@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "configflux-cortex"
+version = "0.1.0"
+description = "Portable agenting knowledge graph toolkit"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+cortex = "cortex.cli:main"
+# Deprecation shim: `kg` keeps working during the transition period described
+# in ADR 0019. It prints a one-line warning and delegates to `cortex.cli:main`.
+# Intended to be removed after a transition period of at least two months.
+kg = "cortex.compat:kg_shim_main"
+
+[project.optional-dependencies]
+tree-sitter = [
+    "tree-sitter>=0.20",
+    "tree-sitter-cpp",
+    "tree-sitter-go",
+    "tree-sitter-javascript",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+]
+
+[tool.setuptools]
+# The pyproject.toml lives inside the cortex/ package directory itself.
+# Map the top-level "cortex" import to "." (this directory) so that
+# `pip install -e cortex/` from the repo root makes `import cortex` work.
+packages = ["cortex", "cortex.strategies"]
+
+[tool.setuptools.package-dir]
+"cortex" = "."
+"cortex.strategies" = "strategies"
+
+[tool.setuptools.package-data]
+"cortex" = ["languages/*.yaml", "templates/*.py", "templates/*.md"]

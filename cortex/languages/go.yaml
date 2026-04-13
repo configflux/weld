@@ -1,0 +1,10 @@
+# Tree-sitter queries for Go symbol extraction.
+
+language: go
+grammar_package: tree_sitter_go
+
+queries:
+  exports: "(function_declaration name: (identifier) @name) (method_declaration name: (field_identifier) @name) (type_declaration (type_spec name: (type_identifier) @name))"
+  classes: "(type_declaration (type_spec name: (type_identifier) @name))"
+  imports: "(import_spec path: (interpreted_string_literal) @name)"
+  calls: "(call_expression function: (identifier) @name) (call_expression function: (selector_expression field: (field_identifier) @name))"

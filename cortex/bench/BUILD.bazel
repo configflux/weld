@@ -1,0 +1,23 @@
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "bench_lib",
+    srcs = [
+        "__init__.py",
+        "bench_cli.py",
+        "quality.py",
+        "runner.py",
+    ],
+    deps = [
+        "//cortex:runtime",
+        "//cortex:yaml",
+    ],
+)
+
+py_binary(
+    name = "bench",
+    srcs = ["__main__.py"],
+    main = "__main__.py",
+    data = ["//cortex/tests:bench_prompts"],
+    deps = ["//cortex:runtime"],
+)

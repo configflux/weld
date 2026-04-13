@@ -1,0 +1,8 @@
+[project]
+name = "mysite"
+version = "1.0.0"
+dependencies = [
+    "django>=5.0",
+    "gunicorn",
+    "psycopg2-binary",
+]

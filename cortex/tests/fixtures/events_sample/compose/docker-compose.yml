@@ -1,0 +1,16 @@
+version: "3"
+services:
+  worker:
+    image: example/worker:latest
+    environment:
+      KAFKA_ORDERS_TOPIC: "orders.events"
+      KAFKA_EVENTS_TOPIC: events.audit
+      CELERY_EMAIL_QUEUE: "celery-email"
+      REDIS_NOTIFY_CHANNEL: notify:users
+      # Not a channel var:
+      LOG_LEVEL: INFO
+  api:
+    image: example/api:latest
+    environment:
+      - KAFKA_USERS_TOPIC=users.created
+      - DB_URL=postgres://db/app

@@ -1,0 +1,10 @@
+# Tree-sitter queries for Rust symbol extraction.
+
+language: rust
+grammar_package: tree_sitter_rust
+
+queries:
+  exports: "(function_item (visibility_modifier) name: (identifier) @name) (struct_item (visibility_modifier) name: (type_identifier) @name) (enum_item (visibility_modifier) name: (type_identifier) @name) (trait_item (visibility_modifier) name: (type_identifier) @name) (type_item (visibility_modifier) name: (type_identifier) @name)"
+  classes: "(struct_item (visibility_modifier) name: (type_identifier) @name) (enum_item (visibility_modifier) name: (type_identifier) @name) (trait_item (visibility_modifier) name: (type_identifier) @name)"
+  imports: "(use_declaration argument: (scoped_identifier path: (identifier) @name)) (use_declaration argument: (scoped_identifier path: (scoped_identifier) @name)) (use_declaration argument: (identifier) @name)"
+  calls: "(call_expression function: (identifier) @name) (call_expression function: (field_expression field: (field_identifier) @name)) (call_expression function: (scoped_identifier name: (identifier) @name))"

@@ -1,0 +1,43 @@
+// Minimal proto fixture for the grpc_proto strategy tests.
+//
+// Declares a single service, one request/response message pair,
+// and an enum used by the response. Keep this tiny -- only the
+// shapes needed by the unit tests should live here.
+
+syntax = "proto3";
+
+package catalog.v1;
+
+// CatalogService exposes read-only catalog lookups.
+service CatalogService {
+  // GetProduct fetches a single product by id.
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
+
+  // ListProducts streams every product in the catalog.
+  rpc ListProducts(ListProductsRequest) returns (stream Product);
+}
+
+message GetProductRequest {
+  string product_id = 1;
+}
+
+message GetProductResponse {
+  Product product = 1;
+  ProductStatus status = 2;
+}
+
+message ListProductsRequest {
+  int32 page_size = 1;
+}
+
+message Product {
+  string id = 1;
+  string name = 2;
+  int64 price_cents = 3;
+}
+
+enum ProductStatus {
+  PRODUCT_STATUS_UNSPECIFIED = 0;
+  PRODUCT_STATUS_ACTIVE = 1;
+  PRODUCT_STATUS_DISCONTINUED = 2;
+}

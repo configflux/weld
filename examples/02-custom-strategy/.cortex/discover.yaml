@@ -1,0 +1,9 @@
+# discover.yaml -- Cortex discovery configuration with a custom strategy.
+#
+# The `todo_comment` strategy is resolved from .cortex/strategies/todo_comment.py.
+# Project-local strategies in .cortex/strategies/ take priority over built-in ones.
+
+sources:
+  - strategy: todo_comment
+    glob: "*.py"
+    type: todo

@@ -1,0 +1,8 @@
+# Example ROS2 .srv fixture for kg ros2_interfaces extractor.
+# Request block above the '---', response block below.
+
+string key
+float64 value
+---
+bool success
+string message

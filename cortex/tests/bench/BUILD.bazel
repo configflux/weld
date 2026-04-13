@@ -1,0 +1,28 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["prompts.yaml", "quality_cases.yaml"])
+
+py_library(
+    name = "bench_test_helpers",
+    srcs = [
+        "__init__.py",
+        "bench_test_helpers.py",
+    ],
+    deps = ["//cortex:contract"],
+)
+
+py_test(
+    name = "cortex_bench_quality_test",
+    srcs = ["cortex_bench_quality_test.py"],
+    data = [
+        "prompts.yaml",
+        "quality_cases.yaml",
+    ],
+    deps = [
+        ":bench_test_helpers",
+        "//cortex:runtime",
+        "//cortex/bench:bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)

@@ -1,0 +1,10 @@
+[project]
+name = "my-fastapi-app"
+version = "0.1.0"
+dependencies = [
+    "fastapi>=0.100",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.0",
+    "uvicorn",
+    "alembic",
+]

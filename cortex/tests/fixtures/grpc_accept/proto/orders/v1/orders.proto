@@ -1,0 +1,63 @@
+// gRPC acceptance fixture: order service proto declarations.
+//
+// Declares a service with unary and server-streaming RPCs,
+// request/response messages, and an enum. Exercises grpc_proto
+// strategy: service, rpc, contract, and enum extraction.
+
+syntax = "proto3";
+
+package orders.v1;
+
+service OrderService {
+  // PlaceOrder creates a new order (unary).
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse);
+
+  // GetOrder fetches an existing order (unary).
+  rpc GetOrder(GetOrderRequest) returns (Order);
+
+  // WatchOrders streams order status updates (server-streaming).
+  rpc WatchOrders(WatchOrdersRequest) returns (stream OrderEvent);
+}
+
+message PlaceOrderRequest {
+  string customer_id = 1;
+  repeated OrderItem items = 2;
+}
+
+message PlaceOrderResponse {
+  string order_id = 1;
+  OrderStatus status = 2;
+}
+
+message GetOrderRequest {
+  string order_id = 1;
+}
+
+message WatchOrdersRequest {
+  string customer_id = 1;
+}
+
+message Order {
+  string id = 1;
+  string customer_id = 2;
+  repeated OrderItem items = 3;
+  OrderStatus status = 4;
+}
+
+message OrderItem {
+  string product_id = 1;
+  int32 quantity = 2;
+}
+
+message OrderEvent {
+  string order_id = 1;
+  OrderStatus status = 2;
+  string timestamp = 3;
+}
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_PENDING = 1;
+  ORDER_STATUS_CONFIRMED = 2;
+  ORDER_STATUS_SHIPPED = 3;
+}

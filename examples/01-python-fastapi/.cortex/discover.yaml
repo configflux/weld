@@ -1,0 +1,10 @@
+# discover.yaml -- Cortex discovery configuration for a FastAPI project.
+#
+# Each source entry maps a glob pattern to a node type and extraction
+# strategy.  Run `cortex discover` from this directory to produce the
+# knowledge graph.
+
+sources:
+  - glob: "*.py"
+    type: file
+    strategy: python_module

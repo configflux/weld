@@ -1,0 +1,82 @@
+# ROS2-specific C++ recogniser patterns.
+#
+# Kept separate from ``cpp.yaml`` so the base C++ symbol extractor stays
+# general-purpose.  This file is consumed by ``cortex/strategies/ros2_topology.py``
+# (C++ half,) and is *not* a tree-sitter query file — the
+# topology extractor is a line/token recogniser that runs without the
+# optional tree-sitter grammar.
+#
+# The patterns here are intentionally conservative:
+#   - they match canonical rclcpp API shapes only
+#   - they do not attempt to understand templates beyond splitting the
+#     first angle-bracketed type argument on "::"
+#   - they ignore macros hidden behind other macros
+#
+# Python-half ROS2 recognition (rclpy) lives in ``cortex/languages/python.yaml``
+# as a separate layer
+#
+# Note: keys that contain ``::`` would confuse the minimal yaml parser in
+# ``cortex/_yaml.py``, so ``node_bases`` is expressed as a list of mappings
+# whose fields use ``name`` (string) and ``lifecycle`` (bool).
+
+language: cpp_ros2
+strategy: ros2_topology
+
+node_bases:
+  - name: rclcpp_Node
+    match: rclcpp::Node
+    lifecycle: false
+  - name: rclcpp_lifecycle_LifecycleNode
+    match: rclcpp_lifecycle::LifecycleNode
+    lifecycle: true
+  - name: LifecycleNode
+    match: LifecycleNode
+    lifecycle: true
+  - name: Node
+    match: Node
+    lifecycle: false
+
+# ROS API call-sites the recogniser understands.
+#
+# Each entry maps a callable name to the graph shape it produces:
+#   kind:       one of ``topic`` | ``service`` | ``action`` | ``parameter``
+#   role:       one of ``produces`` | ``consumes`` | ``exposes`` |
+#               ``configures``
+#   declared:   (parameters only) whether the call declares the parameter
+#
+# The recogniser accepts both free functions and method calls on
+# ``this`` / ``self`` — it matches on the unqualified callee name only.
+calls:
+  create_publisher:
+    kind: topic
+    role: produces
+  create_subscription:
+    kind: topic
+    role: consumes
+  create_service:
+    kind: service
+    role: exposes
+  create_client:
+    kind: service
+    role: consumes
+  create_server:
+    kind: action
+    role: exposes
+  create_action_server:
+    kind: action
+    role: exposes
+  create_action_client:
+    kind: action
+    role: consumes
+  declare_parameter:
+    kind: parameter
+    role: configures
+    declared: true
+  get_parameter:
+    kind: parameter
+    role: configures
+    declared: false
+
+# Composable-node registration macro.  The argument is the fully
+# qualified class name, which must match an existing ``ros_node`` id.
+composable_macro: RCLCPP_COMPONENTS_REGISTER_NODE

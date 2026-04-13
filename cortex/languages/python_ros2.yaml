@@ -1,0 +1,111 @@
+# ROS2-specific Python (rclpy) recogniser patterns.
+#
+# Kept separate from ``python.yaml`` so the base Python symbol and
+# call-graph extractors stay general-purpose.  This file is consumed
+# by ``cortex/strategies/ros2_topology.py`` (Python half,)
+# via the ``_ros2_py`` helper module.
+#
+# The Python half uses the stdlib ``ast`` module rather than token-level
+# scanning, so the patterns here describe *classes* and *call shapes*
+# rather than text patterns:
+#
+#   - ``node_bases`` lists the rclpy base classes that mark a subclass
+#     as a ROS node.  Matching is exact on the unqualified tail or on
+#     the dotted suffix of the ``ast.Name`` / ``ast.Attribute`` base
+#     expression.  ``lifecycle`` flags LifecycleNode-derived bases.
+#
+#   - ``calls`` names the rclpy helper calls the recogniser understands.
+#     ``arg_index`` is the positional index of the runtime name literal
+#     (topics / services take it at index 1 because index 0 is the
+#     message / srv / action class; parameters take it at index 0).
+#     ``type_index``  is the positional index of the rclpy interface
+#     class reference used to resolve the ``<pkg>/msg|srv|action/<Name>``
+#     message_type; omit it for parameters.
+#
+# C++-half ROS2 recognition (rclcpp) lives in ``cpp_ros2.yaml`` — the
+# two configs are intentionally symmetric.
+
+language: python_ros2
+strategy: ros2_topology
+
+node_bases:
+  - name: rclpy_node_Node
+    match: rclpy.node.Node
+    tail: Node
+    lifecycle: false
+  - name: rclpy_lifecycle_LifecycleNode
+    match: rclpy.lifecycle.LifecycleNode
+    tail: LifecycleNode
+    lifecycle: true
+  - name: rclpy_lifecycle_Node
+    match: rclpy.lifecycle.Node
+    tail: Node
+    lifecycle: true
+
+# rclpy API call-sites the recogniser understands.
+#
+# Each entry maps a callable name to the graph shape it produces:
+#   kind:        one of ``topic`` | ``service`` | ``action`` | ``parameter``
+#   role:        one of ``produces`` | ``consumes`` | ``exposes`` |
+#                ``configures``
+#   type_index:  positional index of the rclpy interface class argument
+#                (0 for create_publisher/subscription/service/client)
+#   name_index:  positional index of the literal name argument
+#                (1 for topics/services, 0 for parameters)
+#   declared:    (parameters only) whether the call declares the parameter
+#
+# The recogniser accepts both ``self.<call>(...)`` and free-function
+# ``<call>(...)`` forms.  Action helpers like ``ActionServer`` and
+# ``ActionClient`` put the owning node at index 0, the action class at
+# index 1, and the action name at index 2.
+calls:
+  create_publisher:
+    kind: topic
+    role: produces
+    type_index: 0
+    name_index: 1
+  create_subscription:
+    kind: topic
+    role: consumes
+    type_index: 0
+    name_index: 1
+  create_service:
+    kind: service
+    role: exposes
+    type_index: 0
+    name_index: 1
+  create_client:
+    kind: service
+    role: consumes
+    type_index: 0
+    name_index: 1
+  ActionServer:
+    kind: action
+    role: exposes
+    type_index: 1
+    name_index: 2
+  ActionClient:
+    kind: action
+    role: consumes
+    type_index: 1
+    name_index: 2
+  create_action_server:
+    kind: action
+    role: exposes
+    type_index: 0
+    name_index: 1
+  create_action_client:
+    kind: action
+    role: consumes
+    type_index: 0
+    name_index: 1
+  declare_parameter:
+    kind: parameter
+    role: configures
+    name_index: 0
+    declared: true
+  get_parameter:
+    kind: parameter
+    role: configures
+    name_index: 0
+    declared: false

@@ -1,0 +1,38 @@
+# Tree-sitter queries for C/C++ symbol extraction.
+#
+# Both C and C++ are folded into this single grammar because the
+# tree-sitter-cpp grammar parses both. (layer 1
+# of the cpp-ros2 epic) and ADR 0005 (deferred to project-f7y.10).
+#
+# Deliberate limitations (do NOT file as bugs
+# only if a real downstream user reports the missing data):
+#   - Macros are NOT preprocessed. Anything hidden behind a macro will
+#     not be visible. Layer 1 is a syntactic best-effort extractor.
+#   - Overload resolution is name-only. Two functions with the same
+#     unqualified name collapse to a single symbol id.
+#   - Argument-dependent lookup (ADL) is out of scope.
+#   - Templates are extracted at the definition site, not per
+#     instantiation. Template parameters are stripped from names.
+#   - Cross-file include resolution is layer 2 (project-f7y.2). Layer 1
+#     emits ``symbol:unresolved:<name>`` sentinels for every call.
+#
+# Capture conventions:
+#   - The ``exports`` query captures function/method/class/struct/
+#     namespace names. For out-of-class definitions like
+#     ``void Foo::bar() {}`` the ``qualified_identifier`` node is
+#     captured whole so ``Foo::bar`` stays joined.
+#   - The ``classes`` query captures class and struct type names only.
+#   - The ``imports`` query captures only ``#include "..."`` (string
+#     literal) form, not ``#include <system>``.
+#   - The ``calls`` query captures identifier, field_expression, and
+#     qualified_identifier callees. ``qualified_identifier`` is
+#     captured whole so ``Foo::bar()`` stays joined.
+
+language: cpp
+grammar_package: tree_sitter_cpp
+
+queries:
+  exports: "(function_definition declarator: (function_declarator declarator: (identifier) @name)) (function_definition declarator: (function_declarator declarator: (field_identifier) @name)) (function_definition declarator: (function_declarator declarator: (qualified_identifier) @name)) (declaration declarator: (function_declarator declarator: (identifier) @name)) (declaration declarator: (function_declarator declarator: (qualified_identifier) @name)) (field_declaration declarator: (function_declarator declarator: (field_identifier) @name)) (class_specifier name: (type_identifier) @name) (struct_specifier name: (type_identifier) @name) (namespace_definition name: (namespace_identifier) @name)"
+  classes: "(class_specifier name: (type_identifier) @name) (struct_specifier name: (type_identifier) @name)"
+  imports: "(preproc_include path: (string_literal) @name)"
+  calls: "(call_expression function: (identifier) @name) (call_expression function: (field_expression field: (field_identifier) @name)) (call_expression function: (qualified_identifier) @name)"

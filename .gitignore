@@ -1,0 +1,20 @@
+# Bazel
+bazel-*
+/.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Linux
+*~
+
+# Local-only environment
+/.env
+
+# Literal %workspace% dir created when --disk_cache uses unexpanded token
+/%workspace%/

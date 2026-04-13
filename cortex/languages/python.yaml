@@ -1,0 +1,11 @@
+# Tree-sitter queries for Python symbol extraction.
+# Each key under queries is a query name; value is an S-expression.
+
+language: python
+grammar_package: tree_sitter_python
+
+queries:
+  exports: "(function_definition name: (identifier) @name) (class_definition name: (identifier) @name)"
+  classes: "(class_definition name: (identifier) @name)"
+  imports: "(import_statement name: (dotted_name) @name) (import_from_statement module_name: (dotted_name) @name)"
+  calls: "(call function: (identifier) @name) (call function: (attribute attribute: (identifier) @name))"

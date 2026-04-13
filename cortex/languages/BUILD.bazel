@@ -1,0 +1,6 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "query_files",
+    srcs = glob(["*.yaml"]),
+)

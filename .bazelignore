@@ -1,0 +1,11 @@
+# Directories Bazel must not walk during package enumeration.
+#
+# This file protects the loading phase of `bazel build //...` and
+# `bazel query //...` from foot-guns where workspace-local state
+# directories either contain BUILD files (Bazel's own .cache execroot,
+# nested repo clones) or contain large symlink trees.
+.cache
+.git
+%workspace%
+node_modules
+out

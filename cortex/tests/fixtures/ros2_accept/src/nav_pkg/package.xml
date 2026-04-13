@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>nav_pkg</name>
+  <version>0.1.0</version>
+  <description>Navigation acceptance fixture for KG extraction.</description>
+  <maintainer email="dev@example.com">dev</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+</package>

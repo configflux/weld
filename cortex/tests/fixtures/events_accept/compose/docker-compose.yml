@@ -1,0 +1,14 @@
+version: "3"
+services:
+  order-worker:
+    image: example/order-worker:latest
+    environment:
+      KAFKA_ORDER_TOPIC: "orders.placed"
+      KAFKA_SHIPMENT_TOPIC: "shipments.dispatched"
+      REDIS_ALERT_CHANNEL: "alerts:critical"
+      LOG_LEVEL: INFO
+  notification-svc:
+    image: example/notification:latest
+    environment:
+      - KAFKA_NOTIFY_TOPIC=notifications.email
+      - DB_HOST=db

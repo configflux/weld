@@ -1,0 +1,81 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "module_entrypoint",
+    # Both files are required so that `import cortex` from an sh_test runfiles
+    # tree resolves to a regular package (with __file__ set), not an implicit
+    # namespace package. Without __init__.py Python treats the runfiles
+    # cortex/ directory as a namespace package and cortex.__file__ becomes
+    # None, which breaks any test that calls `Path(cortex.__file__).parent`.
+    srcs = [
+        "__init__.py",
+        "__main__.py",
+    ],
+)
+
+py_library(
+    name = "yaml",
+    srcs = ["_yaml.py"],
+)
+
+py_library(
+    name = "git",
+    srcs = ["_git.py"],
+)
+
+py_library(
+    name = "repo_boundary",
+    srcs = ["repo_boundary.py"],
+)
+
+py_library(
+    name = "contract",
+    srcs = ["contract.py"],
+)
+
+py_library(
+    name = "runtime",
+    srcs = [
+        "__init__.py",
+        "_init_ros2.py",
+        "bootstrap.py",
+        "brief.py",
+        "cli.py",
+        "compat.py",
+        "discover.py",
+        "file_index.py",
+        "graph.py",
+        "init.py",
+        "init_detect.py",
+        "mcp_helpers.py",
+        "mcp_server.py",
+        "migrate.py",
+        "prime.py",
+        "query_index.py",
+        "ranking.py",
+        "scaffold.py",
+        "synonyms.py",
+        "trace.py",
+        "warnings.py",
+    ],
+    data = [
+        "//cortex/templates",
+    ],
+    deps = [
+        ":contract",
+        ":git",
+        ":repo_boundary",
+        ":yaml",
+        "//cortex/strategies",
+    ],
+)
+
+py_binary(
+    name = "cli",
+    srcs = ["__main__.py"],
+    main = "__main__.py",
+    deps = [
+        ":runtime",
+        "//cortex/bench:bench_lib",
+    ],
+)

@@ -1,0 +1,98 @@
+# Quality benchmark cases for `cortex bench --quality`.
+#
+# Each case represents a realistic agent query and specifies what a
+# high-quality retrieval response MUST contain.
+#
+# Fields:
+#   id            : stable case id
+#   query         : the term fed to cortex brief / cortex trace
+#   surface       : "brief" or "trace" -- which surface to evaluate
+#   expect_buckets: list of brief/trace bucket names that must be non-empty
+#   expect_labels : list of node labels (substring match) that must appear
+#                   in the top results
+#   max_tokens    : optional token budget -- result must fit within this count
+#   category      : grouping tag for reporting
+#
+# Edit freely; the harness picks up new entries automatically.
+
+cases:
+  # -- brief surface: interaction-aware queries --
+  - id: bq01
+    query: "grpc"
+    surface: brief
+    expect_buckets: [interfaces]
+    expect_labels: [grpc]
+    category: interaction
+
+  - id: bq02
+    query: "http endpoint routes"
+    surface: brief
+    expect_buckets: [interfaces, boundaries]
+    expect_labels: [route]
+    category: interaction
+
+  - id: bq03
+    query: "event channel"
+    surface: brief
+    expect_buckets: [interfaces]
+    expect_labels: [event]
+    category: interaction
+
+  # -- brief surface: navigation queries --
+  - id: bq04
+    query: "Store"
+    surface: brief
+    expect_buckets: [primary]
+    expect_labels: [Store]
+    category: navigation
+
+  - id: bq05
+    query: "discovery strategies"
+    surface: brief
+    expect_buckets: [primary]
+    expect_labels: [discover]
+    category: navigation
+
+  - id: bq06
+    query: "brief contract"
+    surface: brief
+    expect_buckets: [primary, docs]
+    expect_labels: [brief]
+    category: navigation
+
+  # -- trace surface: protocol-aware paths --
+  - id: tq01
+    query: "grpc"
+    surface: trace
+    expect_buckets: [interfaces]
+    expect_labels: [grpc]
+    category: trace_protocol
+
+  - id: tq02
+    query: "Store"
+    surface: trace
+    expect_buckets: [services]
+    expect_labels: [Store]
+    category: trace_protocol
+
+  - id: tq03
+    query: "auth"
+    surface: trace
+    expect_buckets: [boundaries]
+    expect_labels: []
+    category: trace_protocol
+
+  # -- brief surface: doc authority --
+  - id: bq07
+    query: "policy"
+    surface: brief
+    expect_buckets: [docs]
+    expect_labels: []
+    category: docs
+
+  - id: bq08
+    query: "build gate test"
+    surface: brief
+    expect_buckets: [build]
+    expect_labels: []
+    category: build
