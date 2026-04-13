@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "configflux-cortex"
-version = "0.1.0"
+version = "0.2.0"
 description = "Portable agenting knowledge graph toolkit"
 readme = "README.md"
 license = "Apache-2.0"

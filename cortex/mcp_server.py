@@ -1,39 +1,12 @@
 """Stdio MCP server exposing cortex query helpers as structured tools.
 
-(``docs/adrs/0015-kg-mcp-server-exposure.md``).
+Thin adapter over :mod:`cortex.graph`, :mod:`cortex.brief`, and
+:mod:`cortex.file_index` (ADR 0015). Each tool handler loads a fresh
+:class:`cortex.graph.Graph` and delegates to the same helper the CLI uses.
+The ``mcp`` SDK is optional -- only :func:`run_stdio` requires it.
 
-Design notes
-------------
-
-The server is a **thin adapter** over the existing query helpers in
-:mod:`cortex.graph`, :mod:`cortex.brief`, and :mod:`cortex.file_index`. It does NOT
-duplicate any query logic: every tool handler here loads a fresh
-:class:`cortex.graph.Graph` and calls the same helper the CLI already calls.
-This keeps the CLI and the MCP surface behaviourally locked together --
-if the CLI output changes, the MCP output changes in lockstep.
-
-The ``mcp`` Python SDK is an **optional** dependency. Importing this module
-must succeed without the SDK installed so the CLI keeps working in
-environments that do not ship ``mcp``. Only :func:`run_stdio` (and the
-``python -m cortex.mcp_server`` entry point) require the SDK, and they import
-it lazily with a helpful error message.
-
-Tool surface (initial)
-----------------------
-
-- ``cortex_query(term, limit?)`` -- ranked tokenized graph search
-- ``cortex_find(term, limit?)`` -- file-index substring search
-- ``cortex_context(node_id)`` -- node plus 1-hop neighborhood
-- ``cortex_path(from_id, to_id)`` -- shortest path between nodes
-- ``cortex_brief(area)`` -- stable brief JSON (``BRIEF_VERSION == 2``, includes interfaces)
-- ``cortex_stale()`` -- graph freshness check vs git HEAD
-- ``cortex_callers(symbol_id, depth?)`` -- direct/transitive callers of a symbol
-- ``cortex_references(symbol_name)`` -- callers + file-index references for a name
-- ``cortex_trace(term?, node_id?)`` -- cross-boundary protocol-aware slice
-
-``cortex_callers`` and ``cortex_references`` were added by the call-graph
-follow-up (project-dkw, ADR ``cortex/docs/adr/0004-call-graph-schema-extension.md``).
-``cortex_trace`` was added for interaction-aware retrieval (project-xoq.2.3).
+Tools: cortex_query, cortex_find, cortex_context, cortex_path, cortex_brief,
+cortex_stale, cortex_callers, cortex_references, cortex_trace, cortex_export.
 """
 
 from __future__ import annotations
@@ -45,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from cortex.brief import brief as _brief
+from cortex.diff import load_and_diff as _load_and_diff
 from cortex.file_index import find_files as _find_files
 from cortex.file_index import load_file_index as _load_file_index
 from cortex.graph import Graph as _Graph
@@ -78,11 +52,7 @@ def cortex_query(term: str, limit: int = 20, *, root: Path | str = ".") -> dict:
     return g.query(term, limit=limit)
 
 def cortex_find(term: str, limit: int | None = None, *, root: Path | str = ".") -> dict:
-    """File-index substring search. Delegates to ``cortex.file_index.find_files``.
-
-    ``limit`` is accepted for symmetry with ``cortex_query`` but applies after
-    the underlying helper returns so the shared result shape is preserved.
-    """
+    """File-index substring search. Delegates to ``cortex.file_index.find_files``."""
     index = _load_file_index(Path(root))
     result = _find_files(index, term)
     if limit is not None and limit >= 0:
@@ -113,29 +83,36 @@ def cortex_stale(*, root: Path | str = ".") -> dict:
     return g.stale()
 
 def cortex_callers(
-    symbol_id: str,
-    depth: int = 1,
-    *,
-    root: Path | str = ".",
+    symbol_id: str, depth: int = 1, *, root: Path | str = ".",
 ) -> dict:
-    """Return direct (and optionally transitive) callers of *symbol_id*.
-
-    Delegates to ``Graph.callers``. ``depth`` defaults to 1.
-    """
+    """Return direct (and optionally transitive) callers of *symbol_id*."""
     g = _load_graph(Path(root))
     return g.callers(symbol_id, depth=depth)
 
-def cortex_references(symbol_name: str, *, root: Path | str = ".") -> dict:
-    """Return callers + file-index references for a bare symbol *name*.
+def cortex_export(
+    format: str, node_id: str | None = None, depth: int = 1,
+    *, root: Path | str = ".",
+) -> dict:
+    """Export graph to a visualization format. Delegates to ``cortex.export``."""
+    from cortex.export import export
+    try:
+        output = export(format, node_id=node_id, depth=depth, root=root)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"format": format, "output": output}
 
-    Combines ``Graph.references`` with ``cortex.file_index.find_files`` so the
-    return shape matches the ``cortex references`` CLI command.
-    """
+
+def cortex_references(symbol_name: str, *, root: Path | str = ".") -> dict:
+    """Return callers + file-index references for a bare symbol *name*."""
     g = _load_graph(Path(root))
     refs = g.references(symbol_name)
     index = _load_file_index(Path(root))
     refs["files"] = _find_files(index, symbol_name).get("files", [])
     return refs
+
+def cortex_diff(*, root: Path | str = ".") -> dict:
+    """Return the graph diff between previous and current discovery run."""
+    return _load_and_diff(Path(root))
 
 # ---------------------------------------------------------------------------
 # Registry + dispatch
@@ -313,10 +290,38 @@ def build_tools() -> list[Tool]:
             },
             handler=cortex_references,
         ),
+        Tool(name="cortex_export",
+             description="Export graph (or subgraph) to Mermaid, DOT, or D2.",
+             input_schema={"type": "object", "properties": {
+                 "format": {"type": "string", "enum": ["mermaid", "dot", "d2"],
+                            "description": "Output format."},
+                 "node_id": {"type": "string",
+                             "description": "Center node for subgraph (optional)."},
+                 "depth": {"type": "integer", "default": 1, "minimum": 0,
+                           "description": "BFS depth for subgraph (default 1)."},
+             }, "required": ["format"], "additionalProperties": False},
+             handler=cortex_export),
     ]
     _td = _build_trace_tool()
     tools.append(Tool(name=_td["name"], description=_td["description"],
                        input_schema=_td["input_schema"], handler=_td["handler"]))
+    tools.append(
+        Tool(
+            name="cortex_diff",
+            description=(
+                "Return the graph diff between the previous and current "
+                "discovery run. Shows added, removed, and modified nodes "
+                "and edges. No parameters required."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            handler=cortex_diff,
+        ),
+    )
     return tools
 
 def dispatch(

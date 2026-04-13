@@ -5,8 +5,9 @@ native location:
 
     cortex bootstrap claude   -> .claude/commands/cortex.md
     cortex bootstrap codex    -> .codex/skills/cortex/SKILL.md
+    cortex bootstrap copilot  -> .github/skills/cortex/SKILL.md
 
-Both targets also write .cortex/README.md and bootstrap discover.yaml if missing.
+All targets also write .cortex/README.md and bootstrap discover.yaml if missing.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from pathlib import Path
 _FRAMEWORKS: dict[str, tuple[str, Path]] = {
     "claude": ("cortex_cmd_claude.md", Path(".claude") / "commands" / "cortex.md"),
     "codex": ("cortex_skill_codex.md", Path(".codex") / "skills" / "cortex" / "SKILL.md"),
+    "copilot": ("cortex_skill_copilot.md", Path(".github") / "skills" / "cortex" / "SKILL.md"),
 }
 
 _README_TEMPLATE = "cortex_readme.md"

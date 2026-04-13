@@ -1,5 +1,4 @@
-# Standalone configflux-cortex build configuration.
-# Adapted from the monorepo .bazelrc — Python-only, no JS/TS/proto/Docker.
+# configflux-cortex build configuration.
 
 startup --max_idle_secs=60
 

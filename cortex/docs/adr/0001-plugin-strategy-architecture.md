@@ -207,5 +207,5 @@ stayed in the discovery runtime.
 
 ## Related Issues
 
-- bd-G100: Refactor strategies into plugin files
-- bd-G106: Tree-sitter optional dependency (first consumer of the plugin arch)
+- Refactor strategies into plugin files
+- Tree-sitter optional dependency (first consumer of the plugin arch)

@@ -198,7 +198,7 @@ dependencies are its own concern.
 
 ## Related Issues
 
-- bd-G106: Tree-sitter as optional native dependency
-- bd-G100: Plugin strategy architecture (prerequisite -- tree-sitter is a plugin)
-- bd-G101: Tree-sitter universal extraction strategy (implementation)
-- bd-G102: Extend discover.yaml for full source coverage (consumer)
+- Tree-sitter as optional native dependency
+- Plugin strategy architecture (prerequisite -- tree-sitter is a plugin)
+- Tree-sitter universal extraction strategy (implementation)
+- Extend discover.yaml for full source coverage (consumer)

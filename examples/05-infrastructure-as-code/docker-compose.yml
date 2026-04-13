@@ -1,0 +1,28 @@
+# Compose stack for cortex discovery demo.
+# Defines three services: an API, a background worker, and a Redis cache.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://cache:6379
+    depends_on:
+      - cache
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - REDIS_URL=redis://cache:6379
+    depends_on:
+      - cache
+
+  cache:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"

@@ -15,12 +15,12 @@ SQLAlchemy strategies and means "command invokes agent", not "function
 calls function".
 
 The tree-sitter strategy already loads grammars for Python, TypeScript,
-Go, and Rust (per [ADR 0014](../../../docs/adrs/0014-kg-rust-language-strategy.md)),
+Go, and Rust (per the Rust language strategy ADR),
 and Python has stdlib `ast` available with zero extra dependencies. The
 marginal cost of adding function-level call edges is therefore moderate,
 and the payoff is replacing the most frequent grep pattern with a
 structured query that the cortex MCP server
-([ADR 0015](../../../docs/adrs/0015-kg-mcp-server-exposure.md)) can expose
+(per the MCP server exposure ADR) can expose
 as a first-class tool.
 
 The constraint that has historically kept this out of scope is type

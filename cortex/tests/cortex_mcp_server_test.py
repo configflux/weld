@@ -307,7 +307,7 @@ class CortexMcpServerRegistryTest(unittest.TestCase):
     def setUp(self) -> None:
         self.root = _make_graph_root()
 
-    def test_tool_registry_lists_nine_tools(self) -> None:
+    def test_tool_registry_lists_eleven_tools(self) -> None:
         tools = mcp_server.build_tools()
         names = {t.name for t in tools}
         self.assertEqual(
@@ -322,6 +322,8 @@ class CortexMcpServerRegistryTest(unittest.TestCase):
                 "cortex_callers",
                 "cortex_references",
                 "cortex_trace",
+                "cortex_diff",
+                "cortex_export",
             },
         )
         for tool in tools:

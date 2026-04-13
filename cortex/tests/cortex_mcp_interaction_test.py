@@ -229,11 +229,11 @@ class CortexMcpBriefV2ParityTest(unittest.TestCase):
         self.assertIn("interfaces", result)
 
 class CortexMcpRegistryCountTest(unittest.TestCase):
-    """After adding cortex_trace, the registry should have 9 tools."""
+    """After adding cortex_export, the registry should have 11 tools."""
 
-    def test_tool_registry_lists_nine_tools(self) -> None:
+    def test_tool_registry_lists_eleven_tools(self) -> None:
         tools = mcp_server.build_tools()
-        self.assertEqual(len(tools), 9)
+        self.assertEqual(len(tools), 11)
         names = {t.name for t in tools}
         self.assertEqual(
             names,
@@ -247,6 +247,8 @@ class CortexMcpRegistryCountTest(unittest.TestCase):
                 "cortex_callers",
                 "cortex_references",
                 "cortex_trace",
+                "cortex_diff",
+                "cortex_export",
             },
         )
 

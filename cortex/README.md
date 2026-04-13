@@ -139,6 +139,7 @@ cortex --help
 cortex prime                      # check what needs to be done
 cortex bootstrap claude           # if you're Claude Code
 cortex bootstrap codex            # if you're Codex
+cortex bootstrap copilot          # if you're Copilot
 ```
 
 No external dependencies required (tree-sitter is optional).
@@ -243,9 +244,10 @@ To set up agent integration, run the bootstrap command for your framework:
 ```bash
 cortex bootstrap claude    # writes .claude/commands/cortex.md
 cortex bootstrap codex     # writes .codex/skills/cortex/SKILL.md
+cortex bootstrap copilot   # writes .github/skills/cortex/SKILL.md
 ```
 
-Both also write `.cortex/README.md` and bootstrap `discover.yaml` if missing.
+All targets also write `.cortex/README.md` and bootstrap `discover.yaml` if missing.
 
 ## Onboarding and extension
 

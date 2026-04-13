@@ -7,6 +7,7 @@ filegroup(
         "cortex_cmd_claude.md",
         "cortex_readme.md",
         "cortex_skill_codex.md",
+        "cortex_skill_copilot.md",
         "local_strategy.py",
     ],
 )

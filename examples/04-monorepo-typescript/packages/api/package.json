@@ -1,0 +1,10 @@
+{
+  "name": "@acme/api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/client.ts",
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run"
+  }
+}

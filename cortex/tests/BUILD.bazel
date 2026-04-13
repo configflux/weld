@@ -93,6 +93,18 @@ sh_test(
 )
 
 sh_test(
+    name = "cortex_incremental_discovery_test",
+    srcs = ["cortex_incremental_discovery_test.sh"],
+    data = [
+        "cortex_test_lib.sh",
+        "//cortex:module_entrypoint",
+        "//cortex/strategies",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+sh_test(
     name = "cortex_init_test",
     srcs = ["cortex_init_test.sh"],
     data = [
@@ -151,6 +163,16 @@ py_test(
 py_test(
     name = "cortex_mcp_server_test",
     srcs = ["cortex_mcp_server_test.py"],
+    deps = [
+        "//cortex:runtime",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "cortex_export_test",
+    srcs = ["cortex_export_test.py"],
     deps = [
         "//cortex:runtime",
     ],
@@ -693,6 +715,7 @@ py_test(
 )
 
 py_test(name = "cortex_prime_test", srcs = ["cortex_prime_test.py"], deps = ["//cortex:runtime"], local = True, tags = ["no-sandbox"])
+py_test(name = "cortex_doctor_test", srcs = ["cortex_doctor_test.py"], deps = ["//cortex:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "cortex_bootstrap_test", srcs = ["cortex_bootstrap_test.py"], data = ["//cortex/templates"], deps = ["//cortex:runtime"], local = True, tags = ["no-sandbox"])
 
 py_test(
@@ -729,6 +752,7 @@ py_test(name = "cortex_description_coverage_test", srcs = ["cortex_description_c
 py_test(name = "cortex_events_strategy_test", srcs = ["cortex_events_strategy_test.py"], data = [":fixture_files"], deps = ["//cortex:contract", "//cortex/strategies", "//cortex/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "cortex_runtime_contract_strategy_test", srcs = ["cortex_runtime_contract_strategy_test.py"], deps = ["//cortex:contract", "//cortex/strategies", "//cortex/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "cortex_grpc_bindings_strategy_test", srcs = ["cortex_grpc_bindings_strategy_test.py"], deps = ["//cortex:contract", "//cortex/strategies", "//cortex/strategies:helpers"], local = True, tags = ["no-sandbox"])
+py_test(name = "cortex_diff_test", srcs = ["cortex_diff_test.py"], deps = ["//cortex:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "cortex_mcp_interaction_test", srcs = ["cortex_mcp_interaction_test.py"], deps = ["//cortex:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "cortex_events_bindings_strategy_test", srcs = ["cortex_events_bindings_strategy_test.py"], deps = ["//cortex:contract", "//cortex/strategies", "//cortex/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "cortex_accept_http_test", srcs = ["cortex_accept_http_test.py"], data = [":fixture_files"], deps = ["//cortex:contract", "//cortex/strategies", "//cortex/strategies:helpers"], local = True, tags = ["no-sandbox"])

@@ -94,6 +94,45 @@ class BootstrapDiscoverYamlTest(unittest.TestCase):
             )
             self.assertIn("already exists", output.getvalue())
 
+class BootstrapCopilotTest(unittest.TestCase):
+    """Verify bootstrap copilot writes the expected files."""
+
+    def test_creates_cortex_readme(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            readme = root / ".cortex" / "README.md"
+            self.assertTrue(readme.is_file())
+
+    def test_creates_copilot_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            skill = root / ".github" / "skills" / "cortex" / "SKILL.md"
+            self.assertTrue(skill.is_file())
+            content = skill.read_text(encoding="utf-8")
+            self.assertIn("cortex brief", content)
+
+    def test_copilot_skill_has_yaml_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            skill = root / ".github" / "skills" / "cortex" / "SKILL.md"
+            content = skill.read_text(encoding="utf-8")
+            self.assertTrue(content.startswith("---\n"))
+            self.assertIn("name: cortex", content)
+            self.assertIn("allowed-tools:", content)
+            self.assertIn("shell", content)
+
+    def test_copilot_skill_has_description(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            skill = root / ".github" / "skills" / "cortex" / "SKILL.md"
+            content = skill.read_text(encoding="utf-8")
+            self.assertIn("description:", content)
+
+
 class BootstrapTemplatesLoadableTest(unittest.TestCase):
     """Verify all markdown templates exist in the package."""
 
@@ -105,6 +144,10 @@ class BootstrapTemplatesLoadableTest(unittest.TestCase):
 
     def test_cortex_skill_codex_template_exists(self) -> None:
         self.assertTrue((_TEMPLATES_DIR / "cortex_skill_codex.md").is_file())
+
+    def test_cortex_skill_copilot_template_exists(self) -> None:
+        self.assertTrue((_TEMPLATES_DIR / "cortex_skill_copilot.md").is_file())
+
 
 class BootstrapCliDispatchTest(unittest.TestCase):
     """Verify bootstrap dispatch from the top-level CLI."""
@@ -123,6 +166,14 @@ class BootstrapCliDispatchTest(unittest.TestCase):
             with patch("sys.stdout", output):
                 cli_main(["bootstrap", "codex", "--root", td, "--force"])
             skill = Path(td) / ".codex" / "skills" / "cortex" / "SKILL.md"
+            self.assertTrue(skill.is_file())
+
+    def test_cli_dispatches_bootstrap_copilot(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            output = io.StringIO()
+            with patch("sys.stdout", output):
+                cli_main(["bootstrap", "copilot", "--root", td, "--force"])
+            skill = Path(td) / ".github" / "skills" / "cortex" / "SKILL.md"
             self.assertTrue(skill.is_file())
 
     def test_help_mentions_bootstrap(self) -> None:

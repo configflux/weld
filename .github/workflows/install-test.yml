@@ -1,0 +1,50 @@
+# Install-test workflow for cortex
+# Verifies that install.sh works end-to-end on supported platforms.
+name: Install Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: install-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  install-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run install.sh
+        run: sh install.sh
+
+      - name: Assert cortex --version exits 0
+        run: cortex --version
+
+      - name: Assert cortex discover --help exits 0
+        run: cortex discover --help
+
+      - name: Assert version matches VERSION file
+        run: |
+          expected="$(cat VERSION)"
+          actual="$(cortex --version)"
+          if echo "${actual}" | grep -qF "${expected}"; then
+            echo "Version match: ${actual} contains ${expected}"
+          else
+            echo "Version mismatch: cortex --version output '${actual}' does not contain expected '${expected}'"
+            exit 1
+          fi

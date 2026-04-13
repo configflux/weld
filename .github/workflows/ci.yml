@@ -1,7 +1,5 @@
-# CI workflow for cortex (public repo)
+# CI workflow for cortex
 # Runs Bazel build + test on push to main and PRs.
-# This file is overlaid into the public repo as .github/workflows/ci.yml
-# by the publish script.
 name: CI
 
 on:
@@ -24,10 +22,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        uses: actions/checkout@v4
 
       - name: Mount Bazel cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/bazel-disk

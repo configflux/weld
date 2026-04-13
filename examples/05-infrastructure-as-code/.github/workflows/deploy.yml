@@ -1,0 +1,17 @@
+# Deploy workflow for cortex discovery demo.
+name: Deploy
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/deploy
+          aws-region: us-east-1
+      - run: terraform -chdir=terraform apply -auto-approve

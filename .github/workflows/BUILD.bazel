@@ -1,3 +1,4 @@
 exports_files([
-    "ci-public.yml",
+    "ci.yml",
+    "install-test.yml",
 ])
