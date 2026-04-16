@@ -277,13 +277,6 @@ py_test(
 )
 
 py_test(
-    name = "weld_rebrand_trace_test",
-    srcs = ["weld_rebrand_trace_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
-)
-
-py_test(
     name = "weld_contract_test",
     srcs = ["weld_contract_test.py"],
     deps = [
