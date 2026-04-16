@@ -1,4 +1,4 @@
-# Background worker container for cortex discovery demo.
+# Background worker container for weld discovery demo.
 FROM python:3.12-slim
 
 WORKDIR /app

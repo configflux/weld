@@ -1,4 +1,4 @@
-# Minimal application container for cortex discovery demo.
+# Minimal application container for weld discovery demo.
 FROM python:3.12-slim
 
 WORKDIR /app

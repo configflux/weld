@@ -1,32 +1,32 @@
 # Example: Build System Extension
 
-Demonstrates integrating cortex into a build system so that knowledge
+Demonstrates integrating weld into a build system so that knowledge
 graph discovery runs automatically as part of your build pipeline. This
 example uses a Makefile, but the same approach applies to any build
 tool (Bazel, Just, Taskfile, shell scripts, CI pipelines, etc.).
 
 ## What This Example Contains
 
-- `Makefile` -- build targets that run cortex discovery and validate
+- `Makefile` -- build targets that run weld discovery and validate
   the graph as part of the build
 - `service.py` -- a minimal Python module representing application code
-- `.cortex/discover.yaml` -- cortex discovery configuration
+- `.weld/discover.yaml` -- weld discovery configuration
 - `README.md` -- this walkthrough
 
 ## The Idea
 
-Instead of running `cortex discover` manually, you embed it as a build
-target. This ensures the knowledge graph stays up to date whenever you
+Instead of running `wd discover` manually, you embed it as a build
+target. This ensures the connected structure stays up to date whenever you
 build your project. The Makefile defines three targets:
 
 | Target | Purpose |
 |---|---|
-| `make discover` | Run cortex discovery and write `.cortex/graph.json` |
+| `make discover` | Run weld discovery and write `.weld/graph.json` |
 | `make graph-check` | Verify the graph is fresh (fails if stale) |
 | `make all` | Build the project and refresh the graph |
 
 The `discover` target uses file-level dependencies: it only re-runs
-cortex when source files change, avoiding redundant work.
+weld when source files change, avoiding redundant work.
 
 ## Running the Example
 
@@ -47,28 +47,28 @@ make graph-check
 
 ### Makefile Integration
 
-The `Makefile` declares `.cortex/graph.json` as a target that depends
+The `Makefile` declares `.weld/graph.json` as a target that depends
 on your source files and the discovery configuration:
 
 ```makefile
 SOURCES := $(wildcard *.py)
-DISCOVER_CONFIG := .cortex/discover.yaml
+DISCOVER_CONFIG := .weld/discover.yaml
 
-.cortex/graph.json: $(SOURCES) $(DISCOVER_CONFIG)
-	cortex discover > .cortex/graph.json
+.weld/graph.json: $(SOURCES) $(DISCOVER_CONFIG)
+	wd discover > .weld/graph.json
 ```
 
 When any `.py` file or the discovery config changes, Make re-runs
-`cortex discover`. When nothing has changed, Make skips it.
+`wd discover`. When nothing has changed, Make skips it.
 
 ### Freshness Check
 
-The `graph-check` target uses `cortex stale` to verify the graph
+The `graph-check` target uses `wd stale` to verify the graph
 reflects the current source files:
 
 ```makefile
-graph-check: .cortex/graph.json
-	@cortex stale && echo "Graph is fresh" || \
+graph-check: .weld/graph.json
+	@wd stale && echo "Graph is fresh" || \
 		(echo "ERROR: Graph is stale -- run 'make discover'" && exit 1)
 ```
 
@@ -83,21 +83,21 @@ The `all` target chains your normal build steps with discovery:
 all: build discover
 ```
 
-This way the knowledge graph is always refreshed alongside your
+This way the connected structure is always refreshed alongside your
 application build.
 
 ## Adapting for Other Build Systems
 
 ### Bazel
 
-Wrap cortex in a `genrule` that produces the graph as a build output:
+Wrap weld in a `genrule` that produces the graph as a build output:
 
 ```python
 genrule(
-    name = "cortex_discover",
-    srcs = glob(["**/*.py"]) + [".cortex/discover.yaml"],
+    name = "weld_discover",
+    srcs = glob(["**/*.py"]) + [".weld/discover.yaml"],
     outs = ["graph.json"],
-    cmd = "cd $$(dirname $(location .cortex/discover.yaml))/.. && cortex discover > $@",
+    cmd = "cd $$(dirname $(location .weld/discover.yaml))/.. && wd discover > $@",
 )
 ```
 
@@ -105,7 +105,7 @@ genrule(
 
 ```just
 discover:
-    cortex discover > .cortex/graph.json
+    wd discover > .weld/graph.json
 
 build: discover
     python -m build
@@ -114,11 +114,11 @@ build: discover
 ### CI Pipeline (GitHub Actions)
 
 ```yaml
-- name: Refresh knowledge graph
-  run: cortex discover > .cortex/graph.json
+- name: Refresh connected structure
+  run: wd discover > .weld/graph.json
 
 - name: Check graph freshness
-  run: cortex stale
+  run: wd stale
 ```
 
 ## What the Graph Contains
@@ -145,9 +145,9 @@ extracted from the Python source files:
 
 ## Customizing
 
-- Add more source entries to `.cortex/discover.yaml` to discover
+- Add more source entries to `.weld/discover.yaml` to discover
   additional file types
-- Extend the `Makefile` with targets for `cortex enrich` or
-  `cortex query` to integrate more cortex features into your workflow
-- Use `cortex discover --format dot` (when available) to generate
+- Extend the `Makefile` with targets for `wd enrich` or
+  `wd query` to integrate more weld features into your workflow
+- Use `wd discover --format dot` (when available) to generate
   dependency diagrams as build artifacts

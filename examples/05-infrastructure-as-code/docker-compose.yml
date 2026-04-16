@@ -1,4 +1,4 @@
-# Compose stack for cortex discovery demo.
+# Compose stack for weld discovery demo.
 # Defines three services: an API, a background worker, and a Redis cache.
 
 services:

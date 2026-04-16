@@ -1,0 +1,124 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "module_entrypoint",
+    # Both files are required so that `import weld` from an sh_test runfiles
+    # tree resolves to a regular package (with __file__ set), not an implicit
+    # namespace package. Without __init__.py Python treats the runfiles
+    # weld/ directory as a namespace package and weld.__file__ becomes
+    # None, which breaks any test that calls `Path(weld.__file__).parent`.
+    srcs = [
+        "__init__.py",
+        "__main__.py",
+    ],
+)
+
+py_library(
+    name = "yaml",
+    srcs = ["_yaml.py"],
+)
+
+py_library(
+    name = "git",
+    srcs = ["_git.py"],
+)
+
+py_library(
+    name = "repo_boundary",
+    srcs = ["repo_boundary.py"],
+)
+
+py_library(
+    name = "contract",
+    srcs = [
+        "_contract_validators.py",
+        "contract.py",
+    ],
+)
+
+py_library(
+    name = "workspace",
+    srcs = ["workspace.py"],
+    deps = [":yaml"],
+)
+
+py_library(
+    name = "runtime",
+    srcs = [
+        "__init__.py",
+        "_discover_postprocess.py",
+        "_discover_strategies.py",
+        "_graph_cli.py",
+        "_graph_schema.py",
+        "_init_ros2.py",
+        "_workspace_inspect.py",
+        "_workspace_lock.py",
+        "arch_lint.py",
+        "arch_lint_boundary.py",
+        "arch_lint_custom.py",
+        "arch_lint_cycles.py",
+        "bm25.py",
+        "bootstrap.py",
+        "brief.py",
+        "cli.py",
+        "diff.py",
+        "_discover_recurse.py",
+        "discover.py",
+        "discovery_state.py",
+        "doctor.py",
+        "enrich.py",
+        "enrich_edges.py",
+        "embeddings.py",
+        "export.py",
+        "federation.py",
+        "federation_root.py",
+        "federation_support.py",
+        "federation_tools.py",
+        "file_index.py",
+        "graph.py",
+        "graph_query.py",
+        "impact.py",
+        "init.py",
+        "init_detect.py",
+        "init_workspace.py",
+        "_mcp_tools.py",
+        "mcp_helpers.py",
+        "mcp_server.py",
+        "prime.py",
+        "providers/__init__.py",
+        "providers/anthropic.py",
+        "providers/ollama.py",
+        "providers/openai.py",
+        "query_state.py",
+        "query_index.py",
+        "ranking.py",
+        "scaffold.py",
+        "serializer.py",
+        "synonyms.py",
+        "trace.py",
+        "warnings.py",
+        "watch.py",
+        "workspace.py",
+        "workspace_state.py",
+    ],
+    data = [
+        "//weld/templates",
+    ],
+    deps = [
+        ":contract",
+        ":git",
+        ":repo_boundary",
+        ":yaml",
+        "//weld/strategies",
+    ],
+)
+
+py_binary(
+    name = "cli",
+    srcs = ["__main__.py"],
+    main = "__main__.py",
+    deps = [
+        ":runtime",
+        "//weld/bench:bench_lib",
+    ],
+)

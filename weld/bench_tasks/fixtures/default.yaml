@@ -1,0 +1,48 @@
+# Default agent-task fixture for `wd bench --compare`.
+#
+# Each task pairs a realistic agent prompt with an answer key -- the
+# repository-relative files an unaided operator would consider correct hits
+# when a teammate asks the prompt. The comparative bench scores two modes
+# (grep baseline vs. weld retrieval) on how many of those answer files
+# they surface, the token cost of the context they land, and per-call
+# latency.
+#
+# Fields:
+#   id           : short stable id (t01..)
+#   prompt       : human prompt
+#   category     : navigation | dependency | callgraph
+#   term         : token used by both the grep baseline and the weld
+#                  query/brief/references call
+#   symbol       : (optional) bare symbol name for callgraph prompts
+#   answer_files : repo-relative path list -- the expected hits
+#
+# Edit freely. New tasks are picked up automatically.
+tasks:
+  - id: t01
+    prompt: "Where is the wd brief surface implemented?"
+    category: navigation
+    term: brief
+    answer_files:
+      - weld/brief.py
+
+  - id: t02
+    prompt: "Where does weld build its file index?"
+    category: navigation
+    term: file_index
+    answer_files:
+      - weld/file_index.py
+
+  - id: t03
+    prompt: "Where is the wd bench harness defined?"
+    category: navigation
+    term: bench
+    answer_files:
+      - weld/bench/runner.py
+      - weld/bench/__init__.py
+
+  - id: t04
+    prompt: "Which module hosts weld's discovery entry point?"
+    category: navigation
+    term: discover
+    answer_files:
+      - weld/discover.py

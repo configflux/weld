@@ -1,4 +1,4 @@
-# Tree-sitter language grammars for cortex multi-language strategy support.
+# Tree-sitter language grammars for weld multi-language strategy support.
 # Pinned versions with sha256 hashes for supply-chain security.
 --require-hashes
 

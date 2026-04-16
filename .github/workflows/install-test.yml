@@ -1,4 +1,4 @@
-# Install-test workflow for cortex
+# Install-test workflow for weld (public repo)
 # Verifies that install.sh works end-to-end on supported platforms.
 name: Install Test
 
@@ -32,19 +32,19 @@ jobs:
       - name: Run install.sh
         run: sh install.sh
 
-      - name: Assert cortex --version exits 0
-        run: cortex --version
+      - name: Assert wd --version exits 0
+        run: wd --version
 
-      - name: Assert cortex discover --help exits 0
-        run: cortex discover --help
+      - name: Assert wd discover --help exits 0
+        run: wd discover --help
 
       - name: Assert version matches VERSION file
         run: |
           expected="$(cat VERSION)"
-          actual="$(cortex --version)"
+          actual="$(wd --version)"
           if echo "${actual}" | grep -qF "${expected}"; then
             echo "Version match: ${actual} contains ${expected}"
           else
-            echo "Version mismatch: cortex --version output '${actual}' does not contain expected '${expected}'"
+            echo "Version mismatch: wd --version output '${actual}' does not contain expected '${expected}'"
             exit 1
           fi

@@ -1,0 +1,24 @@
+# Tree-sitter queries for C# symbol extraction.
+#
+# Capture conventions:
+#   - ``exports`` captures namespace, type, method, and property names.
+#   - ``classes`` captures class-like type declarations: class, interface,
+#     struct, and record.
+#   - ``imports`` captures direct ``using`` target names.
+#   - ``methods`` and ``properties`` capture member names; the strategy adds
+#     best-effort visibility metadata from the surrounding declaration line.
+#   - ``attributes`` captures attribute names such as ApiController and HttpGet.
+#   - ``namespaces`` captures both block-scoped and file-scoped namespaces.
+
+language: csharp
+grammar_package: tree_sitter_c_sharp
+
+queries:
+  exports: "(class_declaration name: (identifier) @name) (interface_declaration name: (identifier) @name) (struct_declaration name: (identifier) @name) (record_declaration name: (identifier) @name) (method_declaration name: (identifier) @name) (property_declaration name: (identifier) @name) (namespace_declaration name: (_) @name) (file_scoped_namespace_declaration name: (_) @name)"
+  classes: "(class_declaration name: (identifier) @name) (interface_declaration name: (identifier) @name) (struct_declaration name: (identifier) @name) (record_declaration name: (identifier) @name)"
+  imports: "(using_directive (identifier) @name) (using_directive (qualified_name) @name)"
+  methods: "(method_declaration name: (identifier) @name)"
+  properties: "(property_declaration name: (identifier) @name)"
+  attributes: "(attribute name: (_) @name)"
+  namespaces: "(namespace_declaration name: (_) @name) (file_scoped_namespace_declaration name: (_) @name)"
+  calls: "(invocation_expression function: (identifier) @name) (invocation_expression function: (member_access_expression name: (identifier) @name))"

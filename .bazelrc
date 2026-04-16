@@ -1,4 +1,4 @@
-# configflux-cortex build configuration.
+# configflux-weld build configuration.
 
 startup --max_idle_secs=60
 

@@ -1,6 +1,6 @@
 # Example: Python FastAPI Discovery
 
-Demonstrates cortex discovering a minimal FastAPI project. The built-in
+Demonstrates weld discovering a minimal FastAPI project. The built-in
 `python_module` strategy extracts modules and their structure from Python
 source files.
 
@@ -9,14 +9,14 @@ source files.
 - `app.py` -- a simple FastAPI application with three routes
   (GET /health, GET /items, POST /items)
 - `models.py` -- Pydantic models used by the routes
-- `.cortex/discover.yaml` -- cortex discovery configuration pointing to
+- `.weld/discover.yaml` -- weld discovery configuration pointing to
   the sample files
 
 ## Running Discovery
 
 ```bash
 cd examples/01-python-fastapi
-cortex discover
+wd discover
 ```
 
 ## What the Graph Contains
@@ -59,6 +59,6 @@ Example output (abbreviated):
 
 ## Customizing
 
-Edit `.cortex/discover.yaml` to add more source entries or try different
-strategies. See the [strategy cookbook](../../cortex/docs/strategy-cookbook.md)
+Edit `.weld/discover.yaml` to add more source entries or try different
+strategies. See the [strategy cookbook](../../weld/docs/strategy-cookbook.md)
 for the full list of built-in strategies.

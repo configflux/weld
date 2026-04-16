@@ -1,8 +1,8 @@
 # Example: Infrastructure-as-Code Discovery
 
-Demonstrates cortex discovering infrastructure-as-code artifacts across
+Demonstrates weld discovering infrastructure-as-code artifacts across
 a project -- Dockerfiles, Docker Compose services, GitHub Actions
-workflows, and Terraform configurations. This shows cortex's
+workflows, and Terraform configurations. This shows weld's
 whole-codebase value proposition: it maps not just source code, but the
 full operational topology of a project.
 
@@ -17,7 +17,7 @@ full operational topology of a project.
 - `terraform/main.tf` -- root Terraform config referencing two modules
 - `terraform/modules/vpc/main.tf` -- VPC module (network layer)
 - `terraform/modules/ecs/main.tf` -- ECS module (compute layer)
-- `.cortex/discover.yaml` -- discovery configuration using five
+- `.weld/discover.yaml` -- discovery configuration using five
   strategies together
 
 ## Project Structure
@@ -38,7 +38,7 @@ full operational topology of a project.
         main.tf                (network layer)
       ecs/
         main.tf                (compute layer)
-  .cortex/
+  .weld/
     discover.yaml              (five strategies configured)
 ```
 
@@ -59,7 +59,7 @@ different kind of infrastructure artifact:
 
 ```bash
 cd examples/05-infrastructure-as-code
-cortex discover
+wd discover
 ```
 
 ## What the Graph Contains
@@ -207,7 +207,7 @@ The graph connects these nodes with typed edges:
 
 ## Why This Matters
 
-Traditional code intelligence tools see only source code. Cortex sees
+Traditional code intelligence tools see only source code. Weld sees
 the whole picture:
 
 - **Container topology**: which services exist, what they depend on,
@@ -219,7 +219,7 @@ the whole picture:
 - **Network boundaries**: where the system is exposed to the outside
   world
 
-This means `cortex query "api"` returns not just the Python module,
+This means `wd query "api"` returns not just the Python module,
 but also the Dockerfile that packages it, the Compose service that
 runs it, the CI job that tests it, and the ECS service that deploys
 it.
@@ -232,5 +232,5 @@ it.
   pod/service definitions
 - Combine with `python_module` or `typescript_exports` strategies to
   build a graph that spans both source code and infrastructure
-- Use `cortex enrich` after discovery to add semantic descriptions
+- Use `wd enrich` after discovery to add semantic descriptions
   to infrastructure nodes

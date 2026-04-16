@@ -1,4 +1,4 @@
-# CI workflow for cortex
+# CI workflow for weld
 # Runs Bazel build + test on push to main and PRs.
 name: CI
 

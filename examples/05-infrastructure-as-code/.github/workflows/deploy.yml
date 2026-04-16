@@ -1,4 +1,4 @@
-# Deploy workflow for cortex discovery demo.
+# Deploy workflow for weld discovery demo.
 name: Deploy
 
 on:

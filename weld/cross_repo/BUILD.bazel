@@ -1,0 +1,19 @@
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "cross_repo",
+    srcs = [
+        "__init__.py",
+        "base.py",
+        "compose_topology.py",
+        "grpc_service_binding.py",
+        "incremental.py",
+        "overrides.py",
+        "package_import_resolver.py",
+        "service_graph.py",
+    ],
+    deps = [
+        "//weld:workspace",
+        "//weld:yaml",
+    ],
+)

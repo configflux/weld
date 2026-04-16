@@ -1,0 +1,36 @@
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "bench_primitives",
+    srcs = ["primitives.py"],
+)
+
+py_library(
+    name = "bench_lib",
+    srcs = [
+        "__init__.py",
+        "bench_cli.py",
+        "quality.py",
+        "runner.py",
+    ],
+    deps = [
+        ":bench_primitives",
+        "//weld:runtime",
+        "//weld:yaml",
+        "//weld/bench_tasks:bench_tasks_lib",
+    ],
+)
+
+py_binary(
+    name = "bench",
+    srcs = ["__main__.py"],
+    main = "__main__.py",
+    data = [
+        "//weld/bench_tasks:fixtures",
+        "//weld/tests:bench_prompts",
+    ],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench_tasks:bench_tasks_lib",
+    ],
+)

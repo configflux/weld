@@ -1,4 +1,4 @@
-# Root Terraform configuration for cortex discovery demo.
+# Root Terraform configuration for weld discovery demo.
 
 terraform {
   required_version = ">= 1.5"

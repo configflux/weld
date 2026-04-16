@@ -3,7 +3,7 @@
 ## Purpose
 
 This code of conduct outlines expectations for participation in the
-configflux-cortex community and the steps for reporting unacceptable behavior.
+configflux-weld community and the steps for reporting unacceptable behavior.
 We are committed to providing a welcoming and productive environment for
 everyone.
 

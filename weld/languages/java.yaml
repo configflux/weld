@@ -1,0 +1,24 @@
+# Tree-sitter queries for Java symbol extraction.
+#
+# Capture conventions:
+#   - ``exports`` captures class, interface, enum, record, and method names.
+#   - ``classes`` captures class-like type declarations: class, interface,
+#     enum, and record.
+#   - ``imports`` captures import declaration paths used as dependency edges.
+#   - ``methods`` captures method names; the strategy adds best-effort
+#     visibility metadata from the surrounding declaration line.
+#   - ``annotations`` captures annotation names such as RestController
+#     and GetMapping (including Spring Boot framework annotations).
+#   - ``packages`` captures the package declaration for the compilation unit.
+
+language: java
+grammar_package: tree_sitter_java
+
+queries:
+  exports: "(class_declaration name: (identifier) @name) (interface_declaration name: (identifier) @name) (enum_declaration name: (identifier) @name) (record_declaration name: (identifier) @name) (method_declaration name: (identifier) @name)"
+  classes: "(class_declaration name: (identifier) @name) (interface_declaration name: (identifier) @name) (enum_declaration name: (identifier) @name) (record_declaration name: (identifier) @name)"
+  imports: "(import_declaration (scoped_identifier) @name)"
+  methods: "(method_declaration name: (identifier) @name)"
+  annotations: "(marker_annotation name: (_) @name) (annotation name: (_) @name)"
+  packages: "(package_declaration (scoped_identifier) @name)"
+  calls: "(method_invocation name: (identifier) @name)"

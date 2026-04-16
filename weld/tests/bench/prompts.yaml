@@ -1,0 +1,67 @@
+# Benchmark prompt fixture for `wd bench`.
+#
+# These prompts represent realistic agent questions a Claude Code session
+# might ask while navigating this repo. They are NOT exhaustive — they are a
+# small, fixed sample used to compare token cost across retrieval modes.
+#
+# Each entry has:
+#   id        : short stable id (q01..)
+#   prompt    : human prompt
+#   category  : navigation | dependency | callgraph
+#   term      : token used by the grep baseline and the wd query/brief calls
+#   symbol    : (optional) bare symbol name for callgraph prompts
+#
+# Edit freely; the harness will pick up new entries automatically.
+prompts:
+  - id: q01
+    prompt: "Where is the auth flow defined?"
+    category: navigation
+    term: auth
+  - id: q02
+    prompt: "Where do we configure the worker pipeline stages?"
+    category: navigation
+    term: pipeline
+  - id: q03
+    prompt: "Which files own the weld discovery surface?"
+    category: navigation
+    term: discover
+  - id: q04
+    prompt: "Where is the brief contract documented?"
+    category: navigation
+    term: brief
+  - id: q05
+    prompt: "What entities consume Store?"
+    category: dependency
+    term: Store
+  - id: q06
+    prompt: "What depends on the file_index module?"
+    category: dependency
+    term: file_index
+  - id: q07
+    prompt: "What touches tracker wrapper?"
+    category: dependency
+    term: bd
+  - id: q08
+    prompt: "What surfaces use the ranking module?"
+    category: dependency
+    term: ranking
+  - id: q09
+    prompt: "Who calls _load_strategy?"
+    category: callgraph
+    term: _load_strategy
+    symbol: _load_strategy
+  - id: q10
+    prompt: "Who calls build_tools?"
+    category: callgraph
+    term: build_tools
+    symbol: build_tools
+  - id: q11
+    prompt: "Who references find_files?"
+    category: callgraph
+    term: find_files
+    symbol: find_files
+  - id: q12
+    prompt: "Who calls dispatch in the MCP server?"
+    category: callgraph
+    term: dispatch
+    symbol: dispatch

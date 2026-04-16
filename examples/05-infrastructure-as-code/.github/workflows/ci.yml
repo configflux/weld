@@ -1,4 +1,4 @@
-# CI workflow for cortex discovery demo.
+# CI workflow for weld discovery demo.
 name: CI
 
 on:

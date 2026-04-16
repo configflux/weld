@@ -1,0 +1,80 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["prompts.yaml", "quality_cases.yaml"])
+
+py_library(
+    name = "bench_test_helpers",
+    srcs = [
+        "__init__.py",
+        "bench_test_helpers.py",
+    ],
+    deps = ["//weld:contract"],
+)
+
+py_test(
+    name = "weld_bench_quality_test",
+    srcs = ["weld_bench_quality_test.py"],
+    data = [
+        "prompts.yaml",
+        "quality_cases.yaml",
+    ],
+    deps = [
+        ":bench_test_helpers",
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_bench_tasks_test",
+    srcs = ["weld_bench_tasks_test.py"],
+    data = ["//weld/bench_tasks:fixtures"],
+    deps = [
+        ":bench_test_helpers",
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench_tasks:bench_tasks_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_bench_tasks_cli_test",
+    srcs = ["weld_bench_tasks_cli_test.py"],
+    data = ["//weld/bench_tasks:fixtures"],
+    deps = [
+        ":bench_test_helpers",
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench_tasks:bench_tasks_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_library(
+    name = "federation_bench_helpers",
+    srcs = [
+        "__init__.py",
+        "federation_bench_helpers.py",
+    ],
+    deps = [
+        "//weld:runtime",
+        "//weld:workspace",
+    ],
+)
+
+py_test(
+    name = "weld_federation_benchmark_test",
+    srcs = ["weld_federation_benchmark_test.py"],
+    deps = [
+        ":federation_bench_helpers",
+        "//weld:runtime",
+        "//weld:workspace",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)

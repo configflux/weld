@@ -1,0 +1,26 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "fixtures/default.yaml",
+])
+
+filegroup(
+    name = "fixtures",
+    srcs = glob(["fixtures/*.yaml"]),
+)
+
+py_library(
+    name = "bench_tasks_lib",
+    srcs = [
+        "__init__.py",
+        "compare.py",
+        "report.py",
+        "tasks.py",
+    ],
+    data = [":fixtures"],
+    deps = [
+        "//weld:runtime",
+        "//weld:yaml",
+        "//weld/bench:bench_primitives",
+    ],
+)

@@ -1,4 +1,4 @@
-# ECS module for cortex discovery demo.
+# ECS module for weld discovery demo.
 
 variable "vpc_id" {
   description = "VPC to deploy into"

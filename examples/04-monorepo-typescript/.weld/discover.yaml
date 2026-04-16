@@ -1,0 +1,38 @@
+# discover.yaml -- Weld discovery configuration for a TypeScript monorepo.
+#
+# This configuration demonstrates three key patterns:
+#   1. Per-package TypeScript export extraction using the `typescript_exports`
+#      strategy with `id_prefix` and `package` fields for scoping.
+#   2. Manifest extraction using the `manifest` strategy to discover
+#      build/test scripts from each package.json.
+#   3. Cross-package dependency edges inferred from import statements
+#      (e.g., apps/web imports from @acme/ui and @acme/api).
+#
+# Run `wd discover` from this directory to produce the connected structure.
+
+sources:
+  # -- UI package: extract exported components and interfaces ----------
+  - glob: "packages/ui/src/**/*.{ts,tsx}"
+    type: file
+    strategy: typescript_exports
+    id_prefix: ui
+    package: "pkg:ui"
+
+  # -- API package: extract exported client functions and types --------
+  - glob: "packages/api/src/**/*.ts"
+    type: file
+    strategy: typescript_exports
+    id_prefix: api
+    package: "pkg:api"
+
+  # -- Web app: extract page components and layouts --------------------
+  - glob: "apps/web/src/**/*.{ts,tsx}"
+    type: file
+    strategy: typescript_exports
+    id_prefix: web
+    package: "pkg:web"
+
+  # -- Manifests: extract build/test scripts from each package.json ----
+  - glob: "**/package.json"
+    type: config
+    strategy: manifest

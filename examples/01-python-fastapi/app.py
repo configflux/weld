@@ -1,4 +1,4 @@
-"""Minimal FastAPI application for cortex discovery demo."""
+"""Minimal FastAPI application for weld discovery demo."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # Example: Monorepo TypeScript Discovery
 
-Demonstrates cortex discovering a TypeScript monorepo with workspace
+Demonstrates weld discovering a TypeScript monorepo with workspace
 packages. The built-in `typescript_exports` strategy extracts exported
 symbols from each package, and the `manifest` strategy discovers
 build/test scripts from `package.json` files. Cross-package dependency
@@ -16,7 +16,7 @@ edges are captured via import analysis.
   both `@acme/ui` and `@acme/api`
 - `package.json` -- root workspace manifest defining the monorepo
   structure
-- `.cortex/discover.yaml` -- cortex discovery configuration with
+- `.weld/discover.yaml` -- weld discovery configuration with
   per-package source entries and manifest extraction
 
 ## Monorepo Structure
@@ -48,7 +48,7 @@ edges are captured via import analysis.
 
 ```bash
 cd examples/04-monorepo-typescript
-cortex discover
+wd discover
 ```
 
 ## What the Graph Contains
@@ -147,7 +147,7 @@ reveals cross-package dependency edges:
 - `apps/web/src/layout.tsx` imports from `@acme/ui`
 
 These edges make the package dependency graph explicit in the
-knowledge graph without requiring a separate analysis pass.
+connected structure without requiring a separate analysis pass.
 
 ### Manifest Extraction
 
@@ -166,7 +166,7 @@ This produces `build-target` and `test-target` nodes for scripts like
 
 - Add more workspace packages by creating new directories under
   `packages/` or `apps/` and adding corresponding source entries to
-  `.cortex/discover.yaml`
+  `.weld/discover.yaml`
 - Use `exclude` in source entries to skip generated files:
   `exclude: ["**/dist/**", "**/*.d.ts"]`
 - Combine with the `config_file` strategy to discover

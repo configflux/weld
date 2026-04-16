@@ -1,18 +1,18 @@
 #!/bin/sh
-# install.sh — POSIX installer for configflux-cortex
-# See cortex/docs/adr/0007-installer-strategy.md for design rationale.
+# install.sh — POSIX installer for configflux-weld
+# See weld/docs/adr/0007-installer-strategy.md for design rationale.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/configflux/cortex/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/configflux/weld/main/install.sh | sh
 #
-# Respects .cortex-version file (plain semver, CWD-or-ancestor walk).
+# Respects .weld-version file (plain semver, CWD-or-ancestor walk).
 # Idempotent: re-running upgrades an existing installation.
 set -eu
 
 # -- Constants ---------------------------------------------------------------
 
-REPO_URL="https://github.com/configflux/cortex.git"
-INSTALL_SUBDIRECTORY="cortex"
+REPO_URL="https://github.com/configflux/weld.git"
+INSTALL_SUBDIRECTORY="weld"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=10
 MAX_PYTHON_MINOR=13
@@ -20,9 +20,9 @@ LOCAL_BIN="${HOME}/.local/bin"
 
 # -- Logging -----------------------------------------------------------------
 
-info()  { printf '[cortex]  %s\n' "$*"; }
-warn()  { printf '[cortex]  WARN: %s\n' "$*" >&2; }
-error() { printf '[cortex]  ERROR: %s\n' "$*" >&2; }
+info()  { printf '[weld]  %s\n' "$*"; }
+warn()  { printf '[weld]  WARN: %s\n' "$*" >&2; }
+error() { printf '[weld]  ERROR: %s\n' "$*" >&2; }
 die()   { error "$@"; exit 1; }
 
 # -- OS / arch detection -----------------------------------------------------
@@ -99,19 +99,19 @@ find_installer() {
     return 1
 }
 
-# -- .cortex-version resolution ----------------------------------------------
+# -- .weld-version resolution ----------------------------------------------
 
-# Walk from CWD to filesystem root looking for .cortex-version.
+# Walk from CWD to filesystem root looking for .weld-version.
 # Sets VERSION_PIN if found, empty otherwise.
 resolve_version_pin() {
     VERSION_PIN=""
     dir="$(pwd)"
     while true; do
-        if [ -f "${dir}/.cortex-version" ]; then
+        if [ -f "${dir}/.weld-version" ]; then
             # Read first non-blank, non-whitespace-only line.
-            VERSION_PIN="$(grep -v '^[[:space:]]*$' "${dir}/.cortex-version" | head -1 | tr -d '[:space:]')"
+            VERSION_PIN="$(grep -v '^[[:space:]]*$' "${dir}/.weld-version" | head -1 | tr -d '[:space:]')"
             if [ -n "$VERSION_PIN" ]; then
-                info "Found .cortex-version pin: $VERSION_PIN"
+                info "Found .weld-version pin: $VERSION_PIN"
                 return 0
             fi
         fi
@@ -129,6 +129,12 @@ resolve_version_pin() {
 # Compute the pip-style install specifier.
 # If VERSION_PIN is set, install that exact git tag; otherwise install HEAD.
 build_install_spec() {
+    if [ -n "${WELD_INSTALL_SPEC:-}" ]; then
+        INSTALL_SPEC="${WELD_INSTALL_SPEC}"
+        info "Using install spec override from WELD_INSTALL_SPEC"
+        return 0
+    fi
+
     base="git+${REPO_URL}#subdirectory=${INSTALL_SUBDIRECTORY}"
     if [ -n "${VERSION_PIN:-}" ]; then
         INSTALL_SPEC="git+${REPO_URL}@v${VERSION_PIN}#subdirectory=${INSTALL_SUBDIRECTORY}"
@@ -141,12 +147,12 @@ build_install_spec() {
 
 do_install() {
     build_install_spec
-    info "Installing configflux-cortex via $INSTALLER ..."
+    info "Installing configflux-weld via $INSTALLER ..."
     info "  spec: $INSTALL_SPEC"
 
     case "$INSTALLER" in
         uv)
-            uv tool install --force --from "$INSTALL_SPEC" configflux-cortex
+            uv tool install --force --from "$INSTALL_SPEC" configflux-weld
             ;;
         pipx)
             pipx install --force "$INSTALL_SPEC"
@@ -176,7 +182,7 @@ check_path() {
 # -- Main --------------------------------------------------------------------
 
 main() {
-    info "configflux-cortex installer"
+    info "configflux-weld installer"
     info "========================"
 
     detect_os_arch
@@ -197,7 +203,7 @@ main() {
 
     check_path
 
-    info "Done. Run 'cortex --help' to get started."
+    info "Done. Run 'wd --help' to get started."
 }
 
 main "$@"

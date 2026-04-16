@@ -1,0 +1,10 @@
+# discover.yaml -- Weld discovery configuration for build-system demo.
+#
+# This is the same configuration you would use in any Python project.
+# The Makefile invokes `wd discover` which reads this file to know
+# what to scan and which strategy to use.
+
+sources:
+  - glob: "*.py"
+    type: file
+    strategy: python_module

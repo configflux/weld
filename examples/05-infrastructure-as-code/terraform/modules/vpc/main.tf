@@ -1,4 +1,4 @@
-# VPC module for cortex discovery demo.
+# VPC module for weld discovery demo.
 
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"

@@ -1,0 +1,26 @@
+{
+  "n1": {
+    "discover_time_s": 2.0,
+    "edges_per_child": 4,
+    "memory_delta_kb": 50000.0,
+    "nodes_per_child": 8,
+    "query_latency_s": 1.0,
+    "seed": 42
+  },
+  "n5": {
+    "discover_time_s": 5.0,
+    "edges_per_child": 4,
+    "memory_delta_kb": 100000.0,
+    "nodes_per_child": 8,
+    "query_latency_s": 2.0,
+    "seed": 42
+  },
+  "n20": {
+    "discover_time_s": 15.0,
+    "edges_per_child": 4,
+    "memory_delta_kb": 200000.0,
+    "nodes_per_child": 8,
+    "query_latency_s": 5.0,
+    "seed": 42
+  }
+}

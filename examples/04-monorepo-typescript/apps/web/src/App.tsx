@@ -3,7 +3,7 @@
  *
  * Imports UI components from @acme/ui and data-fetching
  * utilities from @acme/api -- demonstrating cross-package
- * dependency edges in the knowledge graph.
+ * dependency edges in the connected structure.
  */
 
 import { Button, Card } from "@acme/ui";

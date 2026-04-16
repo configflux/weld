@@ -1,23 +1,23 @@
 # Example: Custom Strategy Plugin
 
 Demonstrates writing and registering a project-local strategy plugin for
-cortex. The custom strategy extracts TODO and FIXME comments from Python
-files and represents each one as a node in the knowledge graph.
+weld. The custom strategy extracts TODO and FIXME comments from Python
+files and represents each one as a node in the connected structure.
 
 ## What This Example Contains
 
-- `.cortex/strategies/todo_comment.py` -- a custom strategy that scans
+- `.weld/strategies/todo_comment.py` -- a custom strategy that scans
   Python files for TODO/FIXME comments and emits a graph node for each
 - `sample.py` -- a sample Python file containing several TODO comments
   for the strategy to find
-- `.cortex/discover.yaml` -- cortex discovery configuration that
+- `.weld/discover.yaml` -- weld discovery configuration that
   registers the custom strategy
 
 ## How Custom Strategies Work
 
-Cortex resolves strategies by name from `discover.yaml`. Project-local
-strategies placed in `.cortex/strategies/` take priority over the
-built-in strategies shipped with cortex.
+Weld resolves strategies by name from `discover.yaml`. Project-local
+strategies placed in `.weld/strategies/` take priority over the
+built-in strategies shipped with weld.
 
 A strategy is a Python module that exports an `extract()` function with
 this signature:
@@ -40,7 +40,7 @@ named tuple.
 
 ```bash
 cd examples/02-custom-strategy
-cortex discover
+wd discover
 ```
 
 ## What the Graph Contains
@@ -67,8 +67,8 @@ found in the sample file:
 
 ## Registering the Strategy
 
-In `.cortex/discover.yaml`, the `strategy` field matches the filename
-(without `.py`) in `.cortex/strategies/`:
+In `.weld/discover.yaml`, the `strategy` field matches the filename
+(without `.py`) in `.weld/strategies/`:
 
 ```yaml
 sources:

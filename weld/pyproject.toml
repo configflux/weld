@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "configflux-weld"
+version = "0.3.0"
+description = "Lightweight agent-first utility for connected work"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+wd = "weld.cli:main"
+
+[project.optional-dependencies]
+tree-sitter = [
+    "tree-sitter>=0.25",
+    "tree-sitter-c-sharp",
+    "tree-sitter-cpp",
+    "tree-sitter-go",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+]
+anthropic = ["anthropic"]
+openai = ["openai"]
+ollama = ["ollama"]
+llm = ["anthropic", "openai", "ollama"]
+
+[tool.setuptools]
+# The pyproject.toml lives inside the weld/ package directory itself.
+# Map the top-level "weld" import to "." (this directory) so that
+# `pip install -e weld/` from the repo root makes `import weld` work.
+packages = ["weld", "weld.providers", "weld.strategies"]
+
+[tool.setuptools.package-dir]
+"weld" = "."
+"weld.providers" = "providers"
+"weld.strategies" = "strategies"
+
+[tool.setuptools.package-data]
+"weld" = ["languages/*.yaml", "templates/*.py", "templates/*.md", "templates/*.toml"]

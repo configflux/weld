@@ -1,0 +1,10 @@
+# discover.yaml -- Weld discovery configuration for a FastAPI project.
+#
+# Each source entry maps a glob pattern to a node type and extraction
+# strategy.  Run `wd discover` from this directory to produce the
+# connected structure.
+
+sources:
+  - glob: "*.py"
+    type: file
+    strategy: python_module
