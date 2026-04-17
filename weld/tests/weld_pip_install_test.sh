@@ -20,6 +20,8 @@ source "${SCRIPT_DIR}/weld_test_lib.sh"
 
 REPO_ROOT="$(weld_test_repo_root "$SCRIPT_DIR")"
 WELD_ROOT="${REPO_ROOT}/weld"
+REPO_VERSION_FILE="${REPO_ROOT}/VERSION"
+MODULE_BAZEL="${REPO_ROOT}/MODULE.bazel"
 
 FAILURES=0
 
@@ -32,6 +34,57 @@ fail() {
 if [[ ! -f "$WELD_ROOT/pyproject.toml" ]]; then
   fail "weld/pyproject.toml not found"
   exit 1
+fi
+
+# --- Validate release metadata consistency ---
+if ! WELD_PYPROJECT="$WELD_ROOT/pyproject.toml" \
+  WELD_VERSION_FILE="$REPO_VERSION_FILE" \
+  WELD_MODULE_BAZEL="$MODULE_BAZEL" \
+  python3 - <<'PY'; then
+import os
+import pathlib
+import re
+import sys
+import tomllib
+
+version_file = pathlib.Path(os.environ["WELD_VERSION_FILE"])
+pyproject_path = pathlib.Path(os.environ["WELD_PYPROJECT"])
+module_path = pathlib.Path(os.environ["WELD_MODULE_BAZEL"])
+errors: list[str] = []
+
+expected = version_file.read_text(encoding="utf-8").strip()
+if not expected:
+    errors.append("VERSION is empty")
+
+project = tomllib.loads(pyproject_path.read_text(encoding="utf-8")).get("project", {})
+pyproject_version = project.get("version")
+if pyproject_version != expected:
+    errors.append(
+        "weld/pyproject.toml project.version "
+        f"{pyproject_version!r} does not match VERSION {expected!r}"
+    )
+
+module_text = module_path.read_text(encoding="utf-8")
+module_match = re.search(
+    r"module\(\s*name\s*=\s*\"configflux-weld\"\s*,\s*"
+    r"version\s*=\s*\"([^\"]+)\"",
+    module_text,
+    re.DOTALL,
+)
+module_version = module_match.group(1) if module_match else None
+if module_version != expected:
+    errors.append(
+        "MODULE.bazel module version "
+        f"{module_version!r} does not match VERSION {expected!r}"
+    )
+
+if errors:
+    for error in errors:
+        print(f"FAIL: {error}")
+    sys.exit(1)
+print("OK: release metadata versions match VERSION")
+PY
+  FAILURES=$((FAILURES + 1))
 fi
 
 # --- Validate pyproject.toml structure ---

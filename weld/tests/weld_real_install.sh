@@ -19,6 +19,7 @@ source "${SCRIPT_DIR}/weld_test_lib.sh"
 
 REPO_ROOT="$(weld_test_repo_root "$SCRIPT_DIR")"
 WELD_ROOT="${REPO_ROOT}/weld"
+EXPECTED_VERSION="$(tr -d '[:space:]' < "${REPO_ROOT}/VERSION")"
 
 # --- Guard: ensurepip must be available (this script is CI-only) ---
 if ! python3 -c "import venv; import ensurepip" 2>/dev/null; then
@@ -36,6 +37,19 @@ fail() {
   FAILURES=$((FAILURES + 1))
 }
 
+check_wd_version() {
+  local phase="$1"
+  local output
+
+  output="$(wd --version 2>&1)"
+  if echo "$output" | grep -qF "$EXPECTED_VERSION"; then
+    echo "OK: wd --version reports ${EXPECTED_VERSION} (${phase})"
+  else
+    fail "wd --version after ${phase} did not contain VERSION ${EXPECTED_VERSION}"
+    echo "Got: $output"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Phase 1 — editable install (`pip install -e weld/`)
 # ---------------------------------------------------------------------------
@@ -47,6 +61,8 @@ source "$TMPDIR/editable-venv/bin/activate"
 
 pip install --quiet --upgrade pip
 pip install --quiet -e "$WELD_ROOT"
+
+check_wd_version "editable install"
 
 # `wd --help` from the installed entry point
 OUTPUT="$(wd --help 2>&1)"
@@ -125,6 +141,8 @@ source "$TMPDIR/wheel-venv/bin/activate"
 
 pip install --quiet --upgrade pip
 pip install --quiet "$WHEEL_PATH"
+
+check_wd_version "wheel install"
 
 # `wd --help` from the installed wheel
 OUTPUT="$(wd --help 2>&1)"
