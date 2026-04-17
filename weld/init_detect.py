@@ -242,10 +242,13 @@ def detect_docs(root: Path, files: list[Path]) -> list[str]:
 def find_python_glob_roots(root: Path, files: list[Path]) -> list[str]:
     """Find directory patterns containing Python files for glob entries."""
     py_dirs: set[str] = set()
+    has_root_py = False
     for f in files:
         if f.suffix == ".py":
             rel_dir = str(f.parent.relative_to(root))
-            if rel_dir != ".":
+            if rel_dir == ".":
+                has_root_py = True
+            else:
                 py_dirs.add(rel_dir)
 
     top_groups: dict[str, set[str]] = {}
@@ -254,6 +257,8 @@ def find_python_glob_roots(root: Path, files: list[Path]) -> list[str]:
         top_groups.setdefault(top, set()).add(d)
 
     patterns: list[str] = []
+    if has_root_py:
+        patterns.append("*.py")
     for top, dirs in sorted(top_groups.items()):
         if len(dirs) > 3:
             patterns.append(f"{top}/**/*.py")

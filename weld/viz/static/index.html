@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Weld Graph</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <strong>Weld Graph</strong>
+          <span id="status">Loading</span>
+        </div>
+        <form id="search-form" class="search">
+          <input id="search-input" name="q" type="search" placeholder="Search graph" autocomplete="off">
+          <button type="submit" title="Search">?</button>
+        </form>
+        <div class="toolbar">
+          <button id="fit-button" type="button" title="Fit view">[]</button>
+          <button id="layout-button" type="button" title="Run layout">@</button>
+          <button id="clear-button" type="button" title="Clear selection">x</button>
+        </div>
+      </header>
+
+      <aside class="rail">
+        <label>
+          Scope
+          <select id="scope-select"></select>
+        </label>
+        <label>
+          Nodes
+          <select id="node-type-select" multiple size="7"></select>
+        </label>
+        <label>
+          Edges
+          <select id="edge-type-select" multiple size="7"></select>
+        </label>
+        <label>
+          Limit
+          <input id="limit-input" type="number" min="20" max="2000" value="300">
+        </label>
+        <button id="apply-filters" type="button" title="Apply filters">Apply</button>
+      </aside>
+
+      <section id="cy" aria-label="Graph canvas"></section>
+
+      <aside id="inspector" class="inspector">
+        <div class="inspector-head">
+          <strong id="inspect-title">Nothing selected</strong>
+          <span id="inspect-kind">Graph</span>
+        </div>
+        <div id="inspect-body" class="inspect-body"></div>
+        <div class="inspect-actions">
+          <button id="expand-button" type="button" title="Expand neighborhood">+</button>
+          <button id="path-a-button" type="button" title="Set path start">A</button>
+          <button id="path-b-button" type="button" title="Set path end">B</button>
+        </div>
+      </aside>
+    </main>
+    <script src="/vendor/cytoscape-3.33.2.min.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

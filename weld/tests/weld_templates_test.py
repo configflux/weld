@@ -200,6 +200,18 @@ class MarkdownTemplateExistsTest(unittest.TestCase):
         content = (_TEMPLATES_DIR / "codex_mcp_config.toml").read_text(encoding="utf-8")
         self.assertGreater(len(content.strip()), 50)
 
+    def test_agent_templates_include_manual_enrichment_guidance(self) -> None:
+        for template_name in (
+            "weld_cmd_claude.md",
+            "weld_skill_codex.md",
+            "weld_skill_copilot.md",
+        ):
+            with self.subTest(template=template_name):
+                content = (_TEMPLATES_DIR / template_name).read_text(encoding="utf-8")
+                self.assertIn("wd add-node", content)
+                self.assertIn('"provider": "manual"', content)
+                self.assertIn('"model": "agent-reviewed"', content)
+
 # -- Template documentation references ---------------------------------------
 
 class TemplateDocReferencesTest(unittest.TestCase):

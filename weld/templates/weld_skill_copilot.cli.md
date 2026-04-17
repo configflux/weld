@@ -61,51 +61,6 @@ wd find "session"
 | `wd init` | Bootstrap `.weld/discover.yaml` for a new project |
 | `wd stats` | Graph summary (node/edge counts, description coverage) |
 
-## Manual enrichment
-
-If provider extras or API keys are unavailable, agents can manually enrich a
-node after reading the underlying content. Start by checking freshness and
-loading the node:
-
-```bash
-wd stale
-wd context "<node-id>"
-```
-
-Read `props.file` when present, or use the node's real neighboring docs,
-config, or source when no file is attached. Then preserve the node ID, type,
-and label from `wd context` and merge reviewed enrichment:
-
-```bash
-wd add-node "<node-id>" --type "<node-type>" --label "<label>" --merge --props '{
-  "description": "One concise factual sentence describing what the node is.",
-  "purpose": "One concise factual sentence describing why it exists.",
-  "enrichment": {
-    "provider": "manual",
-    "model": "agent-reviewed",
-    "timestamp": "<ISO-8601 UTC timestamp>",
-    "description": "One concise factual sentence describing what the node is.",
-    "purpose": "One concise factual sentence describing why it exists.",
-    "suggested_tags": ["lowercase", "tags"]
-  }
-}'
-```
-
-Optional enrichment fields follow the provider-backed schema:
-`complexity_hint` may be `low`, `medium`, or `high`, and `suggested_tags`
-should be lowercase strings. Manual inferred edges must use explicit
-provenance such as `{"source": "manual"}` and only be added after verifying
-the relationship from source content.
-
-Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
-a later `wd discover > .weld/graph.json`. Refresh discovery first, then
-validate after manual edits:
-
-```bash
-wd validate
-wd stats
-```
-
 ## When to refresh
 
 - After significant code changes (new modules, renamed files, deleted surfaces)
@@ -120,5 +75,5 @@ If `weld` is not yet installed:
 ```bash
 pip install -e ./weld    # from the monorepo root
 wd prime               # check what needs to be done
-wd bootstrap copilot   # set up Copilot integration
+wd bootstrap copilot --cli-only   # set up Copilot integration (CLI only)
 ```

@@ -178,6 +178,53 @@ wd find "<term>"
 This is especially useful when the graph node does not carry a `props.file`
 field, or when you are looking for files by name pattern.
 
+## Manual enrichment
+
+Provider-backed `wd enrich` is optional. If provider extras or API keys are
+unavailable, an agent can manually enrich a node after reading the underlying
+content.
+
+Start by checking freshness and loading the node:
+
+```bash
+wd stale
+wd context "<node-id>"
+```
+
+Read `props.file` when present, or use the node's real neighboring docs,
+config, or source when no file is attached. Preserve the node ID, type, and
+label from `wd context`, then merge reviewed enrichment:
+
+```bash
+wd add-node "<node-id>" --type "<node-type>" --label "<label>" --merge --props '{
+  "description": "One concise factual sentence describing what the node is.",
+  "purpose": "One concise factual sentence describing why it exists.",
+  "enrichment": {
+    "provider": "manual",
+    "model": "agent-reviewed",
+    "timestamp": "<ISO-8601 UTC timestamp>",
+    "description": "One concise factual sentence describing what the node is.",
+    "purpose": "One concise factual sentence describing why it exists.",
+    "suggested_tags": ["lowercase", "tags"]
+  }
+}'
+```
+
+Optional enrichment fields follow the provider-backed schema:
+`complexity_hint` may be `low`, `medium`, or `high`, and `suggested_tags`
+should be lowercase strings. Manual inferred edges must use explicit
+provenance such as `{"source": "manual"}` and only be added after verifying
+the relationship from source content.
+
+Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
+a later `wd discover > .weld/graph.json`. Refresh discovery before manual
+edits, then validate after writing:
+
+```bash
+wd validate
+wd stats
+```
+
 ## Decision matrix
 
 | Question | Command |

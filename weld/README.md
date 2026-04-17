@@ -39,7 +39,7 @@ Today Weld already supports:
 - project-local strategy overrides under `.weld/strategies/`
 - optional tree-sitter support for broader language extraction
 - built-in semantic enrichment through pluggable providers
-- a graph export plus keyword-oriented file index
+- a browser graph visualizer, graph export, and keyword-oriented file index
 - query, context, path, impact, enrich, find, and staleness inspection commands
 
 ## Supported languages
@@ -143,6 +143,13 @@ To enable built-in enrichment providers, install an extra:
 pip install -e "./weld[openai]"     # or [anthropic], [ollama], or [llm]
 ```
 
+Agents can also enrich nodes without provider extras or API keys by reading the
+relevant source or documentation and writing reviewed enrichment manually with
+`wd add-node --merge`. Use `provider: manual` and `model: agent-reviewed` in
+`props.enrichment`, refresh discovery first, and run `wd validate` plus
+`wd stats` after edits because manual enrichment writes `.weld/graph.json`
+directly.
+
 ### Install from GitHub
 
 From another repository:
@@ -207,6 +214,7 @@ python -m weld --help
    wd context file:web/app/stores/page
    wd impact file:web/app/stores/page
    wd find footer
+   wd viz --no-open
    wd stale
    ```
 
@@ -222,6 +230,7 @@ python -m weld --help
 | `wd find <term>` | File-index keyword search |
 | `wd context <id>` | Node + neighborhood |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
+| `wd viz` | Local read-only browser graph explorer |
 | `wd bootstrap` | Agent onboarding files |
 | `wd lint` | Lint graph edges, including custom `.weld/lint-rules.yaml` rules |
 

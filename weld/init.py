@@ -255,21 +255,17 @@ def generate_yaml(
         ))
 
     # --- infra ---
-    if dockerfiles:
-        glob_dfs = [df for df in dockerfiles if "*" in df]
-        file_dfs = [df for df in dockerfiles if "*" not in df]
-        for df in glob_dfs:
-            buckets["infra"].append(_source_entry(
-                df, "dockerfile", "dockerfile", comment="Dockerfiles",
-            ))
-        if file_dfs:
-            buckets["infra"].append(_files_entry(
-                file_dfs, "dockerfile", "dockerfile", comment="Dockerfiles",
-            ))
+    # dockerfile and compose strategies require ``glob``; a literal file name
+    # is itself a valid single-file glob pattern. Emitting ``files`` here
+    # would crash discovery with KeyError: 'glob'.
+    for df in dockerfiles:
+        buckets["infra"].append(_source_entry(
+            df, "dockerfile", "dockerfile", comment="Dockerfiles",
+        ))
 
     for cf in compose_files:
-        buckets["infra"].append(_files_entry(
-            [cf], "compose", "compose", comment="Docker Compose",
+        buckets["infra"].append(_source_entry(
+            cf, "compose", "compose", comment="Docker Compose",
         ))
 
     # --- build ---

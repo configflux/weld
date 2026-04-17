@@ -43,6 +43,7 @@ wd discover > .weld/graph.json
 wd query "authentication"
 wd find "login"
 wd context file:src/auth/handler
+wd viz --no-open
 wd stale
 ```
 
@@ -55,11 +56,17 @@ path:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/configflux/weld/main/install.sh | sh
-wd prime                  # show setup status and next steps
+wd prime                  # show setup status + per-framework surface matrix
 wd bootstrap claude       # writes .claude/commands/weld.md
 wd bootstrap codex        # writes .codex/skills/weld/SKILL.md + .codex/config.toml
-wd bootstrap copilot      # writes .github/skills/weld/SKILL.md
+wd bootstrap copilot      # writes .github/skills/weld/SKILL.md + .github/instructions/weld.instructions.md
 ```
+
+All three `wd bootstrap` frameworks accept opt-out flags:
+
+- `--no-mcp` — skip the MCP pair (`.codex/config.toml` for codex; the `.mcp.json` guidance block for copilot/claude).
+- `--no-enrich` — write the `.cli.md` variant that omits `wd enrich`.
+- `--cli-only` — shorthand for `--no-mcp --no-enrich`.
 
 `wd prime` is idempotent and safe to re-run — it reports what is
 already configured and what is still missing.
@@ -91,6 +98,22 @@ To use the built-in semantic enrichment providers:
 pip install -e "weld/[openai]"     # or [anthropic], [ollama], or [llm]
 ```
 
+Agents can also enrich nodes without provider extras or API keys by reading the
+relevant source or documentation and writing reviewed enrichment manually:
+
+```bash
+wd stale
+wd context "<node-id>"
+wd add-node "<node-id>" --type "<node-type>" --label "<label>" --merge --props '{"description":"...","purpose":"...","enrichment":{"provider":"manual","model":"agent-reviewed","timestamp":"<ISO-8601 UTC timestamp>","description":"...","purpose":"...","suggested_tags":["lowercase","tags"]}}'
+wd validate
+wd stats
+```
+
+Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
+a later `wd discover > .weld/graph.json`; refresh discovery before manual
+edits. Manual inferred edges should use explicit provenance such as
+`{"source": "manual"}` after the relationship is verified from source content.
+
 Without tree-sitter, the built-in Python module strategy and non-language
 strategies (markdown, YAML, config, frontmatter) still work.
 
@@ -118,10 +141,6 @@ For Codex, add MCP servers in `.codex/config.toml` (or run `wd bootstrap codex`)
 [mcp_servers.weld]
 command = "python"
 args = ["-m", "weld.mcp_server"]
-
-[mcp_servers.context7]
-command = "npx"
-args = ["-y", "@upstash/context7-mcp"]
 ```
 
 For agents that read `.mcp.json`, use:
@@ -132,10 +151,6 @@ For agents that read `.mcp.json`, use:
     "weld": {
       "command": "python",
       "args": ["-m", "weld.mcp_server"]
-    },
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
     }
   }
 }
@@ -146,7 +161,7 @@ Then bootstrap onboarding files for your agent framework:
 ```bash
 wd bootstrap claude     # writes .claude/commands/weld.md
 wd bootstrap codex      # writes .codex/skills/weld/SKILL.md + .codex/config.toml
-wd bootstrap copilot    # writes .github/skills/weld/SKILL.md
+wd bootstrap copilot    # writes .github/skills/weld/SKILL.md + .github/instructions/weld.instructions.md
 ```
 
 Each target also writes `.weld/README.md` and bootstraps
@@ -301,6 +316,11 @@ The presence of `workspaces.yaml` activates federation mode in `wd discover`.
 `workspace-state.json` is written automatically during discovery and read by
 `wd workspace status`.
 
+When `.weld/workspaces.yaml` is present at the bootstrap target, `wd bootstrap`
+appends a federation paragraph to the copilot skill/instruction, codex skill,
+and claude command directing agents to pick a child via `wd workspace status`
+before querying inside it.
+
 ### Cross-repo resolvers
 
 Resolvers are plugins that analyze child graphs and emit typed edges across
@@ -350,9 +370,10 @@ rm .weld/workspace-state.json
 | `wd path <from> <to>` | Shortest path |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
 | `wd callers <symbol>` | Direct/transitive callers |
+| `wd viz` | Local read-only browser graph explorer |
 | `wd stale` | Check graph freshness |
 | `wd stats` | Graph statistics |
-| `wd prime` | Setup status and next steps |
+| `wd prime` | Setup status + per-framework agent surface matrix (skill / instruction / mcp) with fix commands |
 | `wd scaffold` | Write starter templates |
 | `wd bootstrap` | Agent onboarding files |
 | `wd brief` | Agent context briefing |

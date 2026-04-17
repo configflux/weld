@@ -129,13 +129,88 @@ def _check_file_index(weld_dir: Path) -> tuple[list[str], list[str]]:
         lines.append(_status("OK", "file-index.json exists"))
     return lines, steps
 
+def _agent_surfaces(root: Path) -> dict[str, dict[str, bool]]:
+    """Detect which agent surfaces are present per framework.
+
+    Returns a mapping ``{framework: {surface_name: present}}`` for copilot,
+    codex, and claude. ``.mcp.json`` is a shared signal; it is reported as the
+    MCP status for copilot/claude only when a framework-specific surface
+    (skill / command / instruction) is present.
+    """
+    return {
+        "copilot": {
+            "skill": (root / ".github" / "skills" / "weld" / "SKILL.md").is_file(),
+            "instruction": (root / ".github" / "instructions" / "weld.instructions.md").is_file(),
+            "mcp": (root / ".mcp.json").is_file(),
+        },
+        "codex": {
+            "skill": (root / ".codex" / "skills" / "weld" / "SKILL.md").is_file(),
+            "mcp": (root / ".codex" / "config.toml").is_file(),
+        },
+        "claude": {
+            "command": (root / ".claude" / "commands" / "weld.md").is_file(),
+        },
+    }
+
+# Which surfaces count as "framework-specific" for the zero-surface suppression
+# rule. ``mcp`` for copilot is shared infrastructure (lives at repo root) and
+# on its own does not indicate copilot setup.
+_FRAMEWORK_SPECIFIC_SURFACES: dict[str, tuple[str, ...]] = {
+    "copilot": ("skill", "instruction"),
+    "codex": ("skill",),
+    "claude": ("command",),
+}
+
+# Stable surface order per framework so output is deterministic.
+_SURFACE_ORDER: dict[str, tuple[str, ...]] = {
+    "copilot": ("skill", "instruction", "mcp"),
+    "codex": ("skill", "mcp"),
+    "claude": ("command",),
+}
+
+def _framework_is_listed(fw: str, surfaces: dict[str, bool]) -> bool:
+    """Return True if the framework has at least one framework-specific surface."""
+    return any(surfaces.get(s, False) for s in _FRAMEWORK_SPECIFIC_SURFACES[fw])
+
+def _framework_line(fw: str, surfaces: dict[str, bool]) -> str:
+    """Render a single per-framework matrix line."""
+    pairs = [
+        f"{name} {'yes' if surfaces.get(name, False) else 'no'}"
+        for name in _SURFACE_ORDER[fw]
+    ]
+    row = ", ".join(pairs)
+    # Partial setup when a listed framework has any ``no`` on its configured
+    # surfaces. Complete setup suppresses the bootstrap hint.
+    missing = [s for s in _SURFACE_ORDER[fw] if not surfaces.get(s, False)]
+    prefix = f"            {fw + ':':9s}{row}"
+    if missing:
+        return f"{prefix}  -> wd bootstrap {fw}"
+    return prefix
+
 def _check_agent_integration(root: Path) -> tuple[list[str], list[str]]:
-    claude_cmd = root / ".claude" / "commands" / "weld.md"
-    codex_skill = root / ".codex" / "skills" / "weld" / "SKILL.md"
-    if claude_cmd.is_file() or codex_skill.is_file():
-        return [], []
-    lines = [_status("INFO", "No agent integration found — run: wd bootstrap claude  (or: codex)")]
-    return lines, []
+    """Report a per-framework matrix of agent surfaces.
+
+    When no framework has any surface, emit a single generic hint. Otherwise
+    list each framework that has at least one framework-specific surface
+    (skill/command/instruction -- MCP alone does not count), with one
+    ``surface yes|no`` per column and a ``-> wd bootstrap <fw>`` next step
+    when the setup is partial.
+    """
+    all_surfaces = _agent_surfaces(root)
+    listed = [fw for fw in ("copilot", "codex", "claude")
+              if _framework_is_listed(fw, all_surfaces[fw])]
+
+    if not listed:
+        return [_status("INFO", "No agent integration found — run: wd bootstrap claude  (or: copilot, codex)")], []
+
+    lines = [_status("INFO", "Agent surfaces:")]
+    steps: list[str] = []
+    for fw in listed:
+        lines.append(_framework_line(fw, all_surfaces[fw]))
+        missing = [s for s in _SURFACE_ORDER[fw] if not all_surfaces[fw].get(s, False)]
+        if missing:
+            steps.append(f"wd bootstrap {fw}")
+    return lines, steps
 
 def prime(root: Path) -> str:
     """Run all checks and return the formatted status report."""

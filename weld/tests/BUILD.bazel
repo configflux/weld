@@ -187,10 +187,10 @@ py_test(
 )
 
 py_test(name = "weld_mcp_federation_test", srcs = ["weld_mcp_federation_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-
 py_test(name = "weld_mcp_federation_tools_test", srcs = ["weld_mcp_federation_tools_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 
 py_test(name = "weld_export_test", srcs = ["weld_export_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+py_test(name = "weld_viz_test", srcs = ["weld_viz_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_impact_test", srcs = ["weld_impact_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_arch_lint_test", srcs = ["weld_arch_lint_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_arch_lint_boundary_test", srcs = ["weld_arch_lint_boundary_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
@@ -420,13 +420,7 @@ py_test(
     tags = ["no-sandbox"],
 )
 
-py_test(
-    name = "weld_cli_docs_surface_test",
-    srcs = ["weld_cli_docs_surface_test.py"],
-    deps = ["//weld:runtime"],
-    local = True,
-    tags = ["no-sandbox"],
-)
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_cli_docs_surface_test", "weld_readme_docs_test")]
 
 py_test(
     name = "weld_docs_validation_test",
@@ -686,6 +680,15 @@ py_test(
 )
 
 py_test(
+    name = "weld_init_source_contract_test",
+    srcs = ["weld_init_source_contract_test.py"],
+    data = [":fixture_files"],
+    deps = ["//weld:runtime", "//weld:yaml"],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
     name = "weld_external_json_acceptance_test",
     srcs = ["weld_external_json_acceptance_test.py"],
     deps = ["//weld:contract", "//weld:runtime", "//weld:yaml", "//weld/strategies:helpers"],
@@ -724,7 +727,7 @@ py_test(
 
 py_test(name = "weld_prime_test", srcs = ["weld_prime_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_doctor_test", srcs = ["weld_doctor_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_bootstrap_test", srcs = ["weld_bootstrap_test.py"], data = ["//weld/templates"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], data = ["//weld/templates"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_bootstrap_test", "weld_bootstrap_optout_test", "weld_bootstrap_federation_test")]
 
 py_test(
     name = "weld_rust_extraction_test",

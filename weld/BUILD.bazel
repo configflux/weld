@@ -96,6 +96,10 @@ py_library(
         "serializer.py",
         "synonyms.py",
         "trace.py",
+        "viz/__init__.py",
+        "viz/adapter.py",
+        "viz/api.py",
+        "viz/server.py",
         "warnings.py",
         "watch.py",
         "workspace.py",
@@ -103,6 +107,11 @@ py_library(
     ],
     data = [
         "//weld/templates",
+        "viz/static/app.js",
+        "viz/static/index.html",
+        "viz/static/styles.css",
+        "viz/static/vendor/cytoscape-3.33.2.LICENSE",
+        "viz/static/vendor/cytoscape-3.33.2.min.js",
     ],
     deps = [
         ":contract",

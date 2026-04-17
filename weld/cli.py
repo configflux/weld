@@ -31,6 +31,7 @@ Retrieval commands:
 
 Visualization commands:
   export         Export graph to Mermaid, DOT, or D2 format
+  viz            Serve a local read-only browser graph explorer
 
 Live commands:
   watch          Watch source files and auto-rediscover on change
@@ -172,6 +173,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if subcmd == "export":
         return _run_export(rest)
+
+    if subcmd == "viz":
+        from weld.viz.server import main as viz_main
+
+        return viz_main(rest)
 
     if subcmd == "impact":
         from weld import impact as impact_mod

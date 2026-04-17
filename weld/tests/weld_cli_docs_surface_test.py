@@ -41,6 +41,13 @@ SPEC_DRIVEN_DOCS = (
     ".claude/commands/execute.md",
 )
 
+MANUAL_ENRICHMENT_DOCS = (
+    ".claude/agents/weld.md",
+    ".claude/commands/weld.md",
+    ".claude/commands/enrich-weld.md",
+    "weld/docs/agent-workflow.md",
+)
+
 FORBIDDEN_TDD_MANDATES = (
     "red-green-refactor",
     "Follow your TDD phases",
@@ -86,6 +93,29 @@ class WeldCliDocsSurfaceTest(unittest.TestCase):
 
         if checked == 0:
             self.skipTest("No SPEC_DRIVEN_DOCS files found in this repo context")
+        self.assertEqual(findings, [])
+
+    def test_manual_enrichment_docs_include_canonical_provenance(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        findings: list[str] = []
+        checked = 0
+
+        for rel_path in MANUAL_ENRICHMENT_DOCS:
+            full_path = repo_root / rel_path
+            if not full_path.exists():
+                continue
+            text = full_path.read_text(encoding="utf-8")
+            checked += 1
+            for required in (
+                "wd add-node",
+                '"provider": "manual"',
+                '"model": "agent-reviewed"',
+            ):
+                if required not in text:
+                    findings.append(f"{rel_path}: missing {required!r}")
+
+        if checked == 0:
+            self.skipTest("No MANUAL_ENRICHMENT_DOCS files found in this repo context")
         self.assertEqual(findings, [])
 
 if __name__ == "__main__":

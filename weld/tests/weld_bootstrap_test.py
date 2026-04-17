@@ -13,6 +13,13 @@ from weld.cli import main as cli_main
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
+
+def _assert_manual_enrichment_guidance(test: unittest.TestCase, content: str) -> None:
+    test.assertIn("wd add-node", content)
+    test.assertIn('"provider": "manual"', content)
+    test.assertIn('"model": "agent-reviewed"', content)
+
+
 class BootstrapClaudeTest(unittest.TestCase):
     """Verify bootstrap claude writes the expected files."""
 
@@ -32,6 +39,7 @@ class BootstrapClaudeTest(unittest.TestCase):
             self.assertTrue(cmd_file.is_file())
             content = cmd_file.read_text(encoding="utf-8")
             self.assertIn("wd brief", content)
+            _assert_manual_enrichment_guidance(self, content)
 
 class BootstrapCodexTest(unittest.TestCase):
     """Verify bootstrap codex writes the expected files."""
@@ -51,6 +59,7 @@ class BootstrapCodexTest(unittest.TestCase):
             self.assertTrue(skill.is_file())
             content = skill.read_text(encoding="utf-8")
             self.assertIn("wd brief", content)
+            _assert_manual_enrichment_guidance(self, content)
 
     def test_creates_codex_mcp_config(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -122,6 +131,7 @@ class BootstrapCopilotTest(unittest.TestCase):
             self.assertTrue(skill.is_file())
             content = skill.read_text(encoding="utf-8")
             self.assertIn("wd brief", content)
+            _assert_manual_enrichment_guidance(self, content)
 
     def test_copilot_skill_has_yaml_frontmatter(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -142,6 +152,101 @@ class BootstrapCopilotTest(unittest.TestCase):
             content = skill.read_text(encoding="utf-8")
             self.assertIn("description:", content)
 
+    def test_copilot_skill_description_has_trigger_phrases(self) -> None:
+        """Skill matching keys on description text -- trigger phrases must be present."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            skill = root / ".github" / "skills" / "weld" / "SKILL.md"
+            content = skill.read_text(encoding="utf-8")
+            # Isolate the frontmatter description block. Frontmatter spans
+            # from the leading '---\n' to the next '\n---\n'.
+            self.assertTrue(content.startswith("---\n"))
+            end = content.find("\n---\n", 4)
+            self.assertGreater(end, 0, "frontmatter not terminated")
+            frontmatter = content[4:end]
+            self.assertIn("description:", frontmatter)
+            for phrase in (
+                "weld",
+                "wd",
+                "workspace graph",
+                "discovery wave",
+                "repo map",
+                "query graph",
+                "federation",
+                "polyrepo",
+            ):
+                self.assertIn(
+                    phrase,
+                    frontmatter,
+                    f"trigger phrase {phrase!r} missing from skill frontmatter",
+                )
+
+    def test_creates_copilot_instructions(self) -> None:
+        """bootstrap copilot must also emit the always-on instruction file."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            instructions = (
+                root / ".github" / "instructions" / "weld.instructions.md"
+            )
+            self.assertTrue(
+                instructions.is_file(),
+                f"missing instruction file: {instructions}",
+            )
+
+    def test_copilot_instructions_apply_to_all(self) -> None:
+        """Instruction file must carry applyTo: '**' frontmatter."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            instructions = (
+                root / ".github" / "instructions" / "weld.instructions.md"
+            )
+            content = instructions.read_text(encoding="utf-8")
+            self.assertTrue(content.startswith("---\n"))
+            end = content.find("\n---\n", 4)
+            self.assertGreater(end, 0, "frontmatter not terminated")
+            frontmatter = content[4:end]
+            self.assertIn("applyTo:", frontmatter)
+            # Accept either quoted form per YAML conventions.
+            self.assertTrue(
+                'applyTo: "**"' in frontmatter or "applyTo: '**'" in frontmatter,
+                f"applyTo not set to **: {frontmatter!r}",
+            )
+
+    def test_copilot_instructions_stay_generic(self) -> None:
+        """Instruction content must not couple to specific repos."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            instructions = (
+                root / ".github" / "instructions" / "weld.instructions.md"
+            )
+            content = instructions.read_text(encoding="utf-8")
+            # Generic discovery primer hits -- presence of `wd` is required.
+            self.assertIn("wd ", content)
+            # No hardcoded repo names from this monorepo. Build the forbidden
+            # tokens from split fragments so this test itself does not embed
+            # the legacy package token that the rebrand-trace guard flags.
+            forbidden_tokens = (
+                "".join(("cor", "tex")) + "-internal",
+                "".join(("tilbuds", "radar")),
+            )
+            for token in forbidden_tokens:
+                self.assertNotIn(token, content)
+
+    def test_copilot_instructions_mention_workspaces_sentinel(self) -> None:
+        """Instruction file should mention the workspaces.yaml sentinel."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            instructions = (
+                root / ".github" / "instructions" / "weld.instructions.md"
+            )
+            content = instructions.read_text(encoding="utf-8")
+            self.assertIn("workspaces.yaml", content)
+
 
 class BootstrapTemplatesLoadableTest(unittest.TestCase):
     """Verify all markdown templates exist in the package."""
@@ -160,6 +265,11 @@ class BootstrapTemplatesLoadableTest(unittest.TestCase):
 
     def test_weld_skill_copilot_template_exists(self) -> None:
         self.assertTrue((_TEMPLATES_DIR / "weld_skill_copilot.md").is_file())
+
+    def test_weld_instructions_copilot_template_exists(self) -> None:
+        self.assertTrue(
+            (_TEMPLATES_DIR / "weld_instructions_copilot.md").is_file()
+        )
 
 
 class BootstrapCliDispatchTest(unittest.TestCase):

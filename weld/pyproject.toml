@@ -35,12 +35,19 @@ llm = ["anthropic", "openai", "ollama"]
 # The pyproject.toml lives inside the weld/ package directory itself.
 # Map the top-level "weld" import to "." (this directory) so that
 # `pip install -e weld/` from the repo root makes `import weld` work.
-packages = ["weld", "weld.providers", "weld.strategies"]
+packages = ["weld", "weld.providers", "weld.strategies", "weld.viz"]
 
 [tool.setuptools.package-dir]
 "weld" = "."
 "weld.providers" = "providers"
 "weld.strategies" = "strategies"
+"weld.viz" = "viz"
 
 [tool.setuptools.package-data]
 "weld" = ["languages/*.yaml", "templates/*.py", "templates/*.md", "templates/*.toml"]
+"weld.viz" = [
+    "static/*.css",
+    "static/*.html",
+    "static/*.js",
+    "static/vendor/*",
+]
