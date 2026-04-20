@@ -196,6 +196,39 @@ class DoctorStrategyTest(unittest.TestCase):
             self.assertIn("nonexistent_strategy_xyz", fail_r[0].message)
 
 
+class DoctorTrustBoundaryTest(unittest.TestCase):
+    def test_warns_for_project_local_strategies(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _setup_dir(root)
+            strategy_dir = root / ".weld" / "strategies"
+            strategy_dir.mkdir()
+            (strategy_dir / "custom.py").write_text("def extract(): pass\n")
+
+            results = doctor(root)
+
+            warnings = [
+                r for r in results
+                if r.level == "warn" and "trusted repos" in r.message
+            ]
+            self.assertTrue(warnings)
+            self.assertIn("project-local strategies", warnings[0].message)
+
+    def test_warns_for_external_json_sources(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _setup_dir(root, yaml_strategies=["external_json"])
+
+            results = doctor(root)
+
+            warnings = [
+                r for r in results
+                if r.level == "warn" and "external_json" in r.message
+            ]
+            self.assertTrue(warnings)
+            self.assertIn("execute configured commands", warnings[0].message)
+
+
 class DoctorPythonVersionTest(unittest.TestCase):
     def test_ok_current(self):
         with tempfile.TemporaryDirectory() as td:

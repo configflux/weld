@@ -86,6 +86,39 @@ auth:
   enabled: true
 YAML
 
+# Broader text/source/config surfaces covered by generic indexing
+mkdir -p "${ROOT}/services/catalog" "${ROOT}/proto" "${ROOT}/infra"
+cat > "${ROOT}/services/catalog/main.go" <<'GO'
+package catalog
+func CatalogHandler() {}
+GO
+cat > "${ROOT}/services/catalog/lib.rs" <<'RS'
+pub struct CatalogItem;
+RS
+cat > "${ROOT}/services/catalog/Program.cs" <<'CS'
+public class CatalogController {}
+CS
+cat > "${ROOT}/services/catalog/catalog.cpp" <<'CPP'
+class CatalogEngine {};
+CPP
+cat > "${ROOT}/proto/catalog.proto" <<'PROTO'
+service CatalogService {}
+PROTO
+cat > "${ROOT}/Dockerfile" <<'DOCKER'
+FROM python:3.12-slim
+CMD ["catalog-service"]
+DOCKER
+cat > "${ROOT}/package.json" <<'JSON'
+{"scripts":{"catalog:build":"vite build"}}
+JSON
+cat > "${ROOT}/BUILD.bazel" <<'BUILD'
+py_binary(name = "catalog_tool")
+BUILD
+cat > "${ROOT}/Makefile" <<'MAKE'
+catalog-build:
+	@echo catalog
+MAKE
+
 # Files in excluded directories (should NOT be indexed)
 mkdir -p "${ROOT}/.git/objects"
 echo "should be excluded" > "${ROOT}/.git/objects/test.py"
@@ -135,6 +168,18 @@ assert 'services/api/src/routers/auth.py' in idx, 'auth.py missing from index'
 assert 'apps/web/lib/auth-ux.ts' in idx, 'auth-ux.ts missing from index'
 assert 'docs/authentication.md' in idx, 'authentication.md missing from index'
 assert 'services/config.yaml' in idx, 'config.yaml missing from index'
+for rel in (
+    'services/catalog/main.go',
+    'services/catalog/lib.rs',
+    'services/catalog/Program.cs',
+    'services/catalog/catalog.cpp',
+    'proto/catalog.proto',
+    'Dockerfile',
+    'package.json',
+    'BUILD.bazel',
+    'Makefile',
+):
+    assert rel in idx, f'{rel} missing from index'
 
 print('PASS: index contains expected files')
 "
@@ -237,6 +282,31 @@ assert 'rate_limits' in tokens, f'rate_limits not in tokens: {tokens}'
 assert 'auth' in tokens, f'auth not in tokens: {tokens}'
 
 print('PASS: YAML tokens extracted correctly')
+"
+
+# --- Test 6b: Generic token extraction ---
+echo "--- Test 6b: Generic token extraction ---"
+python3 -c "
+import json
+_raw = json.load(open('${ROOT}/.weld/file-index.json'))
+idx = _raw.get('files', _raw)
+
+checks = {
+    'services/catalog/main.go': 'CatalogHandler',
+    'services/catalog/lib.rs': 'CatalogItem',
+    'services/catalog/Program.cs': 'CatalogController',
+    'services/catalog/catalog.cpp': 'CatalogEngine',
+    'proto/catalog.proto': 'CatalogService',
+    'Dockerfile': 'catalog-service',
+    'package.json': 'catalog:build',
+    'BUILD.bazel': 'catalog_tool',
+    'Makefile': 'catalog-build',
+}
+for path, token in checks.items():
+    tokens = idx[path]
+    assert token in tokens, f'{token} not in {path}: {tokens}'
+
+print('PASS: Generic tokens extracted correctly')
 "
 
 # --- Test 7: find subcommand - rate returns rate_limits.py ---

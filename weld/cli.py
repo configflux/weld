@@ -14,7 +14,7 @@ Core commands:
   scaffold       Write bundled templates into the current repo
   prime          Check setup status and suggest next steps
   doctor         Diagnostic checks: config, graph, staleness, strategies, tree-sitter
-  bootstrap      Write onboarding assets (wd bootstrap claude|codex)
+  bootstrap      Write onboarding assets (wd bootstrap claude|codex|copilot)
   bench          Run Weld benchmarks (token cost, first-context quality, or --compare agent tasks)
 
 Retrieval commands:

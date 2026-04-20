@@ -78,6 +78,13 @@ class ReadmeBootstrapDocsTest(unittest.TestCase):
             "printed by `wd prime`",
         )
 
+    def test_trust_and_install_stance_documented(self) -> None:
+        """Root README must document trusted discovery and source-first install."""
+        self.assertIn("repositories you trust", self.text)
+        self.assertIn("external_json", self.text)
+        self.assertIn("source/Git-first", self.text)
+        self.assertIn("Python 3.10 through 3.13", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Keyword-to-file inverted index for the connected structure.
 
-Builds an index by walking all source files (.py, .ts, .tsx, .md, .yaml, .yml)
-and extracting tokens from: path segments, exported symbol names, class/function
-names, import targets, and markdown headings.
+Builds an index by walking common source, config, build, and documentation
+files. Rich extractors handle Python, TypeScript, Markdown, and YAML; a bounded
+generic extractor covers the broader text surfaces that agents often need to
+locate by filename or token.
 
 Output: .weld/file-index.json
 
@@ -26,8 +27,23 @@ from pathlib import Path
 from weld._git import get_git_sha
 from weld.repo_boundary import iter_repo_files
 
-# File extensions to index
-INDEXED_EXTENSIONS = frozenset([".py", ".ts", ".tsx", ".md", ".yaml", ".yml"])
+# File extensions to index. Discovery coverage is still driven by
+# ``.weld/discover.yaml``; this list is the broad file-locator surface for
+# ``wd find`` and MCP ``weld_find``.
+INDEXED_EXTENSIONS = frozenset({
+    ".bzl", ".c", ".cc", ".cpp", ".cs", ".css", ".cxx", ".go", ".h",
+    ".hh", ".hpp", ".hxx", ".ipp", ".java", ".js", ".json", ".jsx",
+    ".md", ".proto", ".py", ".rs", ".sh", ".sql", ".srv", ".tf", ".toml",
+    ".tpp", ".ts", ".tsx", ".xml", ".yaml", ".yml",
+})
+INDEXED_FILENAMES = frozenset({
+    ".bazelrc", "BUILD", "BUILD.bazel", "CMakeLists.txt", "Cargo.toml",
+    "Dockerfile", "Makefile", "MODULE.bazel", "go.mod", "go.sum",
+    "package.json", "package.xml", "pom.xml", "pyproject.toml",
+    "requirements.txt",
+})
+_GENERIC_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_:-]{1,80}")
+_MAX_GENERIC_TOKENS = 512
 
 def _tokenize_path(rel_path: str) -> list[str]:
     """Extract tokens from path segments and filename (without extension)."""
@@ -122,6 +138,18 @@ def _extract_typescript_tokens(content: str) -> list[str]:
             tokens.append(mod)
     return tokens
 
+def _extract_generic_tokens(content: str) -> list[str]:
+    """Extract a bounded, deterministic token set from general text files."""
+    tokens = {
+        match.group(0).strip("_:-")
+        for match in _GENERIC_TOKEN_RE.finditer(content)
+    }
+    return [token for token in sorted(tokens) if token][:_MAX_GENERIC_TOKENS]
+
+def _is_indexed_file(filepath: Path) -> bool:
+    """Return True if *filepath* belongs to the ``wd find`` text surface."""
+    return filepath.suffix in INDEXED_EXTENSIONS or filepath.name in INDEXED_FILENAMES
+
 def build_file_index(root: Path) -> dict[str, list[str]]:
     """Walk the repo and build a file-to-tokens mapping.
 
@@ -138,7 +166,7 @@ def build_file_index(root: Path) -> dict[str, list[str]]:
 
     for filepath in iter_repo_files(root):
         suffix = filepath.suffix
-        if suffix not in INDEXED_EXTENSIONS:
+        if not _is_indexed_file(filepath):
             continue
 
         rel_path = str(filepath.relative_to(root))
@@ -151,12 +179,14 @@ def build_file_index(root: Path) -> dict[str, list[str]]:
 
         if suffix == ".py":
             tokens.extend(_extract_python_tokens(content))
-        elif suffix in (".ts", ".tsx"):
+        elif suffix in (".ts", ".tsx", ".js", ".jsx"):
             tokens.extend(_extract_typescript_tokens(content))
         elif suffix == ".md":
             tokens.extend(_extract_markdown_tokens(content))
         elif suffix in (".yaml", ".yml"):
             tokens.extend(_extract_yaml_tokens(content))
+        else:
+            tokens.extend(_extract_generic_tokens(content))
 
         # Deduplicate, then sort lexicographically so the in-memory token
         # order is canonical (ADR 0012 §3). Any future in-process consumer

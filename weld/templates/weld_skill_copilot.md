@@ -61,6 +61,13 @@ wd find "session"
 | `wd init` | Bootstrap `.weld/discover.yaml` for a new project |
 | `wd stats` | Graph summary (node/edge counts, description coverage) |
 
+## Trust boundary
+
+Run `wd discover` automatically only on repositories you trust. Project-local
+strategies under `.weld/strategies/` are Python modules loaded at discovery
+time, and `strategy: external_json` executes configured commands from
+`discover.yaml`.
+
 ## Manual enrichment
 
 If provider extras or API keys are unavailable, agents can manually enrich a

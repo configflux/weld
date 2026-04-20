@@ -212,6 +212,48 @@ class MarkdownTemplateExistsTest(unittest.TestCase):
                 self.assertIn('"provider": "manual"', content)
                 self.assertIn('"model": "agent-reviewed"', content)
 
+    def test_agent_templates_include_trust_boundary(self) -> None:
+        for template_name in (
+            "weld_cmd_claude.md",
+            "weld_cmd_claude.cli.md",
+            "weld_skill_codex.md",
+            "weld_skill_codex.cli.md",
+            "weld_skill_copilot.md",
+            "weld_skill_copilot.cli.md",
+            "weld_instructions_copilot.md",
+            "weld_instructions_copilot.cli.md",
+        ):
+            with self.subTest(template=template_name):
+                content = (_TEMPLATES_DIR / template_name).read_text(encoding="utf-8")
+                self.assertIn("repositories you trust", content)
+                self.assertIn("external_json", content)
+
+    def test_copilot_instructions_guard_graph_writes(self) -> None:
+        """Always-on Copilot templates must warn against graph-writing
+        wd subcommands without user consent (confused-deputy guard).
+
+        The default template names ``wd add-node`` as a concrete example.
+        The ``.cli.md`` opt-out variant must convey the same guard but
+        cannot name ``wd add-node`` or ``wd enrich`` -- those identifiers
+        are stripped by the ``--cli-only`` / ``--no-enrich`` contract
+        enforced in :mod:`weld_bootstrap_optout_test`.
+        """
+        default = (_TEMPLATES_DIR / "weld_instructions_copilot.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("wd add-node", default)
+        self.assertIn("without asking", default)
+        self.assertIn("write graph data", default)
+
+        cli = (_TEMPLATES_DIR / "weld_instructions_copilot.cli.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("write graph data", cli)
+        self.assertIn("without asking", cli)
+        # Opt-out contract: CLI variant must not name stripped identifiers.
+        self.assertNotIn("wd add-node", cli)
+        self.assertNotIn("wd enrich", cli)
+
 # -- Template documentation references ---------------------------------------
 
 class TemplateDocReferencesTest(unittest.TestCase):

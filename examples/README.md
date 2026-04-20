@@ -30,20 +30,20 @@ weld extracts exported symbols from multiple packages using the
 `typescript_exports` strategy with per-package scoping, and how
 cross-package dependency edges appear in the connected structure.
 
-### [05-infrastructure-as-code](./05-infrastructure-as-code/)
-
-Discover infrastructure-as-code artifacts across a project. Shows how
-weld maps Dockerfiles, Docker Compose services, GitHub Actions
-workflows, and Terraform configurations into a unified connected structure
-using the `dockerfile`, `compose`, `gh_workflow`, `yaml_meta`, and
-`boundary_entrypoint` strategies together.
-
 ### [05-polyrepo](./05-polyrepo/)
 
 Set up a federated polyrepo workspace. Walks through initializing child
 repos, scaffolding `workspaces.yaml` at the workspace root, running
 federated discovery with cross-repo resolvers, and checking workspace
 status with `wd workspace status`.
+
+### [06-infrastructure-as-code](./06-infrastructure-as-code/)
+
+Discover infrastructure-as-code artifacts across a project. Shows how
+weld maps Dockerfiles, Docker Compose services, GitHub Actions
+workflows, and Terraform configurations into a unified connected structure
+using the `dockerfile`, `compose`, `gh_workflow`, `yaml_meta`, and
+`boundary_entrypoint` strategies together.
 
 ## Prerequisites
 

@@ -21,16 +21,16 @@ Only the latest release is actively supported with security fixes.
 
 ## Security Considerations
 
-configflux-weld is a static analysis and discovery tool. It reads source files
-and produces a connected structure. It does not execute discovered code, open
-network connections, or process untrusted input beyond the files in the
-repository it is pointed at.
+configflux-weld is a static analysis and discovery tool. Bundled discovery
+reads source files and produces a connected structure. It does not execute
+discovered application code or open network connections as part of bundled
+discovery.
 
 Key areas of concern:
 
 - **Strategy plugins**: Project-local strategies (`.weld/strategies/`) are
   Python modules loaded at discovery time. Only run `wd discover` on
   repositories you trust.
-- **External adapters**: The external JSON adapter reads files from paths
-  specified in `discover.yaml`. Ensure these paths are within the project
-  directory.
+- **External adapters**: `strategy: external_json` executes the configured
+  command from `discover.yaml` with the repository root as its working
+  directory. Only enable external adapters from repositories you trust.

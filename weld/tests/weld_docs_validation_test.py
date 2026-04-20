@@ -369,5 +369,22 @@ class CrossDocConsistencyTest(unittest.TestCase):
         self.assertIn("onboarding.md", self.readme)
         self.assertIn("strategy-cookbook.md", self.readme)
 
+
+class DeterminismAuditDocTest(unittest.TestCase):
+    """The audit doc must distinguish historical findings from current status."""
+
+    def setUp(self) -> None:
+        self.text = (
+            _repo_root() / "docs" / "determinism-audit-T1a.md"
+        ).read_text("utf-8")
+
+    def test_current_status_table_present(self) -> None:
+        self.assertIn("## 1. Current status", self.text)
+        for status in ("fixed", "exempt", "contained", "out of scope"):
+            self.assertIn(status, self.text)
+
+    def test_no_deferred_fix_wording(self) -> None:
+        self.assertNotIn("fixes deferred", self.text)
+
 if __name__ == "__main__":
     unittest.main()

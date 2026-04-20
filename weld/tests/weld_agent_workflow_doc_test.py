@@ -52,6 +52,11 @@ class AgentWorkflowDocTest(unittest.TestCase):
             f"agent-workflow.md is missing sections: {missing}",
         )
 
+    def test_trust_boundary_documented(self) -> None:
+        self.assertIn("Trust boundary", self.text)
+        self.assertIn("repositories you trust", self.text)
+        self.assertIn("external_json", self.text)
+
     def test_readme_references_agent_workflow(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         readme = (repo_root / "weld" / "README.md").read_text(encoding="utf-8")

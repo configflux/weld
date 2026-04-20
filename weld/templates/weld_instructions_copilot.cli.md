@@ -21,6 +21,11 @@ external `wd` CLI. Use it to learn the codebase before grepping.
 3. Use `wd query "<term>"` when `brief` is too narrow, and
    `wd context "<node-id>"` to drill into a specific node.
 
+Run `wd discover` automatically only on repositories you trust. Project-local
+strategies under `.weld/strategies/` are Python modules loaded at discovery
+time, and `strategy: external_json` executes configured commands from
+`discover.yaml`.
+
 ## Federation awareness
 
 If a `.weld/workspaces.yaml` file exists at the discovery root, the root is
@@ -33,6 +38,13 @@ single-repo layout.
 This bootstrap was produced with `--cli-only`, so treat weld strictly as a
 shell-invoked CLI. Read `wd --help` to confirm available commands instead
 of guessing.
+
+## Ask before writing to the graph
+
+Never run `wd` subcommands that write graph data without asking the user
+first. Reads (`wd query`, `wd context`, `wd brief`, `wd find`,
+`wd --help`) are safe; any write must be explicitly authorized for the
+task at hand.
 
 ## Deep-dives
 

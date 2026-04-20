@@ -91,6 +91,10 @@ def _seed_repo(root: Path) -> None:
     (root / "pkg" / "mod.py").write_text(_SAMPLE_PY, encoding="utf-8")
     (root / "pkg" / "readme.md").write_text(_SAMPLE_MD, encoding="utf-8")
     (root / "pkg" / "conf.yaml").write_text(_SAMPLE_YAML, encoding="utf-8")
+    (root / "pkg" / "tool.go").write_text(
+        "package pkg\nfunc ZebraTool() {}\nfunc AlphaTool() {}\n",
+        encoding="utf-8",
+    )
 
     env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}

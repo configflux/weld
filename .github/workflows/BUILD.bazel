@@ -1,4 +1,6 @@
 exports_files([
     "ci.yml",
     "install-test.yml",
+    "public-surface.yml",
+    "publish-pypi.yml",
 ])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import mimetypes
 import sys
@@ -21,6 +22,8 @@ from weld.viz.adapter import (
     clamp_limit,
 )
 from weld.viz.api import VizApi
+
+_LOOPBACK_HOSTNAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
 
 
 def make_server(
@@ -64,16 +67,50 @@ def main(argv: list[str] | None = None) -> int:
         description="Serve a local read-only browser visualizer for .weld/graph.json.",
     )
     parser.add_argument("--root", default=".", help="Project root directory")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind host (must be loopback unless --allow-remote is set)",
+    )
     parser.add_argument("--port", type=int, default=0, help="Bind port; 0 chooses a free port")
     parser.add_argument("--no-open", action="store_true", help="Do not open a browser")
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Allow binding to a non-loopback host (exposes the visualizer beyond this machine)",
+    )
     args = parser.parse_args(argv)
+    if not args.allow_remote and not _is_loopback_host(args.host):
+        print(
+            f"error: --host={args.host!r} is not a loopback address; "
+            "refusing to bind. Pass --allow-remote to acknowledge the exposure risk.",
+            file=sys.stderr,
+        )
+        return 2
     return serve(
         args.root,
         host=args.host,
         port=args.port,
         open_browser=not args.no_open,
     )
+
+
+def _is_loopback_host(host: str) -> bool:
+    """Return True only if ``host`` is guaranteed to bind to loopback.
+
+    Recognizes all IPv4 addresses in 127.0.0.0/8, the IPv6 ``::1`` loopback,
+    and the ``localhost`` hostname family. Anything else -- including
+    ``0.0.0.0``, ``::``, public IPs, and unrecognized hostnames -- returns
+    False so the CLI refuses to bind without ``--allow-remote``.
+    """
+    if not host:
+        return False
+    if host.lower() in _LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _handler_for(api: VizApi) -> type[BaseHTTPRequestHandler]:

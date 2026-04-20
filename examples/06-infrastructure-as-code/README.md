@@ -23,7 +23,7 @@ full operational topology of a project.
 ## Project Structure
 
 ```
-05-infrastructure-as-code/
+06-infrastructure-as-code/
   Dockerfile                   (API container)
   Dockerfile.worker            (worker container)
   docker-compose.yml           (service stack)
@@ -58,7 +58,7 @@ different kind of infrastructure artifact:
 ## Running Discovery
 
 ```bash
-cd examples/05-infrastructure-as-code
+cd examples/06-infrastructure-as-code
 wd discover
 ```
 

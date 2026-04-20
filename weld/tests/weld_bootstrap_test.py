@@ -306,6 +306,17 @@ class BootstrapCliDispatchTest(unittest.TestCase):
         with patch("sys.stdout", output):
             cli_main(["--help"])
         self.assertIn("bootstrap", output.getvalue())
+        for framework in ("claude", "codex", "copilot"):
+            self.assertIn(framework, output.getvalue())
+
+    def test_bootstrap_help_mentions_all_frameworks(self) -> None:
+        output = io.StringIO()
+        with patch("sys.stdout", output):
+            with self.assertRaises(SystemExit) as cm:
+                cli_main(["bootstrap", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        for framework in ("claude", "codex", "copilot"):
+            self.assertIn(framework, output.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

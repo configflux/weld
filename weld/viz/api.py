@@ -34,14 +34,22 @@ class VizApi:
         self.root = Path(root).resolve()
 
     def summary(self) -> dict:
-        """Return graph metadata, counts, stale status, and available scopes."""
+        """Return graph metadata, counts, stale status, and available scopes.
+
+        Paths in the payload (``root``, ``graph_path``) are intentionally
+        emitted as posix-relative strings rather than absolute filesystem
+        paths. Echoing the absolute server-side path in an HTTP response
+        leaks environment information (user home, repo checkout location)
+        to any client that can reach the viz server, which is undesirable
+        even for a local-dev tool.
+        """
         graph = self._load_root_graph()
         data = graph.dump()
         config = load_workspace_config(self.root)
         payload = {
             "viz_api_version": VIZ_API_VERSION,
-            "root": str(self.root),
-            "graph_path": str(self.root / ".weld" / "graph.json"),
+            "root": ".",
+            "graph_path": ".weld/graph.json",
             "graph_exists": (self.root / ".weld" / "graph.json").is_file(),
             "meta": data.get("meta", {}),
             "stale": graph.stale(),

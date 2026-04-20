@@ -120,9 +120,18 @@ wd find "footer"
 ```
 
 `find` searches the inverted file index (`.weld/file-index.json`), not the graph.
-It matches against path segments, exported symbols, class/function names, import
-targets, and markdown headings. Use it when you need file paths rather than
-graph-level context.
+It covers common source, config, build, and documentation text surfaces and
+matches against path segments, known language tokens, and generic file tokens.
+Use it when you need file paths rather than graph-level context. Graph
+discovery remains driven by `.weld/discover.yaml`, so broad `find` hits do not
+mean those files have rich graph nodes.
+
+## Trust boundary for refreshes
+
+Run `wd discover` automatically only on repositories you trust. Project-local
+strategies under `.weld/strategies/` are Python modules loaded at discovery
+time, and `strategy: external_json` executes configured commands from
+`discover.yaml` with the repository root as the working directory.
 
 ## Typical agent workflow
 

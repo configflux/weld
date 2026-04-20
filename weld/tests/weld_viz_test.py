@@ -18,6 +18,7 @@ from weld.contract import SCHEMA_VERSION
 from weld.federation_support import prefix_node_id
 from weld.viz.adapter import neighborhood_from_data, normalize_graph_data
 from weld.viz.api import VizApi
+from weld.viz import server as viz_server
 from weld.viz.server import make_server
 from weld.workspace import ChildEntry, WorkspaceConfig, dump_workspaces_yaml
 
@@ -201,6 +202,85 @@ class VizServerTest(unittest.TestCase):
             cli_main(["viz", "--help"])
         self.assertEqual(cm.exception.code, 0)
         self.assertIn("--no-open", stdout.getvalue())
+        self.assertIn("--allow-remote", stdout.getvalue())
+
+
+class VizHostGuardTest(unittest.TestCase):
+    def test_loopback_helper_accepts_loopback_hosts(self) -> None:
+        for host in ("127.0.0.1", "127.0.0.5", "::1", "localhost"):
+            self.assertTrue(
+                viz_server._is_loopback_host(host),
+                f"expected loopback for {host!r}",
+            )
+
+    def test_loopback_helper_rejects_public_hosts(self) -> None:
+        for host in ("0.0.0.0", "192.168.1.1", "8.8.8.8", "::", "2001:db8::1"):
+            self.assertFalse(
+                viz_server._is_loopback_host(host),
+                f"expected non-loopback for {host!r}",
+            )
+
+    def test_loopback_helper_rejects_empty_and_unparseable(self) -> None:
+        for host in ("", "not a host", "example.com"):
+            self.assertFalse(
+                viz_server._is_loopback_host(host),
+                f"expected non-loopback for {host!r}",
+            )
+
+    def test_main_refuses_non_loopback_without_allow_remote(self) -> None:
+        stderr = io.StringIO()
+        with patch("weld.viz.server.serve") as mock_serve, patch("sys.stderr", stderr):
+            exit_code = viz_server.main(["--host", "0.0.0.0", "--no-open"])
+        self.assertNotEqual(exit_code, 0)
+        mock_serve.assert_not_called()
+        self.assertIn("--allow-remote", stderr.getvalue())
+
+    def test_main_accepts_loopback_default(self) -> None:
+        with patch("weld.viz.server.serve", return_value=0) as mock_serve:
+            exit_code = viz_server.main(["--host", "127.0.0.1", "--no-open"])
+        self.assertEqual(exit_code, 0)
+        mock_serve.assert_called_once()
+        _, kwargs = mock_serve.call_args
+        self.assertEqual(kwargs["host"], "127.0.0.1")
+
+    def test_main_accepts_non_loopback_with_allow_remote(self) -> None:
+        with patch("weld.viz.server.serve", return_value=0) as mock_serve:
+            exit_code = viz_server.main(
+                ["--host", "0.0.0.0", "--allow-remote", "--no-open"]
+            )
+        self.assertEqual(exit_code, 0)
+        mock_serve.assert_called_once()
+        _, kwargs = mock_serve.call_args
+        self.assertEqual(kwargs["host"], "0.0.0.0")
+
+
+class VizSummaryPathDisclosureTest(unittest.TestCase):
+    def test_summary_returns_relative_paths_missing_graph(self) -> None:
+        with TemporaryDirectory() as tmp:
+            summary = VizApi(tmp).summary()
+        # root should be the repo-root placeholder, not the absolute path.
+        self.assertEqual(summary["root"], ".")
+        # graph_path should be posix-relative, never absolute.
+        self.assertEqual(summary["graph_path"], ".weld/graph.json")
+
+    def test_summary_returns_relative_paths_with_graph(self) -> None:
+        with _simple_root() as tmp:
+            summary = VizApi(tmp).summary()
+        self.assertEqual(summary["root"], ".")
+        self.assertEqual(summary["graph_path"], ".weld/graph.json")
+        # Sanity: nothing in summary should start with "/" (unix absolute)
+        # or look like "C:\..." (windows absolute).
+        for key in ("root", "graph_path"):
+            value = summary[key]
+            self.assertIsInstance(value, str)
+            self.assertFalse(
+                value.startswith("/"),
+                f"summary[{key!r}]={value!r} is absolute",
+            )
+            self.assertFalse(
+                len(value) >= 2 and value[1] == ":",
+                f"summary[{key!r}]={value!r} looks like a windows absolute path",
+            )
 
 
 if __name__ == "__main__":

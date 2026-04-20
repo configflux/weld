@@ -128,6 +128,10 @@ idempotent and honours a `.weld-version` file in the current directory
 or any ancestor to pin a specific release tag. Use this when you just
 want the `weld` CLI on your PATH without cloning the repo.
 
+Weld is source/Git-first for now: `install.sh`, editable checkout installs,
+and Git URL installs are the supported public paths. A package-index
+publication path is not promised by this release.
+
 ### Local editable install
 
 For local development on Weld itself, install from a checkout:
@@ -183,6 +187,9 @@ module entrypoint remains available:
 python -m weld --help
 ```
 
+Runtime installs support Python 3.10 through 3.13. Contributor builds and
+Bazel tests use the Python 3.12 toolchain pinned in `MODULE.bazel`.
+
 ## Quickstart
 
 1. Bootstrap a starter config:
@@ -227,7 +234,7 @@ python -m weld --help
 | `wd workspace status` | Show workspace child ledger and status |
 | `wd build-index` | Regenerate file index |
 | `wd query <term>` | Hybrid-ranked tokenized graph search |
-| `wd find <term>` | File-index keyword search |
+| `wd find <term>` | Broad file-token search, separate from graph discovery |
 | `wd context <id>` | Node + neighborhood |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
 | `wd viz` | Local read-only browser graph explorer |
@@ -245,6 +252,9 @@ wd bootstrap copilot   # writes .github/skills/weld/SKILL.md
 ```
 
 All targets also write `.weld/README.md` and bootstrap `discover.yaml` if missing.
+Run `wd discover` automatically only on repositories you trust: project-local
+strategies are Python modules loaded at discovery time, and `external_json`
+adapters execute configured commands from `discover.yaml`.
 
 ## Onboarding and extension
 

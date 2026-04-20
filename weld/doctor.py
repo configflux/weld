@@ -181,8 +181,58 @@ def _check_mcp_config(root: Path) -> list[CheckResult]:
     return [CheckResult("warn", "MCP server config not found (.mcp.json or .codex/config.toml)")]
 
 
+def _check_trust_boundaries(weld_dir: Path) -> list[CheckResult]:
+    """Warn when discovery will load repo-owned code or commands."""
+    results: list[CheckResult] = []
+
+    strategies_dir = weld_dir / "strategies"
+    local_strategies = (
+        sorted(path.name for path in strategies_dir.glob("*.py"))
+        if strategies_dir.is_dir()
+        else []
+    )
+    if local_strategies:
+        sample = ", ".join(local_strategies[:3])
+        extra = (
+            ""
+            if len(local_strategies) <= 3
+            else f", +{len(local_strategies) - 3} more"
+        )
+        results.append(
+            CheckResult(
+                "warn",
+                "project-local strategies present "
+                f"({sample}{extra}) -- run wd discover only on trusted repos",
+            )
+        )
+
+    config_path = weld_dir / "discover.yaml"
+    if not config_path.is_file():
+        return results
+    try:
+        data = parse_yaml(config_path.read_text(encoding="utf-8"))
+        sources = data.get("sources", []) if isinstance(data, dict) else []
+    except Exception:
+        return results
+
+    if any(
+        isinstance(src, dict) and src.get("strategy") == "external_json"
+        for src in sources
+    ):
+        results.append(
+            CheckResult(
+                "warn",
+                "external_json adapters execute configured commands with "
+                "the repository root as cwd -- use only with trusted repos",
+            )
+        )
+    return results
+
+
 def _resolve_strategy(name: str, root: Path) -> bool:
     """Return True if a strategy can be resolved (project-local or bundled)."""
+    if name == "external_json":
+        return True
     project_local = root / ".weld" / "strategies" / f"{name}.py"
     bundled = Path(__file__).resolve().parent / "strategies" / f"{name}.py"
     return project_local.is_file() or bundled.is_file()
@@ -262,6 +312,7 @@ def doctor(root: Path) -> list[CheckResult]:
     results.extend(_check_staleness(weld_dir, root))
     results.extend(_check_tree_sitter(weld_dir))
     results.extend(_check_mcp_config(root))
+    results.extend(_check_trust_boundaries(weld_dir))
     results.extend(_check_strategies(weld_dir, root))
     results.extend(_check_python_version())
     return results

@@ -1,16 +1,15 @@
 # Determinism Audit — T1a Inventory
 
-- **Status:** Audit complete; fixes deferred to T2 (`the internal audit task`).
+- **Status:** Historical audit; current statuses are tracked below.
 - **Date:** 2026-04-14
-- **Related issues:**
-  - `the internal audit task` — this audit (T1a).
-  - `the internal audit task` — regression harness (T1b).
-  - `the internal audit task` — fixes (T2).
+- **Last reviewed against source:** 2026-04-17
 - **Governing contract:** ADR 0012 (`docs/adrs/0012-determinism-contract.md`).
 
-This inventory catalogs every source of nondeterminism observed in the
-`wd discover` pipeline and in each bundled strategy. It is the
-authoritative list handed off to T1b (regression harness) and T2 (fixes).
+This inventory cataloged sources of nondeterminism observed in the
+`wd discover` pipeline and in each bundled strategy. The detailed finding
+sections below are retained as historical reproduction notes. The status table
+in this section is the current source-of-truth for whether each concern is
+fixed, exempt, tracking-only, or out of scope.
 
 Each finding is tagged with a single category per ADR 0012 §2:
 
@@ -30,29 +29,23 @@ Every finding carries a **scope** tag:
 - **enrichment** — exercised only by `wd enrich` (excluded from
   the contract, per ADR 0012 §7; recorded for completeness).
 
-## 1. Summary of findings
+## 1. Current status
 
-| # | Category    | Scope       | Site                                                         | Severity |
-|---|-------------|-------------|--------------------------------------------------------------|----------|
-| 1 | ordering    | base        | `weld/discover.py` — final `json.dump` omits `sort_keys=True` | high     |
-| 2 | ordering    | base        | `weld/discover.py` `_post_process` — node dict iteration order leaks via `{"nodes": nodes}` | high     |
-| 3 | ordering    | base        | `weld/discover.py` `_post_process` — edges list order driven by emission order (no sort) | high     |
-| 4 | ordering    | base        | `weld/graph.py` `Graph.save` — `json.dump` omits `sort_keys=True` | high     |
-| 5 | ordering    | base        | `weld/repo_boundary.py` `iter_repo_files` — `os.walk` dir traversal is filesystem-enumeration order | high     |
-| 6 | ordering    | base        | `weld/strategies/cpp_resolver.py` `augment_state_with_headers` — iterates `frozenset` `CPP_HEADER_EXTS` | medium   |
-| 7 | ordering    | base        | `weld/file_index.py` `save_file_index` — `json.dump` omits `sort_keys=True` | medium   |
-| 8 | ordering    | base        | `weld/discovery_state.py` `save_state` — `json.dumps` omits `sort_keys=True` | medium   |
-| 9 | hashing     | base        | No production `hash()` call found — **PASS**, but lint rule is absent (ADR 0012 §5 Risks). | tracking |
-| 10| subprocess  | base        | `weld/_git.py` — three `subprocess.run(["git", ...])` calls omit `env={..., "LC_ALL": "C"}` | high     |
-| 11| subprocess  | base        | `weld/repo_boundary.py` — two `subprocess.run(["git", ...])` calls omit `env={..., "LC_ALL": "C"}` | high     |
-| 12| subprocess  | base        | `weld/discover.py` `_run_external_json` — `subprocess.run(argv, ...)` omits `env={..., "LC_ALL": "C"}` | medium   |
-| 13| timestamps  | base (exempt)| `weld/discover.py` `_post_process` — `meta.updated_at` = `datetime.now(UTC)` | exempt (ADR 0012 §1) |
-| 14| timestamps  | base (exempt)| `weld/graph.py` `_now` — `meta.updated_at` refreshed on every save | exempt (ADR 0012 §1) |
-| 15| timestamps  | base        | `weld/discovery_state.py` `save_state` — `created_at` uses `datetime.now(UTC)` | contained — not in graph.json |
-| 16| other       | base (exempt)| Plugin directory scan — `_load_strategy` uses explicit filename lookup, and sources are iterated in declared `discover.yaml` order; no plugin directory iteration. | OK — contract §2 row 6 satisfied |
-| 17| other       | enrichment  | `weld/enrich.py` — LLM provider output varies by design. Scope: enrichment. | out of scope (ADR 0012 §7) |
+| # | Category | Current status | Current source anchor |
+|---|---|---|---|
+| 1-4 | ordering | fixed | `weld/serializer.py`, `weld/discover.py`, `weld/graph.py` |
+| 5 | ordering | fixed | `weld/repo_boundary.py::iter_repo_files` sorts traversal |
+| 6 | ordering | fixed | `weld/strategies/cpp_resolver.py` sorts header extensions |
+| 7 | ordering | fixed | `weld/file_index.py::save_file_index` uses sorted keys and token lists |
+| 8 | ordering | fixed | `weld/discovery_state.py::save_state` writes sorted JSON |
+| 9 | hashing | fixed | `tools/lint_repo.py` enforces no production `hash()` in `weld/` |
+| 10-12 | subprocess | fixed | git/external subprocess calls set `LC_ALL=C` |
+| 13-14 | timestamps | exempt | `meta.updated_at` remains the documented graph timestamp exemption |
+| 15 | timestamps | contained | discovery state timestamp does not feed `graph.json` |
+| 16 | other | OK | strategy lookup is by declared source entry |
+| 17 | enrichment | out of scope | provider output varies by design |
 
-Severity legend:
+Historical severity legend:
 
 - **high** — reproducibly causes byte-differences across two discover runs
   on the same source tree or on realistic locales.

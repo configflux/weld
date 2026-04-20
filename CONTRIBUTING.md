@@ -25,9 +25,14 @@ wd prime
 Continue reading if you want a local development checkout for debugging
 or experimenting with the source.
 
+Weld is source/Git-first for now: `install.sh`, editable checkout installs,
+and Git URL installs are the supported public paths. A package-index
+publication path is not promised by this release.
+
 ### Prerequisites
 
-- **Python** >= 3.10 (3.10–3.13 supported)
+- **Python** >= 3.10 (3.10–3.13 supported for runtime installs; Bazel
+  contributor tests use the Python 3.12 toolchain pinned in `MODULE.bazel`)
 - **Git**
 
 ### Development setup

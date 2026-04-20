@@ -1,5 +1,12 @@
 package(default_visibility = ["//visibility:public"])
 
+# Exported so //tools:version_consistency_test can stage pyproject.toml in
+# its runfiles and read the PEP 621 `version = "..."` field at test time.
+# Keeping the export line-oriented (rather than a filegroup) mirrors the
+# convention used by the repo root BUILD.bazel for VERSION and similar
+# source-of-truth files.
+exports_files(["pyproject.toml"])
+
 filegroup(
     name = "module_entrypoint",
     # Both files are required so that `import weld` from an sh_test runfiles

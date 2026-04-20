@@ -71,6 +71,10 @@ All three `wd bootstrap` frameworks accept opt-out flags:
 `wd prime` is idempotent and safe to re-run — it reports what is
 already configured and what is still missing.
 
+Trust note: run `wd discover` automatically only on repositories you trust.
+Project-local strategies are Python modules loaded at discovery time, and
+`strategy: external_json` executes configured commands from `discover.yaml`.
+
 ## Supported languages
 
 All language strategies use tree-sitter and degrade gracefully when the
@@ -365,7 +369,7 @@ rm .weld/workspace-state.json
 | `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
 | `wd build-index` | Regenerate file index |
 | `wd query <term>` | Hybrid-ranked tokenized graph search |
-| `wd find <term>` | File-index keyword search |
+| `wd find <term>` | Broad file-token search, separate from graph discovery |
 | `wd context <id>` | Node + neighborhood |
 | `wd path <from> <to>` | Shortest path |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
@@ -420,6 +424,10 @@ existing installation — and honours a `.weld-version` file in the
 current directory or any ancestor to pin a specific release tag. This is
 the fast path for end users and agents.
 
+Weld is intentionally source/Git-first for now: the supported public install
+paths are `install.sh`, editable checkout installs, and Git URL installs. A
+standard package-index release path is not part of this release contract yet.
+
 ### From a local checkout (development)
 
 Use this when you want to edit Weld locally or contribute changes:
@@ -438,7 +446,7 @@ pip install -e "weld/[tree-sitter]"
 ### From GitHub
 
 ```bash
-pip install "git+ssh://git@github.com/configflux/weld.git@main#subdirectory=weld"
+pip install "git+https://github.com/configflux/weld.git@main#subdirectory=weld"
 ```
 
 ### Raw source (no install)
@@ -458,6 +466,12 @@ python -m weld --help
 | `pip install -e weld/` | Local development on weld itself. |
 | `pip install "git+ssh://..."` | Reproducible installs from a branch or tag, without running a shell script. |
 | `python -m weld` | A plain checkout with no install step, e.g. inside a locked-down container. |
+
+### Python compatibility
+
+Runtime installs support Python 3.10 through 3.13. Contributor builds and
+Bazel tests use the Python 3.12 toolchain pinned in `MODULE.bazel`, so the
+development toolchain can be narrower than the runtime support window.
 
 ## Documentation
 
