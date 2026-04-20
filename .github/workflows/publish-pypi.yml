@@ -1,22 +1,147 @@
-# DIAGNOSTIC step 3: env only, no pypa action
+# Release workflow for weld (public repo)
+# Triggered on vX.Y.Z tag pushes. Builds sdist + wheel and uploads to PyPI.
+#
+# Auth mechanism: prefers Trusted Publishing (OIDC), falls back to a
+# repository-level PYPI_API_TOKEN secret. Mechanism selection:
+#
+#   * If PYPI_API_TOKEN is NOT configured as a repository secret, the
+#     expression ${{ secrets.PYPI_API_TOKEN }} evaluates to an empty
+#     string; the pinned pypa/gh-action-pypi-publish release then uses
+#     the ambient OIDC id-token (Trusted Publishing) minted by GitHub.
+#   * If PYPI_API_TOKEN IS configured, the action uses that token
+#     instead of OIDC.
+#
+# Supply-chain hardening: third-party actions are pinned to immutable
+# commit SHAs (not moving tags). The comment next to each `uses:` line
+# records the human-readable semver so the file stays auditable. Update
+# the SHA when upstream ships a new release you have reviewed; do not
+# switch back to a moving tag reference.
+#
+# PyPI-side setup for the preferred Trusted Publishing path: register
+# this workflow as a Trusted Publisher on the PyPI project
+# (configflux-weld) with workflow filename publish-pypi.yml and the
+# optional environment "pypi".
 name: Publish to PyPI
+
 on:
   push:
-    tags: ["v*.*.*"]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "version"
-        required: true
-        type: string
+    tags:
+      - "v*.*.*"
+  # workflow_dispatch intentionally omitted: environment "pypi" is
+  # configured to allow only v*.*.* tag refs. Manual dispatch from main
+  # would be rejected by env protection and reported as startup_failure,
+  # which is confusing. Use an explicit tag push to trigger this workflow.
+
 permissions:
   contents: read
+
+concurrency:
+  group: publish-pypi-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  test:
+  build-and-publish:
+    name: Build and publish to PyPI
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: pypi
     permissions:
       contents: read
       id-token: write
+
     steps:
-      - run: echo "env pypi only, no action"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build
+        run: python -m pip install --upgrade build
+
+      - name: Build sdist and wheel
+        run: python -m build weld
+
+      - name: Publish to PyPI
+        # Pinned to an immutable commit SHA for supply-chain hardening.
+        # Re-verify and bump when upstream ships a new release you have
+        # reviewed. Current pin matches the tip of `release/v1` and the
+        # `v1.14.0` tag as of 2026-04-19.
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          packages-dir: weld/dist
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  verify-install:
+    name: Verify pip install of tagged release
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only contents: read -- this job installs from public PyPI and must
+    # not inherit any elevated OIDC permission from the publish job.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Wait for PyPI CDN propagation
+        # PyPI's CDN typically takes 60-120 seconds to surface a freshly
+        # uploaded release. Installing sooner can race the CDN and raise
+        # spurious "version not found" failures. 90s is a conservative
+        # middle of the documented window.
+        run: sleep 90
+
+      - name: Derive version from tag
+        id: version
+        # github.ref_name is "vX.Y.Z" on a tag push; strip the leading "v"
+        # so pip sees the PEP 440 version "X.Y.Z". The tag is read via an
+        # env var rather than direct `${{ }}` interpolation into the run
+        # script body so a tag containing shell metacharacters cannot
+        # alter the command (defense in depth, on top of the 'v*.*.*'
+        # tag-trigger filter).
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version="${REF_NAME#v}"
+          # Validate: must be strict PEP 440 X.Y.Z (digits + dots only)
+          # after stripping the leading "v". Anything else is rejected
+          # before it can reach pip or Python.
+          if ! printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Rejected non-conforming tag: ${REF_NAME}"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Install tagged release from PyPI
+        # --no-cache-dir forces a fresh metadata fetch so we exercise the
+        # real PyPI index and do not test a cached copy of the previous
+        # version. Pinning the exact version catches a silent rollback
+        # where PyPI still shows the prior release. PKG_VERSION is
+        # exported as an env var so the run script never interpolates a
+        # raw GitHub expression mid-command.
+        env:
+          PKG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pip install --no-cache-dir "configflux-weld==${PKG_VERSION}"
+
+      - name: Sanity-check installed package
+        # Two lightweight checks prove the wheel both installed and is
+        # importable: the console script entry point resolves, and the
+        # distribution metadata reports the version we just published.
+        # PKG_VERSION is passed through the environment so the Python
+        # one-liner reads it from os.environ rather than via string
+        # interpolation.
+        env:
+          PKG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          wd --version
+          python -c "import os; from importlib.metadata import version; expected = os.environ['PKG_VERSION']; v = version('configflux-weld'); print(f'configflux-weld {v}'); assert v == expected, f'version mismatch: expected {expected}, got {v}'"
