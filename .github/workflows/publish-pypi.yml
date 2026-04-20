@@ -46,7 +46,7 @@ jobs:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: pypi
+    # environment: pypi  # DIAGNOSTIC: temporarily commented to isolate startup_failure
     permissions:
       contents: read
       id-token: write
