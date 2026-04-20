@@ -1,53 +1,22 @@
-# Release workflow for weld (public repo)
-# DIAGNOSTIC — bisecting startup_failure (step 2: + pypa action + environment)
-
+# DIAGNOSTIC step 3: env only, no pypa action
 name: Publish to PyPI
-
 on:
   push:
-    tags:
-      - "v*.*.*"
+    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag to publish (e.g. v0.5.0)"
+        description: "version"
         required: true
         type: string
-
 permissions:
   contents: read
-
-concurrency:
-  group: publish-pypi-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  build-and-publish:
-    name: Build and publish to PyPI
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     environment: pypi
     permissions:
       contents: read
       id-token: write
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install build
-        run: python -m pip install --upgrade build
-
-      - name: Build sdist and wheel
-        run: python -m build weld
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
-        with:
-          packages-dir: weld/dist
-          password: ${{ secrets.PYPI_API_TOKEN }}
+      - run: echo "env pypi only, no action"
