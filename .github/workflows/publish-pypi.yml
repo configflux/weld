@@ -1,5 +1,5 @@
 # Release workflow for weld (public repo)
-# DIAGNOSTIC — bisecting startup_failure
+# DIAGNOSTIC — bisecting startup_failure (step 2: + pypa action + environment)
 
 name: Publish to PyPI
 
@@ -26,6 +26,7 @@ jobs:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: pypi
     permissions:
       contents: read
       id-token: write
@@ -45,5 +46,8 @@ jobs:
       - name: Build sdist and wheel
         run: python -m build weld
 
-      - name: Diagnostic - simulate publish
-        run: echo "would publish sdist+wheel here"
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          packages-dir: weld/dist
+          password: ${{ secrets.PYPI_API_TOKEN }}
