@@ -268,11 +268,23 @@ def load_file_index(root: Path) -> dict[str, list[str]]:
         return data["files"]
     return data
 
-def find_files(index: dict[str, list[str]], term: str) -> dict:
+def find_files(
+    index: dict[str, list[str]],
+    term: str,
+    limit: int | None = None,
+) -> dict:
     """Search the index for files matching *term* via substring match.
 
     Returns ranked results: files where the term appears in more tokens
-    are ranked higher.
+    are ranked higher. Each file entry carries an integer ``score`` equal
+    to ``len(matching_tokens)`` -- the same signal the ranker already
+    uses, exposed so consumers can display it without having to count
+    the tokens list themselves.
+
+    When *limit* is not ``None``, the result is sliced to at most that
+    many entries *after* ranking. ``limit`` values less than or equal to
+    zero yield an empty ``files`` list. ``limit=None`` (the default) is
+    the pre-change, unbounded behaviour.
     """
     term_lower = term.lower()
     results: list[dict] = []
@@ -283,10 +295,14 @@ def find_files(index: dict[str, list[str]], term: str) -> dict:
             results.append({
                 "path": path,
                 "tokens": matching_tokens,
+                "score": len(matching_tokens),
             })
 
     # Rank by number of matching tokens (descending), then by path (ascending)
-    results.sort(key=lambda r: (-len(r["tokens"]), r["path"]))
+    results.sort(key=lambda r: (-r["score"], r["path"]))
+
+    if limit is not None:
+        results = results[:max(limit, 0)]
 
     return {"query": term, "files": results}
 

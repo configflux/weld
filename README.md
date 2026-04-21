@@ -369,7 +369,7 @@ rm .weld/workspace-state.json
 | `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
 | `wd build-index` | Regenerate file index |
 | `wd query <term>` | Hybrid-ranked tokenized graph search |
-| `wd find <term>` | Broad file-token search, separate from graph discovery |
+| `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`) |
 | `wd context <id>` | Node + neighborhood |
 | `wd path <from> <to>` | Shortest path |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
@@ -399,6 +399,18 @@ Rules can add an `allow` block with the same `from` / `to` selectors to
 exempt specific edges from a broader deny match.
 
 Run `wd --help` for the full list.
+
+### Edge provenance with `props.source`
+
+`wd add-edge` accepts a strict set of edge types (see
+`weld.contract.VALID_EDGE_TYPES`). When an agent, tool, or LLM emits an
+edge, stamp its origin under `props.source` so downstream consumers can
+filter, rank, or audit tool-generated relationships. The `--props` help
+text carries the canonical example: `--props '{"source":"llm","confidence":"inferred"}'`.
+The `source` value is free-form (agent name, tool name, `llm`,
+`manual`, strategy id); `confidence` follows the existing vocabulary
+(`definite`, `inferred`, `speculative`). This replaces the 0.3.0-era
+`--source` and `--relation` flags.
 
 ## Examples
 

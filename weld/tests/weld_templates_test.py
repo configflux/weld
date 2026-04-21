@@ -179,6 +179,24 @@ class MarkdownTemplateExistsTest(unittest.TestCase):
         content = (_TEMPLATES_DIR / "weld_readme.md").read_text(encoding="utf-8")
         self.assertGreater(len(content.strip()), 100)
 
+    def test_weld_readme_has_no_placeholder_tokens(self) -> None:
+        """Regression: the bundled weld README template is copied verbatim by
+        bootstrap into a fresh workspace's .weld/README.md (no substitution
+        step). It must not ship with placeholder organization or token
+        markers that would leak into user-facing output.
+        """
+        content = (_TEMPLATES_DIR / "weld_readme.md").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "your-org", content,
+            "weld_readme.md must not contain the `your-org` placeholder URL; "
+            "bootstrap copies this template verbatim into user workspaces.",
+        )
+        self.assertNotIn(
+            "<placeholder>", content,
+            "weld_readme.md must not contain `<placeholder>` tokens; "
+            "bootstrap copies this template verbatim into user workspaces.",
+        )
+
     def test_weld_cmd_claude_template_exists(self) -> None:
         self.assertTrue((_TEMPLATES_DIR / "weld_cmd_claude.md").is_file())
 

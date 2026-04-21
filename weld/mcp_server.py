@@ -88,15 +88,17 @@ def weld_query(term: str, limit: int = 20, *, root: Path | str = ".") -> dict:
     return _attach_children_status(g, g.query(term, limit=limit))
 
 def weld_find(term: str, limit: int | None = None, *, root: Path | str = ".") -> dict:
-    """File-index substring search. Delegates to ``weld.file_index.find_files``."""
+    """File-index substring search. Delegates to ``weld.file_index.find_files``.
+
+    ``limit`` is forwarded to ``find_files``, which slices the ranked result
+    and emits a ``score`` field on every file entry (the number of matching
+    tokens, identical to the signal used for ordering). Negative ``limit``
+    values are ignored to preserve the pre-change tolerance at the MCP
+    boundary.
+    """
     index = _load_file_index(Path(root))
-    result = _find_files(index, term)
-    if limit is not None and limit >= 0:
-        result = {
-            "query": result.get("query", term),
-            "files": result.get("files", [])[:limit],
-        }
-    return result
+    effective_limit = limit if limit is None or limit >= 0 else None
+    return _find_files(index, term, limit=effective_limit)
 
 def weld_context(node_id: str, *, root: Path | str = ".") -> dict:
     """Node + 1-hop neighborhood. Delegates to ``Graph.context``; see

@@ -234,7 +234,7 @@ Bazel tests use the Python 3.12 toolchain pinned in `MODULE.bazel`.
 | `wd workspace status` | Show workspace child ledger and status |
 | `wd build-index` | Regenerate file index |
 | `wd query <term>` | Hybrid-ranked tokenized graph search |
-| `wd find <term>` | Broad file-token search, separate from graph discovery |
+| `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`) |
 | `wd context <id>` | Node + neighborhood |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
 | `wd viz` | Local read-only browser graph explorer |

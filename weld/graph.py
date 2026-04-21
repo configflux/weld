@@ -7,8 +7,8 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
-from weld._git import commits_behind as _commits_behind
 from weld._git import get_git_sha, is_git_repo
+from weld._staleness import compute_stale_info as _compute_stale_info
 from weld._graph_schema import (
     CHILD_SCHEMA_VERSION,
     ROOT_FEDERATED_SCHEMA_VERSION,
@@ -17,6 +17,8 @@ from weld._graph_schema import (
     schema_version_for as _graph_schema_version_for,
 )
 from weld.contract import SCHEMA_VERSION
+from weld.graph_context import context_with_fallback as _context_with_fallback
+from weld.graph_context import simple_exact_context as _simple_exact_context
 from weld.graph_query import query_graph as _query_graph
 from weld.query_state import build_query_state as _build_query_state
 from weld.serializer import dumps_graph as _dumps_graph
@@ -78,18 +80,22 @@ class Graph:
             }
         self._build_inverted_index()
 
-    def save(self) -> None:
-        """Persist the graph via the canonical serializer (ADR 0012 ss3).
+    def save(self, *, touch_git_sha: bool = False) -> None:
+        """Atomically persist the graph (ADR 0011 ss8, ADR 0012 ss3).
 
-        Stamps ``meta.schema_version`` based on the in-memory node set
-        (ADR 0011 ss11, ADR 0012 ss4). The on-disk replacement goes
-        through :func:`weld.workspace_state.atomic_write_text` for
-        crash safety (ADR 0011 ss8).
+        Stamps ``meta.schema_version`` from the node set. When
+        *touch_git_sha* is True and the root is a git working tree,
+        also stamp ``meta.git_sha=HEAD`` before writing (ADR 0017).
+        Silent no-op outside a git repo.
         """
         self._data["meta"]["updated_at"] = _now()
         self._data["meta"]["schema_version"] = _schema_version_for(
             self._data.get("nodes", {})
         )
+        if touch_git_sha and is_git_repo(self._path.parent.parent):
+            sha = get_git_sha(self._path.parent.parent)
+            if sha is not None:
+                self._data["meta"]["git_sha"] = sha
         atomic_write_text(self._path, _dumps_graph(self._data))
 
     def add_node(self, node_id: str, node_type: str, label: str, props: dict) -> dict:
@@ -286,12 +292,16 @@ class Graph:
             "edges": all_edges,
         }
 
-    def context(self, node_id: str) -> dict:
-        node = self.get_node(node_id)
-        if node is None:
-            return {"error": f"node not found: {node_id}"}
-        neighbors, edges = self._neighborhood({node_id})
-        return {"node": node, "neighbors": neighbors, "edges": edges}
+    def context(self, node_id: str, *, fallback: bool = True) -> dict:
+        """Return a node plus its 1-hop neighborhood; see graph_context."""
+        return _context_with_fallback(
+            raw_node_id=node_id, error_node_id=node_id, fallback=fallback,
+            exact_fn=lambda: _simple_exact_context(
+                self.get_node, self._neighborhood, node_id),
+            query_fn=self.query,
+            recurse_fn=lambda nid: self.context(nid, fallback=False),
+            match_tokens_fn=Graph._match_tokens,
+        )
 
     def path(self, from_id: str, to_id: str) -> dict:
         if from_id not in self._data["nodes"] or to_id not in self._data["nodes"]:
@@ -349,18 +359,8 @@ class Graph:
         }
 
     def stale(self) -> dict:
-        root = self._path.parent.parent  # .weld/ -> project root
-        if not is_git_repo(root):
-            return {"stale": False, "reason": "not a git repo"}
-        cur = get_git_sha(root)
-        gsha = self._data.get("meta", {}).get("git_sha")
-        if gsha is None:
-            stale, behind = True, -1
-        elif gsha == cur:
-            stale, behind = False, 0
-        else:
-            stale, behind = True, _commits_behind(root, gsha, cur)
-        return {"stale": stale, "graph_sha": gsha, "current_sha": cur, "commits_behind": behind}
+        """Report graph freshness (ADR 0017); primary = source drift."""
+        return _compute_stale_info(self._path, self._data.get("meta", {}))
 
     def dump(self) -> dict:
         return self._data

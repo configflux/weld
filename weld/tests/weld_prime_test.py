@@ -209,6 +209,33 @@ class PrimeAgentIntegrationHintTest(unittest.TestCase):
             self.assertIn("instruction yes", output)
             self.assertIn("wd bootstrap copilot", output)
 
+    def test_copilot_skill_and_instruction_present_mcp_absent_no_bootstrap_hint(self) -> None:
+        """All framework-specific copilot surfaces present; only shared .mcp.json
+        missing -> matrix row still shows `mcp no` but NO bootstrap hint anywhere.
+
+        Regression for bd-5ob: _framework_line and _check_agent_integration used
+        _SURFACE_ORDER (which includes `mcp`) for the missing-detection that
+        drives the next-step hint, causing a spurious `wd bootstrap copilot`
+        even though `mcp` is a shared surface and not part of
+        _FRAMEWORK_SPECIFIC_SURFACES[copilot].
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _setup_ready_root(root)
+            _write_file(root / ".github" / "skills" / "weld" / "SKILL.md")
+            _write_file(root / ".github" / "instructions" / "weld.instructions.md")
+            # Note: .mcp.json deliberately absent.
+            output = prime(root)
+            # Matrix row still surfaces the fact that .mcp.json is missing.
+            self.assertIn("copilot:", output)
+            self.assertIn("skill yes", output)
+            self.assertIn("instruction yes", output)
+            self.assertIn("mcp no", output)
+            # But the next-step hint must NOT fire -- both the inline arrow and
+            # the Next-steps block must be free of `wd bootstrap copilot`.
+            self.assertNotIn("-> wd bootstrap copilot", output)
+            self.assertNotIn("wd bootstrap copilot", output)
+
     def test_copilot_mcp_only_is_not_a_surface(self) -> None:
         """.mcp.json alone does not count as a copilot surface (shared signal)."""
         # Rationale: .mcp.json is shared between copilot/claude; on its own it

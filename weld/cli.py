@@ -9,7 +9,7 @@ _HELP = """Usage: wd <command> [args]
 Core commands:
   init           Bootstrap .weld/discover.yaml for the current repo
   discover       Run discovery and emit graph JSON to stdout
-  workspace      Inspect workspace child status from the root ledger
+  workspace      Inspect child status (status) or one-shot federate a polyrepo (bootstrap)
   build-index    Regenerate .weld/file-index.json
   scaffold       Write bundled templates into the current repo
   prime          Check setup status and suggest next steps

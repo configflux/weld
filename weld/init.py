@@ -306,59 +306,59 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
     Returns True on success, False if file exists and force is not set.
     """
     if output.exists() and not force:
-        print(f"discover.yaml already exists at {output}")
-        print("Use --force to overwrite.")
+        print(f"discover.yaml already exists at {output}", file=sys.stderr)
+        print("Use --force to overwrite.", file=sys.stderr)
         return False
 
-    print("Scanning for files...")
+    print("Scanning for files...", file=sys.stderr)
     files = scan_files(root)
-    print(f"Found {len(files)} files total")
+    print(f"Found {len(files)} files total", file=sys.stderr)
 
-    print("Scanning for languages...")
+    print("Scanning for languages...", file=sys.stderr)
     languages = detect_languages(files)
     for lang, count in languages.items():
-        print(f"  Found {count} {lang.capitalize()} files")
+        print(f"  Found {count} {lang.capitalize()} files", file=sys.stderr)
 
-    print("Detecting frameworks...")
+    print("Detecting frameworks...", file=sys.stderr)
     frameworks = detect_frameworks(root, files)
     for fw, _strategy, path in frameworks:
-        print(f"  Detected {fw} in {path}")
+        print(f"  Detected {fw} in {path}", file=sys.stderr)
 
-    print("Detecting project structure...")
+    print("Detecting project structure...", file=sys.stderr)
     structure = detect_structure(root, files)
-    print(f"  Structure: {structure}")
+    print(f"  Structure: {structure}", file=sys.stderr)
 
-    print("Scanning for Dockerfiles...")
+    print("Scanning for Dockerfiles...", file=sys.stderr)
     dockerfiles = detect_dockerfiles(root, files)
     for df in dockerfiles:
-        print(f"  Found {df}")
+        print(f"  Found {df}", file=sys.stderr)
     if not dockerfiles:
-        print("  No Dockerfiles found")
+        print("  No Dockerfiles found", file=sys.stderr)
 
     compose_files = detect_compose(root, files)
     for cf in compose_files:
-        print(f"  Found {cf}")
+        print(f"  Found {cf}", file=sys.stderr)
 
-    print("Scanning for CI configurations...")
+    print("Scanning for CI configurations...", file=sys.stderr)
     ci_files = detect_ci(root, files)
     for cf in ci_files:
-        print(f"  Found .github/workflows/{cf}")
+        print(f"  Found .github/workflows/{cf}", file=sys.stderr)
     if not ci_files:
-        print("  No CI workflows found")
+        print("  No CI workflows found", file=sys.stderr)
 
-    print("Scanning for Claude definitions...")
+    print("Scanning for Claude definitions...", file=sys.stderr)
     claude_agents, claude_commands = detect_claude(root, files)
     if claude_agents:
-        print(f"  Found {len(claude_agents)} agent definitions")
+        print(f"  Found {len(claude_agents)} agent definitions", file=sys.stderr)
     if claude_commands:
-        print(f"  Found {len(claude_commands)} command definitions")
+        print(f"  Found {len(claude_commands)} command definitions", file=sys.stderr)
 
     doc_dirs = detect_docs(root, files)
     python_globs = find_python_glob_roots(root, files) if "python" in languages else []
     root_configs = detect_root_configs(root, files)
     ros2_pkg_roots = detect_ros2(root, files)
 
-    print("Generating discover.yaml...")
+    print("Generating discover.yaml...", file=sys.stderr)
     yaml_text = generate_yaml(
         languages=languages, frameworks=frameworks,
         dockerfiles=dockerfiles, compose_files=compose_files,
@@ -370,7 +370,7 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(yaml_text, encoding="utf-8")
-    print(f"Wrote {output}")
+    print(f"Wrote {output}", file=sys.stderr)
     return True
 
 def main(argv: list[str] | None = None) -> None:
@@ -405,7 +405,7 @@ def main(argv: list[str] | None = None) -> None:
     if _init_workspace(
         root, workspaces_out, force=args.force, max_depth=args.max_depth,
     ):
-        print(f"Wrote {workspaces_out}")
+        print(f"Wrote {workspaces_out}", file=sys.stderr)
     if not success:
         sys.exit(1)
 

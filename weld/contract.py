@@ -43,6 +43,14 @@ VALID_EDGE_TYPES = frozenset([
     "represents", "feeds_into", "enforces", "verifies", "exposes", "governs",
     # Function-level call edge; symbol -> symbol. See ADR 0004.
     "calls",
+    # Governance and provenance vocabulary (ADR 0016, project-asu).
+    # Labels cover ownership (``owned_by``), bidirectional gating
+    # (``gates`` / ``gated_by``), temporal replacement (``supersedes``),
+    # validator-subject assertions (``validates``), producer-artifact
+    # emission (``generates``), data-model evolution (``migrates``), and
+    # contractual agreement between parties and interfaces (``contracts``).
+    "owned_by", "gates", "gated_by", "supersedes", "validates",
+    "generates", "migrates", "contracts",
 ])
 
 # -- Value vocabularies ----------------------------------------------------

@@ -45,7 +45,10 @@ py_library(
 
 py_library(
     name = "workspace",
-    srcs = ["workspace.py"],
+    srcs = [
+        "_gitignore_scan.py",
+        "workspace.py",
+    ],
     deps = [":yaml"],
 )
 
@@ -55,9 +58,12 @@ py_library(
         "__init__.py",
         "_discover_postprocess.py",
         "_discover_strategies.py",
+        "_gitignore_scan.py",
         "_graph_cli.py",
         "_graph_schema.py",
         "_init_ros2.py",
+        "_staleness.py",
+        "_workspace_bootstrap.py",
         "_workspace_inspect.py",
         "_workspace_lock.py",
         "arch_lint.py",
@@ -83,6 +89,7 @@ py_library(
         "federation_tools.py",
         "file_index.py",
         "graph.py",
+        "graph_context.py",
         "graph_query.py",
         "impact.py",
         "init.py",

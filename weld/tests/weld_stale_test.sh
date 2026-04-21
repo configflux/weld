@@ -20,9 +20,17 @@ git init --quiet
 git config user.email "test@test.com"
 git config user.name "Test"
 
-# Create a minimal discover config and some source files
+# Create a minimal discover config and some source files.
+# Track README.md via firstline_md so meta.discovered_from is non-empty --
+# the ADR 0017 stale model gates on source file diffs (intersected with
+# meta.discovered_from), so the fixture must actually track a file for
+# test 3's "source change -> stale=true" assertion to be meaningful.
 cat > "${ROOT}/.weld/discover.yaml" <<'YAML'
-sources: []
+sources:
+  - strategy: firstline_md
+    glob: "README.md"
+    kind: command
+    type: readme
 topology:
   nodes: []
   edges: []

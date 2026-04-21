@@ -50,12 +50,27 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
     p_an.add_argument("--label", default="", help="Human-readable label")
     p_an.add_argument("--props", default="{}", help="JSON properties")
     p_an.add_argument("--merge", action="store_true", help="Deep-merge props into existing node")
-    p_ae = sub.add_parser("add-edge", help="Add an edge")
+    p_ae = sub.add_parser(
+        "add-edge",
+        help=(
+            "Add an edge. Use --props for provenance, e.g. --props "
+            "'{\"source\":\"llm\"}'. (Replaces 0.3.0 --source/--relation "
+            "flags.)"
+        ),
+    )
     p_ae.add_argument("from_id", help="Source node ID")
     p_ae.add_argument("to_id", help="Target node ID")
     p_ae.add_argument("--type", required=True, dest="edge_type",
                        choices=sorted(VALID_EDGE_TYPES), help="Edge type")
-    p_ae.add_argument("--props", default="{}", help="JSON properties")
+    p_ae.add_argument(
+        "--props",
+        default="{}",
+        help=(
+            "JSON properties, e.g. '{\"source\":\"llm\","
+            "\"confidence\":\"inferred\"}'. Use props.source to record "
+            "provenance for tool-generated edges."
+        ),
+    )
     p_rn = sub.add_parser("rm-node", help="Remove a node and its edges")
     p_rn.add_argument("id", help="Node ID")
     p_re = sub.add_parser("rm-edge", help="Remove edge(s)")
@@ -68,6 +83,12 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
                          default=None, help="Filter by type")
     p_find = sub.add_parser("find", help="Search file index by keyword")
     p_find.add_argument("term", help="Search term (substring match)")
+    p_find.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum number of file entries to return (default 20, mirrors wd query)",
+    )
     p_callers = sub.add_parser(
         "callers", help="Direct (and optionally transitive) callers of a symbol"
     )
@@ -79,6 +100,13 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
     )
     p_refs.add_argument("name", help="Bare symbol name, e.g. _load_strategy")
     sub.add_parser("stale", help="Check if graph is stale vs current HEAD")
+    sub.add_parser(
+        "touch",
+        help=(
+            "Stamp meta.git_sha=HEAD + meta.updated_at=now without "
+            "mutating nodes/edges (use after enrichment-only commits)."
+        ),
+    )
     sub.add_parser("dump", help="Full graph JSON")
     sub.add_parser("stats", help="Summary counts")
     p_imp = sub.add_parser("import", help="Import/merge from file")
@@ -113,7 +141,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
     if cmd == "find":
         from weld.file_index import find_files, load_file_index
         index = load_file_index(args.root)
-        _out(find_files(index, args.term))
+        _out(find_files(index, args.term, limit=args.limit))
     elif cmd == "query":
         _out(g.query(args.term, args.limit))
     elif cmd == "context":
@@ -157,6 +185,12 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
         _out(g.list_nodes(args.type_filter))
     elif cmd == "stale":
         _out(g.stale())
+    elif cmd == "touch":
+        g.save(touch_git_sha=True)
+        _out({
+            "git_sha": g.dump().get("meta", {}).get("git_sha"),
+            "updated_at": g.dump().get("meta", {}).get("updated_at"),
+        })
     elif cmd == "dump":
         _out(g.dump())
     elif cmd == "stats":
@@ -186,4 +220,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
         if errs:
             sys.exit(1)
     if mutates:
-        g.save()
+        # Mutating CLI paths implicitly advance meta.git_sha to HEAD so
+        # enrichment-only commits do not trigger [stale] false positives
+        # (ADR 0017). Outside a git repo this is a silent no-op.
+        g.save(touch_git_sha=True)

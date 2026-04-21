@@ -69,3 +69,51 @@ def commits_behind(root: Path, old_sha: str, new_sha: str) -> int:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError, ValueError):
         pass
     return -1
+
+
+def source_files_changed_since(
+    root: Path, graph_sha: str, tracked: list[str]
+) -> list[str]:
+    """Return files changed between *graph_sha* and HEAD that fall under
+    any path in *tracked* (ADR 0017).
+
+    *tracked* is a list of directory prefixes or file paths (as stored
+    in ``meta.discovered_from``). Directory prefixes may end in ``/``
+    or be bare names; both forms match descendants. The root prefix
+    ``"./"`` / ``"."`` is treated as "any path" (strategies that scan
+    from the repo root record their ``discovered_from`` that way). An
+    empty *tracked* yields an empty result -- nothing can be intersected.
+
+    Returns ``[]`` when the diff cannot be computed (git missing, SHA
+    unreachable, force-push): callers must treat that as "unknown" and
+    fall back to other staleness signals.
+    """
+    if not tracked:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{graph_sha}..HEAD"],
+            capture_output=True, text=True, cwd=str(root), timeout=10,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    out: list[str] = []
+    for path in result.stdout.splitlines():
+        if not path:
+            continue
+        for prefix in tracked:
+            if not isinstance(prefix, str) or not prefix:
+                continue
+            # Repo-root marker "./" or "." means every file is tracked.
+            if (
+                prefix in (".", "./")
+                or (prefix.endswith("/") and path.startswith(prefix))
+                or path == prefix
+                or path.startswith(prefix.rstrip("/") + "/")
+            ):
+                out.append(path)
+                break
+    return out

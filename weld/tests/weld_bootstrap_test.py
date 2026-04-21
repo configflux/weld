@@ -31,6 +31,20 @@ class BootstrapClaudeTest(unittest.TestCase):
             self.assertTrue(readme.is_file())
             self.assertGreater(len(readme.read_text(encoding="utf-8").strip()), 50)
 
+    def test_bootstrapped_readme_has_no_placeholder_tokens(self) -> None:
+        """Regression: the bootstrapped .weld/README.md must not contain
+        placeholder organization names or token markers. The template is
+        copied verbatim (no substitution), so any placeholder in the template
+        leaks directly to end users.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("claude", root, force=True)
+            readme = root / ".weld" / "README.md"
+            content = readme.read_text(encoding="utf-8")
+            self.assertNotIn("your-org", content)
+            self.assertNotIn("<placeholder>", content)
+
     def test_creates_claude_command(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

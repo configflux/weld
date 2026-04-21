@@ -262,6 +262,35 @@ class FederatedGraphCliTest(unittest.TestCase):
         self.assertEqual(cross_edge["from_display"], "repo-a::file:src/a-bridge.py")
         self.assertEqual(cross_edge["to_display"], "repo-b::file:src/b-mid.py")
 
+    def test_context_free_form_string_surfaces_resolved_from_envelope(self) -> None:
+        """bd-gv1 follow-up: exercise the CLI end-to-end for the free-form
+        query fallback. A term that is not an exact node id must resolve
+        through query() and return the matched node's context plus a
+        ``resolved_from`` envelope identifying the query, matched id, and
+        score. Unit-level coverage lives in weld_context_fallback_test.py;
+        this guards the CLI seam end-to-end."""
+        root = self._make_workspace()
+
+        payload = _run_graph_cli(root, "context", "bridge")
+
+        self.assertNotIn("error", payload)
+        self.assertIn("resolved_from", payload)
+        resolved = payload["resolved_from"]
+        self.assertEqual(resolved["query"], "bridge")
+        self.assertEqual(
+            resolved["matched_id"],
+            prefix_node_id("repo-a", "file:src/a-bridge.py"),
+        )
+        self.assertIn("score", resolved)
+        # The envelope rides alongside a fully-resolved context payload, so
+        # the node + neighbors from the matched id must be present.
+        self.assertEqual(
+            payload["node"]["id"],
+            prefix_node_id("repo-a", "file:src/a-bridge.py"),
+        )
+        neighbor_ids = {neighbor["id"] for neighbor in payload["neighbors"]}
+        self.assertIn(prefix_node_id("repo-a", "file:src/a-start.py"), neighbor_ids)
+
     def test_path_matrix(self) -> None:
         root = self._make_workspace()
 

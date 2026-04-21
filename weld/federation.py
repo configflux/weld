@@ -23,6 +23,7 @@ from weld.federation_support import (
     split_prefixed_id,
 )
 from weld.graph import CHILD_SCHEMA_VERSION, Graph, SchemaVersionError
+from weld.graph_context import context_with_fallback as _context_with_fallback
 from weld.workspace import ChildEntry, UNIT_SEPARATOR
 from weld.workspace_state import load_workspace_config
 
@@ -94,16 +95,12 @@ class FederatedGraph:
                     return self._query_payload(term, matches)
         return self._query_payload(term, matches)
 
-    def context(self, node_id: str) -> dict:
-        """Return the 1-hop neighborhood for a root or prefixed child node."""
-        canonical_id = self._canonicalize_node_id(node_id)
+    def _exact_context(self, canonical_id: str) -> dict | None:
         node = self.get_node(canonical_id)
         if node is None:
-            return {"error": f"node not found: {canonical_id}"}
-
+            return None
         neighbors: dict[str, dict] = {}
         edges: dict[str, dict] = {}
-
         parts = split_prefixed_id(canonical_id)
         if parts is not None:
             child_name, local_id = parts
@@ -116,7 +113,6 @@ class FederatedGraph:
                 for edge in child_context.get("edges", []):
                     prefixed_edge = self._prefix_edge(child_name, edge)
                     edges.setdefault(edge_key(prefixed_edge), prefixed_edge)
-
         for edge in self._root_edges_for(canonical_id):
             other_id = edge["to"] if edge["from"] == canonical_id else edge["from"]
             other = self.get_node(other_id)
@@ -125,13 +121,26 @@ class FederatedGraph:
             neighbors.setdefault(other["id"], other)
             decorated = self._decorate_edge(edge)
             edges.setdefault(edge_key(decorated), decorated)
-
         neighbors.pop(canonical_id, None)
         return {
             "node": node,
             "neighbors": [neighbors[nid] for nid in sorted(neighbors)],
             "edges": sorted_edges(edges.values()),
         }
+
+    def context(self, node_id: str, *, fallback: bool = True) -> dict:
+        """1-hop neighborhood. Prefixed child ids short-circuit and skip fallback."""
+        canonical_id = self._canonicalize_node_id(node_id)
+        # Prefixed-child ids must never go through query fallback; force off.
+        effective_fallback = fallback and split_prefixed_id(canonical_id) is None
+        return _context_with_fallback(
+            raw_node_id=node_id, error_node_id=canonical_id,
+            fallback=effective_fallback,
+            exact_fn=lambda: self._exact_context(canonical_id),
+            query_fn=self.query,
+            recurse_fn=lambda nid: self.context(nid, fallback=False),
+            match_tokens_fn=Graph._match_tokens,
+        )
 
     def path(self, from_id: str, to_id: str) -> dict:
         """Return the shortest path across child graphs and root cross edges."""

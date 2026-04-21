@@ -64,7 +64,9 @@ def build_tools(
             name="weld_find",
             description=(
                 "Substring search over the .weld/file-index.json file keyword "
-                "index. Returns ranked file hits with matching tokens."
+                "index. Returns ranked file hits with matching tokens and an "
+                "integer score (= number of matching tokens, same signal used "
+                "for ordering)."
             ),
             input_schema={
                 "type": "object",

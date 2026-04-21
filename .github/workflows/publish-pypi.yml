@@ -27,10 +27,6 @@ on:
   push:
     tags:
       - "v*.*.*"
-  # workflow_dispatch intentionally omitted: environment "pypi" is
-  # configured to allow only v*.*.* tag refs. Manual dispatch from main
-  # would be rejected by env protection and reported as startup_failure,
-  # which is confusing. Use an explicit tag push to trigger this workflow.
 
 permissions:
   contents: read
@@ -51,10 +47,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -86,10 +82,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 

@@ -153,11 +153,27 @@ def _agent_surfaces(root: Path) -> dict[str, dict[str, bool]]:
     }
 
 # Which surfaces count as "framework-specific" for the zero-surface suppression
-# rule. ``mcp`` for copilot is shared infrastructure (lives at repo root) and
-# on its own does not indicate copilot setup.
+# rule (the listing gate in _framework_is_listed). ``mcp`` for copilot is
+# shared root infrastructure (``.mcp.json`` lives at repo root) and on its own
+# does not indicate copilot setup, so copilot is listed only when a
+# skill/instruction exists.
 _FRAMEWORK_SPECIFIC_SURFACES: dict[str, tuple[str, ...]] = {
     "copilot": ("skill", "instruction"),
     "codex": ("skill",),
+    "claude": ("command",),
+}
+
+# Which surfaces the bootstrap next-step hint checks for completeness. This
+# must exclude surfaces that are *shared* across frameworks (copilot's
+# ``.mcp.json`` lives at repo root and is wired up by any one of
+# copilot/claude), while still including per-framework MCP config that lives
+# *inside* the framework's own tree (codex ``.codex/config.toml``).
+# A missing shared surface should not, by itself, produce a
+# ``-> wd bootstrap <fw>`` hint -- the matrix row still surfaces its
+# absence for visibility.
+_FRAMEWORK_COMPLETENESS_SURFACES: dict[str, tuple[str, ...]] = {
+    "copilot": ("skill", "instruction"),
+    "codex": ("skill", "mcp"),
     "claude": ("command",),
 }
 
@@ -179,9 +195,12 @@ def _framework_line(fw: str, surfaces: dict[str, bool]) -> str:
         for name in _SURFACE_ORDER[fw]
     ]
     row = ", ".join(pairs)
-    # Partial setup when a listed framework has any ``no`` on its configured
-    # surfaces. Complete setup suppresses the bootstrap hint.
-    missing = [s for s in _SURFACE_ORDER[fw] if not surfaces.get(s, False)]
+    # The bootstrap hint fires only when a surface the framework is expected
+    # to own is missing. Shared root infrastructure (e.g. ``.mcp.json``) is
+    # reported in the matrix row above for visibility but does not trigger
+    # a bootstrap suggestion on its own -- see
+    # _FRAMEWORK_COMPLETENESS_SURFACES.
+    missing = [s for s in _FRAMEWORK_COMPLETENESS_SURFACES[fw] if not surfaces.get(s, False)]
     prefix = f"            {fw + ':':9s}{row}"
     if missing:
         return f"{prefix}  -> wd bootstrap {fw}"
@@ -207,7 +226,11 @@ def _check_agent_integration(root: Path) -> tuple[list[str], list[str]]:
     steps: list[str] = []
     for fw in listed:
         lines.append(_framework_line(fw, all_surfaces[fw]))
-        missing = [s for s in _SURFACE_ORDER[fw] if not all_surfaces[fw].get(s, False)]
+        # Consistency with _framework_line: only completeness surfaces drive
+        # the bootstrap next-step hint. Shared root infra like ``.mcp.json``
+        # appears in the matrix row but does not imply copilot/claude is
+        # incomplete -- see _FRAMEWORK_COMPLETENESS_SURFACES.
+        missing = [s for s in _FRAMEWORK_COMPLETENESS_SURFACES[fw] if not all_surfaces[fw].get(s, False)]
         if missing:
             steps.append(f"wd bootstrap {fw}")
     return lines, steps

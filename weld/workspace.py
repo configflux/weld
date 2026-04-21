@@ -35,6 +35,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from weld._gitignore_scan import load_root_gitignore_dirs
 from weld._yaml import parse_yaml
 
 __all__ = [
@@ -429,15 +430,13 @@ def _normalised_exclude_paths(
     """Split user-provided exclude_paths into directory names vs absolute paths.
 
     A bare name like ``vendor`` is applied to any directory of that name; a
-    path with separators like ``apps/scratch`` is resolved against ``root`` and
-    treated as an exact directory match.
+    path with separators like ``apps/scratch`` is resolved against ``root``.
+    Dirs declared in ``root/.gitignore`` are folded in too (bd-5038-rkt).
     """
-    if exclude_paths is None:
-        raw = list(DEFAULT_EXCLUDE_PATHS)
-    else:
-        raw = list(exclude_paths) + list(DEFAULT_EXCLUDE_PATHS)
+    defaults = list(DEFAULT_EXCLUDE_PATHS)
+    raw = defaults if exclude_paths is None else list(exclude_paths) + defaults
     names: set[str] = set()
-    absolute: set[Path] = set()
+    absolute: set[Path] = set(load_root_gitignore_dirs(root))
     for item in raw:
         s = str(item).strip().replace("\\", "/")
         if not s:

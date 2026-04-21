@@ -122,7 +122,7 @@ sh_test(
     local = True,
     tags = ["no-sandbox"],
 )
-
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:contract", "//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_stale_source_test", "weld_touch_test")]
 sh_test(
     name = "weld_strategy_unit_test",
     srcs = ["weld_strategy_unit_test.sh"],
@@ -152,10 +152,10 @@ py_test(
     tags = ["no-sandbox"],
 )
 py_test(name = "weld_workspace_state_test", srcs = ["weld_workspace_state_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"]) for _n in ("weld_federation_test", "weld_federation_cache_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"]) for _n in ("weld_federation_test", "weld_federation_cache_test", "weld_context_fallback_test")]
 py_test(name = "weld_init_workspace_test", srcs = ["weld_init_workspace_test.py"], deps = ["//weld:runtime", "//weld:yaml"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_root_discovery_test", srcs = ["weld_root_discovery_test.py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"])
-py_test(name = "discover_recurse_test", srcs = ["discover_recurse_test.py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"]) for _n in ("discover_recurse_test", "weld_workspace_bootstrap_test")]
 py_test(name = "weld_root_write_safety_test", srcs = ["weld_root_write_safety_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_cross_repo_base_test", srcs = ["weld_cross_repo_base_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_cross_repo_incremental_test", srcs = ["weld_cross_repo_incremental_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
@@ -286,7 +286,7 @@ py_test(
     local = True,
     tags = ["no-sandbox"],
 )
-
+py_test(name = "weld_edge_types_test", srcs = ["weld_edge_types_test.py"], deps = ["//weld:contract", "//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(
     name = "weld_contract_ros2_test",
     srcs = ["weld_contract_ros2_test.py"],
@@ -797,8 +797,7 @@ py_test(name = "weld_determinism_walk_order_test", srcs = ["weld_determinism_wal
 py_test(name = "weld_determinism_frozenset_order_test", srcs = ["weld_determinism_frozenset_order_test.py"], deps = ["//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_determinism_hash_randomization_test", srcs = ["weld_determinism_hash_randomization_test.py"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_determinism_subprocess_locale_test", srcs = ["weld_determinism_subprocess_locale_test.py"], deps = ["//weld:git"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_file_index_determinism_test", srcs = ["weld_file_index_determinism_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_build_file_index_determinism_test", srcs = ["weld_build_file_index_determinism_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_file_index_determinism_test", "weld_build_file_index_determinism_test", "weld_find_limit_test")]
 # ``meta.schema_version`` bump + ``repo`` node type acceptance (ADR 0011 §11, ADR 0012 §4).
 py_test(name = "weld_schema_version_test", srcs = ["weld_schema_version_test.py"], deps = ["//weld:contract", "//weld:runtime"], local = True, tags = ["no-sandbox"])
 # Local mirror of install-test.yml CI assertions.

@@ -1,6 +1,6 @@
 # .weld/ — Connected Structure Working Directory
 
-This directory is managed by the [`weld` toolkit](https://github.com/your-org/weld).
+This directory is managed by the [`weld` toolkit](https://github.com/configflux/weld).
 It contains the discovery configuration, built graph, and optional project-local
 extensions for the repository's connected structure.
 

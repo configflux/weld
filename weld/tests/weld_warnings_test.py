@@ -42,23 +42,27 @@ def _make_graph(
 # -- Freshness tests ---------------------------------------------------------
 
 class FreshnessTest(unittest.TestCase):
-    """check_freshness emits [stale] warnings when the graph is outdated."""
+    """check_freshness emits [stale] for source drift and [advisory]
+    for SHA-only drift (ADR 0017)."""
 
     def test_fresh_graph_no_warnings(self) -> None:
         g = _make_graph({})
         with patch.object(
-            g, "stale", return_value={"stale": False, "commits_behind": 0}
+            g, "stale",
+            return_value={
+                "stale": False, "source_stale": False, "sha_behind": False,
+                "commits_behind": 0, "graph_sha": "abc",
+            },
         ):
             self.assertEqual(check_freshness(g), [])
 
-    def test_stale_graph_with_commits_behind(self) -> None:
+    def test_source_stale_commits_behind_emits_stale(self) -> None:
         g = _make_graph({})
         with patch.object(
             g, "stale",
             return_value={
-                "stale": True,
-                "commits_behind": 5,
-                "graph_sha": "old",
+                "stale": True, "source_stale": True, "sha_behind": True,
+                "commits_behind": 5, "graph_sha": "old",
             },
         ):
             warnings = check_freshness(g)
@@ -71,32 +75,67 @@ class FreshnessTest(unittest.TestCase):
         with patch.object(
             g, "stale",
             return_value={
-                "stale": True,
-                "commits_behind": -1,
-                "graph_sha": None,
+                "stale": True, "source_stale": True, "sha_behind": False,
+                "commits_behind": -1, "graph_sha": None,
             },
         ):
             warnings = check_freshness(g)
             self.assertEqual(len(warnings), 1)
+            self.assertTrue(warnings[0].startswith("[stale]"))
             self.assertIn("no recorded git_sha", warnings[0])
 
-    def test_stale_force_push(self) -> None:
+    def test_stale_force_push_emits_stale(self) -> None:
         g = _make_graph({})
         with patch.object(
             g, "stale",
             return_value={
-                "stale": True,
-                "commits_behind": -1,
-                "graph_sha": "old",
+                "stale": True, "source_stale": True, "sha_behind": True,
+                "commits_behind": -1, "graph_sha": "old",
             },
         ):
             warnings = check_freshness(g)
             self.assertEqual(len(warnings), 1)
+            self.assertTrue(warnings[0].startswith("[stale]"))
             self.assertIn("force-push", warnings[0])
 
     def test_stale_exception_returns_empty(self) -> None:
         g = _make_graph({})
         with patch.object(g, "stale", side_effect=RuntimeError("boom")):
+            self.assertEqual(check_freshness(g), [])
+
+    def test_sha_only_drift_emits_advisory_not_stale(self) -> None:
+        """When source files are unchanged but HEAD moved past graph_sha
+        the warning tier drops to [advisory] and does NOT recommend
+        `wd discover`. This is the enrichment-commit case."""
+        g = _make_graph({})
+        with patch.object(
+            g, "stale",
+            return_value={
+                "stale": False, "source_stale": False, "sha_behind": True,
+                "commits_behind": 2, "graph_sha": "old",
+            },
+        ):
+            warnings = check_freshness(g)
+            self.assertEqual(len(warnings), 1)
+            w = warnings[0]
+            self.assertTrue(w.startswith("[advisory]"),
+                f"expected [advisory] prefix, got {w!r}")
+            self.assertNotIn("wd discover >", w,
+                "[advisory] must not recommend re-running wd discover")
+            self.assertIn("wd touch", w,
+                "[advisory] must point to the wd touch escape hatch")
+            self.assertIn("2 commit(s)", w)
+
+    def test_source_fresh_no_sha_drift_no_warning(self) -> None:
+        """source_stale=False and sha_behind=False => silent."""
+        g = _make_graph({})
+        with patch.object(
+            g, "stale",
+            return_value={
+                "stale": False, "source_stale": False, "sha_behind": False,
+                "commits_behind": 0, "graph_sha": "abc",
+            },
+        ):
             self.assertEqual(check_freshness(g), [])
 
 # -- Partial coverage tests --------------------------------------------------

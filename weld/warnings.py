@@ -9,8 +9,10 @@ linked).
 Warning strings follow a stable prefix convention so consuming agents
 can pattern-match on severity without parsing free text:
 
-  - ``[stale]``   -- graph freshness problem
-  - ``[partial]`` -- interaction coverage gap
+  - ``[stale]``    -- graph freshness problem; discovery required
+  - ``[advisory]`` -- graph SHA drift only; enrichment preserved, no
+                      discovery required (ADR 0017)
+  - ``[partial]``  -- interaction coverage gap
 
 """
 
@@ -21,11 +23,23 @@ from typing import Any
 # -- Staleness detection -----------------------------------------------------
 
 def check_freshness(graph: Any) -> list[str]:
-    """Return warnings if the graph is stale relative to HEAD.
+    """Return freshness warnings for *graph* (ADR 0017).
 
-    Uses ``graph.stale()`` which compares the graph's ``git_sha`` against
-    the current HEAD. Returns an empty list when the graph is fresh or
-    when staleness cannot be determined (not a git repo).
+    Two severity tiers:
+
+    - ``[stale]``: emitted when ``source_stale`` is True (any tracked
+      source file changed between ``graph_sha`` and HEAD), when
+      ``graph_sha`` is missing, or when history is unreachable
+      (force-push). Recommends ``wd discover`` -- correctness requires
+      a rebuild.
+    - ``[advisory]``: emitted when ``sha_behind`` is True but
+      ``source_stale`` is False. HEAD moved past ``graph_sha`` but
+      every tracked source file is unchanged. Enrichment is preserved;
+      rebuilding would destroy it. Recommends ``wd touch`` to advance
+      the pointer.
+
+    Returns ``[]`` when the graph is fresh or freshness cannot be
+    determined (not a git repo, ``stale()`` raised).
     """
     warnings: list[str] = []
     try:
@@ -34,34 +48,45 @@ def check_freshness(graph: Any) -> list[str]:
         # If stale() fails (e.g. git not available), skip silently.
         return warnings
 
-    if not stale_info.get("stale", False):
-        return warnings
-
+    # Back-compat: callers on pre-ADR-0017 graph.stale() payloads have
+    # only `stale`, so fall back to it when `source_stale` is absent.
+    source_stale = stale_info.get("source_stale", stale_info.get("stale", False))
+    sha_behind = stale_info.get("sha_behind", False)
     behind = stale_info.get("commits_behind", -1)
     graph_sha = stale_info.get("graph_sha")
 
-    if graph_sha is None:
+    if source_stale:
+        if graph_sha is None:
+            warnings.append(
+                "[stale] Graph has no recorded git_sha; "
+                "run `wd discover > .weld/graph.json` to rebuild."
+            )
+        elif behind == -1:
+            warnings.append(
+                "[stale] Graph SHA not reachable from HEAD "
+                "(possible force-push); interaction data may be outdated. "
+                "Run `wd discover > .weld/graph.json` to rebuild."
+            )
+        elif behind > 0:
+            warnings.append(
+                f"[stale] Graph is {behind} commit(s) behind HEAD and "
+                f"tracked source files changed; "
+                f"interaction data may be outdated. "
+                f"Run `wd discover > .weld/graph.json` to rebuild."
+            )
+        else:
+            # source_stale=True with behind==0 -- e.g. mtime fallback.
+            warnings.append(
+                "[stale] Tracked source files changed since last "
+                "discovery; run `wd discover > .weld/graph.json` to "
+                "rebuild."
+            )
+    elif sha_behind:
+        count = behind if isinstance(behind, int) and behind > 0 else 1
         warnings.append(
-            "[stale] Graph has no recorded git_sha; "
-            "run `wd discover > .weld/graph.json` to rebuild."
-        )
-    elif behind > 0:
-        warnings.append(
-            f"[stale] Graph is {behind} commit(s) behind HEAD; "
-            f"interaction data may be outdated. "
-            f"Run `wd discover > .weld/graph.json` to rebuild."
-        )
-    elif behind == -1:
-        warnings.append(
-            "[stale] Graph SHA not reachable from HEAD "
-            "(possible force-push); interaction data may be outdated. "
-            "Run `wd discover > .weld/graph.json` to rebuild."
-        )
-    else:
-        # behind == 0 but stale is True -- shouldn't happen, but be safe.
-        warnings.append(
-            "[stale] Graph may be outdated; "
-            "run `wd discover > .weld/graph.json` to rebuild."
+            f"[advisory] Graph SHA is {count} commit(s) behind HEAD; "
+            f"enrichment is preserved. Run `wd touch` to advance the "
+            f"SHA, or `wd discover` only if sources changed."
         )
 
     return warnings
