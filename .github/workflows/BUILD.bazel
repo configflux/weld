@@ -3,4 +3,5 @@ exports_files([
     "install-test.yml",
     "public-surface.yml",
     "publish-pypi.yml",
+    "release-notes.yml",
 ])

@@ -55,7 +55,7 @@ SOURCES := $(wildcard *.py)
 DISCOVER_CONFIG := .weld/discover.yaml
 
 .weld/graph.json: $(SOURCES) $(DISCOVER_CONFIG)
-	wd discover > .weld/graph.json
+	wd discover --output .weld/graph.json
 ```
 
 When any `.py` file or the discovery config changes, Make re-runs
@@ -105,7 +105,7 @@ genrule(
 
 ```just
 discover:
-    wd discover > .weld/graph.json
+    wd discover --output .weld/graph.json
 
 build: discover
     python -m build
@@ -115,7 +115,7 @@ build: discover
 
 ```yaml
 - name: Refresh connected structure
-  run: wd discover > .weld/graph.json
+  run: wd discover --output .weld/graph.json
 
 - name: Check graph freshness
   run: wd stale

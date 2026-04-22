@@ -37,6 +37,7 @@ template matrix.
 from __future__ import annotations
 
 import argparse
+import difflib
 import sys
 from pathlib import Path
 
@@ -121,32 +122,16 @@ def _cli_variant(template_name: str) -> str:
     )
 
 
-def _write_template(
-    template_name: str,
-    dest: Path,
-    *,
-    force: bool = False,
-    cwd: Path | None = None,
-    append: str | None = None,
-) -> bool:
-    """Copy a bundled template to *dest*, optionally appending content.
+def _render_template(template_name: str, *, append: str | None = None) -> str:
+    """Return the bundled template's rendered content with optional appendix.
 
-    When *append* is provided, its text is appended to the rendered template
-    after ensuring a single blank-line separator. This is how bootstrap
-    injects the federation paragraph into topology-dependent markdown files
-    without maintaining a federation.* template matrix.
-
-    Returns True if the file was written, False if skipped.
+    Centralises the "template + optional federation paragraph" shape so the
+    same content can be written, diffed, or compared against an existing
+    file without divergence.
     """
     src = _templates_dir() / template_name
     if not src.is_file():
         raise FileNotFoundError(f"missing bundled template: {src}")
-
-    if dest.exists() and not force:
-        display = _display_path(dest, cwd=cwd)
-        print(f"{display} already exists, skipping.")
-        return False
-
     content = src.read_text(encoding="utf-8")
     if append:
         # Ensure exactly one blank line between template body and appendix
@@ -157,11 +142,65 @@ def _write_template(
         if not content.endswith("\n\n"):
             content += "\n"
         content += append.lstrip("\n")
+    return content
+
+
+def _process_template(
+    template_name: str,
+    dest: Path,
+    *,
+    force: bool,
+    diff: bool,
+    cwd: Path | None,
+    append: str | None,
+) -> bool:
+    """Render template, then write/diff/compare against *dest*.
+
+    Returns True when a diff was detected (i.e. *dest* either does not
+    exist, or exists with different content) during a ``diff`` pass. In
+    write mode (``diff=False``) the return value is unused.
+    """
+    rendered = _render_template(template_name, append=append)
+    display = _display_path(dest, cwd=cwd)
+
+    if diff:
+        existing = (
+            dest.read_text(encoding="utf-8") if dest.is_file() else ""
+        )
+        if existing == rendered:
+            return False
+        diff_text = "".join(
+            difflib.unified_diff(
+                existing.splitlines(keepends=True),
+                rendered.splitlines(keepends=True),
+                fromfile=f"{display} (on disk)",
+                tofile=f"{display} (template)",
+            )
+        )
+        if diff_text:
+            print(diff_text, end="" if diff_text.endswith("\n") else "\n")
+        else:
+            # Fallback for edge cases difflib emits empty output on
+            # (e.g. empty vs empty, which we already returned False for).
+            print(f"{display} differs from the current template.")
+        return True
+
+    if dest.exists() and not force:
+        existing = dest.read_text(encoding="utf-8")
+        if existing == rendered:
+            print(f"{display} is up-to-date, skipping.")
+        else:
+            print(
+                f"{display} differs from the current template. "
+                f"Run `wd bootstrap <framework> --diff` to inspect or "
+                f"`--force` to update."
+            )
+        return False
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(content, encoding="utf-8")
-    print(f"Wrote {_display_path(dest, cwd=cwd)}")
-    return True
+    dest.write_text(rendered, encoding="utf-8")
+    print(f"Wrote {display}")
+    return False
 
 
 def _display_path(path: Path, *, cwd: Path | None = None) -> str:
@@ -180,8 +219,9 @@ def bootstrap(
     no_mcp: bool = False,
     no_enrich: bool = False,
     cli_only: bool = False,
-) -> None:
-    """Write onboarding assets for *framework* into *root*.
+    diff: bool = False,
+) -> int:
+    """Write (or diff) onboarding assets for *framework* into *root*.
 
     Parameters
     ----------
@@ -199,6 +239,14 @@ def bootstrap(
         manual-enrichment guidance to its ``.cli.md`` variant.
     cli_only:
         Convenience alias for ``no_mcp=True, no_enrich=True``.
+    diff:
+        When True, print unified diffs for every template whose on-disk
+        copy differs from the bundled version and return the count of
+        differing files. Nothing is written in diff mode; opt-out and
+        federation behaviour are still honoured for the comparison target.
+
+    Returns the number of files with diffs when ``diff=True`` (0 when all
+    targeted assets match the bundled templates); always 0 in write mode.
     """
     if framework not in _FRAMEWORKS:
         raise ValueError(
@@ -226,13 +274,18 @@ def bootstrap(
     # federation.* template variants).
     federation_mode = find_workspaces_yaml(root) is not None
 
+    diff_count = 0
+
+    def _run(template_name: str, dest: Path, append: str | None) -> None:
+        nonlocal diff_count
+        if _process_template(
+            template_name, dest,
+            force=force, diff=diff, cwd=root, append=append,
+        ):
+            diff_count += 1
+
     # 1. Write .weld/README.md (no variant swap -- README content is stable).
-    _write_template(
-        _README_TEMPLATE,
-        root / ".weld" / "README.md",
-        force=force,
-        cwd=root,
-    )
+    _run(_README_TEMPLATE, root / ".weld" / "README.md", None)
 
     # 2. Framework-specific markdown assets (skill / instructions / command).
     for template_name, rel_dest in _FRAMEWORKS[framework]:
@@ -245,27 +298,20 @@ def bootstrap(
             and effective_name in _TOPOLOGY_DEPENDENT_TEMPLATES
             else None
         )
-        _write_template(
-            effective_name,
-            root / rel_dest,
-            force=force,
-            cwd=root,
-            append=append,
-        )
+        _run(effective_name, root / rel_dest, append)
 
     # 3. MCP config files -- written only when MCP is enabled. MCP config is
     # topology-agnostic (it configures servers, not discovery shape), so no
     # federation paragraph is appended here.
     if not no_mcp:
         for template_name, rel_dest in _MCP_PAIRS.get(framework, ()):
-            _write_template(
-                template_name,
-                root / rel_dest,
-                force=force,
-                cwd=root,
-            )
+            _run(template_name, root / rel_dest, None)
 
-    # 4. Bootstrap discover.yaml if missing
+    # 4. Bootstrap discover.yaml if missing. ``discover.yaml`` is generated
+    # content, not a template copy, so it stays outside the diff/force
+    # surface -- existing files keep the silent-skip behaviour.
+    if diff:
+        return diff_count
     discover_path = root / ".weld" / "discover.yaml"
     if discover_path.is_file():
         print("discover.yaml already exists, skipping.")
@@ -273,6 +319,7 @@ def bootstrap(
         from weld.init import init as init_bootstrap
 
         init_bootstrap(root, discover_path)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -301,6 +348,14 @@ def main(argv: list[str] | None = None) -> None:
             help="Overwrite existing files",
         )
         fw_parser.add_argument(
+            "--diff", action="store_true",
+            help=(
+                "Print unified diffs between bundled templates and the "
+                "on-disk copies without writing; exits 1 when any diffs "
+                "are found, 0 otherwise."
+            ),
+        )
+        fw_parser.add_argument(
             "--no-mcp", action="store_true", dest="no_mcp",
             help=(
                 "Do not write MCP configuration, and strip MCP mentions "
@@ -319,17 +374,22 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     try:
-        bootstrap(
+        diff_count = bootstrap(
             args.framework,
             args.root,
             force=args.force,
             no_mcp=args.no_mcp,
             no_enrich=args.no_enrich,
             cli_only=args.cli_only,
+            diff=args.diff,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"[weld] error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+
+    if args.diff:
+        # --diff exits with 1 when any target differs, 0 otherwise.
+        raise SystemExit(1 if diff_count else 0)
 
 
 if __name__ == "__main__":

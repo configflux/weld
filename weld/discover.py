@@ -168,6 +168,7 @@ def discover(
     incremental: bool | None = None,
     write_root_graph: bool = False,
     recurse: bool = False,
+    output: Path | None = None,
 ) -> dict:
     """Walk the codebase and build a connected structure from config.
 
@@ -179,6 +180,15 @@ def discover(
     meta-graph is written to ``.weld/graph.json`` atomically inside
     the lock before the ledger, so the ledger never points at a graph
     this run failed to commit (ADR 0011 section 8).
+
+    When *output* is provided (ADR 0019), the final canonical graph is
+    written to that path atomically via
+    :func:`weld.workspace_state.atomic_write_text`. For federated roots
+    *output* takes precedence over *write_root_graph* and the meta-graph
+    goes to *output* instead of ``.weld/graph.json``; the write still
+    happens inside the workspace lock. For single-repo roots *output*
+    is handled by the caller (:func:`main`) so this function keeps its
+    pure "build and return graph" shape for single-repo callers.
     """
     workspace_config = load_workspace_config(root)
     if workspace_config is None:
@@ -190,7 +200,11 @@ def discover(
             recurse_children(root, workspace_config, state, incremental=incremental)
             state = build_workspace_state(root, workspace_config)
         graph = build_root_meta_graph(root, workspace_config, state)
-        if write_root_graph:
+        if output is not None:
+            from weld.workspace_state import atomic_write_text
+
+            atomic_write_text(output, _dumps_graph(graph))
+        elif write_root_graph:
             from weld.workspace_state import atomic_write_text
 
             atomic_write_text(
@@ -220,19 +234,38 @@ def main(argv: list[str] | None = None) -> int:
         "--recurse", action="store_true", default=False,
         help="Cascade discovery into each present child before building the root meta-graph.",
     )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Atomically write canonical graph JSON to this path "
+             "(parent directories are created). When set, stdout is "
+             "empty; human status still goes to stderr. (ADR 0019)",
+    )
     args = parser.parse_args(argv)
 
     inc = False if args.full else (True if args.incremental else None)
+    output_path = Path(args.output) if args.output else None
+    root_path = Path(args.root)
+    is_federated = load_workspace_config(root_path) is not None
     try:
         result = discover(
-            Path(args.root),
+            root_path,
             incremental=inc,
             write_root_graph=args.write_root_graph,
             recurse=args.recurse,
+            # Federated roots write inside the workspace lock; single-repo
+            # roots write here via the same atomic helper.
+            output=output_path if is_federated else None,
         )
     except (WorkspaceConfigError, WorkspaceLockedError) as exc:
         print(f"[weld] error: {exc}", file=sys.stderr)
         return 2
+    if output_path is not None:
+        if not is_federated:
+            from weld.workspace_state import atomic_write_text
+
+            atomic_write_text(output_path, _dumps_graph(result))
+        return 0
     sys.stdout.write(_dumps_graph(result))
     return 0
 

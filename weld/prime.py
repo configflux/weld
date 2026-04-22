@@ -8,8 +8,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+# Known frameworks the agent matrix can cover. Order here is the stable display
+# order used when rendering the matrix.
+_KNOWN_FRAMEWORKS: tuple[str, ...] = ("copilot", "codex", "claude")
+
+# Accepted --agent values. "auto" inspects the environment to guess the active
+# agent, "all" forces every known framework into the matrix, and a framework
+# name forces just that framework.
+_AGENT_CHOICES: tuple[str, ...] = ("auto", "all", *_KNOWN_FRAMEWORKS)
 
 def _status(tag: str, msg: str) -> str:
     return f"  [{tag:6s}] {msg}"
@@ -50,7 +60,7 @@ def _check_graph_json(weld_dir: Path, root: Path) -> tuple[list[str], list[str]]
     steps: list[str] = []
     path = weld_dir / "graph.json"
     if not path.is_file():
-        line, cmd = _action("graph.json not found", "wd discover > .weld/graph.json")
+        line, cmd = _action("graph.json not found", "wd discover --output .weld/graph.json")
         lines.append(line)
         steps.append(cmd)
         return lines, steps
@@ -59,7 +69,7 @@ def _check_graph_json(weld_dir: Path, root: Path) -> tuple[list[str], list[str]]
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         lines.append(_status("ACTION", "graph.json is invalid or unreadable"))
-        steps.append("wd discover > .weld/graph.json")
+        steps.append("wd discover --output .weld/graph.json")
         return lines, steps
 
     # Staleness check
@@ -91,31 +101,57 @@ def _check_graph_json(weld_dir: Path, root: Path) -> tuple[list[str], list[str]]
     return lines, steps
 
 def _check_staleness(data: dict, root: Path) -> tuple[list[str], list[str]]:
-    from weld._git import commits_behind, get_git_sha, is_git_repo
+    """Report graph freshness using the ADR 0017 source-file model.
+
+    The primary signal is ``source_stale`` -- did any tracked source file
+    change between ``meta.git_sha`` and HEAD. Only that signal produces a
+    ``wd discover`` action, because only that state requires a rebuild.
+
+    SHA-only drift (``sha_behind=True`` with ``source_stale=False``) is
+    reported as an advisory with no next-step action: rerunning discovery
+    on a SHA-only-drift graph destroys curated descriptions and
+    enrichment. ``wd touch`` is the non-destructive way to advance the
+    pointer but it is an informational hint, not a required action.
+    """
+    from weld._git import is_git_repo
+    from weld._staleness import compute_stale_info
 
     if not is_git_repo(root):
         return [_status("INFO", "Not a git repo — staleness check skipped")], []
 
-    current_sha = get_git_sha(root)
-    graph_sha = (data.get("meta") or {}).get("git_sha")
+    info = compute_stale_info(root / ".weld" / "graph.json", data.get("meta") or {})
+    source_stale = info.get("source_stale", False)
+    sha_behind = info.get("sha_behind", False)
+    behind = info.get("commits_behind", -1)
+    graph_sha = info.get("graph_sha")
 
-    if graph_sha is None:
-        line, cmd = _action(
-            "graph.json has no git SHA — may be stale",
-            "wd discover > .weld/graph.json",
-        )
+    if source_stale:
+        if graph_sha is None:
+            msg = "graph.json has no git SHA — may be stale"
+        elif behind == -1:
+            msg = "graph.json SHA not reachable from HEAD (possible force-push)"
+        elif behind > 0:
+            msg = (
+                f"graph.json is {behind} commit{'s' if behind != 1 else ''} "
+                f"behind HEAD and tracked source files changed"
+            )
+        else:
+            msg = "tracked source files changed since last discovery"
+        line, cmd = _action(msg, "wd discover --output .weld/graph.json")
         return [line], [cmd]
 
-    if graph_sha == current_sha:
-        return [], []
+    if sha_behind:
+        count = behind if isinstance(behind, int) and behind > 0 else 1
+        # Advisory: enrichment is preserved; no discovery required. Do NOT
+        # add a step -- rebuilding would destroy curated descriptions.
+        return [_status(
+            "INFO",
+            f"graph.json SHA is {count} commit{'s' if count != 1 else ''} "
+            f"behind HEAD, but tracked sources are unchanged — enrichment "
+            f"preserved (run `wd touch` to advance the pointer)",
+        )], []
 
-    behind = commits_behind(root, graph_sha, current_sha) if current_sha else -1
-    if behind > 0:
-        msg = f"graph.json is {behind} commit{'s' if behind != 1 else ''} behind HEAD"
-    else:
-        msg = "graph.json is behind HEAD"
-    line, cmd = _action(msg, "wd discover > .weld/graph.json")
-    return [line], [cmd]
+    return [], []
 
 def _check_file_index(weld_dir: Path) -> tuple[list[str], list[str]]:
     lines: list[str] = []
@@ -206,7 +242,42 @@ def _framework_line(fw: str, surfaces: dict[str, bool]) -> str:
         return f"{prefix}  -> wd bootstrap {fw}"
     return prefix
 
-def _check_agent_integration(root: Path) -> tuple[list[str], list[str]]:
+def _detect_active_agent_from_env(env: dict[str, str] | None = None) -> str | None:
+    """Guess the active agent from well-known environment variables.
+
+    Currently we only surface Codex this way because it is the case bd-5038
+    targets (a Codex user not seeing Codex in the matrix). Any ``CODEX_*`` env
+    var is treated as a signal that Codex is the active agent. Returns the
+    framework name or ``None`` when no signal is present.
+    """
+    source = env if env is not None else os.environ
+    for key in source:
+        if key.startswith("CODEX_"):
+            return "codex"
+    return None
+
+def _resolve_forced_frameworks(active_agent: str | None) -> tuple[str, ...]:
+    """Translate a caller-supplied agent selector into forced-listed frameworks.
+
+    - ``None`` or ``"auto"``: inspect the environment for a signal.
+    - ``"all"``: force all known frameworks.
+    - a specific framework name: force just that framework.
+
+    Unknown values yield an empty tuple -- argparse is the gate that rejects
+    bad values at the CLI boundary.
+    """
+    if active_agent is None or active_agent == "auto":
+        detected = _detect_active_agent_from_env()
+        return (detected,) if detected else ()
+    if active_agent == "all":
+        return _KNOWN_FRAMEWORKS
+    if active_agent in _KNOWN_FRAMEWORKS:
+        return (active_agent,)
+    return ()
+
+def _check_agent_integration(
+    root: Path, active_agent: str | None = None,
+) -> tuple[list[str], list[str]]:
     """Report a per-framework matrix of agent surfaces.
 
     When no framework has any surface, emit a single generic hint. Otherwise
@@ -214,10 +285,18 @@ def _check_agent_integration(root: Path) -> tuple[list[str], list[str]]:
     (skill/command/instruction -- MCP alone does not count), with one
     ``surface yes|no`` per column and a ``-> wd bootstrap <fw>`` next step
     when the setup is partial.
+
+    ``active_agent`` forces additional frameworks into the matrix even when
+    they have zero surfaces -- so a Codex user running ``wd prime`` sees
+    ``codex: skill no, mcp no -> wd bootstrap codex`` instead of silence.
     """
     all_surfaces = _agent_surfaces(root)
-    listed = [fw for fw in ("copilot", "codex", "claude")
-              if _framework_is_listed(fw, all_surfaces[fw])]
+    forced = _resolve_forced_frameworks(active_agent)
+
+    listed = [
+        fw for fw in _KNOWN_FRAMEWORKS
+        if _framework_is_listed(fw, all_surfaces[fw]) or fw in forced
+    ]
 
     if not listed:
         return [_status("INFO", "No agent integration found — run: wd bootstrap claude  (or: copilot, codex)")], []
@@ -235,8 +314,14 @@ def _check_agent_integration(root: Path) -> tuple[list[str], list[str]]:
             steps.append(f"wd bootstrap {fw}")
     return lines, steps
 
-def prime(root: Path) -> str:
-    """Run all checks and return the formatted status report."""
+def prime(root: Path, active_agent: str | None = None) -> str:
+    """Run all checks and return the formatted status report.
+
+    ``active_agent`` selects which frameworks are forced into the agent-surface
+    matrix even when they have zero surfaces on disk. ``None`` (default) and
+    ``"auto"`` inspect the environment; ``"all"`` forces every known framework;
+    a framework name forces just that one. See _resolve_forced_frameworks.
+    """
     weld_dir = root / ".weld"
 
     if not weld_dir.is_dir():
@@ -245,7 +330,7 @@ def prime(root: Path) -> str:
             "\n"
             "Get started:\n"
             "  1. wd init                       # bootstrap .weld/discover.yaml\n"
-            "  2. wd discover > .weld/graph.json   # build the graph\n"
+            "  2. wd discover --output .weld/graph.json   # build the graph\n"
             "  3. wd build-index                 # build the keyword index\n"
             "  4. wd bootstrap claude             # or: wd bootstrap codex\n"
             "  5. wd prime                        # confirm everything is set up\n"
@@ -258,7 +343,7 @@ def prime(root: Path) -> str:
         lambda: _check_discover_yaml(weld_dir),
         lambda: _check_graph_json(weld_dir, root),
         lambda: _check_file_index(weld_dir),
-        lambda: _check_agent_integration(root),
+        lambda: _check_agent_integration(root, active_agent=active_agent),
     ):
         lines, steps = check()
         all_lines.extend(lines)
@@ -283,9 +368,18 @@ def main(argv: list[str] | None = None) -> None:
         "--root", type=Path, default=Path("."),
         help="Project root directory (default: current directory)",
     )
+    parser.add_argument(
+        "--agent", choices=_AGENT_CHOICES, default="auto",
+        help=(
+            "Force a framework into the agent-surface matrix even if no "
+            "surfaces are configured. 'auto' (default) infers from "
+            "environment variables (e.g. CODEX_*), 'all' shows every known "
+            "framework, or specify 'claude', 'codex', or 'copilot'."
+        ),
+    )
     args = parser.parse_args(argv)
     root = args.root.resolve()
-    output = prime(root)
+    output = prime(root, active_agent=args.agent)
     sys.stdout.write(output)
 
 if __name__ == "__main__":

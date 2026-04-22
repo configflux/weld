@@ -21,7 +21,7 @@ wd prime
 Re-run discovery and refresh the graph:
 
 ```bash
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 wd build-index
 wd stats
 ```
@@ -107,7 +107,7 @@ wd add-node "<node-id>" --type "<node-type>" --label "<label>" --merge --props '
 Manual inferred edges must use explicit provenance such as
 `{"source": "manual"}` and only be added after verifying the relationship from
 source content. Manual enrichment writes `.weld/graph.json` directly and can be
-overwritten by a later `wd discover > .weld/graph.json`, so validate afterward:
+overwritten by a later `wd discover --output .weld/graph.json`, so validate afterward:
 
 ```bash
 wd validate

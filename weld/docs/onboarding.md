@@ -106,7 +106,7 @@ When in doubt, prefer an honest manual edge over a clever but opaque heuristic.
 After tuning discovery, regenerate artifacts and inspect them directly:
 
 ```bash
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 wd build-index
 wd query "<term>"
 wd find "<term>"

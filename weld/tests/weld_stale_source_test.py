@@ -223,5 +223,114 @@ class GraphStaleBackcompatKeysTest(unittest.TestCase):
             self.assertIn(key, r, f"missing key {key} in stale() output")
 
 
+class GraphOnlyCommitDriftTest(unittest.TestCase):
+    """Graph-only commits must not leave the graph in a stale-after-commit
+    loop (bd-p1a.6).
+
+    Workflow:
+      1. Run discovery -> meta.git_sha stamped to HEAD_A.
+      2. Optionally `wd touch` to re-stamp -> still HEAD_A on disk.
+      3. Commit just .weld/graph.json -> HEAD advances to HEAD_B while
+         meta.git_sha on disk still points at HEAD_A.
+      4. `wd stale` must report source_stale=False AND sha_behind=False
+         so that `wd prime` emits no graph next-step action. Otherwise
+         the advisory nudges the user to `wd touch` again, which stamps
+         the new HEAD, which then requires another commit, which bumps
+         HEAD again -- an infinite touch/commit/touch loop.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.mkdtemp()
+        self.root = Path(self._tmp)
+        _git_init(self.root)
+        (self.root / "src").mkdir()
+        (self.root / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+        _commit_all(self.root, "initial")
+        self._sha0 = get_git_sha(self.root)
+        assert self._sha0 is not None
+
+    def tearDown(self) -> None:
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _stale(self) -> dict:
+        g = Graph(self.root)
+        g.load()
+        return g.stale()
+
+    def _commit_graph_only(self, msg: str) -> None:
+        _run(["git", "add", ".weld/graph.json"], self.root)
+        _run(["git", "commit", "-m", msg, "--quiet"], self.root)
+
+    def test_graph_only_commit_does_not_mark_sha_behind(self) -> None:
+        """Committing ONLY .weld/graph.json must collapse the SHA drift.
+
+        Without the fix, after the commit:
+          - source_stale=False (src/ unchanged) [already OK]
+          - sha_behind=True    [this triggers the [advisory] / touch loop]
+
+        With the fix, sha_behind must also be False because the only
+        commits between graph_sha and HEAD touched nothing but the
+        graph JSON -- the graph is effectively fresh.
+        """
+        _write_graph(self.root, git_sha=self._sha0, discovered_from=["src/"])
+        # Commit the graph file. HEAD advances; graph_sha stays at sha0.
+        self._commit_graph_only("commit graph")
+        r = self._stale()
+        self.assertFalse(r["source_stale"], f"source_stale must be False: {r}")
+        self.assertFalse(r["stale"], f"stale must be False: {r}")
+        self.assertFalse(
+            r["sha_behind"],
+            f"graph-only drift must not set sha_behind: {r}",
+        )
+
+    def test_graph_only_commit_preserves_backcompat_keys(self) -> None:
+        _write_graph(self.root, git_sha=self._sha0, discovered_from=["src/"])
+        self._commit_graph_only("commit graph")
+        r = self._stale()
+        for key in (
+            "stale", "source_stale", "sha_behind",
+            "graph_sha", "current_sha", "commits_behind",
+        ):
+            self.assertIn(key, r, f"missing key {key}")
+        # graph_sha is still the original recorded value; HEAD moved.
+        self.assertEqual(r["graph_sha"], self._sha0)
+        self.assertNotEqual(r["current_sha"], self._sha0)
+
+    def test_graph_only_then_source_change_is_stale(self) -> None:
+        """A graph-only commit followed by a real source change must still
+        flip source_stale (and sha_behind) to True -- the graph-only
+        pass-through must not mask real drift."""
+        _write_graph(self.root, git_sha=self._sha0, discovered_from=["src/"])
+        self._commit_graph_only("commit graph")
+        # Now change a tracked source and commit that too.
+        (self.root / "src" / "a.py").write_text("x = 2\n", encoding="utf-8")
+        _commit_all(self.root, "src change")
+        r = self._stale()
+        self.assertTrue(
+            r["source_stale"],
+            f"source change must still be detected across graph-only drift: {r}",
+        )
+        self.assertTrue(r["sha_behind"])
+
+    def test_graph_only_mixed_with_other_commit_keeps_sha_behind(self) -> None:
+        """If ANY commit in the drift touched something other than the
+        graph file, SHA drift must still be reported (the existing
+        [advisory] path still applies)."""
+        _write_graph(self.root, git_sha=self._sha0, discovered_from=["src/"])
+        self._commit_graph_only("commit graph")
+        # README is untracked by discover so source_stale stays False,
+        # but sha_behind must remain True because a non-graph commit
+        # happened.
+        (self.root / "README.md").write_text("hi\n", encoding="utf-8")
+        _commit_all(self.root, "readme")
+        r = self._stale()
+        self.assertFalse(r["source_stale"])
+        self.assertTrue(
+            r["sha_behind"],
+            f"non-graph-only drift must still set sha_behind: {r}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

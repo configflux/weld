@@ -98,7 +98,12 @@ class BootstrapOverwriteTest(unittest.TestCase):
             with patch("sys.stdout", output):
                 bootstrap("claude", root, force=False)
             self.assertEqual(readme.read_text(encoding="utf-8"), "sentinel")
-            self.assertIn("already exists", output.getvalue())
+            # File differs from the bundled template, so bootstrap must now
+            # surface the --diff / --force upgrade path instead of a silent
+            # "already exists" message.
+            self.assertIn("differs", output.getvalue())
+            self.assertIn("--diff", output.getvalue())
+            self.assertIn("--force", output.getvalue())
 
     def test_force_overwrites(self) -> None:
         with tempfile.TemporaryDirectory() as td:

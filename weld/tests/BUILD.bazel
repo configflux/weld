@@ -67,7 +67,7 @@ sh_test(
     local = True,
     tags = ["no-sandbox"],
 )
-
+sh_test(name = "weld_cli_sigpipe_test", srcs = ["weld_cli_sigpipe_test.sh"], data = ["weld_test_lib.sh", "//weld:module_entrypoint"], local = True, tags = ["no-sandbox"])
 sh_test(
     name = "weld_file_index_test",
     srcs = ["weld_file_index_test.sh"],
@@ -155,7 +155,7 @@ py_test(name = "weld_workspace_state_test", srcs = ["weld_workspace_state_test.p
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"]) for _n in ("weld_federation_test", "weld_federation_cache_test", "weld_context_fallback_test")]
 py_test(name = "weld_init_workspace_test", srcs = ["weld_init_workspace_test.py"], deps = ["//weld:runtime", "//weld:yaml"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_root_discovery_test", srcs = ["weld_root_discovery_test.py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"])
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"]) for _n in ("discover_recurse_test", "weld_workspace_bootstrap_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"]) for _n in ("discover_recurse_test", "weld_workspace_bootstrap_test", "weld_discover_output_test")]
 py_test(name = "weld_root_write_safety_test", srcs = ["weld_root_write_safety_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_cross_repo_base_test", srcs = ["weld_cross_repo_base_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_cross_repo_incremental_test", srcs = ["weld_cross_repo_incremental_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
@@ -725,9 +725,8 @@ py_test(
     tags = ["no-sandbox"],
 )
 
-py_test(name = "weld_prime_test", srcs = ["weld_prime_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_doctor_test", srcs = ["weld_doctor_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-[py_test(name = _n, srcs = [_n + ".py"], data = ["//weld/templates"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_bootstrap_test", "weld_bootstrap_optout_test", "weld_bootstrap_federation_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_prime_test", "weld_prime_active_agent_test", "weld_prime_freshness_test", "weld_doctor_test")]
+[py_test(name = _n, srcs = [_n + ".py"], data = ["//weld/templates"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_bootstrap_test", "weld_bootstrap_optout_test", "weld_bootstrap_federation_test", "weld_bootstrap_diff_test")]
 
 py_test(
     name = "weld_rust_extraction_test",

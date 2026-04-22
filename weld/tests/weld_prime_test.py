@@ -1,4 +1,10 @@
-"""Tests for the wd prime command."""
+"""Tests for the wd prime command.
+
+Covers the standard per-framework matrix rules: zero/one/many surfaces, shared
+vs framework-specific surface handling, and top-level CLI dispatch. Tests that
+exercise the ``--agent`` selector live in ``weld_prime_active_agent_test.py``
+so each file stays focused on one responsibility and within the 400-line cap.
+"""
 
 from __future__ import annotations
 

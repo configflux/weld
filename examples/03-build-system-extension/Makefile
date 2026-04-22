@@ -24,7 +24,7 @@ build:
 
 # Re-run discovery only when sources or config change.
 $(GRAPH): $(SOURCES) $(DISCOVER_CFG)
-	wd discover > $(GRAPH)
+	wd discover --output $(GRAPH)
 	@echo "discover: wrote $(GRAPH)"
 
 discover: $(GRAPH)

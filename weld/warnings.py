@@ -59,26 +59,26 @@ def check_freshness(graph: Any) -> list[str]:
         if graph_sha is None:
             warnings.append(
                 "[stale] Graph has no recorded git_sha; "
-                "run `wd discover > .weld/graph.json` to rebuild."
+                "run `wd discover --output .weld/graph.json` to rebuild."
             )
         elif behind == -1:
             warnings.append(
                 "[stale] Graph SHA not reachable from HEAD "
                 "(possible force-push); interaction data may be outdated. "
-                "Run `wd discover > .weld/graph.json` to rebuild."
+                "Run `wd discover --output .weld/graph.json` to rebuild."
             )
         elif behind > 0:
             warnings.append(
                 f"[stale] Graph is {behind} commit(s) behind HEAD and "
                 f"tracked source files changed; "
                 f"interaction data may be outdated. "
-                f"Run `wd discover > .weld/graph.json` to rebuild."
+                f"Run `wd discover --output .weld/graph.json` to rebuild."
             )
         else:
             # source_stale=True with behind==0 -- e.g. mtime fallback.
             warnings.append(
                 "[stale] Tracked source files changed since last "
-                "discovery; run `wd discover > .weld/graph.json` to "
+                "discovery; run `wd discover --output .weld/graph.json` to "
                 "rebuild."
             )
     elif sha_behind:

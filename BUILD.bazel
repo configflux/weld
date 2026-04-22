@@ -4,5 +4,6 @@ exports_files([
     ".bazelrc",
     ".bazelversion",
     ".gitignore",
+    "CHANGELOG.md",
     "VERSION",
 ])

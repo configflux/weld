@@ -87,7 +87,7 @@ def validate_meta(meta: dict) -> list[ValidationError]:
         errors.append(ValidationError(
             "meta", "version",
             f"unsupported graph schema version {meta['version']}; "
-            f"expected {SCHEMA_VERSION}. Run `wd discover > "
+            f"expected {SCHEMA_VERSION}. Run `wd discover --output "
             f".weld/graph.json` to regenerate.",
         ))
     if "updated_at" not in meta:

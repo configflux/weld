@@ -9,7 +9,7 @@ extensions for the repository's connected structure.
 | File | Purpose | Rebuild command |
 |------|---------|-----------------|
 | `discover.yaml` | Declarative discovery config — defines which files, strategies, and topology feed the graph | `wd init` (bootstrap) or edit manually |
-| `graph.json` | Built connected structure (nodes, edges, metadata) | `wd discover > .weld/graph.json` |
+| `graph.json` | Built connected structure (nodes, edges, metadata) | `wd discover --output .weld/graph.json` |
 | `file-index.json` | Inverted keyword-to-file index for `wd find` | `wd build-index` |
 
 ## Optional directories
@@ -30,7 +30,7 @@ wd init              # first time — scans the project and writes discover.yaml
 # Then edit discover.yaml to tune sources, topology, and entity packages.
 
 # 3. Build the graph and index
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 wd build-index
 
 # 4. Query the graph

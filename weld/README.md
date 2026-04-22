@@ -71,7 +71,7 @@ automatically; for an existing workspace, the usual two-step flow works:
 ```bash
 cd path/to/ros2_workspace           # any checkout with src/<pkg>/package.xml
 wd init                             # writes .weld/discover.yaml with ros2_* entries
-wd discover > .weld/graph.json        # emits ros_package / ros_node / ros_topic / ... nodes
+wd discover --output .weld/graph.json        # emits ros_package / ros_node / ros_topic / ... nodes
 wd query "cmd_vel"                  # ask ROS2-shaped questions
 wd context ros_node:demo_pkg/talker # inspect a specific node's topology
 ```
@@ -171,10 +171,15 @@ If an agent or tool needs to install and bootstrap `weld`:
 pip install -e ./weld
 wd --help
 wd prime                      # check what needs to be done
+wd prime --agent codex        # force the Codex row even if only Claude is configured
 wd bootstrap claude           # if you're Claude Code
 wd bootstrap codex            # if you're Codex (.codex/config.toml + skill)
 wd bootstrap copilot          # if you're Copilot
 ```
+
+`wd prime --agent {auto,claude,codex,copilot,all}` lets the active agent
+surface itself in the matrix even when that framework has no files yet.
+`auto` (default) infers from environment variables such as `CODEX_*`.
 
 No external dependencies required (tree-sitter is optional).
 
@@ -210,7 +215,7 @@ Bazel tests use the Python 3.12 toolchain pinned in `MODULE.bazel`.
 3. Build or refresh discovery artifacts:
 
    ```bash
-   wd discover > .weld/graph.json
+   wd discover --output .weld/graph.json
    wd build-index
    ```
 

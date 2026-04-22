@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/configflux/weld/main/install.sh | s
 wd init
 
 # Run discovery and save the graph
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 
 # Query the graph
 wd query "authentication"
@@ -68,8 +68,23 @@ All three `wd bootstrap` frameworks accept opt-out flags:
 - `--no-enrich` — write the `.cli.md` variant that omits `wd enrich`.
 - `--cli-only` — shorthand for `--no-mcp --no-enrich`.
 
+To upgrade existing bootstrap files after pulling a new weld release, use
+the diff-aware upgrade path:
+
+- `wd bootstrap <framework> --diff` — print unified diffs between bundled
+  templates and your on-disk copies without writing. Exits 1 when any
+  file differs, 0 otherwise, so it composes with CI checks.
+- `wd bootstrap <framework> --force` — overwrite targeted files while
+  still honouring the opt-out (`--no-mcp`, `--no-enrich`, `--cli-only`)
+  and federation template behaviour.
+
 `wd prime` is idempotent and safe to re-run — it reports what is
-already configured and what is still missing.
+already configured and what is still missing. Pass
+`--agent {auto,claude,codex,copilot,all}` to force the active agent's row
+into the matrix even when that framework has no files yet (e.g. a Codex user
+in a Claude-only checkout sees `codex: skill no, mcp no -> wd bootstrap codex`
+instead of silence). `auto` is the default and infers the agent from
+environment variables such as `CODEX_*`.
 
 Trust note: run `wd discover` automatically only on repositories you trust.
 Project-local strategies are Python modules loaded at discovery time, and
@@ -114,7 +129,7 @@ wd stats
 ```
 
 Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
-a later `wd discover > .weld/graph.json`; refresh discovery before manual
+a later `wd discover --output .weld/graph.json`; refresh discovery before manual
 edits. Manual inferred edges should use explicit provenance such as
 `{"source": "manual"}` after the relationship is verified from source content.
 
@@ -274,7 +289,7 @@ cross_repo_strategies: [service_graph]
 
 ```bash
 cd ~/workspace-root
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 ```
 
 When `workspaces.yaml` is present, `wd discover` operates in federation
@@ -377,7 +392,7 @@ rm .weld/workspace-state.json
 | `wd viz` | Local read-only browser graph explorer |
 | `wd stale` | Check graph freshness |
 | `wd stats` | Graph statistics |
-| `wd prime` | Setup status + per-framework agent surface matrix (skill / instruction / mcp) with fix commands |
+| `wd prime` | Setup status + per-framework agent surface matrix (skill / instruction / mcp) with fix commands; `--agent {auto,claude,codex,copilot,all}` forces an agent row even when its framework files are absent |
 | `wd scaffold` | Write starter templates |
 | `wd bootstrap` | Agent onboarding files |
 | `wd brief` | Agent context briefing |

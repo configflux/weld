@@ -63,10 +63,11 @@ cd examples/01-python-fastapi
 wd discover
 ```
 
-The output is a JSON connected structure printed to stdout. Pipe it to a file
-to inspect the structure:
+The output is a JSON connected structure printed to stdout. Use `--output` to
+write it atomically to a file (recommended) or pipe stdout for quick
+inspection:
 
 ```bash
-wd discover > graph.json
+wd discover --output graph.json
 python -m json.tool graph.json
 ```

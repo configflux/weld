@@ -41,11 +41,11 @@ and a graph:
 ```bash
 cd services/api
 wd init
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 
 cd ../auth
 wd init
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 ```
 
 ## Step 2: Initialize the workspace root
@@ -109,7 +109,7 @@ to API endpoint definitions in another and emits `invokes` edges.
 
 ```bash
 cd ~/workspace-root
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 ```
 
 In federation mode, `wd discover`:

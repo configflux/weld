@@ -146,7 +146,7 @@ wd stale
 If the graph is stale (commits behind > 0), refresh before querying:
 
 ```bash
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 wd build-index
 ```
 
@@ -226,7 +226,7 @@ provenance such as `{"source": "manual"}` and only be added after verifying
 the relationship from source content.
 
 Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
-a later `wd discover > .weld/graph.json`. Refresh discovery before manual
+a later `wd discover --output .weld/graph.json`. Refresh discovery before manual
 edits, then validate after writing:
 
 ```bash

@@ -56,7 +56,7 @@ wd find "session"
 |---------|---------|
 | `wd prime` | Check setup status and get next-step guidance |
 | `wd stale` | Quick freshness check against git HEAD |
-| `wd discover > .weld/graph.json` | Rebuild the graph from source |
+| `wd discover --output .weld/graph.json` | Rebuild the graph from source |
 | `wd build-index` | Rebuild the keyword file index |
 | `wd init` | Bootstrap `.weld/discover.yaml` for a new project |
 | `wd stats` | Graph summary (node/edge counts, description coverage) |
@@ -105,7 +105,7 @@ provenance such as `{"source": "manual"}` and only be added after verifying
 the relationship from source content.
 
 Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
-a later `wd discover > .weld/graph.json`. Refresh discovery first, then
+a later `wd discover --output .weld/graph.json`. Refresh discovery first, then
 validate after manual edits:
 
 ```bash

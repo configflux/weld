@@ -10,6 +10,7 @@ from pathlib import Path
 
 from weld._git import (
     commits_behind as _commits_behind,
+    drift_is_graph_only,
     get_git_sha,
     is_git_repo,
     source_files_changed_since,
@@ -29,6 +30,13 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
 
     ``stale`` is aliased to ``source_stale`` for back-compat callers.
     Non-git roots keep the legacy ``stale=False`` + ``reason`` shape.
+
+    Graph-only commits (bd-p1a.6) are collapsed: when the only commits
+    between ``graph_sha`` and HEAD touched nothing but
+    ``.weld/graph.json``, ``sha_behind`` is reported False as well. The
+    graph is effectively fresh -- reporting drift in that state drives
+    users into a touch/commit/touch loop because ``wd touch`` re-stamps
+    HEAD, the user commits the graph, and HEAD advances again.
     """
     root = graph_path.parent.parent  # .weld/ -> project root
     if not is_git_repo(root):
@@ -53,6 +61,11 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
         source_stale = False
     else:
         source_stale = bool(source_files_changed_since(root, gsha, tracked))
+    # Collapse pure graph-only drift -- the graph tracks its inputs and
+    # no advisory is warranted. Only applies when sources are unchanged.
+    if sha_behind and not source_stale and gsha is not None:
+        if drift_is_graph_only(root, gsha):
+            sha_behind = False
     return {
         "stale": source_stale, "source_stale": source_stale,
         "sha_behind": sha_behind, "graph_sha": gsha,

@@ -21,7 +21,7 @@ wd prime
 Re-run discovery and refresh the graph:
 
 ```bash
-wd discover > .weld/graph.json
+wd discover --output .weld/graph.json
 wd build-index
 wd stats
 ```

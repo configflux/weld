@@ -2,7 +2,44 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import sys
+
+
+def _install_sigpipe_handler() -> None:
+    """Let downstream consumers (``head``, ``less``) close our stdout quietly.
+
+    By default CPython catches SIGPIPE, translates it to BrokenPipeError, and
+    prints a traceback on stderr when a write fails. Restoring the default
+    handler lets the OS terminate us as soon as we try to write into a
+    closed pipe, with no traceback. Best-effort: Windows has no SIGPIPE, and
+    some environments (e.g. embedded interpreters) may disallow signal
+    changes.
+    """
+    try:
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+def _suppress_broken_pipe_at_exit() -> None:
+    """Silence tracebacks when a BrokenPipeError escapes to Python's shutdown.
+
+    Even with SIG_DFL installed, buffered writes during interpreter shutdown
+    can surface a BrokenPipeError via ``sys.stderr.flush``. Redirect stdout
+    and stderr to ``os.devnull`` so shutdown-time flushes do not emit
+    tracebacks. Safe to call more than once.
+    """
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, sys.stdout.fileno())
+        os.dup2(devnull, sys.stderr.fileno())
+    except (OSError, ValueError):
+        pass
+    finally:
+        os.close(devnull)
+
 
 _HELP = """Usage: wd <command> [args]
 
@@ -86,6 +123,16 @@ def _run_export(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _install_sigpipe_handler()
+    try:
+        return _dispatch(argv)
+    except BrokenPipeError:
+        _suppress_broken_pipe_at_exit()
+        # 128 + SIGPIPE (13) is the conventional exit code for a pipe close.
+        return 141
+
+
+def _dispatch(argv: list[str] | None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"-h", "--help"}:
         print(_HELP)
