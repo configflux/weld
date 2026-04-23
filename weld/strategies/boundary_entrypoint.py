@@ -206,7 +206,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         return StrategyResult(nodes, edges, discovered_from)
 
     for py in matched:
-        if should_skip(py, excludes):
+        if should_skip(py, excludes, root=root):
             continue
         if py.name.startswith("_") and py.name != "__init__.py":
             continue

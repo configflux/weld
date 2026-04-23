@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.7.0 - 2026-04-23
+
+### Fixed
+
+- `wd discover` no longer overwrites `.weld/graph-previous.json` before
+  parsing the current graph. A corrupt `graph.json` now leaves the last
+  good recovery snapshot intact so `wd diff` and manual recovery keep
+  working.
+- Repo boundary checks evaluate excludes against the logical
+  (non-resolved) path first, so Bazel runfiles under `.cache/bazel/...`
+  that symlink back into the repo no longer leak into `discovered_from`
+  or graph nodes. `.cache` is now part of the always-excluded directory
+  set.
+- Recursive `glob:` patterns in `.weld/discover.yaml` no longer traverse
+  excluded subtrees. Discovery uses an `os.walk`-based iterator that
+  prunes `EXCLUDED_DIR_NAMES`, nested repo copies, and user `exclude`
+  directories before descent; symlinks are not followed.
+
+### Changed
+
+- `exclude:` patterns in `.weld/discover.yaml` now match against the
+  full repo-relative path, not just the filename. Segmented patterns
+  like `.cache/**`, `compiler/**`, and `**/*.gen.py` work as expected;
+  bare filename patterns (`README.md`, `*.pyc`) continue to match via
+  a basename fallback. Source-level `exclude` is applied uniformly in
+  `resolve_source_files`, so strategies no longer need to opt in for
+  excludes to take effect. See ADR 0020.
+
 ## v0.6.0 - 2026-04-22
 
 ### Added

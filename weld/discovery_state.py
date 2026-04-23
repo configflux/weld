@@ -232,24 +232,27 @@ def resolve_source_files(
 
     Returns repo-relative paths.  *filter_fn* is
     ``filter_glob_results`` from the strategies helpers module -- passed
-    in to avoid a circular import.
+    in to avoid a circular import. The source-level ``exclude`` list is
+    applied here so that every entry under ``.weld/discover.yaml`` honours
+    excludes uniformly, independent of whether the dispatched strategy
+    opts into its own per-file check.
     """
+    from weld.glob_match import matches_exclude, walk_glob
+
+    excludes = [p for p in (source.get("exclude") or []) if p]
     files: list[str] = []
 
     glob_pattern = source.get("glob")
     if glob_pattern:
-        if "**" in glob_pattern:
-            raw = sorted(root.glob(glob_pattern))
-        else:
-            parent = (root / glob_pattern).parent
-            if parent.is_dir():
-                raw = sorted(parent.glob(Path(glob_pattern).name))
-            else:
-                raw = []
-        files = [str(p.relative_to(root)) for p in filter_fn(root, raw)]
+        matched = walk_glob(root, glob_pattern, excludes=excludes)
+        files = [str(p.relative_to(root)) for p in matched]
 
     for f in source.get("files", []):
-        if (root / f).exists():
-            files.append(str((root / f).relative_to(root)))
+        if not (root / f).exists():
+            continue
+        rel = str((root / f).relative_to(root))
+        if excludes and matches_exclude(Path(rel).as_posix(), excludes):
+            continue
+        files.append(rel)
 
     return files

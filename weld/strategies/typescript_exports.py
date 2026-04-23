@@ -252,7 +252,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for ts_file in matched:
         if not ts_file.is_file():
             continue
-        if should_skip(ts_file, excludes):
+        if should_skip(ts_file, excludes, root=root):
             continue
         try:
             source_text = ts_file.read_text(encoding="utf-8")

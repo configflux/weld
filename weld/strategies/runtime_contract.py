@@ -167,7 +167,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for md_file in matched:
         if not md_file.is_file():
             continue
-        if should_skip(md_file, excludes):
+        if should_skip(md_file, excludes, root=root):
             continue
 
         try:

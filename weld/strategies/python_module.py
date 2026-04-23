@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld.strategies._helpers import StrategyResult, should_skip
 
 def _extract_imports(tree: ast.Module) -> list[str]:
     """Extract coarse-grained package references from imports.
@@ -26,28 +26,31 @@ def _extract_imports(tree: ast.Module) -> list[str]:
             packages.add(".".join(parts[:3]))
     return sorted(packages)
 
-def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
+def _resolve_glob(
+    root: Path,
+    pattern: str,
+    excludes: list[str] | None = None,
+) -> tuple[list[Path], list[str]]:
     """Resolve a glob pattern that may contain ``**``.
 
-    Returns ``(matched_files, discovered_from_dirs)``.
-    Results inside excluded or nested-repo-copy directories are filtered out.
+    Returns ``(matched_files, discovered_from_dirs)``. Uses the shared
+    prune-during-descent walker so excluded subtrees (``.cache/bazel``,
+    ``node_modules``, and user *excludes*) are never visited.
     """
+    from weld.glob_match import walk_glob
+
     files: list[Path] = []
     dirs: set[str] = set()
 
     if "**" in pattern:
-        # Recursive glob from root
-        raw = sorted(root.glob(pattern))
-        for py in filter_glob_results(root, raw):
+        for py in walk_glob(root, pattern, excludes=excludes):
             files.append(py)
             dirs.add(str(py.parent.relative_to(root)) + "/")
     else:
         parent = (root / pattern).parent
         if not parent.is_dir():
             return [], []
-        name_pat = Path(pattern).name
-        raw = sorted(parent.glob(name_pat))
-        for py in filter_glob_results(root, raw):
+        for py in walk_glob(root, pattern, excludes=excludes):
             files.append(py)
         dirs.add(str(parent.relative_to(root)) + "/")
 
@@ -97,7 +100,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     package_id = source.get("package", "")
     id_prefix = source.get("id_prefix", "")
 
-    matched, dirs = _resolve_glob(root, pattern)
+    matched, dirs = _resolve_glob(root, pattern, excludes)
     discovered_from.extend(dirs)
 
     if not matched:
@@ -106,7 +109,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for py in matched:
         if py.name.startswith("_") and py.name != "__init__.py":
             continue
-        if should_skip(py, excludes):
+        if should_skip(py, excludes, root=root):
             continue
         try:
             source_text = py.read_text(encoding="utf-8")

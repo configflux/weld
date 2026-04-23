@@ -24,6 +24,7 @@ EXCLUDED_DIR_NAMES: frozenset[str] = frozenset([
     "node_modules",
     "__pycache__",
     ".weld",
+    ".cache",
     "bazel-bin",
     "bazel-out",
     "bazel-testlogs",
@@ -187,30 +188,52 @@ def path_within_repo_boundary(
     *,
     fallback_excluded_dir_names: Collection[str] = (),
 ) -> bool:
-    """Return True when *path* is inside weld's repo-visible boundary."""
-    root = root.resolve()
+    """Return True when *path* is inside weld's repo-visible boundary.
+
+    Excludes are evaluated against the *logical* repo-relative path --
+    that is, the path as given, without following symlinks. A symlink
+    under an excluded tree (e.g. ``.cache/bazel/runfiles/foo.py``) is
+    rejected even when it points at a legitimate source file inside the
+    repo; otherwise Bazel runfiles leak back into discovery.
+    """
+    root_resolved = root.resolve()
+
+    abs_path = path if path.is_absolute() else (root / path)
     try:
-        rel = path.resolve().relative_to(root)
+        logical_rel = Path(
+            os.path.relpath(os.fspath(abs_path), os.fspath(root_resolved))
+        )
+    except ValueError:
+        return False
+    if logical_rel.parts and logical_rel.parts[0] == "..":
+        return False
+
+    is_dir = path.is_dir()
+    logical_parts = logical_rel.parts
+    if logical_parts and logical_rel != Path("."):
+        if _parts_excluded(
+            logical_parts, is_dir=is_dir, extra_excluded_dir_names=()
+        ):
+            return False
+
+    try:
+        rel = path.resolve().relative_to(root_resolved)
     except ValueError:
         return False
 
     if str(rel) == ".":
         return True
 
-    boundary = get_repo_boundary(root)
-    is_dir = path.is_dir()
+    boundary = get_repo_boundary(root_resolved)
 
-    if _parts_excluded(rel.parts, is_dir=is_dir, extra_excluded_dir_names=()):
-        return False
-
-    rel_str = rel.as_posix()
+    logical_rel_str = logical_rel.as_posix()
     if boundary.uses_git:
         if is_dir:
-            return rel_str in boundary.visible_dirs
-        return rel_str in (boundary.visible_files or frozenset())
+            return logical_rel_str in boundary.visible_dirs
+        return logical_rel_str in (boundary.visible_files or frozenset())
 
     if _parts_excluded(
-        rel.parts,
+        logical_parts,
         is_dir=is_dir,
         extra_excluded_dir_names=fallback_excluded_dir_names,
     ):

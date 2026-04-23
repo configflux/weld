@@ -36,6 +36,12 @@ py_library(
 )
 
 py_library(
+    name = "glob_match",
+    srcs = ["glob_match.py"],
+    deps = [":repo_boundary"],
+)
+
+py_library(
     name = "contract",
     srcs = [
         "_contract_validators.py",
@@ -130,6 +136,7 @@ py_library(
     deps = [
         ":contract",
         ":git",
+        ":glob_match",
         ":repo_boundary",
         ":yaml",
         "//weld/strategies",

@@ -322,7 +322,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for cmake in matched:
         if not cmake.is_file():
             continue
-        if should_skip(cmake, excludes):
+        if should_skip(cmake, excludes, root=root):
             continue
 
         rel = str(cmake.relative_to(root))

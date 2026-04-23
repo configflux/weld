@@ -3,7 +3,10 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "helpers",
     srcs = ["_helpers.py"],
-    deps = ["//weld:repo_boundary"],
+    deps = [
+        "//weld:glob_match",
+        "//weld:repo_boundary",
+    ],
 )
 
 py_library(
@@ -62,6 +65,7 @@ py_library(
     ],
     deps = [
         ":helpers",
+        "//weld:glob_match",
         "//weld:repo_boundary",
         "//weld:yaml",
     ],

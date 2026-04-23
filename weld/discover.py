@@ -65,12 +65,24 @@ def _discover_single_repo(root: Path, *, incremental: bool | None = None) -> dic
     config = parse_yaml(config_path.read_text(encoding="utf-8")) if config_path.exists() else {"sources": [], "topology": {}}
     sources = config.get("sources", [])
 
-    # Snapshot previous graph before overwriting (for `wd diff`)
-    graph_path_snap = root / ".weld" / "graph.json"
+    # Load the previous graph and snapshot it for `wd diff` -- but only after
+    # we've confirmed it parses. A corrupt graph.json must not overwrite the
+    # last known-good graph-previous.json.
+    graph_path = root / ".weld" / "graph.json"
     prev_path = root / ".weld" / "graph-previous.json"
-    if graph_path_snap.is_file():
+    existing_graph_bytes: bytes | None = None
+    existing_graph: dict | None = None
+    if graph_path.is_file():
         try:
-            prev_path.write_bytes(graph_path_snap.read_bytes())
+            existing_graph_bytes = graph_path.read_bytes()
+            existing_graph = json.loads(existing_graph_bytes.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            existing_graph_bytes = None
+            existing_graph = None
+
+    if existing_graph_bytes is not None:
+        try:
+            prev_path.write_bytes(existing_graph_bytes)
         except OSError:
             pass  # best-effort; diff will report "no previous"
 
@@ -83,9 +95,6 @@ def _discover_single_repo(root: Path, *, incremental: bool | None = None) -> dic
     if incremental is None:
         incremental = old_state is not None
 
-    graph_path = root / ".weld" / "graph.json"
-    existing_graph: dict | None = None
-
     if incremental:
         if old_state is None:
             print("[weld] notice: no discovery state file, running full discovery", file=sys.stderr)
@@ -93,12 +102,9 @@ def _discover_single_repo(root: Path, *, incremental: bool | None = None) -> dic
         elif not graph_path.is_file():
             print("[weld] notice: no graph.json found, running full discovery", file=sys.stderr)
             incremental = False
-        else:
-            try:
-                existing_graph = json.loads(graph_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                print("[weld] warning: corrupt graph.json, falling back to full discovery", file=sys.stderr)
-                incremental = False
+        elif existing_graph is None:
+            print("[weld] warning: corrupt graph.json, falling back to full discovery", file=sys.stderr)
+            incremental = False
 
     current_hashes = build_file_hashes(root, current_file_set)
     state_diff = diff_state(old_state, current_hashes) if incremental else StateDiff(added=set(current_hashes.keys()))

@@ -10,8 +10,9 @@ from __future__ import annotations
 import ast
 import fnmatch
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterable, NamedTuple
 
+from weld import glob_match as _glob_match
 from weld import repo_boundary as _repo_boundary
 
 EXCLUDED_DIR_NAMES = _repo_boundary.EXCLUDED_DIR_NAMES
@@ -19,6 +20,7 @@ EXCLUDED_NESTED_REPO_SEGMENTS = _repo_boundary.EXCLUDED_NESTED_REPO_SEGMENTS
 is_excluded_dir_name = _repo_boundary.is_excluded_dir_name
 is_nested_repo_copy = _repo_boundary.is_nested_repo_copy
 filter_repo_paths = _repo_boundary.filter_repo_paths
+matches_exclude = _glob_match.matches_exclude
 
 # ---------------------------------------------------------------------------
 # Shared exclusion policy — directories that must never appear in Weld discovery
@@ -26,13 +28,34 @@ filter_repo_paths = _repo_boundary.filter_repo_paths
 # ``weld.discover`` (via strategies) and ``weld.file_index`` import from here.
 # ---------------------------------------------------------------------------
 
-def filter_glob_results(root: Path, paths: list[Path]) -> list[Path]:
+def filter_glob_results(
+    root: Path,
+    paths: list[Path],
+    *,
+    excludes: Iterable[str] | None = None,
+) -> list[Path]:
     """Filter out paths that reside inside excluded or nested-repo-copy dirs.
 
-    Strategies that use ``root.glob()`` should pass results through this
-    function so that worktree copies (and other excluded trees) are dropped.
+    When *excludes* is provided, also drops paths matching any user exclude
+    pattern (see :func:`weld.repo_boundary.matches_exclude` for semantics).
     """
-    return filter_repo_paths(root, paths)
+    filtered = filter_repo_paths(root, paths)
+    if not excludes:
+        return filtered
+    pats = [p for p in excludes if p]
+    if not pats:
+        return filtered
+    kept: list[Path] = []
+    for path in filtered:
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            kept.append(path)
+            continue
+        if matches_exclude(rel, pats):
+            continue
+        kept.append(path)
+    return kept
 
 class StrategyResult(NamedTuple):
     """Return type for every strategy extract() function."""
@@ -141,8 +164,28 @@ def module_name(py_path: Path, domain_root: Path) -> str:
     """Derive module name from file path relative to domain root."""
     return py_path.stem
 
-def should_skip(path: Path, excludes: list[str]) -> bool:
-    """Check if path matches any exclude pattern."""
+def should_skip(
+    path: Path,
+    excludes: list[str],
+    *,
+    root: Path | None = None,
+) -> bool:
+    """Check if *path* matches any *excludes* pattern.
+
+    When *root* is provided, patterns match against the posix repo-relative
+    path so segmented patterns like ``.cache/**`` or ``compiler/**`` catch
+    files under those subtrees. Without *root*, falls back to basename-only
+    matching (legacy behaviour; kept for callers that haven't been
+    migrated).
+    """
+    if not excludes:
+        return False
+    if root is not None:
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        return matches_exclude(rel, excludes)
     for pattern in excludes:
         if fnmatch.fnmatch(path.name, pattern):
             return True

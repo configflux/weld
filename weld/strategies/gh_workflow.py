@@ -136,8 +136,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not parent.is_dir():
         return StrategyResult(nodes, edges, discovered_from)
 
-    for yml in filter_glob_results(root, sorted(parent.glob(Path(pattern).name))):
-        if should_skip(yml, excludes):
+    for yml in filter_glob_results(root, sorted(parent.glob(Path(pattern).name)), excludes=excludes):
+        if should_skip(yml, excludes, root=root):
             continue
 
         rel_path = str(yml.relative_to(root))

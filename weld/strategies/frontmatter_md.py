@@ -19,8 +19,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         return StrategyResult(nodes, edges, discovered_from)
     discovered_from.append(str(parent.relative_to(root)) + "/")
 
-    for md in filter_glob_results(root, sorted(parent.glob(Path(pattern).name))):
-        if should_skip(md, excludes):
+    for md in filter_glob_results(root, sorted(parent.glob(Path(pattern).name)), excludes=excludes):
+        if should_skip(md, excludes, root=root):
             continue
         rel_path = str(md.relative_to(root))
         try:

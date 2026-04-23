@@ -250,7 +250,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for fpath in matched:
         if not fpath.is_file():
             continue
-        if should_skip(fpath, excludes):
+        if should_skip(fpath, excludes, root=root):
             continue
         try:
             source_text = fpath.read_text(encoding="utf-8")

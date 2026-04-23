@@ -790,8 +790,7 @@ py_test(
 # Canonical serializer + determinism harness (ADR 0012 §3, §8) + T1a xfail audit reproductions.
 py_test(name = "weld_serializer_test", srcs = ["weld_serializer_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "discover_twice_identical_test", srcs = ["discover_twice_identical_test.py"], deps = ["//weld:runtime", "//weld/strategies", "//weld/strategies:helpers"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"])
-py_test(name = "discover_no_changes_does_not_mutate_loaded_graph_test", srcs = ["discover_no_changes_does_not_mutate_loaded_graph_test.py"], deps = ["//weld:runtime", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_determinism_dict_order_test", srcs = ["weld_determinism_dict_order_test.py"], deps = ["//weld:runtime", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"]) for _n in ("discover_no_changes_does_not_mutate_loaded_graph_test", "discover_corrupt_graph_preserves_previous_test", "weld_determinism_dict_order_test")]
 py_test(name = "weld_determinism_walk_order_test", srcs = ["weld_determinism_walk_order_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_determinism_frozenset_order_test", srcs = ["weld_determinism_frozenset_order_test.py"], deps = ["//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_determinism_hash_randomization_test", srcs = ["weld_determinism_hash_randomization_test.py"], local = True, tags = ["no-sandbox"])
