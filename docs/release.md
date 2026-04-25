@@ -21,7 +21,7 @@ Related tooling referenced below:
 - `tools/publish.sh` -- one-way sync + commit + tag pair creation
 - `tools/audit_publish.sh` -- pre-publish leak audit (writes evidence token)
 - `tools/release_smoke.sh` -- overlay install smoke (build wheel, install,
-  `wd --version`, `import weld`)
+  and run core CLI, Agent Graph, and MCP config commands)
 - `tools/setup_public_repo.sh` -- one-time clone of the public repo into
   `./public/`
 - `./local-task-gate` -- repo gate (lint + build + test, auto-scoped)
@@ -94,15 +94,15 @@ continuing. Do **not** skip to smoke testing while the gate is red.
 ## 3. Run the package install smoke test
 
 Stage the overlay the same way publish would, build an sdist + wheel from
-`weld/pyproject.toml`, install into a disposable venv, and run `wd --version`
-plus `import weld`.
+`weld/pyproject.toml`, install into a disposable venv, and run the installed
+CLI through a small end-to-end repo workflow.
 
 ```bash
 tools/release_smoke.sh
 ```
 
 **Verify:** exit 0 and the final log line reads
-`[smoke] All smoke checks passed.`
+`[smoke] Installed wheel workflow smoke passed.`
 
 Notes:
 
@@ -265,6 +265,10 @@ wd --version
 
 wd --help | head -5
 # Expected: subcommand help, no ImportError
+
+wd graph stats
+wd graph validate
+# Expected: both work after discovery in a smoke repo.
 ```
 
 Clean up when done:

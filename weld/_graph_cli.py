@@ -130,8 +130,8 @@ def ensure_graph_exists(root: Path, retry_cmd: str) -> None:
     sys.exit(1)
 
 
-def main(argv: list[str] | None = None) -> None:  # noqa: C901
-    parser = argparse.ArgumentParser(prog="wd", description="Connected structure CLI")
+def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C901
+    parser = argparse.ArgumentParser(prog=prog, description="Connected structure CLI")
     parser.add_argument("--root", type=Path, default=Path("."), help="Project root directory")
     sub = parser.add_subparsers(dest="command")
     p_query = sub.add_parser("query", help="Tokenized search (fields: id, label, props.file, props.exports, props.description)")

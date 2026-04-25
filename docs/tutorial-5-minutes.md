@@ -38,20 +38,35 @@ Everything below assumes `wd` is on your PATH.
 
 ## 1. Monorepo demo -- cross-package queries (2 minutes)
 
-The target is a realistic TypeScript monorepo with apps, packages, libs, a
-service, Docker runtime, CI, and ADRs. It ships at
-[`examples/04-monorepo-typescript`](../examples/04-monorepo-typescript).
+The target is a small TypeScript-flavored monorepo with apps, packages,
+libs, and a service. The frictionless path is to materialize it into a
+clean directory with the bundled bootstrap script:
 
 ```bash
-cd examples/04-monorepo-typescript
-wd init                       # one-time; this demo ships a pre-committed config
+scripts/create-monorepo-demo.sh /tmp/weld-monorepo-demo
+cd /tmp/weld-monorepo-demo
 wd discover --output .weld/graph.json
 wd build-index                # enables `wd find` substring search
 ```
 
-`wd init` scans the repo and writes `.weld/discover.yaml`. On a fresh
-repo it prints progress to stderr (skipped here because this demo ships
-a pre-committed config):
+The script lays down the source tree, writes `.weld/discover.yaml`, and
+seeds a single git commit so the demo is reproducible. If you have not
+configured a git identity (`user.name`/`user.email`), the script exits
+with a one-line message telling you which `git config` commands to run.
+
+If you only have Weld installed (no source checkout), `wd demo
+monorepo --init /tmp/weld-monorepo-demo` is an equivalent CLI
+entrypoint that calls into the same bundled bootstrap script. Run
+`wd demo list` to see all available demos.
+
+A fuller, in-tree variant ships at
+[`examples/04-monorepo-typescript`](../examples/04-monorepo-typescript)
+with Docker runtime, CI, and ADRs included; the queries below work
+against either layout.
+
+The bootstrap script writes `.weld/discover.yaml` for you, so `wd init`
+is not required. On any other repo, `wd init` scans the tree and emits
+a starter config:
 
 ```
 Scanning for files...
@@ -62,9 +77,11 @@ Wrote .weld/discover.yaml
 ```
 
 `wd discover` scans the tree per `.weld/discover.yaml` and writes a
-deterministic `graph.json`. On this demo it produces ~35 nodes covering
-packages, source files, Dockerfiles, docker-compose services, the CI
-workflow, architecture docs, and ADRs:
+deterministic `graph.json`. On the script-generated demo it produces
+roughly a dozen nodes covering packages, source files, and the
+workspace manifests; the in-tree variant produces ~35 nodes once
+Dockerfiles, docker-compose services, the CI workflow, architecture
+docs, and ADRs are included:
 
 ```
 [weld] notice: no graph.json found, running full discovery
@@ -157,21 +174,29 @@ and ADRs are first-class nodes in the same graph as the code.
 ## 2. Polyrepo demo -- cross-repo federation (2 minutes)
 
 The target is a three-child workspace stitched together by a
-`workspaces.yaml` registry. It ships at
-[`examples/05-polyrepo`](../examples/05-polyrepo) with two FastAPI
-services (`api`, `auth`) and a shared Pydantic library.
-
-Federation requires each child to be a git repo. The in-tree demo ships
-without child `.git/` directories; add them so federation sees the
-children:
+`workspaces.yaml` registry. The frictionless path materializes the
+workspace into a clean directory with each child already initialized
+as its own git repo and seeded with one commit -- the prerequisite for
+federation:
 
 ```bash
-cd ../05-polyrepo
-for child in services/api services/auth libs/shared-models; do
-  (cd "$child" && git init --quiet && git add -A && \
-     git commit --quiet -m "demo seed" 2>/dev/null || true)
-done
+scripts/create-polyrepo-demo.sh /tmp/weld-polyrepo-demo
+cd /tmp/weld-polyrepo-demo
 ```
+
+The script lays down two FastAPI services (`api`, `auth`) and a shared
+Pydantic library, writes per-child and root `.weld` configs, and runs
+`git init` plus a seed commit inside every child. As with the monorepo
+script, a missing git identity produces a one-line, actionable error.
+
+The CLI equivalent is `wd demo polyrepo --init /tmp/weld-polyrepo-demo`
+for installed-wheel users without a source checkout; both paths invoke
+the same bootstrap script.
+
+A fuller, in-tree variant ships at
+[`examples/05-polyrepo`](../examples/05-polyrepo). It does not pre-init
+the child `.git/` directories; if you start from there, run the same
+init-and-commit loop the script performs internally.
 
 Now discover each child and federate at the root:
 

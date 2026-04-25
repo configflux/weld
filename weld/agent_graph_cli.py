@@ -18,6 +18,7 @@ from weld.agent_graph_render import (
     print_explanation,
     print_impact,
 )
+from weld.agent_graph_render_cli import add_render_parser, run_render
 from weld.agent_graph_storage import (
     AgentGraphNotFoundError,
     agent_graph_path,
@@ -52,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_impact_parser(subparsers)
     _add_audit_parser(subparsers)
     _add_plan_change_parser(subparsers)
+    add_render_parser(subparsers)
     args = parser.parse_args(argv)
     if args.command in {"discover", "rediscover"}:
         return _run_discover(args)
@@ -65,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_audit(args)
     if args.command == "plan-change":
         return _run_plan_change(args)
+    if args.command == "render":
+        return run_render(args)
     parser.error(f"unknown agents command: {args.command}")
     return 2
 
@@ -255,7 +259,7 @@ def _run_audit(args: argparse.Namespace) -> int:
     graph = _load_persisted_graph(root)
     if graph is None:
         return 2
-    payload = audit_graph(graph)
+    payload = audit_graph(graph, root=root)
     if args.json:
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         return 0

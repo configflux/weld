@@ -1,0 +1,51 @@
+# Public demo bootstrap scripts.
+#
+# These ship to the public weld repo so users can reproduce the
+# 5-minute tutorial in a clean directory without manually wiring up
+# nested git repos and .weld configs.
+
+sh_binary(
+    name = "create_polyrepo_demo",
+    srcs = ["create-polyrepo-demo.sh"],
+    data = ["_demo_common.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "create_monorepo_demo",
+    srcs = ["create-monorepo-demo.sh"],
+    data = ["_demo_common.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "create_polyrepo_demo_test",
+    srcs = ["create_polyrepo_demo_test.sh"],
+    data = [
+        "_demo_common.sh",
+        "create-polyrepo-demo.sh",
+    ],
+    # Runs `git init` inside a temp dir; needs real git on PATH.
+    tags = ["no-sandbox"],
+)
+
+sh_test(
+    name = "create_monorepo_demo_test",
+    srcs = ["create_monorepo_demo_test.sh"],
+    data = [
+        "_demo_common.sh",
+        "create-monorepo-demo.sh",
+    ],
+    tags = ["no-sandbox"],
+)
+
+sh_test(
+    name = "demo_git_identity_failure_test",
+    srcs = ["demo_git_identity_failure_test.sh"],
+    data = [
+        "_demo_common.sh",
+        "create-monorepo-demo.sh",
+        "create-polyrepo-demo.sh",
+    ],
+    tags = ["no-sandbox"],
+)

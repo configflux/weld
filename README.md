@@ -12,7 +12,15 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-**Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md) walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path` against the in-tree mono- and polyrepo examples.
+**Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md) walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path` against demo workspaces. Spin up a clean demo with one command:
+
+```bash
+scripts/create-polyrepo-demo.sh /tmp/weld-polyrepo-demo
+# or
+scripts/create-monorepo-demo.sh /tmp/weld-monorepo-demo
+```
+
+Each script materializes a self-contained demo directory with seeded source files, `.weld` configs, and committed git history -- ready for `wd discover`. If you have Weld installed but no source checkout, the same demos are available through the CLI: `wd demo list`, `wd demo monorepo --init <dir>`, `wd demo polyrepo --init <dir>`.
 
 ## Use Weld when…
 
@@ -64,9 +72,13 @@ were not designed to provide.
   extract anything repo-specific.
 - **Agent Graph** — discover agents, skills, prompts, commands, hooks,
   instructions, MCP servers, and platform-specific copies into
-  `.weld/agent-graph.json`.
-- **Agent-native** — ships an MCP server so Claude Code, Codex, and other
-  agents can query the graph directly.
+  `.weld/agent-graph.json`; see the
+  [Agent Graph guide](docs/agent-graph.md) for node and edge types,
+  authority/drift, and limitations, and the
+  [platform support matrix](docs/platform-support.md) for tested surfaces.
+- **Agent-native** — generates MCP config snippets by default and ships an
+  optional stdio MCP server so Claude Code, Codex, and other agents can query
+  the graph directly.
 - **Zero external dependencies** — runs from a plain checkout with Python >= 3.10.
   Tree-sitter is optional.
 
@@ -137,6 +149,12 @@ wd agents plan-change "planner should always include test strategy"
 Use `--json` on `list`, `explain`, `impact`, `audit`, and `plan-change` for
 agent-friendly output. Use `wd agents rediscover` when you want an explicit
 refresh of `.weld/agent-graph.json` before inspecting the persisted graph.
+Weld discovers common AI customization formats and exposes them through a
+local graph; the
+[Agent Graph guide](docs/agent-graph.md) documents node and edge types,
+authority and drift, and the read-only-first policy, and runtime behavior is
+validated per client in the
+[platform support matrix](docs/platform-support.md).
 
 ### Agent-first onboarding
 
@@ -231,8 +249,8 @@ relevant source or documentation and writing reviewed enrichment manually:
 wd stale
 wd context "<node-id>"
 wd add-node "<node-id>" --type "<node-type>" --label "<label>" --merge --props '{"description":"...","purpose":"...","enrichment":{"provider":"manual","model":"agent-reviewed","timestamp":"<ISO-8601 UTC timestamp>","description":"...","purpose":"...","suggested_tags":["lowercase","tags"]}}'
-wd validate
-wd stats
+wd graph validate
+wd graph stats
 ```
 
 Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
@@ -245,16 +263,32 @@ strategies (markdown, YAML, config, frontmatter) still work.
 
 ## MCP
 
-Weld ships an MCP server so Claude Code, VS Code, Cursor, Codex, and any
-other MCP-capable agent can query the graph as structured tool calls. Point
-your client at `python -m weld.mcp_server`:
+Weld generates MCP config snippets for Claude Code, VS Code, Cursor, and
+Codex in the default install:
+
+```bash
+wd mcp config --client=claude
+wd mcp config --client=vscode
+wd mcp config --client=cursor
+```
+
+Running the stdio MCP server requires the optional MCP SDK extra:
+
+```bash
+uv tool install "configflux-weld[mcp]"
+python -m weld.mcp_server --help
+```
+
+Point your client at `python -m weld.mcp_server`:
 
 ```json
 {"mcpServers": {"weld": {"command": "python", "args": ["-m", "weld.mcp_server"]}}}
 ```
 
 See **[docs/mcp.md](docs/mcp.md)** for the full tool reference, per-client
-configs, example prompts, and troubleshooting.
+configs, example prompts, troubleshooting, and the exact dependency model. See
+the [platform support matrix](docs/platform-support.md) for per-client support
+status and runtime validation.
 
 ## Discovery configuration
 
@@ -467,7 +501,10 @@ rm .weld/workspace-state.json
 | `wd callers <symbol>` | Direct/transitive callers |
 | `wd viz` | Local read-only browser graph explorer |
 | `wd stale` | Check graph freshness |
-| `wd stats` | Graph statistics |
+| `wd graph stats` | Graph statistics |
+| `wd stats` | Backward-compatible alias for `wd graph stats` |
+| `wd graph validate` | Validate graph against the contract |
+| `wd validate` | Backward-compatible alias for `wd graph validate` |
 | `wd doctor` | Check setup health; exits 0 in directories that are not Weld projects yet |
 | `wd prime` | Setup status + per-framework agent surface matrix (skill / instruction / mcp) with fix commands; `--agent {auto,claude,codex,copilot,all}` forces an agent row even when its framework files are absent |
 | `wd scaffold` | Write starter templates |
@@ -524,6 +561,10 @@ The `source` value is free-form (agent name, tool name, `llm`,
   customization assets with `wd agents discover`, `list`, `audit`,
   `explain`, `impact`, and `plan-change`
 
+For a tour of what each command above actually prints, see
+[Graph visualization examples](docs/visualization-examples.md) — real
+terminal snippets captured against `wd 0.8.1`.
+
 ## Install
 
 ### Recommended: `uv tool install`
@@ -545,6 +586,15 @@ uv tool upgrade configflux-weld   # or: uv tool upgrade --all
 
 Don't have `uv` yet? See the [uv install
 instructions](https://docs.astral.sh/uv/getting-started/installation/).
+
+To run the stdio MCP server, install the optional MCP extra:
+
+```bash
+uv tool install "configflux-weld[mcp]"
+python -m weld.mcp_server --help
+```
+
+`wd mcp config` does not require the extra; only the server process does.
 
 ### Alternative install paths
 
@@ -620,6 +670,16 @@ development toolchain can be narrower than the runtime support window.
 - [Onboarding guide](weld/docs/onboarding.md)
 - [Agent workflow](weld/docs/agent-workflow.md) — when to use each
   retrieval surface
+- [Agent Graph](docs/agent-graph.md) — static map of the AI
+  customization layer (agents, skills, prompts, hooks, MCP servers)
+- [Graph visualization examples](docs/visualization-examples.md) —
+  real terminal output: monorepo graph, polyrepo `repo:` nodes,
+  Agent Graph, MCP config snippet
+- [Platform support matrix](docs/platform-support.md) — per-platform
+  support and runtime-validation status
+- [Performance notes](docs/performance.md) — discovery and query
+  timings on synthetic 1k/10k/100k single repos and polyrepo workspaces,
+  with a reproducible recipe
 - [Strategy cookbook](weld/docs/strategy-cookbook.md)
 - [Glossary](weld/docs/glossary.md)
 

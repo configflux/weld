@@ -27,6 +27,67 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.8.2 - 2026-04-25
+
+### Added
+
+- `wd security` (and `wd doctor --security` mode) shows trust posture as a
+  scannable view: project-local strategies under `.weld/strategies`,
+  `external_json` adapters in `.weld/discover.yaml`, enrichment provider
+  network use, MCP importability, and safe-mode availability. Risk level
+  rolls up to `low`/`medium`/`high` with recommendations; `--json` output
+  is available for tooling. ADR 0025.
+- `wd agents render` (preview) writes Agent Graph artifacts with a safe
+  contract: dry-run/diff by default, `--write` required to write,
+  `--force` required to clobber, provenance headers on rendered files,
+  and a drift audit. ADR 0026.
+- `wd demo` command family wraps the new bootstrap scripts: `wd demo
+  list`, `wd demo monorepo --init <dir>`, and `wd demo polyrepo --init
+  <dir>` for a frictionless first-run experience.
+- `scripts/create-monorepo-demo.sh` and `scripts/create-polyrepo-demo.sh`
+  build deterministic demo workspaces in a tempdir without manual nested
+  `git init`. Fail gracefully when Git identity is missing.
+- MCP server: 11 graph-backed tools (`weld_query`, `weld_context`,
+  `weld_path`, `weld_brief`, `weld_callers`, `weld_callees`,
+  `weld_export`, `weld_diff`, `weld_trace`, `weld_impact`, `weld_enrich`)
+  return an actionable error payload when neither `.weld/graph.json` nor
+  `.weld/workspaces.yaml` is present.
+- Installed-wheel MCP smoke test (`weld_mcp_install_smoke_test`) builds
+  the wheel, installs it, and asserts `python -m weld.mcp_server --help`
+  works from the installed copy. Catches packaging regressions like the
+  v0.8.0 missing-`weld.cross_repo` failure.
+- Public Agent Graph guide at `docs/agent-graph.md`: what the Agent Graph
+  is and is not, supported asset types and platform formats, node and
+  edge types, an example graph, the `wd agents` commands, authority and
+  drift, the read-only-first policy, render/export status, and known
+  limitations. README links to it from key features, the Agent Graph
+  quickstart, and the Documentation section.
+- Platform fixtures for AGENTS.md, SKILL.md, and `.mcp.json` formats
+  under `weld/tests/fixtures/agent_graph/` give deterministic Agent
+  Graph coverage aligned with the platform-support claims.
+- `docs/runtime-validation.md` records real-client validation entries
+  (client version, date, tester, OS, scenario, result, notes) and is
+  linked from `docs/platform-support.md`.
+- `docs/visualization-examples.md` shows monorepo, polyrepo, Agent Graph,
+  and MCP query terminal output captured from real demo workspaces.
+- `docs/performance.md` reports measured `wd discover`, `wd query`, and
+  `wd workspace status` timings at 1k / 10k / 100k file scales for
+  single-repo and polyrepo workspaces, plus a reproducible synthetic
+  generator at `weld/bench/synthetic_large_repo.py`.
+- `docs/mcp-registry-submission.md` and
+  `docs/mcp-registry-payload.yaml` draft the upstream MCP Registry
+  submission. The submission is held until launch; this release ships
+  the local draft only.
+
+### Changed
+
+- README, `CONTRIBUTING.md`, `docs/community.md`, `docs/launch.md`, and
+  the changelog no longer reference GitHub Discussions. Open-ended
+  feedback is routed to GitHub Issues; Discussions is deferred until
+  there is a concrete reason to enable it.
+- Public publish allowlist now includes `scripts/`, so the demo
+  bootstrap scripts ship in the public package.
+
 ## v0.8.1 - 2026-04-25
 
 ### Fixed
@@ -95,7 +156,7 @@ in [`docs/launch.md`](docs/launch.md) links here.
   trust-model section, sample output, an MCP section, and leads
   install with `uv tool install`.
 - GitHub: issue templates and contact routing for incoming community
-  reports; a Discussions categories plan in `docs/community.md`.
+  reports; `docs/community.md` documents how feedback is organized.
 
 ### Changed
 

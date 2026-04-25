@@ -59,7 +59,7 @@ wd find "session"
 | `wd discover --output .weld/graph.json` | Rebuild the graph from source |
 | `wd build-index` | Rebuild the keyword file index |
 | `wd init` | Bootstrap `.weld/discover.yaml` for a new project |
-| `wd stats` | Graph summary (node/edge counts, description coverage) |
+| `wd graph stats` | Graph summary (node/edge counts, description coverage) |
 
 ## Trust boundary
 

@@ -23,7 +23,7 @@ Re-run discovery and refresh the graph:
 ```bash
 wd discover --output .weld/graph.json
 wd build-index
-wd stats
+wd graph stats
 ```
 
 Report the updated node and edge counts.

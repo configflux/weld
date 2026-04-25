@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "configflux-weld"
-version = "0.8.1"
-description = "Lightweight agent-first utility for connected work"
+version = "0.8.2"
+description = "Local codebase and agent graph for AI coding workflows"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
@@ -15,6 +15,7 @@ dependencies = []
 wd = "weld.cli:main"
 
 [project.optional-dependencies]
+mcp = ["mcp"]
 tree-sitter = [
     "tree-sitter>=0.25",
     "tree-sitter-c-sharp",
@@ -40,6 +41,7 @@ packages = [
     "weld.bench",
     "weld.bench_tasks",
     "weld.cross_repo",
+    "weld.demos",
     "weld.providers",
     "weld.strategies",
     "weld.viz",
@@ -50,12 +52,14 @@ packages = [
 "weld.bench" = "bench"
 "weld.bench_tasks" = "bench_tasks"
 "weld.cross_repo" = "cross_repo"
+"weld.demos" = "demos"
 "weld.providers" = "providers"
 "weld.strategies" = "strategies"
 "weld.viz" = "viz"
 
 [tool.setuptools.package-data]
 "weld" = ["languages/*.yaml", "templates/*.py", "templates/*.md", "templates/*.toml"]
+"weld.demos" = ["scripts/*.sh"]
 "weld.viz" = [
     "static/*.css",
     "static/*.html",

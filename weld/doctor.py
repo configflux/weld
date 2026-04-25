@@ -307,7 +307,14 @@ affect the exit code.
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for ``wd doctor``."""
+    """CLI entry point for ``wd doctor``.
+
+    With ``--security``, restricts output to the trust-posture engine
+    (ADR 0025) and supports ``--json``. Without ``--security``, the
+    summary points to ``wd security`` whenever the trust-posture engine
+    finds any ``high`` signal, satisfying the "doctor integrates or
+    points to the security view" criterion.
+    """
     parser = argparse.ArgumentParser(
         prog="wd doctor",
         description="Check Weld setup and report issues",
@@ -320,12 +327,40 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("."),
         help="Project root directory (default: current directory)",
     )
+    parser.add_argument(
+        "--security",
+        action="store_true",
+        help="Show the trust-posture report only (ADR 0025)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --security, emit the trust-posture report as JSON",
+    )
     args = parser.parse_args(argv)
     root = args.root.resolve()
+
+    if args.security:
+        from weld.security import run_security
+
+        return run_security(root, as_json=args.json)
 
     results = doctor(root)
     output = format_results(results)
     sys.stdout.write(output + "\n")
+
+    # Pointer line: surface the dedicated trust-posture view when we detect
+    # a high-risk signal. Cheap to assess; never raises.
+    try:
+        from weld._security_posture import assess, has_high
+
+        if has_high(assess(root)):
+            sys.stdout.write(
+                "\nSecurity: high-risk signals detected -- run "
+                "`wd security` (or `wd doctor --security`) for details.\n"
+            )
+    except Exception:  # noqa: BLE001 -- never let the pointer crash doctor
+        pass
 
     has_fail = any(r.level == "fail" for r in results)
     return 1 if has_fail else 0

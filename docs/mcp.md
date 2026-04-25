@@ -28,6 +28,15 @@ descriptors and JSON Schemas).
 
 ## Running the server
 
+MCP config generation is available in the default install through
+`wd mcp config`. Running the stdio server itself requires the optional
+MCP SDK extra:
+
+```bash
+uv tool install "configflux-weld[mcp]"
+python -m weld.mcp_server --help
+```
+
 The server is a regular Python module. In a Weld-aware checkout:
 
 ```bash
@@ -38,9 +47,9 @@ python -m weld.mcp_server /path/to/repo
 It runs over stdio and expects an MCP client on the other end. It does not
 open a network socket.
 
-The `mcp` Python SDK is an optional dependency. If it is not installed, the
-server prints an install hint and exits with status 2 -- the rest of the
-`weld` package stays usable without it.
+If the `mcp` Python SDK is not installed, the server prints an install hint
+and exits with status 2 -- the rest of the `weld` package stays usable
+without it.
 
 ## Exposed tools
 
@@ -247,9 +256,10 @@ and how to report a vulnerability.
 ## Troubleshooting
 
 **`ImportError: No module named 'mcp'`**
-The stdio entrypoint requires the optional `mcp` SDK. Install it in the
-same environment your client launches (`pip install mcp`), or point
-`command` at a Python interpreter where it is already installed.
+The stdio entrypoint requires the optional `mcp` SDK. Install the Weld extra
+in the same environment your client launches
+(`pip install 'configflux-weld[mcp]'`), or point `command` at a Python
+interpreter where it is already installed.
 
 **Client reports zero tools**
 Verify that `python -m weld.mcp_server` runs from the command line in the

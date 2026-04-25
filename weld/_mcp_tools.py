@@ -28,11 +28,20 @@ def build_tools(
     weld_export,
     weld_diff,
     tool_cls,
+    weld_trace=None,
+    weld_impact=None,
+    weld_enrich=None,
 ) -> list:
     """Return the ordered list of MCP tool descriptors.
 
     The caller passes the adapter functions and the ``Tool`` class so this
     module has no circular import on ``weld.mcp_server``.
+
+    The ``weld_trace`` / ``weld_impact`` / ``weld_enrich`` overrides let
+    callers supply guarded adapters (e.g.,
+    :func:`weld.mcp_server.weld_impact`) without rewriting the schema
+    descriptors that live in :mod:`weld.mcp_helpers`. When omitted, the
+    raw helpers are used (legacy behavior).
     """
     tools = [
         tool_cls(
@@ -235,17 +244,20 @@ def build_tools(
     _td = _build_trace_tool()
     tools.append(tool_cls(
         name=_td["name"], description=_td["description"],
-        input_schema=_td["input_schema"], handler=_td["handler"],
+        input_schema=_td["input_schema"],
+        handler=weld_trace if weld_trace is not None else _td["handler"],
     ))
     _id = _build_impact_tool()
     tools.append(tool_cls(
         name=_id["name"], description=_id["description"],
-        input_schema=_id["input_schema"], handler=_id["handler"],
+        input_schema=_id["input_schema"],
+        handler=weld_impact if weld_impact is not None else _id["handler"],
     ))
     _ed = _build_enrich_tool()
     tools.append(tool_cls(
         name=_ed["name"], description=_ed["description"],
-        input_schema=_ed["input_schema"], handler=_ed["handler"],
+        input_schema=_ed["input_schema"],
+        handler=weld_enrich if weld_enrich is not None else _ed["handler"],
     ))
     tools.append(
         tool_cls(

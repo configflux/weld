@@ -177,11 +177,11 @@ py_test(
     local = True,
     tags = ["no-sandbox"],
 )
-
 py_test(name = "weld_mcp_server_test", srcs = ["mcp_expected_tools.py", "weld_mcp_server_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_mcp_federation_test", srcs = ["weld_mcp_federation_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_mcp_federation_tools_test", srcs = ["weld_mcp_federation_tools_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_mcp_smoke_test", srcs = ["mcp_expected_tools.py", "weld_mcp_smoke_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+py_test(name = "weld_mcp_install_smoke_test", srcs = ["weld_mcp_install_smoke_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_mcp_config_test", srcs = ["weld_mcp_config_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_export_test", srcs = ["weld_export_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_viz_test", srcs = ["weld_viz_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
@@ -280,7 +280,7 @@ py_test(
     local = True,
     tags = ["no-sandbox"],
 )
-[py_test(name = _n, srcs = [_n + ".py"], deps = _deps, local = True, tags = ["no-sandbox"]) for _n, _deps in (("weld_edge_types_test", ["//weld:contract", "//weld:runtime"]), ("weld_agent_graph_schema_test", ["//weld:contract"]), ("weld_agent_graph_storage_test", ["//weld:runtime"]), ("weld_agent_graph_discovery_test", ["//weld:runtime"]), ("weld_agent_graph_metadata_test", ["//weld:runtime"]), ("weld_agent_graph_cli_test", ["//weld:runtime"]), ("weld_agent_graph_impact_cli_test", ["//weld:runtime"]), ("weld_agent_graph_audit_cli_test", ["//weld:runtime"]), ("weld_agent_graph_plan_cli_test", ["//weld:runtime"]), ("weld_agent_graph_authority_test", ["//weld:runtime"]), ("weld_agent_graph_demo_fixture_test", ["//weld:runtime"]))]
+[py_test(name = _n, srcs = [_n + ".py"], deps = _deps, local = True, tags = ["no-sandbox"]) for _n, _deps in (("weld_edge_types_test", ["//weld:contract", "//weld:runtime"]), ("weld_agent_graph_schema_test", ["//weld:contract"]), ("weld_agent_graph_storage_test", ["//weld:runtime"]), ("weld_agent_graph_discovery_test", ["//weld:runtime"]), ("weld_agent_graph_metadata_test", ["//weld:runtime"]), ("weld_agent_graph_cli_test", ["//weld:runtime"]), ("weld_agent_graph_impact_cli_test", ["//weld:runtime"]), ("weld_agent_graph_audit_cli_test", ["//weld:runtime"]), ("weld_agent_graph_plan_cli_test", ["//weld:runtime"]), ("weld_agent_graph_authority_test", ["//weld:runtime"]), ("weld_agent_graph_render_test", ["//weld:runtime"]), ("weld_agent_graph_demo_fixture_test", ["//weld:runtime"]))]
 py_test(
     name = "weld_contract_ros2_test",
     srcs = ["weld_contract_ros2_test.py"],
@@ -414,7 +414,7 @@ py_test(
     tags = ["no-sandbox"],
 )
 
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_cli_docs_surface_test", "weld_readme_docs_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_cli_docs_surface_test", "weld_cli_graph_namespace_test", "weld_readme_docs_test")]
 
 py_test(
     name = "weld_docs_validation_test",
@@ -770,4 +770,4 @@ py_test(name = "weld_determinism_subprocess_locale_test", srcs = ["weld_determin
 py_test(name = "weld_schema_version_test", srcs = ["weld_schema_version_test.py"], deps = ["//weld:contract", "//weld:runtime"], local = True, tags = ["no-sandbox"])
 # Local mirror of install-test.yml CI assertions.
 py_test(name = "weld_install_assertions_test", srcs = ["weld_install_assertions_test.py"], data = ["//:VERSION"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_enrich_edge_test", srcs = ["weld_enrich_edge_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_enrich_edge_test", "weld_security_posture_test", "weld_security_cli_test", "weld_demo_cli_test")]

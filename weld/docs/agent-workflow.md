@@ -230,8 +230,8 @@ a later `wd discover --output .weld/graph.json`. Refresh discovery before manual
 edits, then validate after writing:
 
 ```bash
-wd validate
-wd stats
+wd graph validate
+wd graph stats
 ```
 
 ## Decision matrix

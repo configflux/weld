@@ -361,10 +361,10 @@ class Graph:
         return neighbors, edges
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:
     """CLI entry point -- delegates to :mod:`weld._graph_cli`."""
     from weld._graph_cli import main as _cli_main
-    _cli_main(argv)
+    _cli_main(argv, prog=prog)
 
 
 if __name__ == "__main__":

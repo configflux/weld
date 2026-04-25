@@ -21,9 +21,9 @@ For mechanics that are out of scope here:
 - The pre-release audit posture (eight checks, GO/NO-GO) is described in
   [`docs/adrs/0015-release-manager-agent.md`](adrs/0015-release-manager-agent.md)
   and invoked via the `release-manager` agent (`/release-audit`).
-- Community channels (GitHub Discussions categories, enablement runbook)
-  live in [`docs/community.md`](community.md). Launch posts should link
-  readers there for open-ended feedback.
+- Community feedback channels live in [`docs/community.md`](community.md).
+  Launch posts should link readers there. Today, GitHub Issues is the
+  single feedback channel.
 - Released features per version are tracked in [`CHANGELOG.md`](../CHANGELOG.md),
   which follows the Keep-a-Changelog convention. Launch readers asking
   "what is new?" should land there.
@@ -82,7 +82,7 @@ wd query "authentication"
 wd find "login"
 wd context file:src/auth/handler
 wd path symbol:foo symbol:bar
-wd stats
+wd graph stats
 wd stale
 ```
 
@@ -261,12 +261,11 @@ launch copy should link there rather than re-state the same caveats.
 
 ### Where do I send feedback?
 
-Bug reports and concretely-scoped feature requests go in GitHub Issues.
-Open-ended feedback (architecture ideas, setup show-and-tell, MCP
-client questions, strategy requests, polyrepo recipes) belongs in
-GitHub Discussions. The categories and enablement runbook for
-Discussions live in [`docs/community.md`](community.md). Launch posts
-should point readers there.
+GitHub Issues -- both scoped reports (bugs, feature requests) and
+open-ended feedback (architecture ideas, setup show-and-tell, MCP
+client questions, strategy requests, polyrepo recipes). Use the closest
+issue template; maintainers triage from there. See
+[`docs/community.md`](community.md) for per-template guidance.
 
 ### How do I keep up with releases?
 

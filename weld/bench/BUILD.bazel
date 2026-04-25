@@ -21,6 +21,11 @@ py_library(
     ],
 )
 
+py_library(
+    name = "synthetic_large_repo",
+    srcs = ["synthetic_large_repo.py"],
+)
+
 py_binary(
     name = "bench",
     srcs = ["__main__.py"],

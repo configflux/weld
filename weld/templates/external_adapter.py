@@ -37,7 +37,7 @@ def build_fragment() -> dict:
     emits a single tool node that could represent a custom build
     script, linter, or analysis tool in your repo.
 
-    Valid node types (see ``weld/contract.py`` or ``wd validate-fragment``):
+    Valid node types (see ``weld/contract.py`` or ``wd graph validate-fragment``):
         service, package, entity, stage, concept, doc, route, contract, enum, file,
         dockerfile, compose, agent, command, tool, workflow, test-suite, config,
         policy, runbook, build-target, test-target, boundary, entrypoint

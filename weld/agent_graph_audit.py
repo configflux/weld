@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from weld.agent_graph_authority_audit import authority_findings
@@ -13,8 +14,17 @@ _RESPONSIBILITY_TYPES = {"agent", "command", "instruction", "prompt", "skill"}
 _VAGUE_DESCRIPTIONS = {"content", "todo", "tbd", "misc", "general", "helper"}
 
 
-def audit_graph(graph: dict[str, Any]) -> dict[str, Any]:
-    """Run deterministic static audit checks over a persisted Agent Graph."""
+def audit_graph(
+    graph: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Run deterministic static audit checks over a persisted Agent Graph.
+
+    *root* is the repository root to consult when an audit check needs to
+    re-read source files (e.g. byte-level rendered-copy drift detection).
+    Description-only checks are unaffected when *root* is omitted.
+    """
     findings: list[dict[str, Any]] = []
     nodes = graph.get("nodes", {})
     assets = asset_entries(graph)
@@ -26,7 +36,7 @@ def audit_graph(graph: dict[str, Any]) -> dict[str, Any]:
     findings.extend(_unsafe_hooks(assets))
     findings.extend(_vague_descriptions(assets))
     findings.extend(_platform_drift(assets))
-    findings.extend(authority_findings(graph, assets, nodes))
+    findings.extend(authority_findings(graph, assets, nodes, root=root))
     findings.extend(_unused_skills(graph, assets))
     findings.extend(_unreachable_subagents(graph, assets))
     findings.extend(_commands_missing_agents(graph, nodes))

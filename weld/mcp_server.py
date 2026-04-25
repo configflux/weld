@@ -18,6 +18,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from weld._mcp_guard import (
+    graph_present as _graph_present,
+    missing_graph_payload as _missing_graph_payload,
+)
 from weld.brief import brief as _brief
 from weld.diff import load_and_diff as _load_and_diff
 from weld.federation import FederatedGraph as _FederatedGraph
@@ -31,6 +35,7 @@ from weld.file_index import load_file_index as _load_file_index
 from weld.graph import Graph as _Graph
 from weld.mcp_helpers import weld_enrich as _weld_enrich
 from weld.mcp_helpers import weld_impact as _weld_impact
+from weld.mcp_helpers import weld_trace as _weld_trace
 from weld.workspace_state import find_workspaces_yaml as _find_workspaces_yaml
 
 # ---------------------------------------------------------------------------
@@ -83,7 +88,10 @@ def _attach_children_status(
 
 def weld_query(term: str, limit: int = 20, *, root: Path | str = ".") -> dict:
     """Tokenized ranked search. Delegates to ``Graph.query``; see
-    :func:`_attach_children_status` for the federated-only extra field."""
+    :func:`_attach_children_status` for the federated-only extra field.
+    Missing-graph guard applies (single-repo root only)."""
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_query")
     g = _load_graph(Path(root))
     return _attach_children_status(g, g.query(term, limit=limit))
 
@@ -102,13 +110,19 @@ def weld_find(term: str, limit: int | None = None, *, root: Path | str = ".") ->
 
 def weld_context(node_id: str, *, root: Path | str = ".") -> dict:
     """Node + 1-hop neighborhood. Delegates to ``Graph.context``; see
-    :func:`_attach_children_status` for the federated-only extra field."""
+    :func:`_attach_children_status` for the federated-only extra field.
+    Missing-graph guard applies (single-repo root only)."""
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_context")
     g = _load_graph(Path(root))
     return _attach_children_status(g, g.context(node_id))
 
 def weld_path(from_id: str, to_id: str, *, root: Path | str = ".") -> dict:
     """Shortest path between two nodes. Delegates to ``Graph.path``; see
-    :func:`_attach_children_status` for the federated-only extra field."""
+    :func:`_attach_children_status` for the federated-only extra field.
+    Missing-graph guard applies (single-repo root only)."""
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_path")
     g = _load_graph(Path(root))
     return _attach_children_status(g, g.path(from_id, to_id))
 
@@ -118,8 +132,10 @@ def weld_brief(area: str, limit: int = 20, *, root: Path | str = ".") -> dict:
     In a federated workspace the underlying graph is a
     :class:`~weld.federation.FederatedGraph` whose ``query`` and ``dump``
     methods span child repos, so the brief transparently includes child
-    matches.
+    matches. Missing-graph guard applies (single-repo root only).
     """
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_brief")
     g = _load_graph(Path(root))
     return _brief(g, area, limit=limit)
 
@@ -141,8 +157,11 @@ def weld_callers(
     """Return direct (and optionally transitive) callers of *symbol_id*.
 
     In a federated workspace, prefixed symbol IDs (``child<US>local_id``)
-    are resolved within the named child graph.
+    are resolved within the named child graph. Missing-graph guard
+    applies (single-repo root only).
     """
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_callers")
     g = _load_graph(Path(root))
     if isinstance(g, _FederatedGraph):
         return _federated_callers(g, symbol_id, depth=depth)
@@ -152,7 +171,10 @@ def weld_export(
     format: str, node_id: str | None = None, depth: int = 1,
     *, root: Path | str = ".",
 ) -> dict:
-    """Export graph to a visualization format. Delegates to ``weld.export``."""
+    """Export graph to a visualization format. Delegates to ``weld.export``.
+    Missing-graph guard applies (single-repo root only)."""
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_export")
     from weld.export import export
     try:
         output = export(format, node_id=node_id, depth=depth, root=root)
@@ -165,8 +187,11 @@ def weld_references(symbol_name: str, *, root: Path | str = ".") -> dict:
     """Return callers + file-index references for a bare symbol *name*.
 
     In a federated workspace, references fan out across all present
-    children with prefixed IDs.
+    children with prefixed IDs. Missing-graph guard applies (single-repo
+    root only).
     """
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_references")
     g = _load_graph(Path(root))
     if isinstance(g, _FederatedGraph):
         refs = _federated_references(g, symbol_name)
@@ -177,12 +202,56 @@ def weld_references(symbol_name: str, *, root: Path | str = ".") -> dict:
     return refs
 
 def weld_diff(*, root: Path | str = ".") -> dict:
-    """Return the graph diff between previous and current discovery run."""
+    """Return the graph diff between previous and current discovery run.
+    Missing-graph guard applies (single-repo root only)."""
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_diff")
     return _load_and_diff(Path(root))
 
 
-weld_impact = _weld_impact
-weld_enrich = _weld_enrich
+def weld_trace(
+    *,
+    term: str | None = None,
+    node_id: str | None = None,
+    depth: int = 2,
+    seed_limit: int = 5,
+    root: Path | str = ".",
+) -> dict:
+    """Protocol-aware cross-boundary slice. Delegates to
+    :func:`weld.mcp_helpers.weld_trace`. Missing-graph guard applies."""
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_trace")
+    return _weld_trace(
+        term=term, node_id=node_id, depth=depth, seed_limit=seed_limit, root=root,
+    )
+
+
+def weld_impact(target: str, depth: int = 3, *, root: Path | str = ".") -> dict:
+    """Reverse-dependency blast radius. Delegates to
+    :func:`weld.mcp_helpers.weld_impact`. Missing-graph guard applies."""
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_impact")
+    return _weld_impact(target, depth=depth, root=root)
+
+
+def weld_enrich(
+    *,
+    node_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    force: bool = False,
+    max_tokens: int | None = None,
+    max_cost: float | None = None,
+    root: Path | str = ".",
+) -> dict:
+    """LLM-assisted enrichment. Delegates to
+    :func:`weld.mcp_helpers.weld_enrich`. Missing-graph guard applies."""
+    if not _graph_present(Path(root)):
+        return _missing_graph_payload("weld_enrich")
+    return _weld_enrich(
+        node_id=node_id, provider=provider, model=model, force=force,
+        max_tokens=max_tokens, max_cost=max_cost, root=root,
+    )
 
 # ---------------------------------------------------------------------------
 # Registry + dispatch
@@ -206,6 +275,9 @@ def build_tools() -> list[Tool]:
         weld_references=weld_references,
         weld_export=weld_export,
         weld_diff=weld_diff,
+        weld_trace=weld_trace,
+        weld_impact=weld_impact,
+        weld_enrich=weld_enrich,
         tool_cls=Tool,
     )
 
@@ -229,6 +301,17 @@ def dispatch(
 # Stdio entry point (optional; requires the ``mcp`` SDK)
 # ---------------------------------------------------------------------------
 
+_HELP = """Usage: python -m weld.mcp_server [ROOT]
+
+Run the Weld MCP stdio server for ROOT, or the current directory when ROOT
+is omitted. The stdio server requires the optional MCP SDK:
+
+  pip install 'configflux-weld[mcp]'
+
+The rest of the weld package, including `wd mcp config`, works without that
+extra.
+"""
+
 def run_stdio(root: Path | str = ".") -> int:
     """Run the stdio MCP server loop.
 
@@ -242,7 +325,8 @@ def run_stdio(root: Path | str = ".") -> int:
     except ImportError as exc:  # pragma: no cover - exercised only with extras
         sys.stderr.write(
             "weld.mcp_server: the 'mcp' Python SDK is not installed. "
-            "Install the optional extra (e.g. 'pip install mcp') to run the "
+            "Install the optional extra with "
+            "'pip install \"configflux-weld[mcp]\"' to run the "
             f"stdio server. Original error: {exc}\n"
         )
         return 2
@@ -288,6 +372,9 @@ def run_stdio(root: Path | str = ".") -> int:
 def main(argv: list[str] | None = None) -> int:
     """Module entry point: ``python -m weld.mcp_server``."""
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {"-h", "--help"}:
+        sys.stdout.write(_HELP)
+        return 0
     root = Path(args[0]) if args else Path(".")
     return run_stdio(root)
 

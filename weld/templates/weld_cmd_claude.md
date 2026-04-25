@@ -23,7 +23,7 @@ Re-run discovery and refresh the graph:
 ```bash
 wd discover --output .weld/graph.json
 wd build-index
-wd stats
+wd graph stats
 ```
 
 Report the updated node and edge counts.
@@ -110,8 +110,8 @@ source content. Manual enrichment writes `.weld/graph.json` directly and can be
 overwritten by a later `wd discover --output .weld/graph.json`, so validate afterward:
 
 ```bash
-wd validate
-wd stats
+wd graph validate
+wd graph stats
 ```
 
 ---

@@ -1,0 +1,142 @@
+# MCP Registry submission payload -- DRAFT, held until launch.
+#
+# This file is the structured form of the entry described in
+# docs/mcp-registry-submission.md. The maintainer translates it into
+# whatever schema the upstream MCP registry asks for on submission day.
+# Do NOT auto-submit this file. It is metadata, not a deployment artifact.
+#
+# Field shape follows the common cross-registry conventions for MCP
+# servers (name, description, install command, runtime, repository,
+# license, capabilities). It is intentionally not pinned to a specific
+# upstream schema version because the upstream schema is still settling.
+
+# --- Identity -----------------------------------------------------------------
+
+name: weld
+display_name: Weld
+description: >-
+  Local codebase and agent graph for AI coding workflows, exposed as MCP
+  tools. Weld scans source code, documentation, CI workflows, build files,
+  runtime configs, and repo boundaries into a deterministic graph on disk
+  under `.weld/`, and serves it to MCP-capable agents over stdio.
+
+# Maintainer fills `version` at submission time with the latest published
+# `configflux-weld` PyPI release. Do not freeze a value here.
+version: TBD_AT_SUBMISSION
+
+license: Apache-2.0
+
+# --- Links --------------------------------------------------------------------
+
+repository: https://github.com/configflux/weld
+homepage: https://github.com/configflux/weld#readme
+documentation: https://github.com/configflux/weld/blob/main/docs/mcp.md
+package_index: https://pypi.org/project/configflux-weld/
+
+# --- Install ------------------------------------------------------------------
+
+# Canonical install command advertised by the registry entry. The stdio
+# server itself requires the optional `mcp` extra; the docs guide users
+# to `pip install 'configflux-weld[mcp]'` when they hit the install hint.
+install:
+  command: |
+    pip install configflux-weld
+    python -m weld.mcp_server
+
+  # Alternate, equally supported install path. uv is the recommended
+  # route in the project's own README.
+  alternates:
+    - description: Install with the optional MCP SDK extra (typical user path)
+      command: |
+        pip install 'configflux-weld[mcp]'
+        python -m weld.mcp_server
+    - description: Install via uv tool
+      command: |
+        uv tool install "configflux-weld[mcp]"
+        python -m weld.mcp_server
+
+# --- Runtime ------------------------------------------------------------------
+
+runtime:
+  language: python
+  minimum_version: "3.10"
+  transport: stdio
+  entrypoint: python -m weld.mcp_server
+  network: false  # Stdio only. Server does not bind a socket or call out.
+
+# --- Capabilities (tools the server exposes) ---------------------------------
+#
+# Stable list pinned in weld/_mcp_tools.py::build_tools and exercised by
+# weld/tests/weld_mcp_smoke_test.py. Mirror exactly what the server
+# registers; do not add tools to this list that the server does not
+# expose.
+capabilities:
+  - name: weld_query
+    description: Tokenized ranked search over the connected structure; returns matches, neighbors, and edges.
+  - name: weld_find
+    description: Substring search over the file index; returns ranked file hits with matching tokens and a score.
+  - name: weld_context
+    description: Node plus its 1-hop neighborhood for a given node id.
+  - name: weld_path
+    description: Shortest path between two nodes, with visited nodes and connecting edges.
+  - name: weld_brief
+    description: Stable agent-facing brief envelope for a task area (primary matches, interfaces, docs, build surfaces, boundaries).
+  - name: weld_stale
+    description: Advisory freshness check vs git HEAD. Does not mutate the graph.
+  - name: weld_callers
+    description: Direct (or transitive) callers of a symbol by walking `calls` edges in reverse.
+  - name: weld_references
+    description: Callers and file-index references for a bare symbol name.
+  - name: weld_export
+    description: Export the graph (or a subgraph centered on a node) to mermaid, dot, or d2.
+  - name: weld_trace
+    description: Protocol-aware cross-boundary slice (service / interface / contract / boundary / verification).
+  - name: weld_impact
+    description: Reverse-dependency blast radius for a node id or file path.
+  - name: weld_enrich
+    description: LLM-assisted semantic enrichment for a node or the full graph (opt-in; respects a `--safe` flag).
+  - name: weld_diff
+    description: Diff between previous and current discovery runs (added, removed, modified nodes and edges).
+
+# --- Tags / categories --------------------------------------------------------
+tags:
+  - code-graph
+  - codebase
+  - structure
+  - discovery
+  - agent
+  - ide
+  - polyrepo
+
+# --- Evidence and verification -----------------------------------------------
+#
+# The install/launch contract this entry advertises is exercised by an
+# automated test that builds the wheel, installs it into an isolated
+# prefix, and confirms `python -m weld.mcp_server --help` works from the
+# installed copy. Point reviewers at this file -- if it fails, the
+# install command published in the registry is not safe.
+evidence:
+  install_smoke_test: weld/tests/weld_mcp_install_smoke_test.py
+  install_smoke_assertions:
+    - Wheel-installed `python -m weld.mcp_server --help` exits 0.
+    - "--help" output contains the `Usage: python -m weld.mcp_server` banner.
+    - "--help" output contains the `configflux-weld[mcp]` install hint.
+    - Every graph-backed MCP tool returns a structured `graph_missing` error payload when no graph is present.
+    - The `weld_stale` response carries the documented key set so consumers can rely on its wire shape.
+  related_tests:
+    - weld/tests/weld_mcp_smoke_test.py        # JSON-RPC handshake + tool-name pinning
+    - weld/tests/weld_mcp_server_test.py       # in-process tool semantics
+    - weld/tests/weld_mcp_config_test.py       # `wd mcp config` snippet generator
+    - weld/tests/weld_mcp_federation_test.py   # federated polyrepo behavior
+
+# --- Submission posture -------------------------------------------------------
+#
+# Held: do NOT auto-open a registry PR from this draft. Submission is
+# the maintainer's manual step once launch readiness is green.
+submission:
+  status: held_until_launch
+  hold_reasons:
+    - Public-readiness work (PyPI README alignment, installed-wheel smoke, platform support, feedback channel) is still in flight.
+    - The registry entry should pin to a stable PyPI version cut after the next patch release.
+    - The MCP tool surface is still being stabilised; submit when we are willing to keep this list pinned.
+  draft_doc: docs/mcp-registry-submission.md

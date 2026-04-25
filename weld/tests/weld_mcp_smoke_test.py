@@ -175,6 +175,20 @@ class WeldMcpSubprocessSmokeTest(unittest.TestCase):
         stderr = proc.stderr.decode("utf-8", errors="replace")
         self.assertIn("mcp", stderr.lower())
         self.assertIn("install", stderr.lower())
+        self.assertIn("configflux-weld[mcp]", stderr)
+
+    def test_help_does_not_require_sdk(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, "-m", "weld.mcp_server", "--help"],
+            capture_output=True,
+            env=self._server_env(),
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Usage: python -m weld.mcp_server", proc.stdout)
+        self.assertIn("configflux-weld[mcp]", proc.stdout)
 
     def test_subprocess_with_sdk_lists_expected_tools(self) -> None:
         if not _mcp_sdk_available():

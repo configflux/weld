@@ -179,10 +179,10 @@ class DoctorOptionalDepsTest(unittest.TestCase):
                 and r.level == "warn"
             ]
             self.assertGreaterEqual(len(hints), 4)
-            self.assertTrue(any("weld[mcp]" in r.message for r in hints))
-            self.assertTrue(any("weld[anthropic]" in r.message for r in hints))
-            self.assertTrue(any("weld[openai]" in r.message for r in hints))
-            self.assertTrue(any("weld[ollama]" in r.message for r in hints))
+            self.assertTrue(any("configflux-weld[mcp]" in r.message for r in hints))
+            self.assertTrue(any("configflux-weld[anthropic]" in r.message for r in hints))
+            self.assertTrue(any("configflux-weld[openai]" in r.message for r in hints))
+            self.assertTrue(any("configflux-weld[ollama]" in r.message for r in hints))
 
     def test_all_present_no_warn_spam(self):
         with tempfile.TemporaryDirectory() as td:

@@ -78,3 +78,13 @@ py_test(
     local = True,
     tags = ["no-sandbox"],
 )
+
+py_test(
+    name = "synthetic_large_repo_test",
+    srcs = ["synthetic_large_repo_test.py"],
+    deps = [
+        "//weld/bench:synthetic_large_repo",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)

@@ -47,13 +47,16 @@ Core commands:
   init           Bootstrap .weld/discover.yaml for the current repo
   discover       Run discovery and emit graph JSON to stdout
   agents         Agent Graph for static AI customization assets
+  graph          Canonical graph namespace (stats, validate, query, context, ...)
   workspace      Inspect child status (status) or one-shot federate a polyrepo (bootstrap)
   build-index    Regenerate .weld/file-index.json
   scaffold       Write bundled templates into the current repo
   prime          Check setup status and suggest next steps
   doctor         Diagnostic checks: config, graph, staleness, strategies, tree-sitter
+  security       Trust-posture summary (alias for `wd doctor --security`, JSON via --json)
   bootstrap      Write onboarding assets (wd bootstrap claude|codex|copilot)
   bench          Run Weld benchmarks (token cost, first-context quality, or --compare agent tasks)
+  demo           Materialize a Weld demo workspace (monorepo or polyrepo)
 
 Retrieval commands:
   brief          Agent-facing context briefing (stable JSON contract)
@@ -78,13 +81,17 @@ MCP commands:
   mcp            MCP server tooling (e.g. `wd mcp config --client=claude`)
 
 Graph commands:
+  graph stats    Graph summary counts (canonical)
+  graph validate Validate graph against the contract (canonical)
+  graph validate-fragment
   diff           Show what changed between discovery runs
   list           List nodes
-  stats          Graph summary counts
+  stats          Alias for `wd graph stats`
   stale          Compare graph freshness to git HEAD
   dump           Emit full graph JSON
-  validate       Validate graph against the contract
+  validate       Alias for `wd graph validate`
   validate-fragment
+                 Alias for `wd graph validate-fragment`
   add-node       Add or update a node
   add-edge       Add an edge
   rm-node        Remove a node and its edges
@@ -216,6 +223,11 @@ def _dispatch(argv: list[str] | None) -> int:
 
         return doctor_mod.main(rest)
 
+    if subcmd == "security":
+        from weld import security as security_mod
+
+        return security_mod.main(rest)
+
     if subcmd == "bootstrap":
         from weld import bootstrap as bootstrap_mod
 
@@ -226,6 +238,11 @@ def _dispatch(argv: list[str] | None) -> int:
         from weld.bench.runner import main as bench_main
 
         return bench_main(rest)
+
+    if subcmd == "demo":
+        from weld import demo as demo_mod
+
+        return demo_mod.main(rest)
 
     if subcmd == "export":
         return _run_export(rest)
@@ -266,6 +283,10 @@ def _dispatch(argv: list[str] | None) -> int:
         return mcp_config_mod.main(rest)
 
     from weld import graph as graph_mod
+
+    if subcmd == "graph":
+        graph_mod.main(rest, prog="wd graph")
+        return 0
 
     graph_mod.main(args)
     return 0

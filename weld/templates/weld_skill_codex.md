@@ -52,7 +52,7 @@ wd find "session"
 | `wd discover --output .weld/graph.json` | Rebuild the graph from source |
 | `wd build-index` | Rebuild the keyword file index |
 | `wd init` | Bootstrap `.weld/discover.yaml` for a new project |
-| `wd stats` | Graph summary (node/edge counts, description coverage) |
+| `wd graph stats` | Graph summary (node/edge counts, description coverage) |
 
 ## Trust boundary
 
@@ -102,8 +102,8 @@ a later `wd discover --output .weld/graph.json`. Refresh discovery first, then
 validate after manual edits:
 
 ```bash
-wd validate
-wd stats
+wd graph validate
+wd graph stats
 ```
 
 ## When to refresh

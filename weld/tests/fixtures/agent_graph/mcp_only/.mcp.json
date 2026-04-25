@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "description": "Local filesystem context server.",
+      "command": "filesystem-server"
+    },
+    "github": {
+      "description": "Repository metadata and issue access.",
+      "command": "github-server"
+    }
+  }
+}

@@ -14,9 +14,13 @@ Bug reports and feature requests are welcome. Open a GitHub issue with:
 - Expected vs. actual behavior.
 - Output of `wd --version` and your Python version.
 
-For open-ended discussion (ideas, setup show-and-tell, MCP-client questions,
-strategy requests, polyrepo patterns), see [docs/community.md](docs/community.md)
-for the planned GitHub Discussions categories and how they differ from Issues.
+Open-ended feedback -- architecture ideas, setup show-and-tell, questions
+about MCP-client integration, strategy requests, polyrepo patterns -- is
+also welcome as a GitHub issue. Use the closest issue template (the
+**Feature request**, **Strategy request**, or **Demo feedback** templates
+cover most cases) and maintainers will triage it. See
+[docs/community.md](docs/community.md) for how community feedback is
+organized today.
 
 ## Running Locally
 

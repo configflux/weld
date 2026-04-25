@@ -109,7 +109,7 @@ def check_optional_deps(result_cls: type) -> list:
 
     Emits a single ``ok`` summary of present deps, a single ``warn``
     summary of missing deps, and one ``warn`` per missing dep with its
-    ``pip install 'weld[<extra>]'`` hint.
+    ``pip install 'configflux-weld[<extra>]'`` hint.
     """
     present: list[str] = []
     missing: list[tuple[str, str]] = []
@@ -141,7 +141,8 @@ def check_optional_deps(result_cls: type) -> list:
             results.append(
                 result_cls(
                     "warn",
-                    f"{display} not installed -- pip install 'weld[{extra}]'",
+                    f"{display} not installed -- "
+                    f"pip install 'configflux-weld[{extra}]'",
                     "Optional",
                 )
             )

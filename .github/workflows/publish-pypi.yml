@@ -60,6 +60,80 @@ jobs:
       - name: Build sdist and wheel
         run: python -m build weld
 
+      - name: Smoke-test built wheel before publish
+        # Run a real installed-wheel smoke before the irreversible PyPI upload.
+        run: |
+          set -euo pipefail
+          workspace="${PWD}"
+          python -m venv /tmp/weld-wheel-smoke
+          /tmp/weld-wheel-smoke/bin/pip install --no-cache-dir weld/dist/configflux_weld-*.whl
+          export PATH="/tmp/weld-wheel-smoke/bin:${PATH}"
+
+          repo="$(mktemp -d)"
+          cd "${repo}"
+          wd --version
+          wd --help >/dev/null
+          wd discover --help >/dev/null
+          python -c "import weld"
+          python -m weld.mcp_server --help >/dev/null
+          python - "${workspace}/weld/pyproject.toml" <<'PYCHECK'
+          import importlib
+          import sys
+          import tomllib
+
+          with open(sys.argv[1], "rb") as pyproject:
+              packages = tomllib.load(pyproject)["tool"]["setuptools"]["packages"]
+          for name in packages:
+              importlib.import_module(name)
+          print(f"all {len(packages)} subpackages imported OK")
+          PYCHECK
+
+          git init --quiet
+          git config user.email "smoke@example.invalid"
+          git config user.name "Weld Smoke Test"
+          mkdir -p src .github/agents .agents/skills/review
+          printf '# Smoke Repo\n\nAuth behavior.\n' > README.md
+          printf 'def authenticate(token: str) -> bool:\n    return token == "ok"\n' > src/auth.py
+          printf '# Agent Instructions\n\nRun tests before finalizing.\n' > AGENTS.md
+          cat > .github/agents/planner.agent.md <<'EOF'
+          ---
+          name: planner
+          description: Plans implementation work before editing.
+          ---
+          # Planner
+          Use Weld before editing.
+          EOF
+          cat > .agents/skills/review/SKILL.md <<'EOF'
+          ---
+          name: review
+          description: Review code changes.
+          ---
+          # Review Skill
+          Check correctness and maintainability.
+          EOF
+          git add -A
+          git commit --quiet -m "smoke seed"
+
+          wd init >/dev/null
+          wd discover --safe --output .weld/graph.json >/dev/null
+          wd doctor >/dev/null
+          wd graph stats >/dev/null
+          wd graph validate >/dev/null
+          wd query auth >/dev/null
+          wd brief auth >/dev/null
+          wd context auth >/dev/null
+          wd build-index >/dev/null
+          wd find authenticate >/dev/null
+          wd agents discover >/dev/null
+          wd agents list >/dev/null
+          wd agents audit >/dev/null
+          wd agents explain planner >/dev/null
+          wd agents impact .github/agents/planner.agent.md >/dev/null
+          wd agents plan-change "planner should mention tests" >/dev/null
+          wd mcp config --client=claude >/dev/null
+          wd mcp config --client=vscode >/dev/null
+          wd mcp config --client=cursor >/dev/null
+
       - name: Publish to PyPI
         # Pinned to an immutable commit SHA for supply-chain hardening.
         # Re-verify and bump when upstream ships a new release you have
@@ -129,15 +203,63 @@ jobs:
         run: |
           pip install --no-cache-dir "configflux-weld==${PKG_VERSION}"
 
-      - name: Sanity-check installed package
-        # Two lightweight checks prove the wheel both installed and is
-        # importable: the console script entry point resolves, and the
-        # distribution metadata reports the version we just published.
-        # PKG_VERSION is passed through the environment so the Python
-        # one-liner reads it from os.environ rather than via string
-        # interpolation.
+      - name: Smoke-test installed package
+        # The exact published version must run real CLI workflows from an
+        # installed console script, not from the source checkout.
         env:
           PKG_VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
+          repo="$(mktemp -d)"
+          cd "${repo}"
           wd --version
+          wd discover --help > /dev/null
           python -c "import os; from importlib.metadata import version; expected = os.environ['PKG_VERSION']; v = version('configflux-weld'); print(f'configflux-weld {v}'); assert v == expected, f'version mismatch: expected {expected}, got {v}'"
+          wd --help >/dev/null
+          python -m weld.mcp_server --help >/dev/null
+
+          git init --quiet
+          git config user.email "smoke@example.invalid"
+          git config user.name "Weld Smoke Test"
+          mkdir -p src .github/agents .agents/skills/review
+          printf '# Smoke Repo\n\nAuth behavior.\n' > README.md
+          printf 'def authenticate(token: str) -> bool:\n    return token == "ok"\n' > src/auth.py
+          printf '# Agent Instructions\n\nRun tests before finalizing.\n' > AGENTS.md
+          cat > .github/agents/planner.agent.md <<'EOF'
+          ---
+          name: planner
+          description: Plans implementation work before editing.
+          ---
+          # Planner
+          Use Weld before editing.
+          EOF
+          cat > .agents/skills/review/SKILL.md <<'EOF'
+          ---
+          name: review
+          description: Review code changes.
+          ---
+          # Review Skill
+          Check correctness and maintainability.
+          EOF
+          git add -A
+          git commit --quiet -m "smoke seed"
+
+          wd init >/dev/null
+          wd discover --safe --output .weld/graph.json >/dev/null
+          wd doctor >/dev/null
+          wd graph stats >/dev/null
+          wd graph validate >/dev/null
+          wd query auth >/dev/null
+          wd brief auth >/dev/null
+          wd context auth >/dev/null
+          wd build-index >/dev/null
+          wd find authenticate >/dev/null
+          wd agents discover >/dev/null
+          wd agents list >/dev/null
+          wd agents audit >/dev/null
+          wd agents explain planner >/dev/null
+          wd agents impact .github/agents/planner.agent.md >/dev/null
+          wd agents plan-change "planner should mention tests" >/dev/null
+          wd mcp config --client=claude >/dev/null
+          wd mcp config --client=vscode >/dev/null
+          wd mcp config --client=cursor >/dev/null
