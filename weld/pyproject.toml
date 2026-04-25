@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "configflux-weld"
-version = "0.8.0"
+version = "0.8.1"
 description = "Lightweight agent-first utility for connected work"
 readme = "README.md"
 license = "Apache-2.0"
@@ -35,10 +35,21 @@ llm = ["anthropic", "openai", "ollama"]
 # The pyproject.toml lives inside the weld/ package directory itself.
 # Map the top-level "weld" import to "." (this directory) so that
 # `pip install -e weld/` from the repo root makes `import weld` work.
-packages = ["weld", "weld.providers", "weld.strategies", "weld.viz"]
+packages = [
+    "weld",
+    "weld.bench",
+    "weld.bench_tasks",
+    "weld.cross_repo",
+    "weld.providers",
+    "weld.strategies",
+    "weld.viz",
+]
 
 [tool.setuptools.package-dir]
 "weld" = "."
+"weld.bench" = "bench"
+"weld.bench_tasks" = "bench_tasks"
+"weld.cross_repo" = "cross_repo"
 "weld.providers" = "providers"
 "weld.strategies" = "strategies"
 "weld.viz" = "viz"

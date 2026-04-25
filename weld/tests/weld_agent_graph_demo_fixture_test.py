@@ -139,9 +139,12 @@ class AgentGraphMaintainerAssetTest(unittest.TestCase):
         assets = discover_agent_assets(_repo_root)
         paths = {asset.path for asset in assets}
 
+        # Paths shipped in both internal and public overlays. The
+        # internal-only `.claude/skills/agent-system-maintainer/SKILL.md`
+        # is excluded by `.publishignore`, so asserting it would break
+        # public CI.
         self.assertTrue({
             ".agents/skills/agent-system-maintainer/SKILL.md",
-            ".claude/skills/agent-system-maintainer/SKILL.md",
             ".github/agents/agent-architect.agent.md",
             ".github/skills/agent-system-maintainer/SKILL.md",
         } <= paths)

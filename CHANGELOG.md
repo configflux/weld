@@ -27,6 +27,21 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.8.1 - 2026-04-25
+
+### Fixed
+
+- Hotfix: include the `weld.cross_repo`, `weld.bench`, and
+  `weld.bench_tasks` subpackages in the published wheel. v0.8.0
+  shipped without `weld.cross_repo`, so any fresh install crashed
+  on `wd discover --help` with
+  `ModuleNotFoundError: No module named 'weld.cross_repo'`. Users
+  on 0.8.0 should upgrade to 0.8.1 immediately.
+- Public CI: the agent-graph maintainer asset discovery test no
+  longer asserts the presence of the internal-only
+  `.claude/skills/agent-system-maintainer/SKILL.md`, which is
+  excluded from the public overlay by `.publishignore`.
+
 ## v0.8.0 - 2026-04-25
 
 ### Added
