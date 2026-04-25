@@ -6,6 +6,21 @@ Any repository object that `weld` models directly, such as a source file, route,
 contract, workflow, tool, policy document, runbook, build target, or test
 target.
 
+## Agent Graph
+
+The persisted `.weld/agent-graph.json` graph of static AI customization
+assets. It records agents, subagents, skills, instructions, prompts, commands,
+hooks, MCP servers, tools, permissions, workflows, scopes, source files, and
+platform variants so a developer or agent can inspect relationships before
+editing those assets.
+
+## AI Customization Asset
+
+A repository file or configuration entry that changes agent behavior. Examples
+include `AGENTS.md`, `CLAUDE.md`, `.github/agents/*`, `.github/prompts/*`,
+`.claude/skills/*/SKILL.md`, `.cursor/rules/*`, `GEMINI.md`, `opencode.json`,
+MCP configuration, and generic `SKILL.md` files.
+
 ## Boundary
 
 An explicit seam in the repository or system that constrains how a change
@@ -23,6 +38,10 @@ Values:
 - `manual` -- hand-written or manually maintained
 - `external` -- originates outside the repository
 
+For Agent Graph assets, `canonical` means the source that should be edited
+first, `derived` means a generated or rendered copy, and `manual` means Weld
+has not found explicit authority metadata.
+
 ## Confidence
 
 How reliable a classification or relationship is. Defined in
@@ -33,6 +52,20 @@ Values:
 - `definite` -- high certainty; verified by structure or declaration
 - `inferred` -- reasonable certainty; derived by heuristic or convention
 - `speculative` -- low certainty; best-effort guess
+
+## Drift
+
+A difference between related Agent Graph assets that are expected to stay in
+sync. Common examples are a rendered copy that no longer matches its canonical
+source, same-name platform variants with different tool permissions, or a
+command that still references a removed agent.
+
+## Platform Variant
+
+One platform-specific representation of the same customization concept, such
+as a Copilot agent, Claude Code subagent, OpenCode agent entry, Cursor rule, or
+Gemini agent file. Variants may be canonical, generated, or intentionally
+platform-specific.
 
 ## Role
 
@@ -68,6 +101,11 @@ a module (HTTP handler, gRPC method, ROS2 service or action). `channel`
 models a named pub/sub or stream endpoint (event topic, ROS2 topic,
 queue). Both node types carry the optional protocol metadata below.
 
+Agent Graph vocabulary (schema v5, ADR 0021): `subagent`, `skill`,
+`instruction`, `prompt`, `hook`, `mcp-server`, `permission`, `platform`,
+`scope`. These model static AI customization assets and the platform,
+path-scope, permission, and tool surfaces they declare.
+
 ## Edge Types
 
 The `type` field on a weld edge. Defined in `VALID_EDGE_TYPES`.
@@ -75,7 +113,12 @@ The `type` field on a weld edge. Defined in `VALID_EDGE_TYPES`.
 Values: `contains`, `depends_on`, `produces`, `consumes`, `implements`,
 `documents`, `relates_to`, `responds_with`, `accepts`, `builds`,
 `orchestrates`, `invokes`, `configures`, `tests`, `represents`, `feeds_into`,
-`enforces`, `verifies`, `exposes`, `governs`.
+`enforces`, `verifies`, `exposes`, `governs`, `owned_by`, `gates`,
+`gated_by`, `supersedes`, `validates`, `generates`, `migrates`, `contracts`,
+`uses_skill`, `uses_command`, `invokes_agent`, `handoff_to`,
+`references_file`, `applies_to_path`, `provides_tool`, `restricts_tool`,
+`triggers_on_event`, `overrides`, `duplicates`, `conflicts_with`,
+`implements_workflow`, `part_of_platform`, `generated_from`.
 
 ## Doc Kind
 

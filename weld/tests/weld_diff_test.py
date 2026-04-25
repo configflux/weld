@@ -25,6 +25,7 @@ if _tests_dir not in sys.path:
 
 from diff_fixtures import base_graph as _base_graph  # noqa: E402
 from diff_fixtures import write_graphs as _write_graphs  # noqa: E402
+from mcp_expected_tools import EXPECTED_TOOL_NAMES  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -337,26 +338,9 @@ class WeldMcpRegistryWithDiffTest(unittest.TestCase):
     def test_tool_registry_lists_thirteen_tools(self) -> None:
         from weld import mcp_server
         tools = mcp_server.build_tools()
-        self.assertEqual(len(tools), 13)
+        self.assertEqual(len(tools), len(EXPECTED_TOOL_NAMES))
         names = {t.name for t in tools}
-        self.assertEqual(
-            names,
-            {
-                "weld_query",
-                "weld_find",
-                "weld_context",
-                "weld_path",
-                "weld_brief",
-                "weld_stale",
-                "weld_callers",
-                "weld_references",
-                "weld_trace",
-                "weld_diff",
-                "weld_export",
-                "weld_impact",
-                "weld_enrich",
-            },
-        )
+        self.assertEqual(names, set(EXPECTED_TOOL_NAMES))
 
 
 if __name__ == "__main__":

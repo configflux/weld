@@ -1,7 +1,9 @@
 # Contributing to Weld
 
-Thank you for your interest in Weld. This project is
-**maintainer-driven** and is not currently accepting external pull requests.
+Thank you for your interest in Weld. Weld is currently **maintainer-led**.
+Issues, bug reports, demo repos, documentation improvements, and strategy
+proposals are welcome. For larger changes, please open an issue first so we
+can align on scope before implementation.
 
 ## Reporting Issues
 
@@ -11,6 +13,10 @@ Bug reports and feature requests are welcome. Open a GitHub issue with:
 - Steps to reproduce (for bugs).
 - Expected vs. actual behavior.
 - Output of `wd --version` and your Python version.
+
+For open-ended discussion (ideas, setup show-and-tell, MCP-client questions,
+strategy requests, polyrepo patterns), see [docs/community.md](docs/community.md)
+for the planned GitHub Discussions categories and how they differ from Issues.
 
 ## Running Locally
 

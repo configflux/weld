@@ -46,6 +46,7 @@ _HELP = """Usage: wd <command> [args]
 Core commands:
   init           Bootstrap .weld/discover.yaml for the current repo
   discover       Run discovery and emit graph JSON to stdout
+  agents         Agent Graph for static AI customization assets
   workspace      Inspect child status (status) or one-shot federate a polyrepo (bootstrap)
   build-index    Regenerate .weld/file-index.json
   scaffold       Write bundled templates into the current repo
@@ -72,6 +73,9 @@ Visualization commands:
 
 Live commands:
   watch          Watch source files and auto-rediscover on change
+
+MCP commands:
+  mcp            MCP server tooling (e.g. `wd mcp config --client=claude`)
 
 Graph commands:
   diff           Show what changed between discovery runs
@@ -167,6 +171,11 @@ def _dispatch(argv: list[str] | None) -> int:
 
         return discover_mod.main(rest)
 
+    if subcmd == "agents":
+        from weld import agent_graph_cli as agents_mod
+
+        return agents_mod.main(rest)
+
     if subcmd == "workspace":
         from weld import workspace_state as workspace_state_mod
 
@@ -250,6 +259,11 @@ def _dispatch(argv: list[str] | None) -> int:
         from weld import arch_lint as arch_lint_mod
 
         return arch_lint_mod.main(rest)
+
+    if subcmd == "mcp":
+        from weld import mcp_config as mcp_config_mod
+
+        return mcp_config_mod.main(rest)
 
     from weld import graph as graph_mod
 

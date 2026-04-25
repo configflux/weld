@@ -1,0 +1,9 @@
+# shared-models library: module + Pydantic model extraction.
+sources:
+  - glob: "src/**/*.py"
+    type: file
+    strategy: python_module
+
+  - glob: "src/**/*.py"
+    type: file
+    strategy: pydantic

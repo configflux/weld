@@ -253,6 +253,15 @@ class DoctorPythonVersionTest(unittest.TestCase):
 
 
 class DoctorExitCodeTest(unittest.TestCase):
+    def test_exit_zero_without_weld_project(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            results = doctor(root)
+            self.assertFalse(any(r.level == "fail" for r in results))
+            self.assertTrue(
+                any("No Weld project found" in r.message for r in results)
+            )
+
     def test_exit_zero_no_fail(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -303,10 +312,21 @@ class DoctorMainExitCodeTest(unittest.TestCase):
     def test_main_exit_fail(self):
         from weld.doctor import main as doctor_main
         with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".weld").mkdir()
             output = io.StringIO()
             with patch("sys.stdout", output):
                 code = doctor_main(["--root", td])
             self.assertEqual(code, 1)
+
+    def test_main_exit_ok_without_weld_project(self):
+        from weld.doctor import main as doctor_main
+        with tempfile.TemporaryDirectory() as td:
+            output = io.StringIO()
+            with patch("sys.stdout", output):
+                code = doctor_main(["--root", td])
+            self.assertEqual(code, 0)
+            self.assertIn("No Weld project found", output.getvalue())
 
     def test_main_exit_ok(self):
         from weld.doctor import main as doctor_main

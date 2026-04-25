@@ -1,0 +1,6 @@
+---
+description: Cursor C++ conventions.
+applyTo: [src/**]
+---
+
+Prefer explicit ownership boundaries.

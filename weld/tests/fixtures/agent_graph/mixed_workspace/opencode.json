@@ -1,0 +1,12 @@
+{
+  "commands": {
+    "plan": {
+      "description": "Use agent:planner to create a test strategy."
+    }
+  },
+  "mcpServers": {
+    "github": {
+      "description": "Repository metadata."
+    }
+  }
+}

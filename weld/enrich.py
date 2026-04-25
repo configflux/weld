@@ -5,11 +5,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from weld._enrich_safe import (
+    SafeModeRefusedError,
+    refuse_if_network_provider,
+    resolve_provider_name,
+)
 from weld.graph import Graph
 from weld.providers import EnrichmentProvider, resolve_provider
 
@@ -34,15 +38,6 @@ def _parse_non_negative_float(raw: str) -> float:
     if value < 0:
         raise argparse.ArgumentTypeError("value must be >= 0")
     return value
-
-
-def _resolve_provider_name(provider_name: str | None) -> str:
-    resolved = (provider_name or os.getenv("WELD_ENRICH_PROVIDER", "")).strip().lower()
-    if not resolved:
-        raise ValueError(
-            "provider is required (use --provider or set WELD_ENRICH_PROVIDER)"
-        )
-    return resolved
 
 
 def _selected_node_ids(graph: Graph, node_id: str | None) -> list[str]:
@@ -322,10 +317,16 @@ def enrich(
     max_tokens: int | None = None,
     max_cost: float | None = None,
     persist: bool = True,
+    safe: bool = False,
 ) -> dict:
-    """Resolve a provider and run enrichment against *graph*."""
+    """Resolve a provider and run enrichment against *graph*.
 
-    resolved_name = _resolve_provider_name(provider_name)
+    When ``safe`` is True, network/LLM providers are refused before
+    instantiation (see :mod:`weld._enrich_safe`).
+    """
+
+    resolved_name = resolve_provider_name(provider_name)
+    refuse_if_network_provider(resolved_name, safe=safe)
     provider = resolve_provider(resolved_name)
     return run_enrichment(
         graph,
@@ -354,10 +355,7 @@ def _print_human(result: dict) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="wd enrich",
-        description="LLM-assisted semantic enrichment for graph nodes.",
-    )
+    parser = argparse.ArgumentParser(prog="wd enrich", description="LLM-assisted semantic enrichment for graph nodes.")
     parser.add_argument("--root", type=Path, default=Path("."), help="Project root directory")
     parser.add_argument("--provider", help="Provider name or WELD_ENRICH_PROVIDER env fallback")
     parser.add_argument("--model", help="Override the provider's default model")
@@ -365,9 +363,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="Rewrite existing matching enrichment")
     parser.add_argument("--max-tokens", type=_parse_non_negative_int, help="Stop after this many tokens are used")
     parser.add_argument("--max-cost", type=_parse_non_negative_float, help="Stop after this much tracked cost is used")
-    parser.add_argument("--json", dest="json_output", action="store_true", default=False, help="Emit machine-readable JSON")
+    parser.add_argument("--json", dest="json_output", action="store_true", help="Emit machine-readable JSON")
+    parser.add_argument("--safe", action="store_true", help="Refuse network/LLM providers (ADR 0024 trust boundary, extended to enrich)")
     args = parser.parse_args(argv)
-
+    # Friendly first-run guidance when graph.json is missing (bd-5038-uqo).
+    from weld._graph_cli import _build_retry_hint, ensure_graph_exists
+    ensure_graph_exists(args.root, _build_retry_hint("enrich", node=args.node_id) if args.node_id else _build_retry_hint("enrich"))
     graph = Graph(args.root)
     graph.load()
     try:
@@ -380,11 +381,13 @@ def main(argv: list[str] | None = None) -> int:
             max_tokens=args.max_tokens,
             max_cost=args.max_cost,
             persist=True,
+            safe=args.safe,
         )
-    except ValueError as exc:
-        sys.stderr.write(f"wd enrich: {exc}\n")
+    except SafeModeRefusedError:
+        # refuse_if_network_provider already wrote a "[weld] safe mode:
+        # refused ..." line to stderr. Exit non-zero without echoing it.
         return 1
-    except RuntimeError as exc:
+    except (ValueError, RuntimeError) as exc:
         sys.stderr.write(f"wd enrich: {exc}\n")
         return 1
 

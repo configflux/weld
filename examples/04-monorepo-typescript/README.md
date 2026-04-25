@@ -1,47 +1,40 @@
 # Example: Monorepo TypeScript Discovery
 
-Demonstrates weld discovering a TypeScript monorepo with workspace
-packages. The built-in `typescript_exports` strategy extracts exported
-symbols from each package, and the `manifest` strategy discovers
-build/test scripts from `package.json` files. Cross-package dependency
-edges are captured via import analysis.
+A realistic, small-but-complete TypeScript monorepo that exercises the
+things weld is designed to surface in a 5-minute demo: cross-package
+imports, service-to-shared-lib dependencies, container runtime, CI
+workflows, architecture docs, and ADRs.
 
 ## What This Example Contains
 
-- `packages/ui/` -- a shared React component library (`@acme/ui`)
-  exporting `Button` and `Card` components
-- `packages/api/` -- a typed API client package (`@acme/api`) exporting
-  `fetchItems`, `createItem`, and shared types
-- `apps/web/` -- a Next.js application (`@acme/web`) that imports from
-  both `@acme/ui` and `@acme/api`
-- `package.json` -- root workspace manifest defining the monorepo
-  structure
-- `.weld/discover.yaml` -- weld discovery configuration with
-  per-package source entries and manifest extraction
-
-## Monorepo Structure
-
 ```
 04-monorepo-typescript/
-  package.json              (root workspace)
-  packages/
-    ui/
-      package.json          (@acme/ui)
-      src/
-        Button.tsx          exports Button, ButtonProps
-        Card.tsx            exports Card, CardProps
-        index.ts            barrel re-exports
-    api/
-      package.json          (@acme/api)
-      src/
-        client.ts           exports fetchItems, createItem
-        types.ts            exports ApiResponse, ApiError
+  package.json                (root workspace)
   apps/
-    web/
-      package.json          (@acme/web, depends on @acme/ui + @acme/api)
-      src/
-        App.tsx             imports Button, Card, fetchItems
-        layout.tsx          imports Card
+    web/                      (@acme/web) -- Next.js-style app
+  packages/
+    ui/                       (@acme/ui) -- React component library
+    api/                      (@acme/api) -- typed fetch client,
+                              re-exports types from @acme/shared-types
+  libs/
+    shared-types/             (@acme/shared-types) -- canonical
+                              domain types (Item, Order, ApiError)
+  services/
+    orders-api/               (@acme/orders-api) -- backend service,
+                              depends on @acme/shared-types
+  docker/
+    Dockerfile.orders-api     multi-stage build for the service
+    docker-compose.yml        orders-api + postgres dev stack
+  .github/
+    workflows/
+      ci.yml                  lint -> build -> test pipeline
+                              (illustrative / non-runnable -- see note below)
+  docs/
+    architecture.md           component + runtime topology overview
+    adr/
+      0001-monorepo-layout.md ADR locking in the four-bucket layout
+  .weld/
+    discover.yaml             weld discovery configuration
 ```
 
 ## Running Discovery
@@ -51,72 +44,45 @@ cd examples/04-monorepo-typescript
 wd discover
 ```
 
+## Demo Narrative
+
+This example is the target of the 5-minute tutorial. The narrative
+weld tells against this repo:
+
+1. **Packages and apps** -- `wd query "Button"` surfaces the `@acme/ui`
+   component, its consumers in `apps/web`, and the package boundary.
+2. **Cross-package edges** -- `wd context file:web/App` shows
+   `apps/web/src/App.tsx` importing from `@acme/ui` and `@acme/api`.
+3. **Shared types across client and server** -- both `@acme/api` and
+   `@acme/orders-api` import from `@acme/shared-types`. Weld renders
+   this as a hub in the graph.
+4. **Runtime and CI context** -- `wd query "orders-api"` returns
+   source files, the Dockerfile that builds it, the compose service,
+   and the CI workflow that tests it.
+5. **Decisions with provenance** -- `wd query "monorepo layout"` turns
+   up the architecture doc and `docs/adr/0001-monorepo-layout.md`.
+
 ## What the Graph Contains
 
 After running discovery, the output JSON graph includes:
 
-- **File nodes** for each TypeScript source file, scoped by package
-  using `id_prefix` (e.g., `file:ui/Button`, `file:api/client`,
-  `file:web/App`)
-- **Exported symbols** listed in each node's `exports` property
-  (functions, classes, interfaces, types)
-- **Import tracking** via the `imports_from` property, showing which
-  modules each file depends on (e.g., `App.tsx` imports from
-  `@acme/ui` and `@acme/api`)
-- **Package containment edges** linking package nodes (`pkg:ui`,
-  `pkg:api`, `pkg:web`) to their constituent files
-- **Config nodes** for each `package.json`, with build/test script
-  targets extracted by the `manifest` strategy
-
-Example output (abbreviated):
-
-```json
-{
-  "nodes": {
-    "file:ui/Button": {
-      "type": "file",
-      "label": "Button",
-      "props": {
-        "file": "packages/ui/src/Button.tsx",
-        "exports": ["Button", "ButtonProps"],
-        "source_strategy": "typescript_exports"
-      }
-    },
-    "file:api/client": {
-      "type": "file",
-      "label": "client",
-      "props": {
-        "file": "packages/api/src/client.ts",
-        "exports": ["fetchItems", "createItem"],
-        "source_strategy": "typescript_exports"
-      }
-    },
-    "file:web/App": {
-      "type": "file",
-      "label": "App",
-      "props": {
-        "file": "apps/web/src/App.tsx",
-        "exports": ["App"],
-        "imports_from": ["@acme/ui", "@acme/api"],
-        "source_strategy": "typescript_exports"
-      }
-    },
-    "config:package_json": {
-      "type": "config",
-      "label": "package.json (@acme/monorepo)",
-      "props": {
-        "file": "package.json",
-        "source_strategy": "manifest"
-      }
-    }
-  },
-  "edges": [
-    {"from": "pkg:ui", "to": "file:ui/Button", "type": "contains"},
-    {"from": "pkg:api", "to": "file:api/client", "type": "contains"},
-    {"from": "pkg:web", "to": "file:web/App", "type": "contains"}
-  ]
-}
-```
+- **File nodes** for every TypeScript source, scoped by package via
+  `id_prefix` (e.g., `file:ui/Button`, `file:api/client`,
+  `file:shared-types/index`, `file:orders-api/server`,
+  `file:web/App`).
+- **Exported symbol lists** on each file node (`exports` property).
+- **Import tracking** via `imports_from` -- the load-bearing edge for
+  cross-package demos (e.g., `orders-api/server` imports
+  `@acme/shared-types`).
+- **Package containment edges** linking package/lib/service nodes
+  (`pkg:ui`, `pkg:api`, `pkg:web`, `lib:shared-types`,
+  `service:orders-api`) to their files.
+- **Config nodes** for every `package.json`, plus `compose` and
+  `gh_workflow` nodes for the runtime and CI surfaces.
+- **File nodes for Dockerfiles** with stages, base images, and
+  exposed ports extracted by the `dockerfile` strategy.
+- **Doc nodes** for `docs/architecture.md` and the ADR history under
+  `docs/adr/`.
 
 ## Key Discovery Configuration Patterns
 
@@ -134,40 +100,44 @@ containment edges:
 ```
 
 Without `id_prefix`, files with the same name across packages (e.g.,
-`index.ts`) would produce colliding node IDs. The prefix ensures
-uniqueness: `file:ui/index` vs `file:api/index`.
+`index.ts`) would produce colliding node IDs.
 
 ### Cross-Package Dependencies
 
 When tree-sitter is available, the `typescript_exports` strategy
-captures import sources in each node's `imports_from` property. This
-reveals cross-package dependency edges:
+captures import sources in each node's `imports_from` property. Key
+cross-package edges in this example:
 
-- `apps/web/src/App.tsx` imports from `@acme/ui` and `@acme/api`
-- `apps/web/src/layout.tsx` imports from `@acme/ui`
+- `apps/web/src/App.tsx` imports from `@acme/ui` and `@acme/api`.
+- `packages/api/src/types.ts` re-exports from `@acme/shared-types`.
+- `services/orders-api/src/server.ts` imports from `@acme/shared-types`.
 
-These edges make the package dependency graph explicit in the
-connected structure without requiring a separate analysis pass.
+### Runtime and CI
 
-### Manifest Extraction
+`dockerfile`, `compose`, and `gh_workflow` strategies fold container
+and CI definitions into the same connected structure as the source
+code, so a single query can span "who builds this" and "what tests
+it" alongside "what imports it".
 
-The `manifest` strategy scans `package.json` files and extracts
-build/test script targets as typed nodes:
+> **Note**: `.github/workflows/ci.yml` in this example is a discovery
+> fixture, not a runnable pipeline. The workspace ships no eslint or
+> test runner config, so the `npm run lint` and `npm run test` steps
+> would fail if executed -- the workflow is here purely so the
+> `gh_workflow` strategy has something to extract. The file's header
+> comment repeats this caveat for anyone who finds it independently.
 
-```yaml
-- glob: "**/package.json"
-  strategy: manifest
-```
+### Docs and ADRs
 
-This produces `build-target` and `test-target` nodes for scripts like
-`npm run build`, `npm run test`, and `npm run lint`.
+The `firstline_md` strategy turns `docs/architecture.md` and every
+file under `docs/adr/` into doc nodes. This is what lets weld answer
+"why is the layout this shape?" by surfacing the ADR next to the code.
 
 ## Customizing
 
 - Add more workspace packages by creating new directories under
-  `packages/` or `apps/` and adding corresponding source entries to
-  `.weld/discover.yaml`
+  `apps/`, `packages/`, `libs/`, or `services/` and adding matching
+  source entries to `.weld/discover.yaml`.
 - Use `exclude` in source entries to skip generated files:
-  `exclude: ["**/dist/**", "**/*.d.ts"]`
-- Combine with the `config_file` strategy to discover
-  `tsconfig.json` files as configuration nodes
+  `exclude: ["**/dist/**", "**/*.d.ts"]`.
+- Combine with the `config_file` strategy to discover `tsconfig.json`
+  files as configuration nodes.

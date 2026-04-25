@@ -331,32 +331,9 @@ class Graph:
                     queue.append(current_path + [neighbor])
         return {"path": None, "reason": "no path found"}
 
-    def stats(self) -> dict:
-        nc: dict[str, int] = {}
-        dc: dict[str, int] = {}  # described count per type
-        for n in self._data["nodes"].values():
-            t = n["type"]
-            nc[t] = nc.get(t, 0) + 1
-            desc = (n.get("props") or {}).get("description")
-            if desc and isinstance(desc, str) and desc.strip():
-                dc[t] = dc.get(t, 0) + 1
-        ec: dict[str, int] = {}
-        for e in self._data["edges"]:
-            ec[e["type"]] = ec.get(e["type"], 0) + 1
-        total = len(self._data["nodes"])
-        desc_total = sum(dc.values())
-        cov_by_type = {
-            t: {"total": nc[t], "with_description": dc.get(t, 0),
-                "coverage_pct": round(dc.get(t, 0) / nc[t] * 100, 2)}
-            for t in nc
-        }
-        return {
-            "total_nodes": total, "total_edges": len(self._data["edges"]),
-            "nodes_by_type": nc, "edges_by_type": ec,
-            "nodes_with_description": desc_total,
-            "description_coverage_pct": round(desc_total / total * 100, 2) if total else 0.0,
-            "description_coverage_by_type": cov_by_type,
-        }
+    def stats(self, *, top: int | None = None) -> dict:
+        from weld._graph_stats import compute_stats as _compute_stats
+        return _compute_stats(self._data, top=top)
 
     def stale(self) -> dict:
         """Report graph freshness (ADR 0017); primary = source drift."""

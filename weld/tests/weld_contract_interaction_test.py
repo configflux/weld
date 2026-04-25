@@ -9,7 +9,7 @@ See ADR 0018 (the interaction-structure and static-truth ADR) for the
 rationale, the static-truth policy, and the four protocol families
 (HTTP, gRPC, events, ROS2) these additions standardize over.
 
-SCHEMA_VERSION is bumped to 4 for the ``rpc`` and ``channel`` node types
+SCHEMA_VERSION was bumped to 4 for the ``rpc`` and ``channel`` node types
 and the optional protocol-metadata vocabulary. No new edge types are
 introduced -- existing edges (``exposes``, ``invokes``, ``produces``,
 ``consumes``, ``implements``) continue to connect interaction surfaces to
@@ -58,8 +58,8 @@ _INTERACTION_OPTIONAL_PROPS = [
 class InteractionSchemaTest(unittest.TestCase):
     """project-xoq.1.2: rpc/channel vocabulary and protocol metadata."""
 
-    def test_schema_version_bumped_to_four(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 4)
+    def test_schema_version_at_least_four(self) -> None:
+        self.assertGreaterEqual(SCHEMA_VERSION, 4)
 
     def test_interaction_node_types_in_vocabulary(self) -> None:
         for node_type in _INTERACTION_NODE_TYPES:
@@ -80,8 +80,8 @@ class InteractionSchemaTest(unittest.TestCase):
                 f"unexpected interaction-prefix edge: {edge_type!r}",
             )
 
-    def test_validate_meta_accepts_schema_four(self) -> None:
-        self.assertEqual(validate_meta({"version": 4, "updated_at": _TS}), [])
+    def test_validate_meta_accepts_current_schema(self) -> None:
+        self.assertEqual(validate_meta({"version": SCHEMA_VERSION, "updated_at": _TS}), [])
 
     def test_validate_meta_rejects_prior_schema_three(self) -> None:
         errs = validate_meta({"version": 3, "updated_at": _TS})
@@ -283,7 +283,7 @@ class InteractionGraphValidationTest(unittest.TestCase):
 
     def test_full_graph_with_interaction_surfaces_is_valid(self) -> None:
         graph = {
-            "meta": {"version": 4, "updated_at": _TS},
+            "meta": {"version": SCHEMA_VERSION, "updated_at": _TS},
             "nodes": {
                 "boundary:api": {"type": "boundary", "label": "API", "props": {}},
                 "rpc:GetUser": {

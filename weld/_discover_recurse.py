@@ -46,6 +46,7 @@ def recurse_children(
     state: WorkspaceState,
     *,
     incremental: bool | None = None,
+    safe: bool = False,
 ) -> RecurseResult:
     """Discover each present child in-process, return a RecurseResult.
 
@@ -73,7 +74,9 @@ def recurse_children(
             continue
 
         child_root = root / child.path
-        exc = _discover_child(child.name, child_root, incremental=incremental)
+        exc = _discover_child(
+            child.name, child_root, incremental=incremental, safe=safe,
+        )
         if exc is None:
             result.discovered.append(child.name)
         else:
@@ -87,6 +90,7 @@ def _discover_child(
     child_root: Path,
     *,
     incremental: bool | None = None,
+    safe: bool = False,
 ) -> Exception | None:
     """Discover a single child repo and write its graph atomically.
 
@@ -99,7 +103,7 @@ def _discover_child(
 
     print(f"[weld] recurse: discovering {name} ...", file=sys.stderr)
     try:
-        graph = _discover_single_repo(child_root, incremental=incremental)
+        graph = _discover_single_repo(child_root, incremental=incremental, safe=safe)
     except Exception as exc:  # noqa: BLE001 -- per-child isolation
         print(
             f"[weld] recurse: {name} failed: {exc}",

@@ -48,3 +48,11 @@ jobs:
             echo "Version mismatch: wd --version output '${actual}' does not contain expected '${expected}'"
             exit 1
           fi
+
+      - name: Assert wd doctor exits 0
+        # Run against the checked-out repo root, which has a committed
+        # .weld/discover.yaml and .weld/graph.json. A failing doctor here
+        # means the installed package is broken (missing bundled modules,
+        # broken entry point, missing strategies, etc.) — i.e. a packaging
+        # regression we want to catch before users hit it on first run.
+        run: wd doctor

@@ -30,7 +30,15 @@ Key areas of concern:
 
 - **Strategy plugins**: Project-local strategies (`.weld/strategies/`) are
   Python modules loaded at discovery time. Only run `wd discover` on
-  repositories you trust.
+  repositories you trust. Pass `wd discover --safe` to refuse
+  project-local strategies (ADR 0024).
 - **External adapters**: `strategy: external_json` executes the configured
   command from `discover.yaml` with the repository root as its working
   directory. Only enable external adapters from repositories you trust.
+  Pass `wd discover --safe` to refuse external_json subprocesses
+  (ADR 0024).
+- **Enrichment providers**: `wd enrich` calls LLM/network providers
+  (Anthropic, OpenAI, Ollama). Pass `wd enrich --safe` to refuse every
+  network-bound provider — useful for CI bots, MCP servers, evaluation
+  harnesses, or any environment where outbound egress is not permitted.
+  Refusal exits non-zero and never mutates the graph.

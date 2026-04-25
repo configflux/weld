@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": ["Read", "Grep"],
+    "deny": ["Bash(rm *)"]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "description": "Record tool use with rollback note.",
+        "matcher": "*"
+      }
+    ]
+  }
+}

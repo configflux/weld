@@ -79,10 +79,14 @@ class ReadmeBootstrapDocsTest(unittest.TestCase):
         )
 
     def test_trust_and_install_stance_documented(self) -> None:
-        """Root README must document trusted discovery and source-first install."""
+        """Root README must document trusted discovery and the blessed install path."""
         self.assertIn("repositories you trust", self.text)
         self.assertIn("external_json", self.text)
-        self.assertIn("source/Git-first", self.text)
+        # Install stance: `uv tool install configflux-weld` is the single
+        # recommended path. pipx is the supported alternative and install.sh
+        # is demoted to a zero-dependency bootstrap for hosts without uv/pipx.
+        self.assertIn("uv tool install configflux-weld", self.text)
+        self.assertIn("pipx install configflux-weld", self.text)
         self.assertIn("Python 3.10 through 3.13", self.text)
 
 

@@ -1,0 +1,9 @@
+# auth service: FastAPI routers + Python module extraction.
+sources:
+  - glob: "src/**/*.py"
+    type: file
+    strategy: python_module
+
+  - glob: "src/routers/*.py"
+    type: file
+    strategy: fastapi

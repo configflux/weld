@@ -1,16 +1,56 @@
 # Weld
 
-Weld the pieces of agent work into one connected structure.
+[![CI](https://github.com/configflux/weld/actions/workflows/ci.yml/badge.svg)](https://github.com/configflux/weld/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/configflux-weld.svg)](https://pypi.org/project/configflux-weld/) [![Python versions](https://img.shields.io/pypi/pyversions/configflux-weld.svg)](https://pypi.org/project/configflux-weld/) [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-ConfigFlux Weld is a small agent-first tool for linking context, actions, and
-knowledge so work can continue without losing structure.
+A local codebase graph for AI coding agents. Weld scans code, docs, CI, build
+files, runtime configs, and repo boundaries into a deterministic graph. Agents
+can query this graph through CLI or MCP instead of rediscovering the repository
+from scratch every session.
 
-Weld helps people and agents:
+The graph lives on disk (`.weld/graph.json`), stays under your control, and
+answers the questions agents and humans repeatedly ask about a codebase: where
+a capability lives, which docs are authoritative, what build and test surfaces
+a change touches, and what boundaries constrain the implementation.
 
-- Where does this capability live?
-- Which docs or policies are authoritative for this area?
-- What build, test, or operational surfaces matter for this change?
-- What boundaries or entrypoints constrain the implementation?
+**Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md) walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path` against the in-tree mono- and polyrepo examples.
+
+## Use Weld when…
+
+- your repo is too large for an agent to understand in one pass
+- your system spans multiple repositories
+- architecture is spread across code, docs, CI, configs, and service contracts
+- you want reproducible repo context instead of ad-hoc chat memory
+
+## When not to use Weld
+
+- **Your repo is small (under ~50 files).** An agent can read it end-to-end;
+  a graph adds overhead without payoff.
+- **`grep` plus your IDE already answers your questions.** If nothing is
+  missing from that workflow, Weld has nothing to add.
+- **You only need symbol navigation.** Go-to-definition and find-references
+  are an LSP job. Weld covers architecture, contracts, docs, and CI -- not
+  IDE jump-to.
+- **You expect compiler-grade static analysis.** Weld is a pragmatic graph,
+  not a type checker or dataflow engine. It will not catch every reference
+  or prove correctness.
+- **You do not want repo-local configuration.** Weld lives in `.weld/`
+  (config, graph, strategies) and expects to be committed alongside your
+  code. If that is unacceptable, Weld is the wrong tool.
+
+## How Weld compares
+
+Weld is not a replacement for the tools below -- it sits alongside them and
+gives agents a persistent, queryable map of the repository. Each of these
+tools is excellent at what it does; Weld adds the connected structure they
+were not designed to provide.
+
+| Tool | Gives you | Weld adds |
+|---|---|---|
+| grep / ripgrep | Fast literal and regex search over file contents. | Typed nodes and edges -- a symbol, route, doc, or config is an addressable entity with neighbours, not a line of text. |
+| ctags / LSP | Symbol navigation and go-to-definition inside one language. | A cross-language graph that also covers docs, CI, configs, service contracts, and repo boundaries -- surfaces an IDE was never meant to index. |
+| Sourcegraph | Hosted code search and references across large fleets of repos. | A local, repo-local graph you commit with your code. No server, no indexing fleet; agents query it offline through CLI or MCP. |
+| vector DB / RAG | Embedding-based semantic recall over chunks of text. | Deterministic structure. Query results are exact nodes and edges with provenance, not top-k fuzzy matches, so agents can follow relationships instead of guessing. |
+| Copilot / Claude Code / OpenCode | In-editor and agentic code generation and chat. | Shared repo context those agents can read through MCP -- the same graph across sessions and tools, instead of each agent rediscovering the repo on every run. |
 
 ## Key features
 
@@ -22,6 +62,9 @@ Weld helps people and agents:
   Go, Rust, C#, C++, and ROS2.
 - **Plugin architecture** — drop a `.py` file in `.weld/strategies/` to
   extract anything repo-specific.
+- **Agent Graph** — discover agents, skills, prompts, commands, hooks,
+  instructions, MCP servers, and platform-specific copies into
+  `.weld/agent-graph.json`.
 - **Agent-native** — ships an MCP server so Claude Code, Codex, and other
   agents can query the graph directly.
 - **Zero external dependencies** — runs from a plain checkout with Python >= 3.10.
@@ -30,8 +73,8 @@ Weld helps people and agents:
 ## Quickstart
 
 ```bash
-# Install (curl | sh — detects uv/pipx/pip automatically)
-curl -fsSL https://raw.githubusercontent.com/configflux/weld/main/install.sh | sh
+# Install (recommended — see the Install section for alternatives)
+uv tool install configflux-weld
 
 # Bootstrap config for your repo
 wd init
@@ -47,7 +90,53 @@ wd viz --no-open
 wd stale
 ```
 
+Try it on a real example: [examples/04-monorepo-typescript](examples/04-monorepo-typescript/) (monorepo) · [examples/05-polyrepo](examples/05-polyrepo/) (polyrepo federation).
+
+Sample output (`wd query "auth"` — trimmed):
+
+```json
+{
+  "query": "auth",
+  "matches": [
+    {
+      "id": "symbol:src/auth/handler.py:authenticate",
+      "label": "authenticate",
+      "type": "function",
+      "props": {
+        "file": "src/auth/handler.py",
+        "exports": ["authenticate"],
+        "description": "Validate a bearer token and return the caller identity."
+      }
+    }
+  ],
+  "neighbors": [{"id": "route:/login", "type": "route"}],
+  "edges": [
+    {"from": "route:/login", "to": "symbol:src/auth/handler.py:authenticate", "type": "calls"}
+  ]
+}
+```
+
 See [Install](#install) for alternatives (local checkout, pip, raw source).
+
+### Agent Graph for AI customizations
+
+Weld also maps the AI customization layer around a repository: agents, skills,
+instructions, prompts, commands, hooks, MCP servers, tool permissions, and
+platform variants. The Agent Graph is static and repo-bound; discovery reads
+known customization files and does not execute project code.
+
+```bash
+wd agents discover
+wd agents list
+wd agents audit
+wd agents explain planner
+wd agents impact .github/agents/planner.agent.md
+wd agents plan-change "planner should always include test strategy"
+```
+
+Use `--json` on `list`, `explain`, `impact`, `audit`, and `plan-change` for
+agent-friendly output. Use `wd agents rediscover` when you want an explicit
+refresh of `.weld/agent-graph.json` before inspecting the persisted graph.
 
 ### Agent-first onboarding
 
@@ -55,7 +144,7 @@ If an agent or coding assistant is driving setup, use the short bootstrap
 path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/configflux/weld/main/install.sh | sh
+uv tool install configflux-weld   # recommended — see Install for alternatives
 wd prime                  # show setup status + per-framework surface matrix
 wd bootstrap claude       # writes .claude/commands/weld.md
 wd bootstrap codex        # writes .codex/skills/weld/SKILL.md + .codex/config.toml
@@ -86,9 +175,27 @@ in a Claude-only checkout sees `codex: skill no, mcp no -> wd bootstrap codex`
 instead of silence). `auto` is the default and infers the agent from
 environment variables such as `CODEX_*`.
 
-Trust note: run `wd discover` automatically only on repositories you trust.
-Project-local strategies are Python modules loaded at discovery time, and
-`strategy: external_json` executes configured commands from `discover.yaml`.
+## Trust model
+
+Weld's trust posture is explicit and narrow:
+
+- **Default**: bundled discovery reads source files and writes the local
+  graph (`.weld/graph.json`). It does not execute discovered application
+  code and does not open network connections.
+- **Safe mode**: when enabled with `--safe`, safe mode disables
+  project-local strategies (`.weld/strategies/`) and the `external_json`
+  adapter for `wd discover`, and refuses network/LLM enrichment providers
+  for `wd enrich`. Pass `wd discover --safe` to scan an untrusted
+  repository without executing any code from it; pass `wd enrich --safe`
+  to refuse network egress (every currently registered provider —
+  Anthropic, OpenAI, Ollama — is refused). Safe mode produces a stable
+  `[weld] safe mode: ...` stderr line for each refused path.
+- **Advanced strategies**: project-local strategies are Python modules
+  loaded at discovery time, and `strategy: external_json` executes
+  configured commands from `discover.yaml`. Only enable these on
+  repositories you trust.
+
+See [SECURITY.md](SECURITY.md) for the full policy and reporting process.
 
 ## Supported languages
 
@@ -136,56 +243,18 @@ edits. Manual inferred edges should use explicit provenance such as
 Without tree-sitter, the built-in Python module strategy and non-language
 strategies (markdown, YAML, config, frontmatter) still work.
 
-## Agent integration
+## MCP
 
-Weld ships an MCP server that exposes the connected structure as structured
-tool calls:
-
-| Tool | Description |
-|---|---|
-| `weld_query(term)` | Hybrid-ranked tokenized graph search |
-| `weld_find(term)` | File-index substring search |
-| `weld_context(node_id)` | Node + 1-hop neighborhood |
-| `weld_path(from, to)` | Shortest path between nodes |
-| `weld_impact(target)` | Reverse-dependency blast-radius analysis |
-| `weld_enrich(node_id?, provider?)` | Built-in semantic enrichment with provider-backed LLMs |
-| `weld_brief(area)` | High-level agent context packet |
-| `weld_stale()` | Graph freshness check |
-
-### Setup for an agent
-
-For Codex, add MCP servers in `.codex/config.toml` (or run `wd bootstrap codex`):
-
-```toml
-[mcp_servers.weld]
-command = "python"
-args = ["-m", "weld.mcp_server"]
-```
-
-For agents that read `.mcp.json`, use:
+Weld ships an MCP server so Claude Code, VS Code, Cursor, Codex, and any
+other MCP-capable agent can query the graph as structured tool calls. Point
+your client at `python -m weld.mcp_server`:
 
 ```json
-{
-  "mcpServers": {
-    "weld": {
-      "command": "python",
-      "args": ["-m", "weld.mcp_server"]
-    }
-  }
-}
+{"mcpServers": {"weld": {"command": "python", "args": ["-m", "weld.mcp_server"]}}}
 ```
 
-Then bootstrap onboarding files for your agent framework:
-
-```bash
-wd bootstrap claude     # writes .claude/commands/weld.md
-wd bootstrap codex      # writes .codex/skills/weld/SKILL.md + .codex/config.toml
-wd bootstrap copilot    # writes .github/skills/weld/SKILL.md + .github/instructions/weld.instructions.md
-```
-
-Each target also writes `.weld/README.md` and bootstraps
-`.weld/discover.yaml` if missing. Run `wd prime` afterwards to
-confirm setup.
+See **[docs/mcp.md](docs/mcp.md)** for the full tool reference, per-client
+configs, example prompts, and troubleshooting.
 
 ## Discovery configuration
 
@@ -380,6 +449,13 @@ rm .weld/workspace-state.json
 | `wd init` | Bootstrap `.weld/discover.yaml` (and `workspaces.yaml` when nested repos are detected) |
 | `wd init --max-depth N` | Limit nested repo scan depth during init (default: 4) |
 | `wd discover` | Run discovery, emit graph JSON (federation mode when `workspaces.yaml` is present) |
+| `wd agents discover` | Scan AI customization assets and write `.weld/agent-graph.json` |
+| `wd agents rediscover` | Refresh `.weld/agent-graph.json` from a new static scan |
+| `wd agents list` | List discovered AI customization assets from `.weld/agent-graph.json` |
+| `wd agents explain <asset>` | Explain one AI customization asset and its graph relationships |
+| `wd agents impact <asset>` | Show affected Agent Graph assets for a proposed customization change |
+| `wd agents audit` | Audit AI customization assets for static consistency issues |
+| `wd agents plan-change "<request>"` | Plan a static AI customization behavior change |
 | `wd workspace status` | Show workspace child ledger: lifecycle status, git ref, dirty state |
 | `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
 | `wd build-index` | Regenerate file index |
@@ -392,6 +468,7 @@ rm .weld/workspace-state.json
 | `wd viz` | Local read-only browser graph explorer |
 | `wd stale` | Check graph freshness |
 | `wd stats` | Graph statistics |
+| `wd doctor` | Check setup health; exits 0 in directories that are not Weld projects yet |
 | `wd prime` | Setup status + per-framework agent surface matrix (skill / instruction / mcp) with fix commands; `--agent {auto,claude,codex,copilot,all}` forces an agent row even when its framework files are absent |
 | `wd scaffold` | Write starter templates |
 | `wd bootstrap` | Agent onboarding files |
@@ -415,6 +492,12 @@ exempt specific edges from a broader deny match.
 
 Run `wd --help` for the full list.
 
+The repository includes a canonical Agent System Maintainer skill at
+`.agents/skills/agent-system-maintainer/SKILL.md` and a GitHub Copilot
+Agent Architect at `.github/agents/agent-architect.agent.md`. They are
+ordinary Agent Graph assets, so `wd agents discover`, `explain`, and
+`impact` can inspect them before future customization changes.
+
 ### Edge provenance with `props.source`
 
 `wd add-edge` accepts a strict set of edge types (see
@@ -433,31 +516,68 @@ The `source` value is free-form (agent name, tool name, `llm`,
   project: routes, Pydantic models, module structure
 - [02-custom-strategy](examples/02-custom-strategy/) — write a project-local
   strategy plugin that extracts TODO/FIXME comments
+- [04-monorepo-typescript](examples/04-monorepo-typescript/) — discover a
+  TypeScript monorepo: workspace packages, cross-package imports, shared types
 - [05-polyrepo](examples/05-polyrepo/) — set up a federated polyrepo
   workspace: workspaces.yaml, cross-repo discovery, workspace status
+- [agent-graph-demo](examples/agent-graph-demo/) — inspect mixed AI
+  customization assets with `wd agents discover`, `list`, `audit`,
+  `explain`, `impact`, and `plan-change`
 
 ## Install
 
-### Quick install (recommended)
+### Recommended: `uv tool install`
+
+```bash
+uv tool install configflux-weld
+
+# Verify
+wd --version
+```
+
+This is the single recommended install path. `uv tool install` puts
+`wd` on your `PATH` in an isolated environment, is fast, and gives you a
+clear update story:
+
+```bash
+uv tool upgrade configflux-weld   # or: uv tool upgrade --all
+```
+
+Don't have `uv` yet? See the [uv install
+instructions](https://docs.astral.sh/uv/getting-started/installation/).
+
+### Alternative install paths
+
+The paths below are supported but secondary. Prefer `uv tool install` unless
+you have a concrete reason to pick one of these.
+
+#### `pipx` (if you already standardize on pipx)
+
+```bash
+pipx install configflux-weld
+wd --version
+```
+
+Functionally equivalent to `uv tool install` for end users. Use whichever
+tool manager your team already has.
+
+#### `install.sh` (zero-dependency bootstrap)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/configflux/weld/main/install.sh | sh
 ```
 
-`install.sh` is a POSIX shell script that detects a compatible Python
-(3.10 through 3.13) and installs via `uv`, `pipx`, or `pip --user`, in
-that order of preference. It is idempotent — re-running upgrades an
-existing installation — and honours a `.weld-version` file in the
-current directory or any ancestor to pin a specific release tag. This is
-the fast path for end users and agents.
+`install.sh` is a POSIX shell script that detects a compatible Python (3.10
+through 3.13) and installs via `uv`, `pipx`, or `pip --user`, in that order
+of preference. Use it only when you don't have `uv` or `pipx` available and
+can't install them first — for example, on a minimal CI image or a
+locked-down host. It is idempotent (re-running upgrades an existing install)
+and honours a `.weld-version` file in the current directory or any ancestor
+to pin a specific release tag.
 
-Weld is intentionally source/Git-first for now: the supported public install
-paths are `install.sh`, editable checkout installs, and Git URL installs. A
-standard package-index release path is not part of this release contract yet.
+#### From a local checkout (development)
 
-### From a local checkout (development)
-
-Use this when you want to edit Weld locally or contribute changes:
+For contributors editing Weld itself:
 
 ```bash
 pip install -e weld/
@@ -470,13 +590,15 @@ For tree-sitter language support (Go, Rust, TypeScript, C++):
 pip install -e "weld/[tree-sitter]"
 ```
 
-### From GitHub
+#### From a Git URL
 
 ```bash
 pip install "git+https://github.com/configflux/weld.git@main#subdirectory=weld"
 ```
 
-### Raw source (no install)
+Useful for pinning an unreleased commit or branch.
+
+#### Raw source (no install)
 
 If you cannot install anything, the module entrypoint works from a plain
 checkout:
@@ -484,15 +606,6 @@ checkout:
 ```bash
 python -m weld --help
 ```
-
-### When to use which
-
-| Path | Use when |
-|---|---|
-| `install.sh` | End users and agents — the quickest supported setup. |
-| `pip install -e weld/` | Local development on weld itself. |
-| `pip install "git+ssh://..."` | Reproducible installs from a branch or tag, without running a shell script. |
-| `python -m weld` | A plain checkout with no install step, e.g. inside a locked-down container. |
 
 ### Python compatibility
 
@@ -512,9 +625,10 @@ development toolchain can be narrower than the runtime support window.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). This project is maintainer-driven
-and is not currently accepting external pull requests. Bug reports and
-feature requests are welcome as GitHub issues.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Weld is currently maintainer-led.
+Issues, bug reports, demo repos, documentation improvements, and strategy
+proposals are welcome. For larger changes, please open an issue first so we
+can align on scope before implementation.
 
 ## License
 

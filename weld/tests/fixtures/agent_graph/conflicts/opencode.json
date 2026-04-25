@@ -1,0 +1,10 @@
+{
+  "commands": {
+    "deploy": {
+      "description": "Run agent:missing-agent."
+    }
+  },
+  "hooks": {
+    "PostToolUse": [{}]
+  }
+}

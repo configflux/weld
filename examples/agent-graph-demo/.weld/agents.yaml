@@ -1,0 +1,6 @@
+agents:
+  planner:
+    canonical: .github/agents/planner.agent.md
+    renders:
+      - .claude/agents/planner.md
+      - .gemini/agents/planner.md

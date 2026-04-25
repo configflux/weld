@@ -1,0 +1,36 @@
+# workspaces.yaml -- polyrepo federation registry for the demo.
+#
+# The three children below are discovered independently (each has its
+# own ``.weld/discover.yaml``) and then stitched together at this root
+# by running ``wd discover`` in federation mode. The ``service_graph``
+# resolver reads each child's graph and emits ``cross_repo:calls`` edges
+# where one child's outbound HTTP call matches another child's endpoint.
+#
+# In this demo:
+#   - ``services-api`` declares an outbound call to
+#     ``http://services-auth:8080/tokens``.
+#   - ``services-auth`` declares ``POST /tokens``.
+#   -> ``service_graph`` emits one cross-repo edge linking the two.
+#
+# ``libs-shared-models`` is the third child. It contributes Pydantic
+# models but has no endpoints or client calls, so it participates in
+# the federated graph without pulling in a cross-repo edge itself.
+
+version: 1
+scan:
+  max_depth: 3
+  exclude_paths: [.worktrees, vendor]
+children:
+  - name: services-api
+    path: services/api
+    tags:
+      category: services
+  - name: services-auth
+    path: services/auth
+    tags:
+      category: services
+  - name: libs-shared-models
+    path: libs/shared-models
+    tags:
+      category: libs
+cross_repo_strategies: [service_graph]

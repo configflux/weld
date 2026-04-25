@@ -1,0 +1,17 @@
+# Build and run the @acme/orders-api service.
+# Multi-stage keeps the final image minimal; weld's `dockerfile`
+# strategy extracts stages, base images, and exposed ports.
+
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json ./
+COPY libs/shared-types ./libs/shared-types
+COPY services/orders-api ./services/orders-api
+RUN npm install --workspaces --include-workspace-root \
+    && npm run build --workspace=@acme/orders-api
+
+FROM node:20-alpine AS runtime
+WORKDIR /app
+COPY --from=build /app /app
+EXPOSE 8080
+CMD ["npm", "run", "start", "--workspace=@acme/orders-api"]

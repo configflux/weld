@@ -13,6 +13,14 @@ _PROVIDER_LOADERS = {
     "openai": ("weld.providers.openai", "OpenAIProvider"),
     "ollama": ("weld.providers.ollama", "OllamaProvider"),
 }
+# Providers that perform outbound network or LLM calls. ``wd enrich --safe``
+# refuses every name listed here. Currently every registered provider falls
+# in this set: anthropic and openai hit hosted HTTPS APIs, and ollama issues
+# HTTP requests to a local or remote ollama server. If a future deterministic
+# provider is added, omit it from this set so safe mode permits it. See
+# ADR 0024 for the discovery trust boundary; the enrich-side extension is
+# tracked in the project issue ledger.
+NETWORK_PROVIDERS = frozenset(_PROVIDER_LOADERS)
 
 
 @dataclass(frozen=True)

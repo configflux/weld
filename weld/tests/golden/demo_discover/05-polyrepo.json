@@ -1,0 +1,79 @@
+{
+  "edges": [
+    {
+      "from": "services-api\u001frpc:http:out:POST:http://services-auth:8080/tokens",
+      "props": {
+        "host": "services-auth",
+        "method": "POST",
+        "path": "/tokens",
+        "port": 8080,
+        "source_strategy": "service_graph"
+      },
+      "to": "services-auth\u001froute:POST:/tokens",
+      "type": "cross_repo:calls"
+    }
+  ],
+  "meta": {
+    "discovered_from": [
+      ".weld/workspaces.yaml"
+    ],
+    "schema_version": 2,
+    "version": 5
+  },
+  "nodes": {
+    "repo:libs-shared-models": {
+      "label": "libs-shared-models",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "depth": 2,
+        "path": "libs/shared-models",
+        "path_segments": [
+          "libs",
+          "shared-models"
+        ],
+        "source_strategy": "federation_root",
+        "tags": {
+          "category": "libs"
+        }
+      },
+      "type": "repo"
+    },
+    "repo:services-api": {
+      "label": "services-api",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "depth": 2,
+        "path": "services/api",
+        "path_segments": [
+          "services",
+          "api"
+        ],
+        "source_strategy": "federation_root",
+        "tags": {
+          "category": "services"
+        }
+      },
+      "type": "repo"
+    },
+    "repo:services-auth": {
+      "label": "services-auth",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "depth": 2,
+        "path": "services/auth",
+        "path_segments": [
+          "services",
+          "auth"
+        ],
+        "source_strategy": "federation_root",
+        "tags": {
+          "category": "services"
+        }
+      },
+      "type": "repo"
+    }
+  }
+}

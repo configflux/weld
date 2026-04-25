@@ -1,0 +1,15 @@
+{
+  "name": "@acme/orders-api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/server.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "start": "node dist/server.js",
+    "test": "echo 'no tests'",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@acme/shared-types": "workspace:*"
+  }
+}

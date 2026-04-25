@@ -17,12 +17,16 @@ from pathlib import Path
 _repo_root = str(Path(__file__).resolve().parent.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
+_tests_dir = str(Path(__file__).resolve().parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
 
 from weld import mcp_server  # noqa: E402
 from weld.brief import BRIEF_VERSION, brief as brief_helper  # noqa: E402
 from weld.contract import SCHEMA_VERSION  # noqa: E402
 from weld.graph import Graph  # noqa: E402
 from weld.trace import TRACE_VERSION, trace as trace_helper  # noqa: E402
+from mcp_expected_tools import EXPECTED_TOOL_NAMES  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixture graph with interaction surfaces
@@ -233,26 +237,9 @@ class WeldMcpRegistryCountTest(unittest.TestCase):
 
     def test_tool_registry_lists_thirteen_tools(self) -> None:
         tools = mcp_server.build_tools()
-        self.assertEqual(len(tools), 13)
+        self.assertEqual(len(tools), len(EXPECTED_TOOL_NAMES))
         names = {t.name for t in tools}
-        self.assertEqual(
-            names,
-            {
-                "weld_query",
-                "weld_find",
-                "weld_context",
-                "weld_path",
-                "weld_brief",
-                "weld_stale",
-                "weld_callers",
-                "weld_references",
-                "weld_trace",
-                "weld_diff",
-                "weld_export",
-                "weld_impact",
-                "weld_enrich",
-            },
-        )
+        self.assertEqual(names, set(EXPECTED_TOOL_NAMES))
 
 if __name__ == "__main__":
     unittest.main()

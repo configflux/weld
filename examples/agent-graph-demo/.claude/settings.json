@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": ["Read", "Grep"],
+    "deny": ["Bash(rm *)"]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "description": "Record tool use without executing project code; rollback by deleting the log.",
+        "matcher": "*"
+      }
+    ]
+  }
+}

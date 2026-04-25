@@ -25,17 +25,21 @@ notes for Bazel, Just, and CI pipelines.
 
 ### [04-monorepo-typescript](./04-monorepo-typescript/)
 
-Discover a TypeScript monorepo with workspace packages. Shows how
-weld extracts exported symbols from multiple packages using the
-`typescript_exports` strategy with per-package scoping, and how
-cross-package dependency edges appear in the connected structure.
+Discover a TypeScript monorepo with workspace packages, shared libs,
+a backend service, container runtime, CI workflows, and an ADR-backed
+architecture doc. Shows how weld extracts exported symbols with
+per-package scoping, cross-package dependency edges (client and
+service both importing `@acme/shared-types`), and folds Docker/CI/docs
+into the same connected structure. Target of the 5-minute demo.
 
 ### [05-polyrepo](./05-polyrepo/)
 
-Set up a federated polyrepo workspace. Walks through initializing child
-repos, scaffolding `workspaces.yaml` at the workspace root, running
-federated discovery with cross-repo resolvers, and checking workspace
-status with `wd workspace status`.
+A federated polyrepo workspace with three in-tree children
+(`services/api`, `services/auth`, `libs/shared-models`) stitched
+together by `.weld/workspaces.yaml`. The `services-api` child calls
+`services-auth` over HTTP, so the `service_graph` resolver emits a
+visible `cross_repo:calls` edge in the root graph. Target of the
+polyrepo half of the 5-minute demo.
 
 ### [06-infrastructure-as-code](./06-infrastructure-as-code/)
 
@@ -44,6 +48,24 @@ weld maps Dockerfiles, Docker Compose services, GitHub Actions
 workflows, and Terraform configurations into a unified connected structure
 using the `dockerfile`, `compose`, `gh_workflow`, `yaml_meta`, and
 `boundary_entrypoint` strategies together.
+
+### [agent-graph-demo](./agent-graph-demo/)
+
+Inspect a mixed AI customization workspace. Shows `wd agents discover`,
+`list`, `audit`, `explain`, `impact`, and `plan-change` across agents,
+skills, prompts, hooks, instructions, MCP config, and platform variants.
+
+Demo flow:
+
+```bash
+cd examples/agent-graph-demo
+wd agents discover
+wd agents list
+wd agents audit
+wd agents explain planner
+wd agents impact .github/agents/planner.agent.md
+wd agents plan-change "planner should always include test strategy"
+```
 
 ## Prerequisites
 

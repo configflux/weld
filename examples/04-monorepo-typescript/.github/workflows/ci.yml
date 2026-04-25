@@ -1,0 +1,54 @@
+# CI for the @acme monorepo demo.
+#
+# ILLUSTRATIVE / NON-RUNNABLE: this workflow is a discovery fixture for
+# weld's `gh_workflow` strategy, not a working pipeline. The `npm run
+# lint` and `npm run test` scripts are intentionally not wired up in
+# this example -- the surrounding workspace ships no eslint or test
+# runner config. If you copy this file into a real repo, add the
+# matching `lint` and `test` scripts (and their tooling) to each
+# package's `package.json` before relying on it.
+#
+# Weld's `gh_workflow` strategy extracts jobs, triggers, and steps
+# from this file so the connected structure includes CI as first-class
+# nodes -- that is the only thing this file is here to demonstrate.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run lint
+
+  build:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run build
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run test

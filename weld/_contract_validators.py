@@ -6,6 +6,17 @@ under the 400-line default.
 """
 from __future__ import annotations
 
+from weld._federation_validate import (
+    is_well_formed_cross_repo_edge_type as _is_cross_repo_type,
+    is_well_formed_federation_id as _is_federation_id,
+)
+from weld._validate_diagnostics import (
+    REGEN_HINT as _REGEN_HINT,
+    dangling_ref_hint as _dangling_ref_hint,
+    missing_edge_field_hint as _missing_edge_hint,
+    missing_node_field_hint as _missing_node_hint,
+    vocab_hint as _vocab_hint,
+)
 from weld.contract import (
     AUTHORITY_VALUES,
     BOUNDARY_KIND_VALUES,
@@ -80,20 +91,36 @@ def validate_meta(meta: dict) -> list[ValidationError]:
     """Validate the graph meta block."""
     errors: list[ValidationError] = []
     if "version" not in meta:
-        errors.append(ValidationError("meta", "version", "required field missing"))
+        errors.append(ValidationError(
+            "meta", "version", "required field missing", hint=_REGEN_HINT,
+        ))
     elif not isinstance(meta["version"], int):
-        errors.append(ValidationError("meta", "version", "must be an integer"))
+        errors.append(ValidationError(
+            "meta", "version", "must be an integer",
+            hint=(
+                f"found {type(meta['version']).__name__} "
+                f"{meta['version']!r}; expected integer {SCHEMA_VERSION}. "
+                f"{_REGEN_HINT}"
+            ),
+        ))
     elif meta["version"] != SCHEMA_VERSION:
         errors.append(ValidationError(
             "meta", "version",
             f"unsupported graph schema version {meta['version']}; "
             f"expected {SCHEMA_VERSION}. Run `wd discover --output "
             f".weld/graph.json` to regenerate.",
+            hint=_REGEN_HINT,
         ))
     if "updated_at" not in meta:
-        errors.append(ValidationError("meta", "updated_at", "required field missing"))
+        errors.append(ValidationError(
+            "meta", "updated_at", "required field missing",
+            hint=_REGEN_HINT,
+        ))
     elif not isinstance(meta["updated_at"], str):
-        errors.append(ValidationError("meta", "updated_at", "must be an ISO-8601 string"))
+        errors.append(ValidationError(
+            "meta", "updated_at", "must be an ISO-8601 string",
+            hint=f"found {type(meta['updated_at']).__name__}; {_REGEN_HINT}",
+        ))
     return errors
 
 
@@ -189,20 +216,42 @@ def validate_node(
     path = _prefix(source_label, f"nodes.{node_id}")
 
     if "type" not in node:
-        errors.append(ValidationError(path, "type", "required field missing"))
+        errors.append(ValidationError(
+            path, "type", "required field missing",
+            hint=_missing_node_hint(node_id, "type"),
+        ))
     elif node["type"] not in VALID_NODE_TYPES:
-        errors.append(ValidationError(path, "type", f"invalid node type: {node['type']}"))
+        errors.append(ValidationError(
+            path, "type",
+            f"invalid node type: {node['type']!r} on node {node_id!r}",
+            hint=_vocab_hint(
+                node["type"], VALID_NODE_TYPES, label="node type",
+            ),
+        ))
 
     if "label" not in node:
-        errors.append(ValidationError(path, "label", "required field missing"))
+        errors.append(ValidationError(
+            path, "label", "required field missing",
+            hint=_missing_node_hint(node_id, "label"),
+        ))
 
     if "props" not in node:
-        errors.append(ValidationError(path, "props", "required field missing"))
+        errors.append(ValidationError(
+            path, "props", "required field missing",
+            hint=_missing_node_hint(node_id, "props"),
+        ))
         return errors
 
     props = node["props"]
     if not isinstance(props, dict):
-        errors.append(ValidationError(path, "props", "must be a dict"))
+        errors.append(ValidationError(
+            path, "props",
+            f"must be a dict (got {type(props).__name__})",
+            hint=(
+                f"node {node_id!r} has a non-dict `props`; replace with a "
+                f"JSON object, e.g. `{{}}` when there are no properties"
+            ),
+        ))
         return errors
 
     _validate_node_props(props, path, errors)
@@ -215,12 +264,20 @@ def validate_edge(
     *,
     check_refs: bool = True,
     source_label: str | None = None,
+    federation: bool = False,
 ) -> list[ValidationError]:
     """Validate a single edge definition.
 
     *node_ids* is the set of all valid node IDs for referential integrity.
     When *check_refs* is False, referential-integrity checks are skipped.
     *source_label* prefixes diagnostic paths (project-xoq.1.3).
+    *federation* gates the cross-repo bypasses (separator-bearing IDs and
+    ``cross_repo:<suffix>`` edge types). It is set to True by
+    :func:`validate_graph` when the containing graph advertises
+    ``meta.schema_version == 2`` (bd-5038-6zm). Callers handling
+    fragments under federation may pass it explicitly. Even with
+    ``federation=True`` the bypass requires a *well-formed* id/prefix --
+    pathological strings still fail with a diagnostic naming the offender.
     """
     errors: list[ValidationError] = []
     from_id = edge.get("from", "?")
@@ -228,119 +285,90 @@ def validate_edge(
     path = _prefix(source_label, f"edges[{from_id}->{to_id}]")
 
     if "from" not in edge:
-        errors.append(ValidationError(path, "from", "required field missing"))
-    elif check_refs and from_id not in node_ids:
-        errors.append(ValidationError(path, "from", f"dangling reference: {from_id}"))
+        errors.append(ValidationError(
+            path, "from", "required field missing",
+            hint=_missing_edge_hint(from_id, to_id, "from"),
+        ))
+    elif (
+        check_refs
+        and from_id not in node_ids
+        and not (federation and _is_federation_id(from_id))
+    ):
+        errors.append(ValidationError(
+            path, "from", f"dangling reference: {from_id!r}",
+            hint=_dangling_ref_hint(from_id, node_ids),
+        ))
 
     if "to" not in edge:
-        errors.append(ValidationError(path, "to", "required field missing"))
-    elif check_refs and to_id not in node_ids:
-        errors.append(ValidationError(path, "to", f"dangling reference: {to_id}"))
+        errors.append(ValidationError(
+            path, "to", "required field missing",
+            hint=_missing_edge_hint(from_id, to_id, "to"),
+        ))
+    elif (
+        check_refs
+        and to_id not in node_ids
+        and not (federation and _is_federation_id(to_id))
+    ):
+        errors.append(ValidationError(
+            path, "to", f"dangling reference: {to_id!r}",
+            hint=_dangling_ref_hint(to_id, node_ids),
+        ))
 
     if "type" not in edge:
-        errors.append(ValidationError(path, "type", "required field missing"))
-    elif edge["type"] not in VALID_EDGE_TYPES:
-        errors.append(ValidationError(path, "type", f"invalid edge type: {edge['type']}"))
+        errors.append(ValidationError(
+            path, "type", "required field missing",
+            hint=_missing_edge_hint(from_id, to_id, "type"),
+        ))
+    elif (
+        edge["type"] not in VALID_EDGE_TYPES
+        and not (federation and _is_cross_repo_type(edge["type"]))
+    ):
+        errors.append(ValidationError(
+            path, "type",
+            f"invalid edge type: {edge['type']!r} on edge "
+            f"{from_id!r} -> {to_id!r}",
+            hint=_vocab_hint(
+                edge["type"], VALID_EDGE_TYPES, label="edge type",
+            ),
+        ))
 
     if "props" not in edge:
-        errors.append(ValidationError(path, "props", "required field missing"))
+        errors.append(ValidationError(
+            path, "props", "required field missing",
+            hint=_missing_edge_hint(from_id, to_id, "props"),
+        ))
     else:
-        props = edge["props"]
-        if isinstance(props, dict):
-            if "source_strategy" in props and not isinstance(props["source_strategy"], str):
-                errors.append(ValidationError(path, "props.source_strategy", "must be a string"))
-            if "confidence" in props and props["confidence"] not in CONFIDENCE_VALUES:
-                errors.append(ValidationError(
-                    path, "props.confidence",
-                    f"invalid confidence: {props['confidence']!r}; "
-                    f"valid: {sorted(CONFIDENCE_VALUES)}",
-                ))
+        _validate_edge_props(edge["props"], path, errors)
 
     return errors
 
 
-def validate_graph(graph: dict) -> list[ValidationError]:
-    """Validate an entire graph document."""
-    errors: list[ValidationError] = []
-
-    if "meta" not in graph:
-        errors.append(ValidationError("graph", "meta", "required field missing"))
-    else:
-        errors.extend(validate_meta(graph["meta"]))
-
-    if "nodes" not in graph:
-        errors.append(ValidationError("graph", "nodes", "required field missing"))
-    elif not isinstance(graph["nodes"], dict):
-        errors.append(ValidationError("graph", "nodes", "must be a dict"))
-    else:
-        for node_id, node in graph["nodes"].items():
-            errors.extend(validate_node(node_id, node))
-
-    if "edges" not in graph:
-        errors.append(ValidationError("graph", "edges", "required field missing"))
-    elif not isinstance(graph["edges"], list):
-        errors.append(ValidationError("graph", "edges", "must be a list"))
-    else:
-        nids = set(graph.get("nodes", {}).keys()) if isinstance(graph.get("nodes"), dict) else set()
-        for edge in graph["edges"]:
-            errors.extend(validate_edge(edge, nids))
-
-    return errors
+def _validate_edge_props(
+    props: object, path: str, errors: list[ValidationError],
+) -> None:
+    """Validate edge ``props`` (ignores non-dict to preserve prior behavior)."""
+    if not isinstance(props, dict):
+        return
+    if "source_strategy" in props and not isinstance(props["source_strategy"], str):
+        errors.append(ValidationError(
+            path, "props.source_strategy", "must be a string",
+            hint=(
+                "props.source_strategy should be the producing strategy "
+                "name, e.g. \"python_callgraph\""
+            ),
+        ))
+    if "confidence" in props and props["confidence"] not in CONFIDENCE_VALUES:
+        errors.append(ValidationError(
+            path, "props.confidence",
+            f"invalid confidence: {props['confidence']!r}; "
+            f"valid: {sorted(CONFIDENCE_VALUES)}",
+            hint=_vocab_hint(
+                props["confidence"], CONFIDENCE_VALUES, label="confidence",
+            ),
+        ))
 
 
-def validate_fragment(
-    fragment: dict,
-    *,
-    source_label: str = "fragment",
-    allow_dangling_edges: bool = False,
-) -> list[ValidationError]:
-    """Validate a graph fragment (strategy output, topology, or adapter).
-
-    Fragments have ``nodes`` and ``edges`` but no ``meta`` block.
-    *source_label* is embedded in error paths for actionable diagnostics.
-    *allow_dangling_edges* skips referential-integrity checks.
-    """
-    errors: list[ValidationError] = []
-
-    if not isinstance(fragment, dict):
-        errors.append(ValidationError(source_label, "fragment", "must be a dict"))
-        return errors
-
-    if "nodes" not in fragment:
-        errors.append(ValidationError(source_label, "nodes", "required field missing"))
-    elif not isinstance(fragment["nodes"], dict):
-        errors.append(ValidationError(source_label, "nodes", "must be a dict"))
-    else:
-        for node_id, node in fragment["nodes"].items():
-            errors.extend(validate_node(node_id, node, source_label=source_label))
-
-    if "edges" not in fragment:
-        errors.append(ValidationError(source_label, "edges", "required field missing"))
-    elif not isinstance(fragment["edges"], list):
-        errors.append(ValidationError(source_label, "edges", "must be a list"))
-    else:
-        nids = (
-            set(fragment["nodes"].keys())
-            if isinstance(fragment.get("nodes"), dict)
-            else set()
-        )
-        for edge in fragment["edges"]:
-            errors.extend(validate_edge(
-                edge, nids,
-                check_refs=not allow_dangling_edges,
-                source_label=source_label,
-            ))
-
-    if "discovered_from" in fragment:
-        df = fragment["discovered_from"]
-        if not isinstance(df, list):
-            errors.append(ValidationError(source_label, "discovered_from", "must be a list"))
-        else:
-            for i, entry in enumerate(df):
-                if not isinstance(entry, str):
-                    errors.append(ValidationError(
-                        source_label, "discovered_from",
-                        f"entry [{i}] must be a string, got {type(entry).__name__}",
-                    ))
-
-    return errors
+# Top-level graph / fragment validators live in a sibling module
+# (_graph_doc_validators) so both files stay under the 400-line cap.
+# Re-export at module bottom keeps the public import path
+# ``from weld.contract import validate_graph, validate_fragment`` unchanged.

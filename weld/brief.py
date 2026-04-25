@@ -357,8 +357,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    from weld._graph_cli import _build_retry_hint, ensure_graph_exists
     from weld.graph import Graph
 
+    # Surface a friendly first-run message when the graph has not been
+    # built yet; mirrors the behaviour of read commands in _graph_cli
+    # (bd-5038-3nr.2).
+    ensure_graph_exists(args.root, _build_retry_hint("brief", args.term))
     g = Graph(args.root)
     g.load()
     result = brief(g, args.term, limit=args.limit)

@@ -19,6 +19,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from weld._discover_federate import merge_cross_repo_edges
 from weld._discover_postprocess import post_process as _post_process
 from weld._discover_strategies import (
     load_strategy as _load_strategy,  # noqa: F401 -- re-export for test consumers
@@ -50,11 +51,19 @@ from weld.strategies._helpers import filter_glob_results
 # Discovery orchestrator
 # ---------------------------------------------------------------------------
 
-def _discover_single_repo(root: Path, *, incremental: bool | None = None) -> dict:
+def _discover_single_repo(
+    root: Path,
+    *,
+    incremental: bool | None = None,
+    safe: bool = False,
+) -> dict:
     """Walk the codebase and build a connected structure from config.
 
     *incremental*: ``True`` = skip unchanged files, ``False`` = full,
     ``None`` = auto-detect (incremental if state file exists).
+
+    *safe*: when True, refuse project-local strategy overrides and the
+    ``external_json`` subprocess adapter (ADR 0024).
 
     Strategies may share state via ``context`` keys such as
     ``table_to_entity``/``pending_fk_edges`` (sqlalchemy strategy) and
@@ -116,7 +125,7 @@ def _discover_single_repo(root: Path, *, incremental: bool | None = None) -> dic
         edges: list[dict] = []
         df: list[str] = []
         for s in sources:
-            r = _run_source(root, s, context)
+            r = _run_source(root, s, context, safe=safe)
             nodes.update(r.nodes)
             edges.extend(r.edges)
             df.extend(r.discovered_from)
@@ -132,6 +141,7 @@ def _discover_single_repo(root: Path, *, incremental: bool | None = None) -> dic
     if not state_diff.has_changes:
         print("[weld] notice: no files changed, graph is up to date", file=sys.stderr)
         refreshed = copy.deepcopy(existing_graph)
+        refreshed["meta"]["version"] = SCHEMA_VERSION
         refreshed["meta"]["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         sha = get_git_sha(root)
         if sha is not None:
@@ -153,7 +163,7 @@ def _discover_single_repo(root: Path, *, incremental: bool | None = None) -> dic
     for i, source in enumerate(sources):
         if not set(source_file_map[i]).intersection(dirty):
             continue
-        r = _run_source(root, source, context)
+        r = _run_source(root, source, context, safe=safe)
         for nid, node in r.nodes.items():
             nf = node.get("props", {}).get("file", "")
             if not nf or nf in dirty:
@@ -175,6 +185,7 @@ def discover(
     write_root_graph: bool = False,
     recurse: bool = False,
     output: Path | None = None,
+    safe: bool = False,
 ) -> dict:
     """Walk the codebase and build a connected structure from config.
 
@@ -195,17 +206,30 @@ def discover(
     happens inside the workspace lock. For single-repo roots *output*
     is handled by the caller (:func:`main`) so this function keeps its
     pure "build and return graph" shape for single-repo callers.
+
+    When *safe* is True, the discovery pipeline refuses project-local
+    strategy overrides under ``<root>/.weld/strategies/`` and the
+    ``external_json`` subprocess adapter (ADR 0024). Bundled strategies
+    still run; partial results are returned for repos that depend on
+    refused paths.
     """
     workspace_config = load_workspace_config(root)
     if workspace_config is None:
-        return _discover_single_repo(root, incremental=incremental)
+        return _discover_single_repo(root, incremental=incremental, safe=safe)
     with WorkspaceLock(root):
         state = build_workspace_state(root, workspace_config)
         if recurse:
             from weld._discover_recurse import recurse_children
-            recurse_children(root, workspace_config, state, incremental=incremental)
+            recurse_children(
+                root, workspace_config, state,
+                incremental=incremental, safe=safe,
+            )
             state = build_workspace_state(root, workspace_config)
         graph = build_root_meta_graph(root, workspace_config, state)
+        # Invoke cross-repo resolvers after the meta-graph is built and
+        # after any recurse pass has refreshed each child's graph.json:
+        # resolvers consume child graphs by reading those files.
+        graph = merge_cross_repo_edges(root, workspace_config, state, graph)
         if output is not None:
             from weld.workspace_state import atomic_write_text
 
@@ -247,6 +271,14 @@ def main(argv: list[str] | None = None) -> int:
              "(parent directories are created). When set, stdout is "
              "empty; human status still goes to stderr. (ADR 0019)",
     )
+    parser.add_argument(
+        "--safe",
+        action="store_true",
+        default=False,
+        help="Refuse project-local strategies under .weld/strategies/ and "
+             "the external_json subprocess adapter. Use this when scanning "
+             "an untrusted repository. (ADR 0024)",
+    )
     args = parser.parse_args(argv)
 
     inc = False if args.full else (True if args.incremental else None)
@@ -262,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
             # Federated roots write inside the workspace lock; single-repo
             # roots write here via the same atomic helper.
             output=output_path if is_federated else None,
+            safe=args.safe,
         )
     except (WorkspaceConfigError, WorkspaceLockedError) as exc:
         print(f"[weld] error: {exc}", file=sys.stderr)

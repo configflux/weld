@@ -279,10 +279,10 @@ class BootstrapWorkspaceUnitTest(unittest.TestCase):
             import weld.discover as _discover_mod
             original = _discover_mod._discover_single_repo
 
-            def _maybe_raise(child_root: Path, *, incremental=None):  # type: ignore[no-untyped-def]
+            def _maybe_raise(child_root: Path, *, incremental=None, safe=False):  # type: ignore[no-untyped-def]
                 if child_root.name == "auth":
                     raise RuntimeError("simulated discover failure")
-                return original(child_root, incremental=incremental)
+                return original(child_root, incremental=incremental, safe=safe)
 
             _discover_mod._discover_single_repo = _maybe_raise
             try:

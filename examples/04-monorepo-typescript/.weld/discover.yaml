@@ -1,12 +1,16 @@
-# discover.yaml -- Weld discovery configuration for a TypeScript monorepo.
+# discover.yaml -- Weld discovery configuration for the @acme monorepo.
 #
-# This configuration demonstrates three key patterns:
-#   1. Per-package TypeScript export extraction using the `typescript_exports`
-#      strategy with `id_prefix` and `package` fields for scoping.
-#   2. Manifest extraction using the `manifest` strategy to discover
-#      build/test scripts from each package.json.
-#   3. Cross-package dependency edges inferred from import statements
-#      (e.g., apps/web imports from @acme/ui and @acme/api).
+# This monorepo demonstrates a realistic layered layout:
+#
+#   apps/      -- user-facing applications (web)
+#   packages/  -- front-end-facing libraries (ui, api)
+#   libs/      -- polyglot/shared libraries (shared-types)
+#   services/  -- long-running backend services (orders-api)
+#
+# In addition to source packages, the example carries runtime and
+# operational artifacts so `wd discover` emits a realistic node mix
+# for tutorial walkthroughs: Docker runtime files, GitHub Actions
+# workflows, architecture docs, and ADRs.
 #
 # Run `wd discover` from this directory to produce the connected structure.
 
@@ -32,7 +36,49 @@ sources:
     id_prefix: web
     package: "pkg:web"
 
-  # -- Manifests: extract build/test scripts from each package.json ----
+  # -- Shared domain types consumed by both client and server ----------
+  - glob: "libs/shared-types/src/**/*.ts"
+    type: file
+    strategy: typescript_exports
+    id_prefix: shared-types
+    package: "lib:shared-types"
+
+  # -- Orders service: backend handlers + domain logic -----------------
+  - glob: "services/orders-api/src/**/*.ts"
+    type: file
+    strategy: typescript_exports
+    id_prefix: orders-api
+    package: "service:orders-api"
+
+  # -- Manifests: extract build/test scripts from every package.json ---
   - glob: "**/package.json"
     type: config
     strategy: manifest
+
+  # -- Container runtime ----------------------------------------------
+  - glob: "docker/Dockerfile*"
+    type: file
+    strategy: dockerfile
+
+  - glob: "docker/docker-compose.yml"
+    type: config
+    strategy: compose
+
+  # -- CI workflows ---------------------------------------------------
+  - glob: ".github/workflows/*.yml"
+    type: config
+    strategy: gh_workflow
+
+  # -- Architecture doc ------------------------------------------------
+  - glob: "docs/*.md"
+    type: doc
+    strategy: markdown
+    id_prefix: guide
+    doc_kind: guide
+
+  # -- ADR history -----------------------------------------------------
+  - glob: "docs/adr/*.md"
+    type: doc
+    strategy: markdown
+    id_prefix: adr
+    doc_kind: adr

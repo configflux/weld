@@ -1,0 +1,6 @@
+---
+description: Testing rule for Cursor.
+applyTo: [tests/**]
+---
+
+Every behavior change needs a focused test.

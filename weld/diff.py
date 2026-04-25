@@ -271,6 +271,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    from weld._graph_cli import _build_retry_hint, ensure_graph_exists
+
+    # Surface a friendly first-run message when the graph has not been
+    # built yet; mirrors the behaviour of read commands in _graph_cli
+    # (bd-5038-3nr.2 / bd-5038-uqo).
+    ensure_graph_exists(Path(args.root), _build_retry_hint("diff"))
+
     result = load_and_diff(Path(args.root))
 
     if args.json_output:

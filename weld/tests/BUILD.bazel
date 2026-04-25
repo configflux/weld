@@ -1,3 +1,5 @@
+load("//weld/tests:examples_tests.bzl", "examples_tests")
+
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
@@ -122,7 +124,7 @@ sh_test(
     local = True,
     tags = ["no-sandbox"],
 )
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:contract", "//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_stale_source_test", "weld_touch_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:contract", "//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_stale_source_test", "weld_touch_test", "weld_missing_graph_guidance_test", "weld_graph_validate_diagnostics_test", "weld_validate_federation_gate_test")]
 sh_test(
     name = "weld_strategy_unit_test",
     srcs = ["weld_strategy_unit_test.sh"],
@@ -154,13 +156,13 @@ py_test(
 py_test(name = "weld_workspace_state_test", srcs = ["weld_workspace_state_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"]) for _n in ("weld_federation_test", "weld_federation_cache_test", "weld_context_fallback_test")]
 py_test(name = "weld_init_workspace_test", srcs = ["weld_init_workspace_test.py"], deps = ["//weld:runtime", "//weld:yaml"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_root_discovery_test", srcs = ["weld_root_discovery_test.py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"])
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"]) for _n in ("discover_recurse_test", "weld_workspace_bootstrap_test", "weld_discover_output_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"]) for _n in ("weld_root_discovery_test", "discover_recurse_test", "weld_workspace_bootstrap_test", "weld_discover_output_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld/strategies"], local = True, tags = ["no-sandbox"]) for _n in ("weld_discover_safe_mode_test", "weld_discover_safe_warn_test", "weld_discover_safe_mode_integration_test")]
 py_test(name = "weld_root_write_safety_test", srcs = ["weld_root_write_safety_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_cross_repo_base_test", srcs = ["weld_cross_repo_base_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_cross_repo_incremental_test", srcs = ["weld_cross_repo_incremental_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_drift_detect_test", srcs = ["weld_drift_detect_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_cross_repo_service_graph_test", srcs = ["weld_cross_repo_service_graph_test.py"], deps = ["//weld/cross_repo", "//weld:workspace"], local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld/cross_repo", "//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"]) for _n in ("discover_federate_test", "weld_cross_repo_service_graph_test")]
 py_test(name = "weld_cross_repo_grpc_test", srcs = ["cross_repo_grpc_fixtures.py", "weld_cross_repo_grpc_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_cross_repo_compose_topology_test", srcs = ["weld_cross_repo_compose_topology_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_cross_repo_overrides_test", srcs = ["weld_cross_repo_overrides_test.py"], deps = ["//weld/cross_repo", "//weld:yaml"], local = True, tags = ["no-sandbox"])
@@ -176,19 +178,11 @@ py_test(
     tags = ["no-sandbox"],
 )
 
-py_test(
-    name = "weld_mcp_server_test",
-    srcs = ["weld_mcp_server_test.py"],
-    deps = [
-        "//weld:runtime",
-    ],
-    local = True,
-    tags = ["no-sandbox"],
-)
-
+py_test(name = "weld_mcp_server_test", srcs = ["mcp_expected_tools.py", "weld_mcp_server_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_mcp_federation_test", srcs = ["weld_mcp_federation_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_mcp_federation_tools_test", srcs = ["weld_mcp_federation_tools_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-
+py_test(name = "weld_mcp_smoke_test", srcs = ["mcp_expected_tools.py", "weld_mcp_smoke_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+py_test(name = "weld_mcp_config_test", srcs = ["weld_mcp_config_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_export_test", srcs = ["weld_export_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_viz_test", srcs = ["weld_viz_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_impact_test", srcs = ["weld_impact_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
@@ -286,7 +280,7 @@ py_test(
     local = True,
     tags = ["no-sandbox"],
 )
-py_test(name = "weld_edge_types_test", srcs = ["weld_edge_types_test.py"], deps = ["//weld:contract", "//weld:runtime"], local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], deps = _deps, local = True, tags = ["no-sandbox"]) for _n, _deps in (("weld_edge_types_test", ["//weld:contract", "//weld:runtime"]), ("weld_agent_graph_schema_test", ["//weld:contract"]), ("weld_agent_graph_storage_test", ["//weld:runtime"]), ("weld_agent_graph_discovery_test", ["//weld:runtime"]), ("weld_agent_graph_metadata_test", ["//weld:runtime"]), ("weld_agent_graph_cli_test", ["//weld:runtime"]), ("weld_agent_graph_impact_cli_test", ["//weld:runtime"]), ("weld_agent_graph_audit_cli_test", ["//weld:runtime"]), ("weld_agent_graph_plan_cli_test", ["//weld:runtime"]), ("weld_agent_graph_authority_test", ["//weld:runtime"]), ("weld_agent_graph_demo_fixture_test", ["//weld:runtime"]))]
 py_test(
     name = "weld_contract_ros2_test",
     srcs = ["weld_contract_ros2_test.py"],
@@ -457,7 +451,7 @@ py_test(
 ) for _name in ("weld_brief_test", "weld_brief_v2_test", "weld_trace_test", "weld_warnings_test")]
 
 py_test(name = "weld_ranking_test", srcs = ["weld_ranking_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_enrich_test", srcs = ["weld_enrich_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_enrich_test", "weld_enrich_safe_mode_test")]
 py_test(
     name = "weld_confidence_discrimination_test",
     srcs = ["weld_confidence_discrimination_test.py"],
@@ -470,17 +464,7 @@ py_test(
     tags = ["no-sandbox"],
 )
 
-py_test(
-    name = "weld_typescript_ast_extraction_test",
-    srcs = ["weld_typescript_ast_extraction_test.py"],
-    data = [
-        "//weld/languages:query_files",
-    ],
-    deps = [
-        "//weld/strategies",
-        "//weld/strategies:helpers",
-    ],
-)
+[py_test(name = _n, srcs = [_n + ".py"], data = ["//weld/languages:query_files"], deps = ["//weld/strategies", "//weld/strategies:helpers"]) for _n in ("weld_typescript_ast_extraction_test", "weld_typescript_brace_glob_test", "weld_typescript_tsx_variant_test")]
 
 py_test(
     name = "weld_brief_cli_test",
@@ -725,7 +709,7 @@ py_test(
     tags = ["no-sandbox"],
 )
 
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_prime_test", "weld_prime_active_agent_test", "weld_prime_freshness_test", "weld_doctor_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_prime_test", "weld_prime_active_agent_test", "weld_prime_freshness_test", "weld_doctor_test", "weld_doctor_sections_test", "weld_doctor_exit_code_test")]
 [py_test(name = _n, srcs = [_n + ".py"], data = ["//weld/templates"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_bootstrap_test", "weld_bootstrap_optout_test", "weld_bootstrap_federation_test", "weld_bootstrap_diff_test")]
 
 py_test(
@@ -758,44 +742,30 @@ py_test(
     tags = ["no-sandbox"],
 )
 
-py_test(name = "weld_description_coverage_test", srcs = ["weld_description_coverage_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_description_coverage_test", "weld_stats_top_authority_test", "weld_stats_cli_breakdown_test", "weld_stats_top_flag_test")]
 py_test(name = "weld_events_strategy_test", srcs = ["weld_events_strategy_test.py"], data = [":fixture_files"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_runtime_contract_strategy_test", srcs = ["weld_runtime_contract_strategy_test.py"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_grpc_bindings_strategy_test", srcs = ["weld_grpc_bindings_strategy_test.py"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_diff_test", srcs = ["diff_fixtures.py", "weld_diff_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+py_test(name = "weld_diff_test", srcs = ["diff_fixtures.py", "mcp_expected_tools.py", "weld_diff_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_watch_test", srcs = ["weld_watch_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_watch_canonical_write_test", srcs = ["weld_watch_canonical_write_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-py_test(name = "weld_mcp_interaction_test", srcs = ["weld_mcp_interaction_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+py_test(name = "weld_mcp_interaction_test", srcs = ["mcp_expected_tools.py", "weld_mcp_interaction_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_events_bindings_strategy_test", srcs = ["weld_events_bindings_strategy_test.py"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_accept_http_test", srcs = ["weld_accept_http_test.py"], data = [":fixture_files"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_accept_grpc_test", srcs = ["weld_accept_grpc_test.py"], data = [":fixture_files"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_accept_events_test", srcs = ["weld_accept_events_test.py"], data = [":fixture_files"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_accept_ros2_test", srcs = ["weld_accept_ros2_test.py"], data = [":fixture_files"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_accept_polyglot_test", srcs = ["weld_accept_polyglot_test.py"], data = [":fixture_files"], deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
-py_test(
-    name = "weld_examples_test",
-    srcs = ["weld_examples_test.py"],
-    data = [
-        "//examples:example_files",
-    ],
-    deps = [
-        "//weld:contract",
-        "//weld:runtime",
-        "//weld:yaml",
-        "//weld/strategies:helpers",
-    ],
-    local = True,
-    tags = ["no-sandbox"],
-)
+examples_tests()
 # Canonical serializer + determinism harness (ADR 0012 §3, §8) + T1a xfail audit reproductions.
 py_test(name = "weld_serializer_test", srcs = ["weld_serializer_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
+py_test(name = "weld_examples_discover_golden_test", srcs = ["weld_examples_discover_golden_test.py"], data = [":fixture_files", "//examples:example_files"], deps = ["//weld:runtime", "//weld:workspace", "//weld/strategies", "//weld/strategies:helpers"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"])
 py_test(name = "discover_twice_identical_test", srcs = ["discover_twice_identical_test.py"], deps = ["//weld:runtime", "//weld/strategies", "//weld/strategies:helpers"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"])
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"]) for _n in ("discover_no_changes_does_not_mutate_loaded_graph_test", "discover_corrupt_graph_preserves_previous_test", "weld_determinism_dict_order_test")]
-py_test(name = "weld_determinism_walk_order_test", srcs = ["weld_determinism_walk_order_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_determinism_frozenset_order_test", srcs = ["weld_determinism_frozenset_order_test.py"], deps = ["//weld/strategies", "//weld/strategies:helpers"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_determinism_hash_randomization_test", srcs = ["weld_determinism_hash_randomization_test.py"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_determinism_subprocess_locale_test", srcs = ["weld_determinism_subprocess_locale_test.py"], deps = ["//weld:git"], local = True, tags = ["no-sandbox"])
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_file_index_determinism_test", "weld_build_file_index_determinism_test", "weld_find_limit_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_determinism_walk_order_test", "weld_file_index_determinism_test", "weld_build_file_index_determinism_test", "weld_find_limit_test")]
 # ``meta.schema_version`` bump + ``repo`` node type acceptance (ADR 0011 §11, ADR 0012 §4).
 py_test(name = "weld_schema_version_test", srcs = ["weld_schema_version_test.py"], deps = ["//weld:contract", "//weld:runtime"], local = True, tags = ["no-sandbox"])
 # Local mirror of install-test.yml CI assertions.

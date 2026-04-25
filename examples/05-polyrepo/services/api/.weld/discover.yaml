@@ -1,0 +1,9 @@
+# api service: Python modules + outbound HTTP client extraction.
+sources:
+  - glob: "src/**/*.py"
+    type: file
+    strategy: python_module
+
+  - glob: "src/**/*.py"
+    type: file
+    strategy: http_client

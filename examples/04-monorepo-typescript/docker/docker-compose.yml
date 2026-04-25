@@ -1,0 +1,27 @@
+# Local dev stack for the monorepo demo.
+# Weld's `compose` strategy extracts services, dependencies,
+# and port mappings as typed nodes.
+
+version: "3.9"
+
+services:
+  orders-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.orders-api
+    image: acme/orders-api:dev
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_ENV: development
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: acme
+      POSTGRES_PASSWORD: acme
+      POSTGRES_DB: orders
+    ports:
+      - "5432:5432"

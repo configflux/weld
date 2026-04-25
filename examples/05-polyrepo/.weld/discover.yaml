@@ -1,0 +1,16 @@
+# Root-level discover config.
+#
+# This file is intentionally minimal: in federation mode (triggered by
+# the presence of ``workspaces.yaml`` next to this file), root-level
+# source globs are not required -- the root graph is produced by
+# reading each child's graph and running cross-repo resolvers.
+#
+# A single ``README.md`` entry is declared so root-only docs still
+# surface as graph nodes for tutorial narration.
+
+sources:
+  - glob: "README.md"
+    type: doc
+    strategy: markdown
+    id_prefix: root
+    doc_kind: guide

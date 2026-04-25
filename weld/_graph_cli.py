@@ -15,6 +15,25 @@ from weld.contract import VALID_EDGE_TYPES, VALID_NODE_TYPES
 from weld.graph import Graph
 
 
+def _positive_int(value: str) -> int:
+    """argparse validator: accept only strictly-positive integers.
+
+    ``wd stats --top 0`` or a negative value would silently return an
+    empty top-authority list, which is worse than a clear error message.
+    """
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected a positive integer, got {value!r}",
+        ) from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(
+            f"expected a positive integer, got {parsed}",
+        )
+    return parsed
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge *override* into a copy of *base*."""
     result = dict(base)
@@ -29,6 +48,86 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def _out(data: object) -> None:
     json.dump(data, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
+
+
+# Graph-backed read commands. A missing `.weld/graph.json` here yields an
+# actionable first-run message instead of a silently empty payload. Mutating
+# commands (add-*/rm-*/import/touch) and diagnostic commands
+# (stale/stats/dump/list/validate*) are intentionally excluded. ``find`` is
+# also excluded because it reads the file-index, not the graph -- users can
+# run ``wd build-index`` + ``wd find`` without ever producing a graph.
+_READ_COMMANDS = frozenset(
+    {"query", "context", "path", "callers", "references"}
+)
+
+
+def _build_retry_hint(cmd: str, *positional: str, **flags: str) -> str:
+    """Format a copy-paste ``wd <cmd> ...`` retry hint.
+
+    Centralizes the quote/flag pattern so call sites (here in
+    :func:`_retry_hint` plus the inline hints in ``brief`` / ``trace`` /
+    ``impact`` / ``diff`` / ``enrich``) all produce the same shape.
+
+    - Positional args are quoted in order:
+      ``_build_retry_hint("path", "a:b", "c:d")`` -> ``wd path "a:b" "c:d"``.
+    - Keyword flags become ``--flag "value"`` (underscores in the keyword
+      become dashes):
+      ``_build_retry_hint("enrich", node="entity:Store")`` ->
+      ``wd enrich --node "entity:Store"``.
+    - With no extra args: ``_build_retry_hint("diff")`` -> ``wd diff``.
+    """
+    parts = [f"wd {cmd}"]
+    for value in positional:
+        parts.append(f'"{value}"')
+    for flag, value in flags.items():
+        parts.append(f'--{flag.replace("_", "-")} "{value}"')
+    return " ".join(parts)
+
+
+def _retry_hint(cmd: str, args) -> str:
+    """Format a copy-paste retry command for the guidance block."""
+    if cmd == "path":
+        return _build_retry_hint("path", args.from_id, args.to_id)
+    if cmd == "context":
+        return _build_retry_hint("context", args.node_id)
+    if cmd == "callers":
+        return _build_retry_hint("callers", args.symbol)
+    if cmd == "references":
+        return _build_retry_hint("references", args.name)
+    # query / brief take a bare term.
+    term = getattr(args, "term", None) or "<term>"
+    return _build_retry_hint(cmd, term)
+
+
+def missing_graph_message(retry_cmd: str) -> str:
+    """Return the friendly missing-graph guidance block (bd-5038-3nr.2 / -uqo).
+
+    Used by graph-backed read commands (``wd brief`` / ``query`` /
+    ``context`` / ``path`` / ``callers`` / ``references`` / ``trace`` /
+    ``impact`` / ``diff`` / ``enrich``) when ``.weld/graph.json`` has not
+    yet been produced. ``wd find`` is intentionally exempt -- it reads the
+    file-index, not the graph. Keep the wording stable -- onboarding docs
+    and tests match against its substrings.
+    """
+    return (
+        "No Weld graph found.\n"
+        "Run: wd init (if no config), then wd discover.\n"
+        f'Then retry: {retry_cmd}.'
+    )
+
+
+def ensure_graph_exists(root: Path, retry_cmd: str) -> None:
+    """Exit with an actionable message when ``.weld/graph.json`` is missing.
+
+    This is a no-op when the graph file is present (even if empty). Callers
+    should invoke this *before* constructing a :class:`~weld.graph.Graph` so
+    first-run users get guidance instead of an empty-payload success.
+    """
+    graph_path = Path(root) / ".weld" / "graph.json"
+    if graph_path.exists():
+        return
+    sys.stderr.write(missing_graph_message(retry_cmd) + "\n")
+    sys.exit(1)
 
 
 def main(argv: list[str] | None = None) -> None:  # noqa: C901
@@ -108,7 +207,14 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
         ),
     )
     sub.add_parser("dump", help="Full graph JSON")
-    sub.add_parser("stats", help="Summary counts")
+    p_stats = sub.add_parser("stats", help="Summary counts")
+    p_stats.add_argument(
+        "--top",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help="Cap on top_authority_nodes list (default: 5).",
+    )
     p_imp = sub.add_parser("import", help="Import/merge from file")
     p_imp.add_argument("file", type=Path, help="JSON file to import")
     sub.add_parser("validate", help="Validate graph against the metadata contract")
@@ -135,6 +241,10 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
             else:
                 _out(fg.path(args.from_id, args.to_id))
             return
+    if cmd in _READ_COMMANDS:
+        # Single-repo read path: surface a friendly first-run message when
+        # the graph has not been built yet (bd-5038-3nr.2).
+        ensure_graph_exists(args.root, _retry_hint(cmd, args))
     g = Graph(args.root)
     g.load()
     mutates = False
@@ -194,7 +304,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
     elif cmd == "dump":
         _out(g.dump())
     elif cmd == "stats":
-        _out(g.stats())
+        from weld._graph_stats_cli import build_stats_payload
+        _out(build_stats_payload(args.root, g, top=args.top))
     elif cmd == "import":
         raw = sys.stdin.read() if str(args.file) == "-" else args.file.read_text(encoding="utf-8")
         data = json.loads(raw)
@@ -202,12 +313,18 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
         _out(result)
         mutates = True
     elif cmd == "validate":
+        from weld._validate_diagnostics import format_validation_report
         from weld.contract import validate_graph
         errs = validate_graph(g.dump())
         _out({"valid": not errs, "errors": [str(e) for e in errs]})
         if errs:
+            graph_path = Path(args.root) / ".weld" / "graph.json"
+            sys.stderr.write(format_validation_report(
+                errs, source=str(graph_path),
+            ))
             sys.exit(1)
     elif cmd == "validate-fragment":
+        from weld._validate_diagnostics import format_validation_report
         from weld.contract import validate_fragment
         raw = sys.stdin.read() if str(args.file) == "-" else args.file.read_text(encoding="utf-8")
         data = json.loads(raw)
@@ -218,6 +335,8 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901
         )
         _out({"valid": not errs, "errors": [str(e) for e in errs]})
         if errs:
+            source = "<stdin>" if str(args.file) == "-" else str(args.file)
+            sys.stderr.write(format_validation_report(errs, source=source))
             sys.exit(1)
     if mutates:
         # Mutating CLI paths implicitly advance meta.git_sha to HEAD so

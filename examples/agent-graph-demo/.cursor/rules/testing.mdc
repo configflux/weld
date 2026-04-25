@@ -1,0 +1,6 @@
+---
+description: Cursor testing conventions.
+applyTo: [tests/**]
+---
+
+Keep tests deterministic.

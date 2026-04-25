@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/configflux/weld/security/advisories/new
+    about: Do not file public issues for vulnerabilities. Use a private GitHub Security Advisory. See SECURITY.md for details.

@@ -1,5 +1,111 @@
 # Changelog
 
+All notable changes to this project are recorded here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## Conventions
+
+- Each release is an `## vX.Y.Z - YYYY-MM-DD` section. Versions follow semver:
+  major bumps for breaking changes, minor for new functionality, patch for
+  fixes.
+- Within a release, group entries under the standard subsections in this
+  order: `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
+  `### Fixed`, `### Security`. Omit any subsection that has no entries for
+  that release. The project also uses `### Release Safety` for changes that
+  affect the publish/tagging path; it lives alongside the standard sections.
+- Keep entries terse and user-focused. One bullet per change. Past tense.
+  No `TODO`, `TBD`, or `WIP` placeholders -- the release-notes gate
+  (`tools/release_notes.py`) will reject them.
+- Heading shape (`## vX.Y.Z - YYYY-MM-DD`) is enforced by the publish gate.
+  Do not add an `[Unreleased]` section; the release commit adds the new
+  section in place. See [`docs/release.md`](docs/release.md) step 4 for the
+  full release-day workflow.
+
+For the broader release process (version triple, smoke test, tag pair, PyPI
+publish), see [`docs/release.md`](docs/release.md). Launch readers asking
+"what is new?" should be pointed at this file directly; the launch material
+in [`docs/launch.md`](docs/launch.md) links here.
+
+## v0.8.0 - 2026-04-25
+
+### Added
+
+- Agent-graph subsystem: a static, persisted graph of agents alongside the
+  code graph. Schema vocabulary, persisted storage, static discovery, and
+  metadata/reference parsing are now part of `wd discover`. New CLI surface:
+  `wd agents discover|list|explain|impact|audit|plan-change` for inspecting
+  the agent graph and reasoning about change impact, with authority-drift
+  detection and a maintainer skill. Demo fixtures included.
+- `wd discover --safe` refuses to run project-local strategy or extractor
+  code when set, so an untrusted repository can be scanned without
+  executing unreviewed Python from `.weld/strategies/`. `wd discover`
+  without `--safe` now prints a one-time warning before running
+  project-local code (ADR 0023/0024).
+- `wd enrich --safe` refuses providers that would touch the network or an
+  LLM, so enrichment can run in offline / sandboxed contexts without
+  surprises.
+- `wd mcp config --client={claude,vscode,cursor}` writes or merges the
+  MCP-server entry for the chosen client. Malformed existing JSON in
+  `--merge` mode now exits non-zero instead of silently overwriting.
+- `wd stats` now surfaces top authority nodes, staleness, and a
+  per-workspace breakdown by default. `--top N` controls the authority
+  list size.
+- `wd validate` emits actionable error diagnostics with suggested
+  remediations, and gates federation bypasses on
+  `schema_version: 2` so older graphs cannot accidentally use new
+  cross-repo features.
+- Federation: cross-repo resolvers declared in
+  `cross_repo_strategies` are now executed during `wd discover` at a
+  polyrepo workspace root, producing cross-repo edges in the federated
+  graph.
+- TypeScript discovery now pins `tree-sitter-typescript` and dispatches
+  TSX files to the TSX grammar so React component exports are
+  discovered correctly.
+- `wd doctor` adds PM first-run UX sections covering install, init,
+  discover, and graph health, and now documents and verifies its
+  exit-code contract.
+- Read-side commands (`wd query`, `wd context`, `wd trace`, `wd impact`,
+  `wd diff`, `wd enrich`) print friendly guidance pointing to
+  `wd discover` when the graph is missing, instead of stack traces.
+- Examples: `examples/04-monorepo` ships a runnable PM demo with
+  services, shared libs, Docker, CI, and docs.
+  `examples/05-polyrepo` makes its `api` and `auth` services runnable
+  via `uvicorn` and adds three children plus a cross-repo edge for
+  federation demos.
+- Docs: new `docs/mcp.md`, `docs/launch.md`, `docs/release.md`,
+  `docs/community.md`, `docs/graph-schema.md`, and a 5-minute tutorial.
+  README adds badges (CI, PyPI, Python versions, license),
+  "Use Weld when…", "When not to use Weld", a comparison table, a
+  trust-model section, sample output, an MCP section, and leads
+  install with `uv tool install`.
+- GitHub: issue templates and contact routing for incoming community
+  reports; a Discussions categories plan in `docs/community.md`.
+
+### Changed
+
+- The publish flow now ships a curated release-notes gate plus an
+  install-test job that runs `wd doctor` (including against the public
+  overlay) so packaging regressions surface before publish. ADR 0015
+  formalizes a read-only `release-manager` agent that runs the
+  pre-tag audit.
+- `wd-retry-hint` formatting is centralized so retry guidance is
+  consistent across CLI commands.
+- `CHANGELOG.md` documents Keep-a-Changelog conventions and links to
+  `docs/release.md`.
+
+### Fixed
+
+- `wd discover` honors brace globs (e.g. `**/*.{ts,tsx}`) in the
+  `typescript_exports` strategy.
+- `wd doctor` no longer fails when run inside an empty directory.
+
+### Release Safety
+
+- ADR 0015 release-manager agent + structured GO/NO-GO audit.
+- Install-test job mirrored into the public overlay to catch
+  packaging regressions in both surfaces.
+
 ## v0.7.0 - 2026-04-23
 
 ### Fixed

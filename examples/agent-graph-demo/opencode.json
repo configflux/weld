@@ -1,0 +1,25 @@
+{
+  "agents": {
+    "planner": {
+      "description": "Creates plans and may edit files.",
+      "tools": ["editFiles"]
+    }
+  },
+  "commands": {
+    "plan": {
+      "description": "Run agent:planner and agent:missing-agent for release planning."
+    }
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*"
+      }
+    ]
+  },
+  "mcpServers": {
+    "filesystem": {
+      "description": "Local repository file context."
+    }
+  }
+}

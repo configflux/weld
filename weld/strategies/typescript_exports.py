@@ -50,33 +50,82 @@ _EXPORT_RE = re.compile(
 )
 
 # ---------------------------------------------------------------------------
-# Glob resolution (mirrors python_module._resolve_glob)
+# Glob resolution (mirrors python_module._resolve_glob, with brace expansion)
 # ---------------------------------------------------------------------------
 
+def _expand_braces(pattern: str) -> list[str]:
+    """Expand a single top-level ``{a,b,...}`` into concrete patterns.
+
+    ``pathlib.Path.glob`` does not understand brace alternatives, so a
+    discover.yaml entry like ``packages/ui/src/**/*.{ts,tsx}`` silently
+    matches nothing. Single top-level brace groups are rewritten into
+    one concrete pattern per trimmed, non-empty alternative (duplicates
+    collapsed). Patterns with no braces, nested braces, or multiple brace
+    groups pass through unchanged; multi-group support can be added later
+    if a real config needs it.
+    """
+    open_idx = pattern.find("{")
+    if open_idx == -1:
+        return [pattern]
+    close_idx = pattern.find("}", open_idx + 1)
+    if close_idx == -1:
+        return [pattern]
+    inner = pattern[open_idx + 1 : close_idx]
+    if "{" in inner or "{" in pattern[close_idx + 1 :]:
+        return [pattern]
+    prefix = pattern[:open_idx]
+    suffix = pattern[close_idx + 1 :]
+    alternatives: list[str] = []
+    seen: set[str] = set()
+    for raw in inner.split(","):
+        alt = raw.strip()
+        if not alt:
+            continue
+        expanded = f"{prefix}{alt}{suffix}"
+        if expanded in seen:
+            continue
+        seen.add(expanded)
+        alternatives.append(expanded)
+    return alternatives or [pattern]
+
+
 def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
-    """Resolve a glob pattern that may contain ``**``.
+    """Resolve a glob pattern that may contain ``**`` and ``{a,b}``.
 
     Returns ``(matched_files, discovered_from_dirs)``.
     Results inside excluded or nested-repo-copy directories are filtered out.
+    Files matched by multiple brace alternatives are deduplicated while
+    preserving stable (sorted) order.
     """
+    patterns = _expand_braces(pattern)
+
     files: list[Path] = []
+    seen: set[Path] = set()
     dirs: set[str] = set()
 
-    if "**" in pattern:
-        raw = sorted(root.glob(pattern))
-        for ts in filter_glob_results(root, raw):
-            files.append(ts)
-            dirs.add(str(ts.parent.relative_to(root)) + "/")
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return [], []
-        name_pat = Path(pattern).name
-        raw = sorted(parent.glob(name_pat))
-        for ts in filter_glob_results(root, raw):
-            files.append(ts)
-        dirs.add(str(parent.relative_to(root)) + "/")
+    for concrete in patterns:
+        if "**" in concrete:
+            raw = sorted(root.glob(concrete))
+            for ts in filter_glob_results(root, raw):
+                if ts in seen:
+                    continue
+                seen.add(ts)
+                files.append(ts)
+                dirs.add(str(ts.parent.relative_to(root)) + "/")
+        else:
+            parent = (root / concrete).parent
+            if not parent.is_dir():
+                continue
+            name_pat = Path(concrete).name
+            raw = sorted(parent.glob(name_pat))
+            for ts in filter_glob_results(root, raw):
+                if ts in seen:
+                    continue
+                seen.add(ts)
+                files.append(ts)
+            dirs.add(str(parent.relative_to(root)) + "/")
 
+    files.sort()
     return files, sorted(dirs)
 
 # ---------------------------------------------------------------------------
@@ -112,10 +161,12 @@ def _make_node_id(rel_path: str, id_prefix: str) -> str:
 # Tree-sitter AST parsing (only called when TREE_SITTER_AVAILABLE is True)
 # ---------------------------------------------------------------------------
 
-def _load_ts_language() -> object:
-    """Dynamically import and return the tree-sitter Language for TypeScript.
+def _load_ts_language(variant: str = "typescript") -> object:
+    """Return the tree-sitter Language for the requested grammar variant.
 
-    The grammar package is ``tree_sitter_typescript``.
+    ``tree_sitter_typescript`` exposes ``language_typescript()`` for plain TS
+    and ``language_tsx()`` for TSX. ``variant`` is ``"typescript"`` (default)
+    or ``"tsx"``; unknown values fall through to the TS grammar.
     """
     import importlib
 
@@ -127,8 +178,8 @@ def _load_ts_language() -> object:
             "pip install tree-sitter-typescript"
         ) from exc
 
-    # Modern grammars expose a language() function; typescript has
-    # language_typescript() for .ts and language_tsx() for .tsx
+    if variant == "tsx" and hasattr(mod, "language_tsx"):
+        return mod.language_tsx()
     if hasattr(mod, "language_typescript"):
         return mod.language_typescript()
     if hasattr(mod, "language"):
@@ -136,6 +187,11 @@ def _load_ts_language() -> object:
     raise ImportError(
         "tree-sitter-typescript module does not expose a language function"
     )
+
+
+def _ts_variant_for(path: Path) -> str:
+    """Return the grammar variant key for a TypeScript/TSX file."""
+    return "tsx" if path.suffix.lower() == ".tsx" else "typescript"
 
 def _load_ts_queries() -> dict[str, str]:
     """Load the tree-sitter query definitions for TypeScript.
@@ -210,6 +266,46 @@ def _count_lines(source_text: str) -> int:
     newlines = source_text.count("\n")
     return newlines + (1 if source_text and not source_text.endswith("\n") else 0)
 
+
+def _build_file_node(
+    rel_path: str,
+    label: str,
+    exports: list[str],
+    line_count: int,
+    confidence: str,
+    *,
+    classes: list[str] | None = None,
+    imports: list[str] | None = None,
+) -> dict:
+    """Assemble a file-type node dict shared by AST and regex paths."""
+    props: dict = {
+        "file": rel_path,
+        "exports": exports,
+        "line_count": line_count,
+        "source_strategy": "typescript_exports",
+        "authority": "derived",
+        "confidence": confidence,
+        "roles": ["implementation"],
+    }
+    if classes:
+        props["types"] = classes
+    if imports:
+        props["imports_from"] = imports
+    return {"type": "file", "label": label, "props": props}
+
+
+def _build_contains_edge(package_id: str, nid: str, confidence: str) -> dict:
+    """Assemble a ``contains`` edge dict shared by AST and regex paths."""
+    return {
+        "from": package_id,
+        "to": nid,
+        "type": "contains",
+        "props": {
+            "source_strategy": "typescript_exports",
+            "confidence": confidence,
+        },
+    }
+
 # ---------------------------------------------------------------------------
 # Strategy entry point
 # ---------------------------------------------------------------------------
@@ -236,18 +332,24 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not matched:
         return StrategyResult(nodes, edges, discovered_from)
 
-    # Attempt to set up tree-sitter once for all files
-    ts_lang = None
+    # Grammars are loaded lazily per variant (typescript vs tsx) and cached.
+    ts_lang_cache: dict[str, object] = {}
     ts_queries: dict[str, str] | None = None
     use_ast = TREE_SITTER_AVAILABLE
-
     if use_ast:
         try:
-            ts_lang = _load_ts_language()
             ts_queries = _load_ts_queries()
         except (ImportError, FileNotFoundError, ValueError):
-            # Grammar or query file not available; fall back to regex
             use_ast = False
+
+    def _grammar_for(variant: str) -> object | None:
+        if variant in ts_lang_cache:
+            return ts_lang_cache[variant]
+        try:
+            ts_lang_cache[variant] = _load_ts_language(variant)
+        except (ImportError, FileNotFoundError, ValueError):
+            return None
+        return ts_lang_cache[variant]
 
     for ts_file in matched:
         if not ts_file.is_file():
@@ -263,86 +365,34 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         line_count = _count_lines(source_text)
 
         # Try AST extraction first, fall back to regex on failure
+        ts_lang = _grammar_for(_ts_variant_for(ts_file)) if use_ast else None
         if use_ast and ts_queries is not None and ts_lang is not None:
             try:
                 symbols = _parse_ts_symbols(ts_file, ts_queries, ts_lang)
                 exports = symbols.get("exports", [])
                 if not exports:
                     continue
-
                 nid = _make_node_id(rel_path, id_prefix)
-                node_props: dict = {
-                    "file": rel_path,
-                    "exports": exports,
-                    "line_count": line_count,
-                    "source_strategy": "typescript_exports",
-                    "authority": "derived",
-                    "confidence": "definite",
-                    "roles": ["implementation"],
-                }
-
-                # Include class/interface/type definitions if present
-                classes = symbols.get("classes", [])
-                if classes:
-                    node_props["types"] = classes
-
-                # Include import sources if present
-                imports = symbols.get("imports", [])
-                if imports:
-                    node_props["imports_from"] = imports
-
-                nodes[nid] = {
-                    "type": "file",
-                    "label": ts_file.stem,
-                    "props": node_props,
-                }
+                nodes[nid] = _build_file_node(
+                    rel_path, ts_file.stem, exports, line_count, "definite",
+                    classes=symbols.get("classes", []),
+                    imports=symbols.get("imports", []),
+                )
                 if package_id:
-                    edges.append(
-                        {
-                            "from": package_id,
-                            "to": nid,
-                            "type": "contains",
-                            "props": {
-                                "source_strategy": "typescript_exports",
-                                "confidence": "definite",
-                            },
-                        }
-                    )
+                    edges.append(_build_contains_edge(package_id, nid, "definite"))
                 continue  # Successfully used AST, skip regex path
             except Exception:
-                # AST parsing failed for this file; fall through to regex
-                pass
+                pass  # AST parsing failed; fall through to regex
 
         # Regex fallback path
         exports = _extract_regex(source_text)
         if not exports:
             continue
-
         nid = _make_node_id(rel_path, id_prefix)
-        nodes[nid] = {
-            "type": "file",
-            "label": ts_file.stem,
-            "props": {
-                "file": rel_path,
-                "exports": exports,
-                "line_count": line_count,
-                "source_strategy": "typescript_exports",
-                "authority": "derived",
-                "confidence": "inferred",
-                "roles": ["implementation"],
-            },
-        }
+        nodes[nid] = _build_file_node(
+            rel_path, ts_file.stem, exports, line_count, "inferred",
+        )
         if package_id:
-            edges.append(
-                {
-                    "from": package_id,
-                    "to": nid,
-                    "type": "contains",
-                    "props": {
-                        "source_strategy": "typescript_exports",
-                        "confidence": "inferred",
-                    },
-                }
-            )
+            edges.append(_build_contains_edge(package_id, nid, "inferred"))
 
     return StrategyResult(nodes, edges, discovered_from)

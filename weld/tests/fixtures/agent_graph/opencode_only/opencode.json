@@ -1,0 +1,27 @@
+{
+  "agents": {
+    "planner": {
+      "description": "Produces implementation plans.",
+      "tools": ["read"],
+      "skills": ["architecture-decision"]
+    }
+  },
+  "commands": {
+    "plan": {
+      "description": "Run agent:planner and produce a test strategy."
+    }
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "description": "Safe audit hook with rollback note.",
+        "matcher": "*"
+      }
+    ]
+  },
+  "mcpServers": {
+    "filesystem": {
+      "description": "Local file context."
+    }
+  }
+}

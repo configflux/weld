@@ -14,7 +14,11 @@ from dataclasses import dataclass
 #:     node types plus optional protocol metadata (``protocol``,
 #:     ``surface_kind``, ``transport``, ``boundary_kind``, ``declared_in``);
 #:     no new edges (ADR docs/adrs/0018, project-xoq.1.2).
-SCHEMA_VERSION: int = 4
+#: v5: Agent Graph vocabulary for static AI customization assets:
+#:     subagent, skill, instruction, prompt, hook, mcp-server, permission,
+#:     platform, and scope nodes plus explicit agent-relationship edges
+#:     (ADR docs/adrs/0021).
+SCHEMA_VERSION: int = 5
 
 VALID_NODE_TYPES = frozenset([
     "service", "package", "entity", "stage", "concept", "doc", "route", "contract", "enum", "file",
@@ -30,6 +34,10 @@ VALID_NODE_TYPES = frozenset([
     # a module (HTTP handler, gRPC method, ROS2 service/action). ``channel``
     # is a named pub/sub or stream endpoint (event topic, ROS2 topic, queue).
     "rpc", "channel",
+    # Agent Graph vocabulary (ADR 0021): static AI customization assets and
+    # their normalized platform/scope/tooling surfaces.
+    "subagent", "skill", "instruction", "prompt", "hook", "mcp-server",
+    "permission", "platform", "scope",
     # Polyrepo federation (ADR 0011 ss4, ss7): one ``repo:<name>`` node per
     # registered child in the root meta-graph. Carries path metadata
     # (``path``, ``path_segments``, ``depth``, ``tags``) and is emitted
@@ -51,6 +59,13 @@ VALID_EDGE_TYPES = frozenset([
     # contractual agreement between parties and interfaces (``contracts``).
     "owned_by", "gates", "gated_by", "supersedes", "validates",
     "generates", "migrates", "contracts",
+    # Agent Graph vocabulary (ADR 0021): relationships among static AI
+    # customization assets. Kept strict so adapters converge on one spelling.
+    "uses_skill", "uses_command", "invokes_agent", "handoff_to",
+    "references_file", "applies_to_path", "provides_tool",
+    "restricts_tool", "triggers_on_event", "overrides", "duplicates",
+    "conflicts_with", "implements_workflow", "part_of_platform",
+    "generated_from",
 ])
 
 # -- Value vocabularies ----------------------------------------------------
@@ -125,25 +140,40 @@ PROTOCOL_TRANSPORT_COMPATIBILITY: dict[str, frozenset[str]] = {
 # -- Validation error ------------------------------------------------------
 @dataclass(frozen=True)
 class ValidationError:
-    """A single validation finding."""
+    """A single validation finding.
+
+    *hint* is an optional actionable fix suggestion used by ``wd validate``
+    and ``wd validate-fragment`` to turn sparse diagnostics into
+    copy-pasteable guidance. When present it is appended to ``__str__`` as
+    ``" (hint: ...)"`` so the existing JSON payload still carries the
+    enriched text while preserving ``path.field: message`` substrings that
+    downstream callers and tests match against.
+    """
     path: str
     field: str
     message: str
+    hint: str | None = None
 
     def __str__(self) -> str:
-        return f"{self.path}.{self.field}: {self.message}"
+        base = f"{self.path}.{self.field}: {self.message}"
+        if self.hint:
+            return f"{base} (hint: {self.hint})"
+        return base
 
-# -- Validators (re-exported from _contract_validators) --------------------
-# The actual implementation lives in weld._contract_validators to keep this
-# module under the 400-line default. All public names are re-exported here
-# so existing callers (``from weld.contract import validate_graph``) work
+# -- Validators (re-exported from sibling private modules) -----------------
+# Implementation is split across ``_contract_validators`` (node/edge/meta)
+# and ``_graph_doc_validators`` (graph/fragment aggregators) to keep every
+# file under the 400-line default. Public names are re-exported here so
+# existing callers (``from weld.contract import validate_graph``) work
 # unchanged.
 from weld._contract_validators import (  # noqa: E402
     validate_edge,
-    validate_fragment,
-    validate_graph,
     validate_meta,
     validate_node,
+)
+from weld._graph_doc_validators import (  # noqa: E402
+    validate_fragment,
+    validate_graph,
 )
 
 __all__ = [

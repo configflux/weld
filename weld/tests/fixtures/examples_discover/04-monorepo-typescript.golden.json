@@ -1,0 +1,796 @@
+{
+  "edges": [
+    {
+      "from": "config:apps_web_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/web:build",
+      "type": "configures"
+    },
+    {
+      "from": "config:apps_web_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/web:dev",
+      "type": "configures"
+    },
+    {
+      "from": "config:apps_web_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/web:start",
+      "type": "configures"
+    },
+    {
+      "from": "config:apps_web_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/web:lint",
+      "type": "configures"
+    },
+    {
+      "from": "config:libs_shared-types_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/shared-types:build",
+      "type": "configures"
+    },
+    {
+      "from": "config:libs_shared-types_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/shared-types:lint",
+      "type": "configures"
+    },
+    {
+      "from": "config:libs_shared-types_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/shared-types:test",
+      "type": "configures"
+    },
+    {
+      "from": "config:package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/monorepo:build",
+      "type": "configures"
+    },
+    {
+      "from": "config:package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/monorepo:dev",
+      "type": "configures"
+    },
+    {
+      "from": "config:package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/monorepo:lint",
+      "type": "configures"
+    },
+    {
+      "from": "config:package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/monorepo:test",
+      "type": "configures"
+    },
+    {
+      "from": "config:packages_api_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/api:build",
+      "type": "configures"
+    },
+    {
+      "from": "config:packages_api_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/api:test",
+      "type": "configures"
+    },
+    {
+      "from": "config:packages_ui_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/ui:build",
+      "type": "configures"
+    },
+    {
+      "from": "config:packages_ui_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/ui:lint",
+      "type": "configures"
+    },
+    {
+      "from": "config:services_orders-api_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/orders-api:build",
+      "type": "configures"
+    },
+    {
+      "from": "config:services_orders-api_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:@acme/orders-api:start",
+      "type": "configures"
+    },
+    {
+      "from": "config:services_orders-api_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/orders-api:lint",
+      "type": "configures"
+    },
+    {
+      "from": "config:services_orders-api_package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:@acme/orders-api:test",
+      "type": "configures"
+    }
+  ],
+  "meta": {
+    "schema_version": 1,
+    "version": 5
+  },
+  "nodes": {
+    "adr/0001-monorepo-layout": {
+      "label": "0001 Monorepo Layout",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "doc_kind": "adr",
+        "file": "docs/adr/0001-monorepo-layout.md",
+        "roles": [
+          "doc"
+        ],
+        "source_strategy": "markdown"
+      },
+      "type": "doc"
+    },
+    "build-target:npm:@acme/api:build": {
+      "label": "npm run build",
+      "props": {
+        "authority": "canonical",
+        "command": "tsc --build",
+        "confidence": "definite",
+        "file": "packages/api/package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "build",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/monorepo:build": {
+      "label": "npm run build",
+      "props": {
+        "authority": "canonical",
+        "command": "turbo run build",
+        "confidence": "definite",
+        "file": "package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "build",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/monorepo:dev": {
+      "label": "npm run dev",
+      "props": {
+        "authority": "canonical",
+        "command": "turbo run dev",
+        "confidence": "definite",
+        "file": "package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "dev",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/orders-api:build": {
+      "label": "npm run build",
+      "props": {
+        "authority": "canonical",
+        "command": "tsc --noEmit",
+        "confidence": "definite",
+        "file": "services/orders-api/package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "build",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/orders-api:start": {
+      "label": "npm run start",
+      "props": {
+        "authority": "canonical",
+        "command": "node dist/server.js",
+        "confidence": "definite",
+        "file": "services/orders-api/package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "start",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/shared-types:build": {
+      "label": "npm run build",
+      "props": {
+        "authority": "canonical",
+        "command": "tsc --noEmit",
+        "confidence": "definite",
+        "file": "libs/shared-types/package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "build",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/ui:build": {
+      "label": "npm run build",
+      "props": {
+        "authority": "canonical",
+        "command": "tsc --build",
+        "confidence": "definite",
+        "file": "packages/ui/package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "build",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/web:build": {
+      "label": "npm run build",
+      "props": {
+        "authority": "canonical",
+        "command": "next build",
+        "confidence": "definite",
+        "file": "apps/web/package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "build",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/web:dev": {
+      "label": "npm run dev",
+      "props": {
+        "authority": "canonical",
+        "command": "next dev",
+        "confidence": "definite",
+        "file": "apps/web/package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "dev",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "build-target:npm:@acme/web:start": {
+      "label": "npm run start",
+      "props": {
+        "authority": "canonical",
+        "command": "next start",
+        "confidence": "definite",
+        "file": "apps/web/package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "start",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "compose:default": {
+      "label": "docker-compose.yml",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "docker/docker-compose.yml",
+        "roles": [
+          "config"
+        ],
+        "services": [
+          "orders-api",
+          "postgres"
+        ],
+        "source_strategy": "compose"
+      },
+      "type": "compose"
+    },
+    "config:apps_web_package_json": {
+      "label": "package.json (@acme/web)",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "apps/web/package.json",
+        "package_name": "@acme/web",
+        "roles": [
+          "config"
+        ],
+        "source_strategy": "manifest"
+      },
+      "type": "config"
+    },
+    "config:libs_shared-types_package_json": {
+      "label": "package.json (@acme/shared-types)",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "libs/shared-types/package.json",
+        "package_name": "@acme/shared-types",
+        "roles": [
+          "config"
+        ],
+        "source_strategy": "manifest"
+      },
+      "type": "config"
+    },
+    "config:package_json": {
+      "label": "package.json (@acme/monorepo)",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "package.json",
+        "package_name": "@acme/monorepo",
+        "roles": [
+          "config"
+        ],
+        "source_strategy": "manifest"
+      },
+      "type": "config"
+    },
+    "config:packages_api_package_json": {
+      "label": "package.json (@acme/api)",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "packages/api/package.json",
+        "package_name": "@acme/api",
+        "roles": [
+          "config"
+        ],
+        "source_strategy": "manifest"
+      },
+      "type": "config"
+    },
+    "config:packages_ui_package_json": {
+      "label": "package.json (@acme/ui)",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "packages/ui/package.json",
+        "package_name": "@acme/ui",
+        "roles": [
+          "config"
+        ],
+        "source_strategy": "manifest"
+      },
+      "type": "config"
+    },
+    "config:services_orders-api_package_json": {
+      "label": "package.json (@acme/orders-api)",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "services/orders-api/package.json",
+        "package_name": "@acme/orders-api",
+        "roles": [
+          "config"
+        ],
+        "source_strategy": "manifest"
+      },
+      "type": "config"
+    },
+    "dockerfile:Dockerfile": {
+      "label": "Dockerfile.orders-api",
+      "props": {
+        "authority": "canonical",
+        "base_image": "node:20-alpine",
+        "confidence": "definite",
+        "file": "docker/Dockerfile.orders-api",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "dockerfile"
+    },
+    "file:api/src/client": {
+      "label": "client",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "fetchItems",
+          "createItem"
+        ],
+        "file": "packages/api/src/client.ts",
+        "line_count": 29,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:api/src/types": {
+      "label": "types",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "ApiResponse"
+        ],
+        "file": "packages/api/src/types.ts",
+        "line_count": 12,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:orders-api/src/routes": {
+      "label": "routes",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "postOrders",
+          "getOrders",
+          "getOrderById"
+        ],
+        "file": "services/orders-api/src/routes.ts",
+        "line_count": 19,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:orders-api/src/server": {
+      "label": "server",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "createOrder",
+          "getOrder",
+          "listOrders"
+        ],
+        "file": "services/orders-api/src/server.ts",
+        "line_count": 32,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:shared-types/src/index": {
+      "label": "index",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "Item",
+          "Order",
+          "ApiError"
+        ],
+        "file": "libs/shared-types/src/index.ts",
+        "line_count": 24,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:ui/src/Button": {
+      "label": "Button",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "ButtonProps",
+          "Button"
+        ],
+        "file": "packages/ui/src/Button.tsx",
+        "line_count": 13,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:ui/src/Card": {
+      "label": "Card",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "CardProps",
+          "Card"
+        ],
+        "file": "packages/ui/src/Card.tsx",
+        "line_count": 12,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:web/src/App": {
+      "label": "App",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "App"
+        ],
+        "file": "apps/web/src/App.tsx",
+        "line_count": 19,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:web/src/layout": {
+      "label": "layout",
+      "props": {
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "LayoutProps",
+          "Layout"
+        ],
+        "file": "apps/web/src/layout.tsx",
+        "line_count": 13,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "guide/architecture": {
+      "label": "Architecture",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "doc_kind": "guide",
+        "file": "docs/architecture.md",
+        "roles": [
+          "doc"
+        ],
+        "source_strategy": "markdown"
+      },
+      "type": "doc"
+    },
+    "test-target:npm:@acme/api:test": {
+      "label": "npm run test",
+      "props": {
+        "authority": "canonical",
+        "command": "vitest run",
+        "confidence": "definite",
+        "file": "packages/api/package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "test",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "test-target:npm:@acme/monorepo:lint": {
+      "label": "npm run lint",
+      "props": {
+        "authority": "canonical",
+        "command": "turbo run lint",
+        "confidence": "definite",
+        "file": "package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "lint",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "test-target:npm:@acme/monorepo:test": {
+      "label": "npm run test",
+      "props": {
+        "authority": "canonical",
+        "command": "turbo run test",
+        "confidence": "definite",
+        "file": "package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "test",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "test-target:npm:@acme/orders-api:lint": {
+      "label": "npm run lint",
+      "props": {
+        "authority": "canonical",
+        "command": "eslint src",
+        "confidence": "definite",
+        "file": "services/orders-api/package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "lint",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "test-target:npm:@acme/orders-api:test": {
+      "label": "npm run test",
+      "props": {
+        "authority": "canonical",
+        "command": "echo 'no tests'",
+        "confidence": "definite",
+        "file": "services/orders-api/package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "test",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "test-target:npm:@acme/shared-types:lint": {
+      "label": "npm run lint",
+      "props": {
+        "authority": "canonical",
+        "command": "eslint src",
+        "confidence": "definite",
+        "file": "libs/shared-types/package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "lint",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "test-target:npm:@acme/shared-types:test": {
+      "label": "npm run test",
+      "props": {
+        "authority": "canonical",
+        "command": "echo 'no tests'",
+        "confidence": "definite",
+        "file": "libs/shared-types/package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "test",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "test-target:npm:@acme/ui:lint": {
+      "label": "npm run lint",
+      "props": {
+        "authority": "canonical",
+        "command": "eslint src/",
+        "confidence": "definite",
+        "file": "packages/ui/package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "lint",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "test-target:npm:@acme/web:lint": {
+      "label": "npm run lint",
+      "props": {
+        "authority": "canonical",
+        "command": "eslint src/",
+        "confidence": "definite",
+        "file": "apps/web/package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "lint",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    },
+    "workflow:ci": {
+      "label": "ci",
+      "props": {
+        "authority": "canonical",
+        "concurrency": null,
+        "confidence": "definite",
+        "file": ".github/workflows/ci.yml",
+        "jobs": [
+          "lint",
+          "build",
+          "test"
+        ],
+        "permissions": [],
+        "roles": [
+          "config"
+        ],
+        "source_strategy": "gh_workflow",
+        "triggers": [
+          "push",
+          "pull_request"
+        ]
+      },
+      "type": "workflow"
+    }
+  }
+}

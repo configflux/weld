@@ -41,6 +41,8 @@ Today Weld already supports:
 - built-in semantic enrichment through pluggable providers
 - a browser graph visualizer, graph export, and keyword-oriented file index
 - query, context, path, impact, enrich, find, and staleness inspection commands
+- static Agent Graph discovery for agents, skills, prompts, commands, hooks,
+  instructions, MCP servers, tool permissions, and platform variants
 
 ## Supported languages
 
@@ -230,12 +232,35 @@ Bazel tests use the Python 3.12 toolchain pinned in `MODULE.bazel`.
    wd stale
    ```
 
+5. Inspect the repository's AI customization layer:
+
+   ```bash
+   wd agents discover
+   wd agents list
+   wd agents audit
+   wd agents explain planner
+   wd agents impact .github/agents/planner.agent.md
+   wd agents plan-change "planner should always include test strategy"
+   ```
+
+   Agent Graph discovery writes `.weld/agent-graph.json` by default. Use
+   `wd agents rediscover` to refresh it explicitly, and use `--json` on
+   `list`, `explain`, `impact`, `audit`, and `plan-change` when an agent
+   needs stable machine-readable output.
+
 ## CLI reference
 
 | Command | Description |
 |---|---|
 | `wd init` | Bootstrap `.weld/discover.yaml` |
 | `wd discover` | Run discovery, emit graph JSON |
+| `wd agents discover` | Scan AI customization assets and write `.weld/agent-graph.json` |
+| `wd agents rediscover` | Refresh `.weld/agent-graph.json` from a new static scan |
+| `wd agents list` | List discovered AI customization assets from `.weld/agent-graph.json` |
+| `wd agents explain <asset>` | Explain one AI customization asset and its graph relationships |
+| `wd agents impact <asset>` | Show affected Agent Graph assets for a proposed customization change |
+| `wd agents audit` | Audit AI customization assets for static consistency issues |
+| `wd agents plan-change "<request>"` | Plan a static AI customization behavior change |
 | `wd workspace status` | Show workspace child ledger and status |
 | `wd build-index` | Regenerate file index |
 | `wd query <term>` | Hybrid-ranked tokenized graph search |
@@ -243,8 +268,15 @@ Bazel tests use the Python 3.12 toolchain pinned in `MODULE.bazel`.
 | `wd context <id>` | Node + neighborhood |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
 | `wd viz` | Local read-only browser graph explorer |
+| `wd doctor` | Check setup health; exits 0 in directories that are not Weld projects yet |
 | `wd bootstrap` | Agent onboarding files |
 | `wd lint` | Lint graph edges, including custom `.weld/lint-rules.yaml` rules |
+
+The repo includes a canonical Agent System Maintainer skill at
+`.agents/skills/agent-system-maintainer/SKILL.md` and a GitHub Copilot
+Agent Architect at `.github/agents/agent-architect.agent.md`. These files
+are discovered like any other Agent Graph asset and provide the workflow for
+safe future customization changes.
 
 ## Agent onboarding
 

@@ -324,7 +324,18 @@ def main(argv: list[str] | None = None) -> None:
     if (args.term is None) == (args.node_id is None):
         parser.error("provide either a term or --node, not both")
 
+    from weld._graph_cli import _build_retry_hint, ensure_graph_exists
     from weld.graph import Graph
+
+    # Surface a friendly first-run message when the graph has not been
+    # built yet; mirrors the behaviour of read commands in _graph_cli
+    # (bd-5038-3nr.2 / bd-5038-uqo).
+    retry_cmd = (
+        _build_retry_hint("trace", args.term)
+        if args.term is not None
+        else _build_retry_hint("trace", node=args.node_id)
+    )
+    ensure_graph_exists(args.root, retry_cmd)
 
     g = Graph(args.root)
     g.load()
