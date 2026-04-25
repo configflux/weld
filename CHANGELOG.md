@@ -27,6 +27,34 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.8.3 - 2026-04-25
+
+### Fixed
+
+- CHANGELOG entry for v0.8.2 listed `11 graph-backed tools` and named the
+  nonexistent `weld_callees`. The MCP registry has had 13 tools since v0.8.2
+  (matching `docs/mcp.md` and the in-process registry); the entry is
+  corrected here so changelog readers and PyPI long-description match the
+  shipped surface.
+
+### Added
+
+- `tools/mcp_tool_count_consistency_test.py` (`bazel test //tools:mcp_tool_count_consistency_test`)
+  asserts that the MCP tool count and names stay in sync across
+  `weld/_mcp_tools.py`, `weld/tests/mcp_expected_tools.py`, `docs/mcp.md`,
+  and `CHANGELOG.md`. CI fails on drift.
+- `tools/version_consistency_test.py` now also pins the `description` field
+  in `weld/pyproject.toml` (non-empty, not the deprecated v0.7 string) and
+  checks `public/weld/pyproject.toml` description matches when the publish
+  staging directory is present.
+- `tools/release_smoke.sh` now exercises `wd security`, `wd doctor --security`,
+  `wd demo list`, `wd demo monorepo --init`, `wd demo polyrepo --init`, and
+  `wd agents render --help` against the installed wheel.
+- `tools/release_smoke.sh` runs an installed-extra MCP phase that builds
+  the wheel, installs `configflux-weld[mcp]`, performs the stdio JSON-RPC
+  `initialize` + `tools/list` handshake against `python -m weld.mcp_server`,
+  and asserts the wire response lists exactly the 13 expected tools.
+
 ## v0.8.2 - 2026-04-25
 
 ### Added
@@ -47,11 +75,11 @@ in [`docs/launch.md`](docs/launch.md) links here.
 - `scripts/create-monorepo-demo.sh` and `scripts/create-polyrepo-demo.sh`
   build deterministic demo workspaces in a tempdir without manual nested
   `git init`. Fail gracefully when Git identity is missing.
-- MCP server: 11 graph-backed tools (`weld_query`, `weld_context`,
-  `weld_path`, `weld_brief`, `weld_callers`, `weld_callees`,
-  `weld_export`, `weld_diff`, `weld_trace`, `weld_impact`, `weld_enrich`)
-  return an actionable error payload when neither `.weld/graph.json` nor
-  `.weld/workspaces.yaml` is present.
+- MCP server: 13 graph-backed tools (`weld_query`, `weld_find`,
+  `weld_context`, `weld_path`, `weld_brief`, `weld_stale`, `weld_callers`,
+  `weld_references`, `weld_export`, `weld_trace`, `weld_impact`,
+  `weld_enrich`, `weld_diff`) return an actionable error payload when
+  neither `.weld/graph.json` nor `.weld/workspaces.yaml` is present.
 - Installed-wheel MCP smoke test (`weld_mcp_install_smoke_test`) builds
   the wheel, installs it, and asserts `python -m weld.mcp_server --help`
   works from the installed copy. Catches packaging regressions like the

@@ -123,6 +123,50 @@ layout (one `.weld/` per child repo) over a single mega-repo with one
 giant graph. The federation mode below is designed for exactly that
 shape.
 
+### Profiling breakdown (100k single repo)
+
+The 50 s `wd init` and 26 s `wd query` cold numbers above were
+profiled with `cProfile` to confirm where wall time actually goes.
+Findings are captured in
+[ADR 0027](adrs/0027-init-and-query-cold-path-on-large-repos.md);
+the short version is that the *original* mental model -- "init walks
+the tree" and "query parses the JSON" -- is not where the time is.
+
+For `wd init` (50 s wall):
+
+| Phase | cumtime | share |
+| --- | --- | --- |
+| `detect_frameworks` (line-by-line scan of every source file) | 60 s | 33% |
+| `detect_docs` | 28 s | 16% |
+| `detect_structure` | 18 s | 10% |
+| `scan_files` (the actual filesystem walk) | 13 s | 7% |
+| Other `detect_*` phases (each) | ~9 s | ~5% |
+
+`pathlib.Path.relative_to` alone accounts for ~54% of cumulative CPU
+because each detect_* phase iterates the file list and reparses
+relative paths per file. The walk is fast; the per-file passes are
+not. The synthetic single repo is not git-initialised, so these
+numbers reflect the `os.walk` fallback in
+`weld/repo_boundary.py:iter_repo_files` rather than the faster
+`git ls-files` branch a real git repo would take.
+
+For `wd query` cold (26 s wall):
+
+| Phase | cumtime | share |
+| --- | --- | --- |
+| Build inverted index + BM25 corpus | 35.9 s | 80% |
+| -- query index | 18.5 s | 41% |
+| -- BM25 corpus | 16.4 s | 36% |
+| `json.loads` of `graph.json` | 2.3 s | 6% |
+| The actual search (`Graph.query`) | 5.8 s | 13% |
+
+The 357 MiB JSON parse is **not** the bottleneck. Stdlib `json.loads`
+takes ~2.3 s; `orjson.loads` takes ~1.6 s on the same file -- a
+~0.7 s win out of 26 s. The dominant cost is rebuilding the inverted
+index and BM25 corpus on every cold load, because neither structure
+is persisted. A sidecar index written by `wd discover` would convert
+that ~34 s rebuild into a load.
+
 ---
 
 ## Polyrepo scaling

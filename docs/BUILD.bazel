@@ -1,0 +1,8 @@
+package(default_visibility = ["//visibility:public"])
+
+# Exposed for cross-package guard tests (e.g.
+# //tools:mcp_tool_count_consistency_test) that read the MCP reference
+# documentation as a data input.
+exports_files([
+    "mcp.md",
+])
