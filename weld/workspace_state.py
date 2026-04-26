@@ -1,9 +1,10 @@
 """Workspace ledger, lockfile, and status helpers for polyrepo roots.
 
-Every writer under ``.weld/`` uses :func:`atomic_write_text` (temp file
-in the same directory + :func:`os.replace`). A ``workspace.lock`` whose
-PID is dead or whose payload is unreadable is treated as stale, removed,
-and warned about on the next acquire (ADR 0011 section 8).
+Every writer under ``.weld/`` uses :func:`atomic_write_text` (or its
+binary sibling :func:`atomic_write_bytes`): temp file in the same
+directory + :func:`os.replace`. A ``workspace.lock`` whose PID is dead
+or whose payload is unreadable is treated as stale, removed, and warned
+about on the next acquire (ADR 0011 section 8).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ __all__ = [
     "WorkspaceStateError",
     "WorkspaceChildState",
     "WorkspaceState",
+    "atomic_write_bytes",
     "atomic_write_text",
     "find_workspaces_yaml",
     "load_workspace_config",
@@ -71,6 +73,34 @@ def atomic_write_text(final_path: Path | str, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+        os.replace(str(tmp_path), str(final))
+    except BaseException:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def atomic_write_bytes(final_path: Path | str, data: bytes) -> None:
+    """Atomically replace ``final_path`` with ``data``.
+
+    Bytes-mode sibling of :func:`atomic_write_text`: same temp-file
+    naming convention (``<basename>.tmp.*`` in the same directory),
+    same :func:`os.replace` rename, same cleanup-on-failure so callers
+    see exactly the old bytes or exactly the new. Missing parent
+    directories are created.
+    """
+    final = Path(final_path)
+    final.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f"{final.name}.tmp.",
+        dir=str(final.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
         os.replace(str(tmp_path), str(final))
     except BaseException:
         try:
@@ -191,7 +221,9 @@ def load_workspace_state_json(root: Path | str) -> dict[str, object]:
     state_path = Path(root) / ".weld" / WORKSPACE_STATE_FILENAME
     if not state_path.is_file():
         raise WorkspaceStateError(
-            f"{state_path} not found; run `wd discover` at the workspace root first",
+            f"{state_path} not found; run `wd workspace bootstrap` to "
+            f"materialize this workspace, or `wd discover` if you intended "
+            f"to (re)discover from scratch",
         )
 
     try:
@@ -247,7 +279,9 @@ def _run_bootstrap_subcommand(args: argparse.Namespace) -> int:
     from weld._workspace_bootstrap import bootstrap_workspace
 
     try:
-        result = bootstrap_workspace(args.root, max_depth=args.max_depth)
+        result = bootstrap_workspace(
+            args.root, max_depth=args.max_depth, ignore_all=args.ignore_all,
+        )
     except FileNotFoundError as exc:
         print(f"[weld] error: {exc}", file=sys.stderr)
         return 2
@@ -324,6 +358,13 @@ def main(argv: list[str] | None = None) -> int:
         "--json",
         action="store_true",
         help="Emit a JSON summary of what the bootstrap did",
+    )
+    bootstrap_parser.add_argument(
+        "--ignore-all",
+        action="store_true",
+        help="Write a fully-ignoring .weld/.gitignore in the root and every "
+             "child (every weld file ignored). Default is selective: track "
+             "config and the canonical graph, ignore per-machine state.",
     )
 
     args = parser.parse_args(argv)

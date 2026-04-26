@@ -254,5 +254,76 @@ class AgentsRenderAuditDriftTest(unittest.TestCase):
             self.assertNotIn("rendered_copy_content_drift", codes)
 
 
+class AgentsExplainCanonicalRenderedTest(unittest.TestCase):
+    """ADR 0029: explain surfaces canonical/derived relationship."""
+
+    def test_explain_on_derived_target_lists_canonical_source(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _render_workspace(root)
+            self.assertEqual(_run(["agents", "render", "--write"], root)[0], 0)
+            self.assertEqual(_run(["agents", "discover"], root)[0], 0)
+
+            rc, stdout, stderr = _run(
+                ["agents", "explain", ".claude/agents/planner.md"], root,
+            )
+
+            self.assertEqual((rc, stderr), (0, ""))
+            self.assertIn("Canonical source:", stdout)
+            self.assertIn(".github/agents/planner.agent.md", stdout)
+
+    def test_explain_on_canonical_lists_rendered_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _render_workspace(root)
+            self.assertEqual(_run(["agents", "render", "--write"], root)[0], 0)
+            self.assertEqual(_run(["agents", "discover"], root)[0], 0)
+
+            rc, stdout, stderr = _run(
+                ["agents", "explain", ".github/agents/planner.agent.md"], root,
+            )
+
+            self.assertEqual((rc, stderr), (0, ""))
+            self.assertIn("Rendered targets:", stdout)
+            self.assertIn(".claude/agents/planner.md", stdout)
+
+    def test_explain_json_payload_carries_canonical_and_rendered_fields(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _render_workspace(root)
+            self.assertEqual(_run(["agents", "render", "--write"], root)[0], 0)
+            self.assertEqual(_run(["agents", "discover"], root)[0], 0)
+
+            rc, stdout, stderr = _run(
+                ["agents", "explain", ".claude/agents/planner.md", "--json"],
+                root,
+            )
+
+            self.assertEqual((rc, stderr), (0, ""))
+            payload = json.loads(stdout)
+            self.assertIn("canonical_source", payload)
+            self.assertIsNotNone(payload["canonical_source"])
+            self.assertEqual(
+                payload["canonical_source"]["node"]["path"],
+                ".github/agents/planner.agent.md",
+            )
+            self.assertEqual(payload.get("rendered_targets", []), [])
+
+            rc, stdout, _ = _run(
+                ["agents", "explain", ".github/agents/planner.agent.md", "--json"],
+                root,
+            )
+            self.assertEqual(rc, 0)
+            payload = json.loads(stdout)
+            self.assertIsNone(payload.get("canonical_source"))
+            self.assertEqual(len(payload["rendered_targets"]), 1)
+            self.assertEqual(
+                payload["rendered_targets"][0]["node"]["path"],
+                ".claude/agents/planner.md",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

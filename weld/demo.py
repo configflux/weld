@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 # Ordered for deterministic ``wd demo list`` output.
@@ -90,16 +92,36 @@ def _bash_executable() -> str:
     return "/bin/bash"
 
 
-def run_demo(kind: str, target: Path) -> int:
+def run_demo(kind: str, target: Path, *, bootstrap: bool = True) -> int:
     """Invoke the bundled bootstrap script for ``kind`` against ``target``.
 
-    Returns the script's exit code unchanged so callers see the same
-    behaviour as if they had run the script directly.
+    For ``kind == "polyrepo"`` the workspace is then materialized in-process
+    via :func:`weld._workspace_bootstrap.bootstrap_workspace` so the demo is
+    immediately usable (``wd workspace status`` works without a separate
+    step). Pass ``bootstrap=False`` to preserve the older two-step
+    contract for fixtures or tests that want the unmaterialized scaffold.
+
+    Returns the script's exit code (or a non-zero code if the in-process
+    bootstrap failed).
     """
     script = _script_for(kind)
     cmd = [_bash_executable(), str(script), str(target)]
     completed = subprocess.run(cmd, check=False)
-    return completed.returncode
+    if completed.returncode != 0 or kind != "polyrepo" or not bootstrap:
+        return completed.returncode
+    # Local import: keep ``weld.demo`` lightweight at module load time.
+    from weld._workspace_bootstrap import bootstrap_workspace
+    try:
+        bootstrap_workspace(target)
+    except Exception as exc:  # noqa: BLE001 -- demo, surface as exit code
+        sys.stderr.write(f"wd demo polyrepo: bootstrap failed: {exc}\n")
+        # Operators chasing a real bug need the full traceback; opt in
+        # via ``WELD_DEBUG`` (any non-empty value) so the default
+        # output stays a single tidy line for normal users.
+        if os.environ.get("WELD_DEBUG", ""):
+            traceback.print_exc(file=sys.stderr)
+        return 1
+    return 0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -128,6 +150,15 @@ def _build_parser() -> argparse.ArgumentParser:
             metavar="DIR",
             help="Target directory to materialize the demo into",
         )
+        if name == "polyrepo":
+            demo_parser.add_argument(
+                "--no-bootstrap",
+                action="store_true",
+                help=(
+                    "Skip the in-process workspace bootstrap; produce the "
+                    "scaffold only (the older two-step contract)"
+                ),
+            )
     return parser
 
 
@@ -139,7 +170,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.action == "list":
         return _list_demos(as_json=args.json)
 
-    return run_demo(args.action, args.init)
+    bootstrap = not getattr(args, "no_bootstrap", False)
+    return run_demo(args.action, args.init, bootstrap=bootstrap)
 
 
 if __name__ == "__main__":

@@ -252,6 +252,14 @@ def _add_audit_parser(subparsers: Any) -> None:
         help="Repository root containing .weld/agent-graph.json (default: current directory).",
     )
     parser.add_argument("--json", action="store_true", help="Emit stable JSON findings.")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Surface canonical+rendered groups silenced by ADR 0029 as "
+            "info-level findings (codes suffixed `_suppressed`)."
+        ),
+    )
 
 
 def _run_audit(args: argparse.Namespace) -> int:
@@ -259,7 +267,7 @@ def _run_audit(args: argparse.Namespace) -> int:
     graph = _load_persisted_graph(root)
     if graph is None:
         return 2
-    payload = audit_graph(graph, root=root)
+    payload = audit_graph(graph, root=root, strict=args.strict)
     if args.json:
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         return 0

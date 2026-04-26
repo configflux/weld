@@ -13,6 +13,31 @@ import os
 import subprocess
 from pathlib import Path
 
+from weld._git import git_main_checkout_path
+
+
+def resolve_child_root(root: Path, rel_path: str) -> Path:
+    """Return the absolute path to a child repo under *root*.
+
+    Primary: ``root / rel_path``. When that location is not a git repo and
+    *root* is inside a linked git worktree, fall back to the main
+    worktree's checkout (ADR 0028 §1). The fallback is necessary because
+    isolated worktrees do not contain sibling child repos -- those live
+    only at the main checkout. When neither location exists, the primary
+    path is returned so callers can report the failure with the
+    user-visible relative-path suffix intact.
+    """
+    primary = root / rel_path
+    if primary.is_dir() and (primary / ".git").exists():
+        return primary
+    main_checkout = git_main_checkout_path(root)
+    if main_checkout is None:
+        return primary
+    fallback = main_checkout / rel_path
+    if fallback.is_dir() and (fallback / ".git").exists():
+        return fallback
+    return primary
+
 
 def inspect_child(
     root: Path,
@@ -20,8 +45,14 @@ def inspect_child(
     remote: str | None,
     seen_at: str,
 ) -> dict:
-    """Return a kwargs dict suitable for ``WorkspaceChildState(...)``."""
-    child_root = root / rel_path
+    """Return a kwargs dict suitable for ``WorkspaceChildState(...)``.
+
+    Uses :func:`resolve_child_root` so a child that exists only at the
+    main worktree's checkout (the common case under
+    ``git worktree``-based isolation) is still reported as ``present``.
+    See ADR 0028.
+    """
+    child_root = resolve_child_root(root, rel_path)
     graph_rel = (Path(rel_path) / ".weld" / "graph.json").as_posix()
 
     if not child_root.is_dir() or not (child_root / ".git").exists():

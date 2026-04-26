@@ -31,6 +31,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from weld._gitignore_writer import write_weld_gitignore
 from weld.init import init as _root_init
 from weld.init_workspace import discover_children, init_workspace
 from weld.workspace import DEFAULT_MAX_DEPTH
@@ -182,15 +183,25 @@ def _child_has_discover_yaml(child_root: Path) -> bool:
     return (child_root / ".weld" / "discover.yaml").is_file()
 
 
-def _init_child(child_root: Path, result: BootstrapResult, name: str) -> None:
+def _init_child(
+    child_root: Path,
+    result: BootstrapResult,
+    name: str,
+    *,
+    ignore_all: bool = False,
+) -> None:
     """Run ``wd init`` inside a child that has ``.git/`` but no discover.yaml.
 
     Per-child errors are recorded on *result* and do not abort the run;
     the recurse step will still inspect the child by its ledger status.
+    Also seeds ``.weld/.gitignore`` if missing (idempotent), so a fresh
+    child does not show its generated weld state as untracked git noise.
     """
+    weld_dir = child_root / ".weld"
     if _child_has_discover_yaml(child_root):
+        write_weld_gitignore(weld_dir, ignore_all=ignore_all)
         return
-    output = child_root / ".weld" / "discover.yaml"
+    output = weld_dir / "discover.yaml"
     try:
         wrote = _root_init(child_root, output, force=False)
     except Exception as exc:  # noqa: BLE001 -- per-child isolation
@@ -198,12 +209,14 @@ def _init_child(child_root: Path, result: BootstrapResult, name: str) -> None:
         return
     if wrote:
         result.children_initialized.append(name)
+    write_weld_gitignore(weld_dir, ignore_all=ignore_all)
 
 
 def bootstrap_workspace(
     root: Path | str,
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
+    ignore_all: bool = False,
 ) -> BootstrapResult:
     """Run the 5-step polyrepo bootstrap sequence on *root* and return a summary.
 
@@ -214,6 +227,11 @@ def bootstrap_workspace(
     max_depth:
         Maximum directory depth for the nested-repo scan, mirroring the
         ``--max-depth`` flag on ``wd init``.
+    ignore_all:
+        When ``True``, the per-child and root ``.weld/.gitignore`` files
+        ignore every weld file (``*`` / ``!.gitignore``). Default is the
+        selective policy: ignore per-machine state, track config and the
+        canonical graph. See :mod:`weld._gitignore_writer`.
 
     Returns
     -------
@@ -239,6 +257,7 @@ def bootstrap_workspace(
 
     # Step 1: root init if needed.
     result.root_init_ran = _run_root_init(root_path)
+    write_weld_gitignore(root_path / ".weld", ignore_all=ignore_all)
 
     # Step 2: scan nested git repos and write workspaces.yaml when needed.
     workspaces_yaml = root_path / ".weld" / "workspaces.yaml"
@@ -287,7 +306,9 @@ def bootstrap_workspace(
 
     # Step 3: per-child init for children lacking discover.yaml.
     for child in children:
-        _init_child(root_path / child.path, result, child.name)
+        _init_child(
+            root_path / child.path, result, child.name, ignore_all=ignore_all,
+        )
 
     # Step 4 + 5: recurse-discover then rebuild root meta-graph + ledger
     # inside the workspace lock. This matches the ordering used by

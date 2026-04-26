@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from weld._workspace_inspect import resolve_child_root
 from weld.serializer import dumps_graph as _dumps_graph
 from weld.workspace import WorkspaceConfig
 from weld.workspace_state import (
@@ -73,7 +74,10 @@ def recurse_children(
             )
             continue
 
-        child_root = root / child.path
+        # ADR 0028 §1: when running from a linked worktree the child repo
+        # lives only at the main checkout, not under root. Use the same
+        # resolver inspect_child uses so recurse and inspection agree.
+        child_root = resolve_child_root(root, child.path)
         exc = _discover_child(
             child.name, child_root, incremental=incremental, safe=safe,
         )

@@ -84,6 +84,240 @@ class AgentGraphAuditCliTest(unittest.TestCase):
             self.assertIn("Tool permission conflict", stdout)
 
 
+class AgentGraphAuditCanonicalRenderedSuppressionTest(unittest.TestCase):
+    """ADR 0029: canonical->rendered pairs must not flag duplicate_name
+    or vague_description findings."""
+
+    def _findings_for(self, root: Path) -> list[dict]:
+        self.assertEqual(_run(["agents", "discover"], root)[0], 0)
+        rc, stdout, stderr = _run(["agents", "audit", "--json"], root)
+        self.assertEqual((rc, stderr), (0, ""))
+        return json.loads(stdout)["findings"]
+
+    def test_canonical_rendered_pair_does_not_flag_duplicate_name(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _canonical_rendered_workspace(root)
+            findings = self._findings_for(root)
+            offending = [
+                f for f in findings
+                if f["code"] == "duplicate_name"
+                and any(n["name"] == "planner" for n in f["nodes"])
+            ]
+            self.assertEqual(offending, [], msg=findings)
+
+    def test_rendered_copy_with_empty_description_does_not_flag_vague(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _canonical_rendered_workspace(root)
+            findings = self._findings_for(root)
+            offending = [
+                f for f in findings
+                if f["code"] == "vague_description"
+                and any(
+                    ".claude/agents/planner.md" in n.get("path", "")
+                    for n in f["nodes"]
+                )
+            ]
+            self.assertEqual(offending, [], msg=findings)
+
+    def test_unrelated_duplicate_still_flags_duplicate_name(self) -> None:
+        """Suppression only applies to pairs linked by generated_from."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root,
+                ".github/agents/planner.agent.md",
+                "---\nname: planner\ndescription: Plans implementation.\n---\n",
+            )
+            _write(
+                root,
+                ".claude/agents/planner.md",
+                "---\nname: planner\ndescription: Drafts implementation.\n---\n",
+            )
+            findings = self._findings_for(root)
+            duplicates = [f for f in findings if f["code"] == "duplicate_name"]
+            self.assertTrue(
+                any(
+                    any(n["name"] == "planner" for n in f["nodes"])
+                    for f in duplicates
+                ),
+                msg=findings,
+            )
+
+
+class AgentGraphAuditUnusedSkillSuppressionTest(unittest.TestCase):
+    """A skill mentioned by name in a discovered agent or instruction
+    file body is treated as referenced, even without an explicit
+    ``uses_skill`` edge. Suppresses noise on instruction-mediated repos
+    (AGENTS.md / project conventions activate skills indirectly)."""
+
+    def _findings_for(self, root: Path) -> list[dict]:
+        self.assertEqual(_run(["agents", "discover"], root)[0], 0)
+        rc, stdout, stderr = _run(["agents", "audit", "--json"], root)
+        self.assertEqual((rc, stderr), (0, ""))
+        return json.loads(stdout)["findings"]
+
+    def test_skill_text_mentioned_in_instruction_is_not_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root, ".claude/skills/planner-helper/SKILL.md",
+                "---\nname: planner-helper\n"
+                "description: Helps the planner break work into steps.\n"
+                "---\n",
+            )
+            _write(
+                root, "AGENTS.md",
+                "# Project conventions\n\n"
+                "Always invoke planner-helper before drafting an issue.\n",
+            )
+            findings = self._findings_for(root)
+            offending = [
+                f for f in findings
+                if f["code"] == "unused_skill"
+                and any(n["name"] == "planner-helper" for n in f["nodes"])
+            ]
+            self.assertEqual(offending, [], msg=findings)
+
+    def test_unmentioned_skill_still_flagged(self) -> None:
+        """Suppression is text-driven; a truly unreferenced skill fires."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root, ".claude/skills/orphan/SKILL.md",
+                "---\nname: orphan\n"
+                "description: Standalone skill with no callers.\n"
+                "---\n",
+            )
+            _write(
+                root, "AGENTS.md",
+                "# Project conventions\n\n"
+                "We mostly use planner-helper here.\n",
+            )
+            findings = self._findings_for(root)
+            offending = [
+                f for f in findings
+                if f["code"] == "unused_skill"
+                and any(n["name"] == "orphan" for n in f["nodes"])
+            ]
+            self.assertEqual(len(offending), 1, msg=findings)
+
+    def test_short_skill_name_substring_does_not_suppress(self) -> None:
+        """A short skill name like 'test' must NOT be suppressed by a
+        substring match inside a larger word ('attestation'). Otherwise
+        common-name skills get silently treated as referenced and real
+        orphans are hidden.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root, ".claude/skills/test/SKILL.md",
+                "---\nname: test\n"
+                "description: Runs a project test pass.\n"
+                "---\n",
+            )
+            _write(
+                root, "AGENTS.md",
+                "# Project conventions\n\n"
+                "Attestation evidence is required before release.\n"
+                "Initialization steps must be planted in the planner.\n",
+            )
+            findings = self._findings_for(root)
+            offending = [
+                f for f in findings
+                if f["code"] == "unused_skill"
+                and any(n["name"] == "test" for n in f["nodes"])
+            ]
+            self.assertEqual(len(offending), 1, msg=findings)
+
+    def test_short_skill_name_whole_word_still_suppresses(self) -> None:
+        """The tightened check must still fire on legitimate whole-word
+        mentions; suppression isn't crippled, only narrowed."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root, ".claude/skills/test/SKILL.md",
+                "---\nname: test\n"
+                "description: Runs a project test pass.\n"
+                "---\n",
+            )
+            _write(
+                root, "AGENTS.md",
+                "# Project conventions\n\n"
+                "Run test before opening a PR.\n",
+            )
+            findings = self._findings_for(root)
+            offending = [
+                f for f in findings
+                if f["code"] == "unused_skill"
+                and any(n["name"] == "test" for n in f["nodes"])
+            ]
+            self.assertEqual(offending, [], msg=findings)
+
+    def test_skill_text_mentioned_in_agent_body_is_not_flagged(self) -> None:
+        """Suppression also reads agent bodies, not just instructions.
+
+        Both ``agent`` and ``instruction`` asset types feed the
+        text-mention check. This pins the agent half of the contract.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root, ".claude/skills/diagram-helper/SKILL.md",
+                "---\nname: diagram-helper\n"
+                "description: Renders C4 diagrams from the graph.\n"
+                "---\n",
+            )
+            _write(
+                root, ".claude/agents/architect.md",
+                "---\nname: architect\n"
+                "description: Reviews designs and writes ADRs.\n"
+                "---\n\n"
+                "When sketching component boundaries, prefer "
+                "diagram-helper over freehand prose.\n",
+            )
+            findings = self._findings_for(root)
+            offending = [
+                f for f in findings
+                if f["code"] == "unused_skill"
+                and any(n["name"] == "diagram-helper" for n in f["nodes"])
+            ]
+            self.assertEqual(offending, [], msg=findings)
+
+
+def _canonical_rendered_workspace(root: Path) -> None:
+    """Customer scratch repo: canonical Copilot agent + rendered Claude target."""
+    _write(
+        root,
+        ".github/agents/planner.agent.md",
+        "---\n"
+        "name: planner\n"
+        "description: Plans implementation changes.\n"
+        "---\n"
+        "Body of the planner agent.\n",
+    )
+    _write(
+        root,
+        ".weld/agents.yaml",
+        "agents:\n"
+        "  planner:\n"
+        "    canonical: .github/agents/planner.agent.md\n"
+        "    renders:\n"
+        "      - .claude/agents/planner.md\n",
+    )
+    _write(
+        root,
+        ".claude/agents/planner.md",
+        "<!-- Generated by Weld from .github/agents/planner.agent.md;"
+        " do not edit by hand. -->\n"
+        "<!-- Run `wd agents render` to regenerate. -->\n"
+        "Body of the planner agent.\n",
+    )
+
+
 def _conflict_workspace(root: Path) -> None:
     _write(root, "AGENTS.md", "Use @docs/missing.md and mcp:github.\n")
     _write(

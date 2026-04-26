@@ -39,6 +39,7 @@ import hashlib
 import sys
 from pathlib import Path
 
+from weld._workspace_inspect import resolve_child_root
 from weld.cross_repo import ResolverContext, run_resolvers
 from weld.federation_support import edge_key, sorted_edges
 from weld.graph import Graph
@@ -170,7 +171,10 @@ def merge_cross_repo_edges(
             # Defensive: config/state drift should be impossible because
             # ``state`` is built from the same config. Skip cleanly.
             continue
-        loaded = _load_present_child_graph(root_path / child_path)
+        # Resolve via the same worktree-aware helper used by inspect_child
+        # so the loader sees the same on-disk repo the ledger marked
+        # ``present``. ADR 0028 §1.
+        loaded = _load_present_child_graph(resolve_child_root(root_path, child_path))
         if loaded is None:
             continue
         child_graph, raw = loaded

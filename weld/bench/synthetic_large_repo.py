@@ -250,6 +250,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "accidental data loss."
         ),
     )
+    p.add_argument(
+        "--git-init",
+        action="store_true",
+        help=(
+            "Initialise the single-layout repo as a git repository with one "
+            "commit (matches what real-world single repos look like). "
+            "Without this flag wd init falls back to os.walk; with it wd "
+            "init takes the faster git ls-files branch. Ignored for "
+            "polyrepo layout (each child is always git-initialised)."
+        ),
+    )
     return p
 
 
@@ -267,8 +278,11 @@ def main(argv: list[str] | None = None) -> int:
                 imports_per_file=args.imports_per_file,
             )
         )
+        if args.git_init:
+            _git_init(out)
+        suffix = " (git-initialised)" if args.git_init else ""
         print(
-            f"generated single repo with {args.files} files at {out}",
+            f"generated single repo with {args.files} files at {out}{suffix}",
             file=sys.stderr,
         )
     else:

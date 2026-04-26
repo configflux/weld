@@ -314,6 +314,32 @@ Run `wd init` to generate a starter config, or write one by hand. See
 the [Strategy Cookbook](weld/docs/strategy-cookbook.md) for the full list
 of bundled strategies.
 
+### `.weld/.gitignore`
+
+`wd init` and `wd workspace bootstrap` write a managed `.weld/.gitignore`
+the first time they touch a `.weld/` directory (idempotent — never
+overwrites an existing file). The default policy is *selective*: it
+tracks `discover.yaml`, `workspaces.yaml`, `agents.yaml`, `graph.json`,
+`agent-graph.json`, and the `strategies/` / `adapters/` subdirs, while
+ignoring per-machine state (`discovery-state.json`, `graph-previous.json`,
+`workspace-state.json`, `workspace.lock`, `query_state.bin`). Tracking the
+canonical graph keeps it warm for CI, the MCP server, and other developers;
+ignoring volatile state keeps `git status` clean.
+
+If you'd rather not commit any weld state yet (early experimentation,
+test installs), pass `--ignore-all`:
+
+```bash
+wd init --ignore-all
+wd workspace bootstrap --ignore-all
+```
+
+This writes a heavy-handed `*` / `!.gitignore` so every weld file is
+ignored. Switch back later by deleting the file; the next init or
+bootstrap reseeds the selective default. To opt out entirely, just delete
+`.weld/.gitignore` after init — the skip-if-exists guard means it won't
+be recreated.
+
 ### Custom strategies
 
 Drop a Python file in `.weld/strategies/` to extract repo-specific
@@ -402,6 +428,13 @@ edges between children. Children that are missing, uninitialized, or corrupt
 degrade gracefully -- they are skipped and recorded in the workspace ledger
 but do not block discovery.
 
+Discovery is safe to run from a linked git worktree of the workspace root:
+the federation pass falls back to the main worktree's checkout when sibling
+child repos are not present at the worktree itself (ADR 0028). As a
+defense-in-depth guard, federated discover refuses to overwrite an existing
+non-empty `graph.json` with a 0-node meta-graph; pass `--allow-empty` to
+intentionally tear the workspace graph down.
+
 ### Workspace status
 
 Inspect the state of every registered child:
@@ -480,8 +513,9 @@ rm .weld/workspace-state.json
 
 | Command | Description |
 |---|---|
-| `wd init` | Bootstrap `.weld/discover.yaml` (and `workspaces.yaml` when nested repos are detected) |
+| `wd init` | Bootstrap `.weld/discover.yaml` (and `workspaces.yaml` when nested repos are detected); seed managed `.weld/.gitignore` |
 | `wd init --max-depth N` | Limit nested repo scan depth during init (default: 4) |
+| `wd init --ignore-all` | Write a fully-ignoring `.weld/.gitignore` instead of the selective default |
 | `wd discover` | Run discovery, emit graph JSON (federation mode when `workspaces.yaml` is present) |
 | `wd agents discover` | Scan AI customization assets and write `.weld/agent-graph.json` |
 | `wd agents rediscover` | Refresh `.weld/agent-graph.json` from a new static scan |
@@ -492,6 +526,8 @@ rm .weld/workspace-state.json
 | `wd agents plan-change "<request>"` | Plan a static AI customization behavior change |
 | `wd workspace status` | Show workspace child ledger: lifecycle status, git ref, dirty state |
 | `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
+| `wd workspace bootstrap` | One-shot polyrepo bootstrap: init root + every nested child, recurse-discover, rebuild root meta-graph |
+| `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child |
 | `wd build-index` | Regenerate file index |
 | `wd query <term>` | Hybrid-ranked tokenized graph search |
 | `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`) |

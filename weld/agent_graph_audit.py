@@ -6,30 +6,45 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from weld._agent_graph_constants import (
+    _CLEAR_DESCRIPTION_TYPES, _VAGUE_DESCRIPTIONS,
+)
+from weld._agent_graph_strict import (
+    all_render_linked, suppressed_duplicate_findings,
+    suppressed_vague_findings,
+)
+from weld._agent_graph_unused_skill import (
+    instruction_bodies, text_mentions_skill,
+)
 from weld.agent_graph_authority_audit import authority_findings
 from weld.agent_graph_inventory import asset_entries, node_entry
+from weld.agent_graph_render_pairs import render_pair_links
 
-_CLEAR_DESCRIPTION_TYPES = {"agent", "skill", "subagent"}
 _RESPONSIBILITY_TYPES = {"agent", "command", "instruction", "prompt", "skill"}
-_VAGUE_DESCRIPTIONS = {"content", "todo", "tbd", "misc", "general", "helper"}
 
 
 def audit_graph(
     graph: dict[str, Any],
     *,
     root: Path | None = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Run deterministic static audit checks over a persisted Agent Graph.
 
     *root* is the repository root to consult when an audit check needs to
     re-read source files (e.g. byte-level rendered-copy drift detection).
     Description-only checks are unaffected when *root* is omitted.
+
+    When *strict* is true, also surface canonical+rendered groups that
+    ADR 0029 normally suppresses, as ``info``-level findings with codes
+    suffixed ``_suppressed``. The default-mode finding set is unchanged.
     """
     findings: list[dict[str, Any]] = []
     nodes = graph.get("nodes", {})
     assets = asset_entries(graph)
+    generated_links = render_pair_links(graph)
     findings.extend(_broken_references(graph, nodes))
-    findings.extend(_duplicate_names(assets))
+    findings.extend(_duplicate_names(assets, generated_links))
     findings.extend(_responsibility_overlap(assets))
     findings.extend(_path_scope_overlap(graph, nodes))
     findings.extend(_permission_conflicts(graph, nodes, assets))
@@ -37,10 +52,17 @@ def audit_graph(
     findings.extend(_vague_descriptions(assets))
     findings.extend(_platform_drift(assets))
     findings.extend(authority_findings(graph, assets, nodes, root=root))
-    findings.extend(_unused_skills(graph, assets))
+    findings.extend(_unused_skills(graph, assets, root=root))
     findings.extend(_unreachable_subagents(graph, assets))
     findings.extend(_commands_missing_agents(graph, nodes))
     findings.extend(_missing_mcp_config(nodes))
+    if strict:
+        findings.extend(suppressed_duplicate_findings(
+            assets, generated_links, finding_factory=_finding, norm=_norm,
+        ))
+        findings.extend(suppressed_vague_findings(
+            assets, finding_factory=_finding, norm=_norm,
+        ))
     findings = _sort_findings(findings)
     return {
         "findings": findings,
@@ -70,18 +92,24 @@ def _broken_references(
     return findings
 
 
-def _duplicate_names(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _duplicate_names(
+    assets: list[dict[str, Any]],
+    generated_links: dict[str, set[str]],
+) -> list[dict[str, Any]]:
+    """ADR 0029: drop groups fully connected by ``generated_from`` (canonical+
+    rendered pairs are intentional, not duplicates)."""
     groups = _group_assets(assets, lambda item: (item["type"], _norm(item["name"])))
-    return [
-        _finding(
+    findings = []
+    for items in groups.values():
+        if len(items) <= 1 or all_render_linked(items, generated_links):
+            continue
+        findings.append(_finding(
             "duplicate_name",
             "Duplicate asset name",
             f"Multiple {items[0]['type']} assets share name {items[0]['name']!r}.",
             items,
-        )
-        for items in groups.values()
-        if len(items) > 1
-    ]
+        ))
+    return findings
 
 
 def _responsibility_overlap(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -186,6 +214,10 @@ def _vague_descriptions(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for asset in assets:
         if asset["type"] not in _CLEAR_DESCRIPTION_TYPES:
             continue
+        # ADR 0029: rendered copies strip frontmatter (ADR 0026); the canonical
+        # still gets the check, so skip derived/generated to avoid double-counting.
+        if asset["status"] in {"derived", "generated"}:
+            continue
         description = _norm(asset["description"])
         words = [word for word in description.split() if word]
         if len(words) < 3 or description in _VAGUE_DESCRIPTIONS:
@@ -213,23 +245,35 @@ def _platform_drift(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return findings
 
 
-def _unused_skills(graph: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _unused_skills(
+    graph: dict[str, Any],
+    assets: list[dict[str, Any]],
+    *,
+    root: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Skills with no ``uses_skill`` edges and no text mention in any
+    agent or instruction body. The text-mention suppression silences
+    instruction-mediated repos where AGENTS.md / project conventions
+    activate skills indirectly."""
     used = {
         edge.get("to")
         for edge in graph.get("edges", [])
         if edge.get("type") == "uses_skill"
     }
-    return [
-        _finding(
-            "unused_skill",
-            "Unused skill",
+    bodies = instruction_bodies(assets, root)
+    findings: list[dict[str, Any]] = []
+    for asset in assets:
+        if asset["type"] != "skill" or asset["id"] in used:
+            continue
+        name = (asset["name"] or "").lower()
+        if text_mentions_skill(name, bodies):
+            continue
+        findings.append(_finding(
+            "unused_skill", "Unused skill",
             "Skill has no incoming uses_skill references.",
-            [asset],
-            severity="info",
-        )
-        for asset in assets
-        if asset["type"] == "skill" and asset["id"] not in used
-    ]
+            [asset], severity="info",
+        ))
+    return findings
 
 
 def _unreachable_subagents(

@@ -68,6 +68,7 @@ class Graph:
     def load(self) -> None:
         if self._path.exists():
             self._data = load_graph_file(self._path)
+            self._load_query_state_with_sidecar()
         else:
             self._data = {
                 "meta": {
@@ -78,7 +79,13 @@ class Graph:
                 "nodes": {},
                 "edges": [],
             }
-        self._build_inverted_index()
+            self._build_inverted_index()
+
+    def _load_query_state_with_sidecar(self) -> None:
+        """Read the sidecar or rebuild + rewrite (ADR 0031). Helper in :mod:`weld._query_sidecar`."""
+        from weld._query_sidecar import load_query_state_for_graph
+
+        load_query_state_for_graph(self)
 
     def save(self, *, touch_git_sha: bool = False) -> None:
         """Atomically persist the graph (ADR 0011 ss8, ADR 0012 ss3).

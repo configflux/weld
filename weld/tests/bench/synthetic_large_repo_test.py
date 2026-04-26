@@ -98,5 +98,39 @@ class SyntheticGeneratorPolyrepoTest(unittest.TestCase):
             self.assertTrue(result.stdout.strip())
 
 
+class SingleLayoutGitInitFlagTest(unittest.TestCase):
+    """``--git-init`` initialises the single layout as a real git repo.
+
+    Without it, ``wd init`` falls back to ``os.walk``; with it, ``wd
+    init`` takes the faster ``git ls-files`` branch. The flag matches
+    what real-world single repos look like at scale.
+    """
+
+    def setUp(self) -> None:
+        self.root = Path(mkdtemp(prefix="weld-bench-single-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+
+    def _run_main(self, *extra: str) -> None:
+        from weld.bench.synthetic_large_repo import main as bench_main
+        rc = bench_main([
+            "--layout", "single", "--files", "5",
+            "--output", str(self.root), "--clean", *extra,
+        ])
+        self.assertEqual(rc, 0)
+
+    def test_default_single_layout_is_not_git_initialised(self) -> None:
+        self._run_main()
+        self.assertFalse((self.root / ".git").exists())
+
+    def test_git_init_flag_creates_git_repo_with_one_commit(self) -> None:
+        self._run_main("--git-init")
+        self.assertTrue((self.root / ".git").is_dir())
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.root, check=True, capture_output=True, text=True,
+        )
+        self.assertTrue(result.stdout.strip())
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

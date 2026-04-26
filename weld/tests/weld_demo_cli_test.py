@@ -164,6 +164,139 @@ class DemoPolyrepoTest(_DemoRunCase):
         self.assertIn("POST /tokens", tokens.read_text(encoding="utf-8"))
 
 
+class DemoPolyrepoBootstrapTest(_DemoRunCase):
+    """``wd demo polyrepo --init`` auto-bootstraps the workspace.
+
+    The curated demo opts into the in-process workspace bootstrap so
+    ``wd workspace status`` works immediately. The opt-out ``--no-bootstrap``
+    flag preserves the older two-step contract for fixtures.
+    """
+
+    def test_init_default_auto_bootstraps_workspace(self) -> None:
+        target = self._target("poly-bootstrap-default")
+        rc = demo_mod.main(["polyrepo", "--init", str(target)])
+        self.assertEqual(rc, 0)
+
+        # Workspace state must exist after the demo (auto-bootstrap),
+        # not require a separate ``wd workspace bootstrap`` step.
+        from weld.workspace_state import (  # noqa: PLC0415 -- scoped import
+            format_workspace_status,
+            load_workspace_state_json,
+        )
+        state = load_workspace_state_json(target)
+        summary = format_workspace_status(state)
+        for child in ("services-api", "services-auth", "libs-shared-models"):
+            self.assertIn(child, summary)
+        # Every child is materialized end-to-end (not just registered).
+        self.assertIn("present=3", summary)
+
+    def _run_polyrepo_with_failing_bootstrap(
+        self,
+        target: Path,
+        *,
+        weld_debug: str | None,
+        message: str,
+    ) -> tuple[int, str]:
+        """Run ``run_demo('polyrepo', target)`` with bootstrap patched to raise.
+
+        Patches :func:`weld._workspace_bootstrap.bootstrap_workspace` to raise
+        ``RuntimeError(message)`` so the bash scaffold step still succeeds (the
+        target is empty) and the in-process bootstrap is the only thing that
+        fails. Returns the exit code and captured stderr.
+        """
+        from weld import _workspace_bootstrap as wsb  # noqa: PLC0415
+
+        original = wsb.bootstrap_workspace
+
+        def _boom(_path: Path) -> None:
+            raise RuntimeError(message)
+
+        wsb.bootstrap_workspace = _boom  # type: ignore[assignment]
+        prior_debug = os.environ.get("WELD_DEBUG")
+        if weld_debug is None:
+            os.environ.pop("WELD_DEBUG", None)
+        else:
+            os.environ["WELD_DEBUG"] = weld_debug
+        err = io.StringIO()
+        try:
+            with redirect_stderr(err):
+                rc = demo_mod.run_demo("polyrepo", target)
+        finally:
+            wsb.bootstrap_workspace = original  # type: ignore[assignment]
+            if prior_debug is None:
+                os.environ.pop("WELD_DEBUG", None)
+            else:
+                os.environ["WELD_DEBUG"] = prior_debug
+        return rc, err.getvalue()
+
+    def test_bootstrap_failure_with_weld_debug_prints_traceback(self) -> None:
+        # When WELD_DEBUG is set to a non-empty value and the in-process
+        # workspace bootstrap raises, ``run_demo`` must print the full
+        # traceback to stderr (in addition to the existing one-line
+        # ``bootstrap failed`` message) so operators can chase the bug.
+        target = self._target("poly-debug-on")
+        rc, stderr_output = self._run_polyrepo_with_failing_bootstrap(
+            target, weld_debug="1", message="boom-debug",
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("bootstrap failed: boom-debug", stderr_output)
+        self.assertIn("Traceback", stderr_output)
+        self.assertIn("RuntimeError: boom-debug", stderr_output)
+
+    def test_bootstrap_failure_without_weld_debug_omits_traceback(self) -> None:
+        # Default behavior (no WELD_DEBUG): only the one-line error
+        # message, no traceback, so the demo stays quiet for ordinary
+        # users.
+        target = self._target("poly-debug-off")
+        rc, stderr_output = self._run_polyrepo_with_failing_bootstrap(
+            target, weld_debug=None, message="boom-quiet",
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("bootstrap failed: boom-quiet", stderr_output)
+        self.assertNotIn("Traceback", stderr_output)
+
+    def test_bootstrap_failure_with_empty_weld_debug_omits_traceback(self) -> None:
+        # An empty WELD_DEBUG (e.g. ``WELD_DEBUG=``) is treated as unset
+        # so accidentally-cleared shell exports don't suddenly start
+        # leaking tracebacks.
+        target = self._target("poly-debug-empty")
+        rc, stderr_output = self._run_polyrepo_with_failing_bootstrap(
+            target, weld_debug="", message="boom-empty",
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("bootstrap failed: boom-empty", stderr_output)
+        self.assertNotIn("Traceback", stderr_output)
+
+    def test_no_bootstrap_flag_preserves_scaffold_only(self) -> None:
+        target = self._target("poly-bootstrap-skip")
+        rc = demo_mod.main(
+            ["polyrepo", "--init", str(target), "--no-bootstrap"],
+        )
+        self.assertEqual(rc, 0)
+
+        # Scaffold materialized -- workspaces.yaml is present.
+        self.assertTrue((target / ".weld" / "workspaces.yaml").is_file())
+        # But workspace-state.json is NOT yet written (bootstrap skipped),
+        # and the error message must direct the operator to the right
+        # next step.
+        from weld.workspace_state import (  # noqa: PLC0415
+            WorkspaceStateError,
+            load_workspace_state_json,
+        )
+        with self.assertRaises(WorkspaceStateError) as ctx:
+            load_workspace_state_json(target)
+        msg = str(ctx.exception)
+        # Pin both halves of the operator-facing message: the
+        # ``wd workspace bootstrap`` direction is the right answer
+        # for an unbootstrapped workspace, and ``wd discover`` is
+        # the alternative for re-discovery from scratch. A single
+        # regex catches drift in either half.
+        self.assertRegex(
+            msg,
+            r"wd workspace bootstrap.*wd discover",
+        )
+
+
 class DemoFailureModesTest(_DemoRunCase):
     """Failure modes surface as non-zero exit codes."""
 

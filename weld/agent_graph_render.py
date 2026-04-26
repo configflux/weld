@@ -10,6 +10,7 @@ def print_explanation(explanation: dict[str, Any]) -> None:
     print(asset["name"])
     print(f"Type: {asset['type']}")
     print(f"Status: {asset['status']}")
+    _print_canonical_rendered(explanation)
     _print_platform_variants(explanation["platform_variants"])
     _print_block("Purpose", [explanation["purpose"]] if explanation["purpose"] else [])
     _print_block("Source files", explanation["source_files"])
@@ -17,6 +18,22 @@ def print_explanation(explanation: dict[str, Any]) -> None:
     _print_relationships("Incoming references", explanation["incoming_references"])
     _print_related(explanation["related"])
     _print_overlap(explanation["overlaps"])
+
+
+def _print_canonical_rendered(explanation: dict[str, Any]) -> None:
+    """ADR 0029: surface canonical->rendered relationship explicitly."""
+    canonical = explanation.get("canonical_source")
+    rendered = explanation.get("rendered_targets") or []
+    if canonical:
+        node = canonical["node"]
+        where = f" at {node['path']}" if node.get("path") else ""
+        print(f"Canonical source: {node['name']}{where}")
+    if rendered:
+        print("Rendered targets:")
+        for rel in rendered:
+            node = rel["node"]
+            where = f" at {node['path']}" if node.get("path") else ""
+            print(f"  - {node['type']}:{node['name']}{where}")
 
 
 def print_impact(impact: dict[str, Any]) -> None:

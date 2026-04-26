@@ -4,18 +4,32 @@ from __future__ import annotations
 
 from typing import Any
 
-ASSET_NODE_TYPES = frozenset({
-    "agent",
-    "command",
-    "config",
-    "hook",
-    "instruction",
-    "mcp-server",
-    "prompt",
-    "skill",
-    "subagent",
-    "workflow",
-})
+from weld._agent_graph_edge_weights import (
+    SAME_NAME_LABEL,
+    SAME_PURPOSE_LABEL,
+    aggregate_weight,
+)
+from weld.agent_graph_assets import (
+    ASSET_NODE_TYPES,
+    asset_status,
+    node_entry,
+    single_line,
+)
+from weld.agent_graph_render_pairs import render_pair_partners
+
+# Re-export so existing importers (audit, authority_audit, plan, cli)
+# keep working without an immediate sweep.
+__all__ = [
+    "ASSET_NODE_TYPES",
+    "asset_entries",
+    "asset_entry",
+    "asset_status",
+    "explain_asset",
+    "impact_asset",
+    "node_entry",
+    "resolve_asset_id",
+    "single_line",
+]
 
 _RELATED_KEYS = {
     "command": "commands",
@@ -65,42 +79,26 @@ def asset_entry(node_id: str, node: dict[str, Any]) -> dict[str, Any] | None:
     return entry
 
 
-def node_entry(node_id: str, node: dict[str, Any]) -> dict[str, Any]:
-    """Return a stable display entry for any graph node."""
-    props = node.get("props") if isinstance(node.get("props"), dict) else {}
-    platform = str(props.get("platform") or props.get("source_platform") or "generic")
-    platform_name = str(props.get("platform_name") or platform)
-    name = str(props.get("name") or node.get("label") or node_id)
-    return {
-        "description": single_line(props.get("description")),
-        "id": node_id,
-        "name": name,
-        "path": str(props.get("file") or ""),
-        "platform": platform,
-        "platform_name": platform_name,
-        "status": asset_status(props),
-        "type": str(node.get("type") or ""),
-    }
-
-
 def explain_asset(graph: dict[str, Any], query: str) -> dict[str, Any] | None:
     """Return a deterministic explanation payload for an asset query."""
     nodes = graph.get("nodes", {})
     target_id = resolve_asset_id(graph, query)
     if target_id is None:
         return None
-
     target = node_entry(target_id, nodes[target_id])
     assets = asset_entries(graph)
     incoming, outgoing = _relationships(graph, target_id)
+    canonicals, rendered = render_pair_partners(graph, target_id, target["path"])
     return {
         "asset": target,
+        "canonical_source": canonicals[0] if canonicals else None,
         "incoming_references": incoming,
         "outgoing_references": outgoing,
         "overlaps": _overlaps(target, assets),
         "platform_variants": _platform_variants(target, assets),
         "purpose": target["description"],
         "related": _related(incoming + outgoing),
+        "rendered_targets": rendered,
         "source_files": sorted({target["path"]} if target["path"] else set()),
     }
 
@@ -161,30 +159,9 @@ def resolve_asset_id(graph: dict[str, Any], query: str) -> str | None:
     return None
 
 
-def single_line(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    return " ".join(value.split())
-
-
-def asset_status(props: dict[str, Any]) -> str:
-    authority = props.get("authority")
-    if authority is True:
-        return "canonical"
-    if authority == "canonical":
-        return "canonical"
-    if props.get("generated") is True:
-        return "generated"
-    if authority:
-        return str(authority)
-    status = props.get("status")
-    return str(status) if status else "manual"
-
-
-def _relationships(
-    graph: dict[str, Any],
-    target_id: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _relationships(graph: dict[str, Any], target_id: str) -> tuple[
+    list[dict[str, Any]], list[dict[str, Any]],
+]:
     nodes = graph.get("nodes", {})
     incoming: list[dict[str, Any]] = []
     outgoing: list[dict[str, Any]] = []
@@ -295,12 +272,30 @@ def _affected_nodes(
     same_purpose: list[dict[str, Any]],
     canonical_assets: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # ADR 0030: each node carries an aggregate ``impact_weight`` so the
+    # plan layer can drop incidental-only siblings (e.g. text-mention
+    # only) without re-traversing edges.
     affected: dict[str, dict[str, Any]] = {}
+    edge_types: dict[str, list[str]] = {}
     for relationship in downstream + incoming:
         node = relationship["node"]
-        affected[node["id"]] = node
-    for entry in same_name + same_purpose + canonical_assets:
-        affected[entry["id"]] = entry
+        affected.setdefault(node["id"], dict(node))
+        edge_types.setdefault(node["id"], []).append(
+            str(relationship.get("edge_type") or ""),
+        )
+    for entry in same_name:
+        affected.setdefault(entry["id"], dict(entry))
+        edge_types.setdefault(entry["id"], []).append(SAME_NAME_LABEL)
+    for entry in same_purpose:
+        affected.setdefault(entry["id"], dict(entry))
+        edge_types.setdefault(entry["id"], []).append(SAME_PURPOSE_LABEL)
+    # Canonical siblings: surfaced because they govern the change, not
+    # because they have an edge here. Treat them as same_name-tier.
+    for entry in canonical_assets:
+        affected.setdefault(entry["id"], dict(entry))
+        edge_types.setdefault(entry["id"], []).append(SAME_NAME_LABEL)
+    for node_id, entry in affected.items():
+        entry["impact_weight"] = aggregate_weight(edge_types.get(node_id, []))
     return _sort_entries(list(affected.values()))
 
 

@@ -5,6 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from weld._agent_graph_edge_weights import (
+    SAME_NAME_LABEL,
+    SAME_PURPOSE_LABEL,
+    aggregate_weight,
+    passes_secondary_threshold,
+)
 from weld.agent_graph_inventory import asset_entries, impact_asset
 
 _STOP_WORDS = frozenset({
@@ -93,14 +99,38 @@ def _secondary_assets(
     impacts: list[dict[str, Any]],
     primary_assets: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    # ADR 0030: aggregate edge-type weights per candidate asset across
+    # the whole change set, then drop anything below SECONDARY_THRESHOLD
+    # so single text-mention (`references_file`) noise does not surface.
+    # Canonical-authority assets bypass the threshold (ADR 0030 audit
+    # follow-up): hiding the authoritative source of a concept reachable
+    # only through an incidental edge is worse than the noise.
     primary_ids = {asset["id"] for asset in primary_assets}
-    secondary: dict[str, dict[str, Any]] = {}
+    candidates: dict[str, dict[str, Any]] = {}
+    edge_types: dict[str, list[str]] = {}
+
+    def _record(asset: dict[str, Any], edge_type: str) -> None:
+        if asset["id"] in primary_ids:
+            return
+        candidates.setdefault(asset["id"], asset)
+        edge_types.setdefault(asset["id"], []).append(edge_type)
+
     for impact in impacts:
-        for key in ("affected_nodes", "same_name_variants", "same_purpose_variants"):
-            for asset in impact.get(key, []):
-                if asset["id"] not in primary_ids:
-                    secondary[asset["id"]] = asset
-    return _sort_assets(list(secondary.values()))
+        for relationship in impact.get("downstream", []):
+            _record(relationship["node"], str(relationship.get("edge_type") or ""))
+        for relationship in impact.get("incoming_references", []):
+            _record(relationship["node"], str(relationship.get("edge_type") or ""))
+        for asset in impact.get("same_name_variants", []):
+            _record(asset, SAME_NAME_LABEL)
+        for asset in impact.get("same_purpose_variants", []):
+            _record(asset, SAME_PURPOSE_LABEL)
+
+    kept: list[dict[str, Any]] = []
+    for asset_id, asset in candidates.items():
+        weight = aggregate_weight(edge_types.get(asset_id, []))
+        if passes_secondary_threshold(weight, str(asset.get("status") or "")):
+            kept.append(asset)
+    return _sort_assets(kept)
 
 
 def _validation_files(

@@ -27,6 +27,37 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.9.0 - 2026-04-26
+
+### Added
+
+- `wd agents audit --strict` surfaces ADR-0029-suppressed groups (canonical/rendered pairs no longer hide audit findings when strict mode is set).
+- `WELD_INIT_FRAMEWORK_CAP` env override lets forensic re-runs of `wd init` raise or remove the per-language framework sample cap; `0` disables the cap, custom positive integers set a custom cap, unset/empty/negative/non-numeric values fall back to the built-in default silently.
+- Query state sidecar (ADR 0031): `wd query` now persists the inverted index and BM25 corpus to `.weld/query-state.bin` after `wd discover`, so cold-path query startup drops from ~1.28 s to ~0.54 s on a representative 100k-node graph (about 58% faster). The sidecar is content-addressed via blake2b digest + node count + weld schema version + format-version envelope; on freshness mismatch or corruption the sidecar is silently rebuilt.
+- `wd init` seeds a selective `.weld/.gitignore` on init and bootstrap so per-checkout artifacts (graph, sidecar, query-state) stay out of version control by default while curated config (`discover.yaml`, `enrich.yaml`, `mcp.config.json`) remains tracked.
+- `wd demo polyrepo --init` auto-bootstraps the workspace before discovery so the first run produces a populated graph instead of an empty one.
+- Bootstrap traceback surfaced under `WELD_DEBUG=1` in `wd demo polyrepo` so the demo's bootstrap exception handler shows the underlying cause when set.
+
+### Changed
+
+- Edge-type weighted impact and plan-change ranking (ADR 0030): `_score_asset()` and `_secondary_assets` consult an edge-weight table (semantic=5.0, related=2.0, incidental=0.5) and a `SECONDARY_THRESHOLD=1.0`. Canonical-authority assets bypass the secondary threshold so authoritative nodes always render even when only attached via low-weight edges (ADR 0030 amendment).
+- `wd init` framework detection merged into a single classifier pass (`_init_classify.py`); per-file `detect_*` walks coalesce, dropping a representative `wd init` cold run from 41.2 s to 8.6 s on a 100k synthetic tree (about 79% faster). No behavior change vs. multi-pass detection — same constants, same heuristics.
+- `wd discover` now warns on stderr when the prior `graph.json` is unreadable instead of silently rewriting it. The previous graph is preserved untouched if the load fails; operators see the failure and can decide whether to rerun.
+- `agent_graph_render_pairs` only honors `render_paths` from `authority="canonical"` nodes (ADR 0029 §5 trust-boundary amendment). Non-canonical nodes can no longer suppress duplicate-name audit findings via render-paths.
+
+### Fixed
+
+- Go gin framework detection now matches the canonical `github.com/gin-gonic/gin` import path; the quoted-path matcher pre-filters block comments and raw-string literals so commented-out imports and string-fixture content no longer trigger false positives.
+- `unused_skill` audit suppression tightened to a word-boundary regex match and respects skill name mentions in agent body / instruction text, eliminating substring false positives.
+- Bench `test_discover_stability` no longer flakes against tiny-time clocks (sub-millisecond mtime resolution).
+- Internal references sanitized in the gitignore writer so the seeded `.weld/.gitignore` does not leak internal-repo conventions.
+
+### Refactor (internal)
+
+- `agent_graph_assets` extracted to break a circular import in the agent-graph rendering path.
+- `_CLEAR_DESCRIPTION_TYPES` and `_VAGUE_DESCRIPTIONS` shared via `_agent_graph_constants` to remove duplicate audit constants.
+- `atomic_write_bytes` promoted to a shared workspace-state helper alongside `atomic_write_text` for binary sidecar writes.
+
 ## v0.8.3 - 2026-04-25
 
 ### Fixed

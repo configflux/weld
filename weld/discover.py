@@ -19,6 +19,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from weld._discover_empty_guard import (
+    EmptyFederatedGraphRefusedError,
+    enforce_nonempty_federated_write as _enforce_nonempty_federated_write,
+)
 from weld._discover_federate import merge_cross_repo_edges
 from weld._discover_postprocess import post_process as _post_process
 from weld._discover_strategies import (
@@ -26,6 +30,7 @@ from weld._discover_strategies import (
     run_external_json as _run_external_json,  # noqa: F401 -- re-export for test consumers
     run_source as _run_source,
 )
+from weld._query_sidecar import write_sidecar_for_bytes as _write_query_sidecar_bytes
 from weld._git import get_git_sha
 from weld._yaml import parse_yaml
 from weld.contract import SCHEMA_VERSION  # noqa: F401 -- re-export for consumers
@@ -50,6 +55,31 @@ from weld.strategies._helpers import filter_glob_results
 # ---------------------------------------------------------------------------
 # Discovery orchestrator
 # ---------------------------------------------------------------------------
+
+
+def _persist_query_state_sidecar(weld_dir: Path, graph: dict) -> None:
+    """Write the .weld/query_state.bin sidecar for the freshly-built graph.
+
+    ADR 0031: the inverted index, BM25 corpus, and structural-score table
+    are pure functions of the graph's node and edge sets and dominate
+    the ``wd query`` cold path. Persisting them here makes the next
+    cold ``Graph.load`` skip the rebuild. Failures inside the sidecar
+    writer are logged and swallowed -- a missing sidecar simply means
+    the next cold load rebuilds and writes one itself.
+    """
+    try:
+        from weld.query_state import build_query_state
+
+        nodes = graph.get("nodes", {})
+        edges = graph.get("edges", [])
+        graph_bytes = _dumps_graph(graph).encode("utf-8")
+        state = build_query_state(nodes, edges)
+        _write_query_sidecar_bytes(weld_dir, graph_bytes, nodes, edges, state)
+    except Exception as exc:  # noqa: BLE001 -- sidecar is best-effort.
+        print(
+            f"[weld] notice: skipped query-state sidecar write: {exc}",
+            file=sys.stderr,
+        )
 
 def _discover_single_repo(
     root: Path,
@@ -131,6 +161,7 @@ def _discover_single_repo(
             df.extend(r.discovered_from)
         graph = _post_process(nodes, edges, context, config, root, df)
         save_state(root, DiscoveryState(files=current_hashes))
+        _persist_query_state_sidecar(root / ".weld", graph)
         return graph
 
     # --- Incremental path ---
@@ -149,6 +180,7 @@ def _discover_single_repo(
         if not refreshed["meta"].get("discovered_from"):
             refreshed["meta"]["discovered_from"] = current_file_set
         save_state(root, DiscoveryState(files=current_hashes))
+        _persist_query_state_sidecar(root / ".weld", refreshed)
         return refreshed
 
     # Purge stale nodes from existing graph
@@ -175,6 +207,7 @@ def _discover_single_repo(
     new_df = [str(p) for files in source_file_map for p in files if p in dirty]
     graph = _post_process(ex_nodes, ex_edges, context, config, root, old_df + new_df)
     save_state(root, DiscoveryState(files=current_hashes))
+    _persist_query_state_sidecar(root / ".weld", graph)
     return graph
 
 
@@ -186,6 +219,7 @@ def discover(
     recurse: bool = False,
     output: Path | None = None,
     safe: bool = False,
+    allow_empty: bool = False,
 ) -> dict:
     """Walk the codebase and build a connected structure from config.
 
@@ -233,13 +267,18 @@ def discover(
         if output is not None:
             from weld.workspace_state import atomic_write_text
 
+            _enforce_nonempty_federated_write(
+                output, graph, state, allow_empty=allow_empty,
+            )
             atomic_write_text(output, _dumps_graph(graph))
         elif write_root_graph:
             from weld.workspace_state import atomic_write_text
 
-            atomic_write_text(
-                root / ".weld" / "graph.json", _dumps_graph(graph)
+            target = root / ".weld" / "graph.json"
+            _enforce_nonempty_federated_write(
+                target, graph, state, allow_empty=allow_empty,
             )
+            atomic_write_text(target, _dumps_graph(graph))
         save_workspace_state(root, state)
         return graph
 
@@ -279,6 +318,15 @@ def main(argv: list[str] | None = None) -> int:
              "the external_json subprocess adapter. Use this when scanning "
              "an untrusted repository. (ADR 0024)",
     )
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        default=False,
+        help="Bypass the federated empty-graph guard. By default, a "
+             "federated discover that would overwrite a non-empty graph "
+             "with a 0-node meta-graph is refused; pass this flag to "
+             "intentionally tear the workspace graph down. (ADR 0028)",
+    )
     args = parser.parse_args(argv)
 
     inc = False if args.full else (True if args.incremental else None)
@@ -295,10 +343,14 @@ def main(argv: list[str] | None = None) -> int:
             # roots write here via the same atomic helper.
             output=output_path if is_federated else None,
             safe=args.safe,
+            allow_empty=args.allow_empty,
         )
     except (WorkspaceConfigError, WorkspaceLockedError) as exc:
         print(f"[weld] error: {exc}", file=sys.stderr)
         return 2
+    except EmptyFederatedGraphRefusedError:
+        # The guard already wrote the explanatory stderr message.
+        return 3
     if output_path is not None:
         if not is_federated:
             from weld.workspace_state import atomic_write_text

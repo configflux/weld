@@ -188,5 +188,42 @@ class DiscoverRecurseTest(unittest.TestCase):
             self.assertIn("repo:svc", graph_recurse["nodes"])
 
 
+class DiscoverRecurseFromWorktreeTest(unittest.TestCase):
+    """ADR 0028 §1: ``wd discover --recurse`` from a linked git worktree
+    must resolve each child via the main checkout (where the child repo
+    actually lives), not via ``root / child.path`` which does not exist
+    in the linked worktree.
+    """
+
+    def test_recurse_uses_resolve_child_root_from_a_linked_worktree(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            main = _init_repo(tmp_path / "main")
+            child = _init_repo(main / "services" / "api")
+            _write_child_graph(child)
+            _write_discover_yaml(child)
+            _write_workspaces(main, [
+                ChildEntry(name="services-api", path="services/api"),
+            ])
+            # Commit so the worktree branch sees the federation registry.
+            _git(main, "add", "-A")
+            _git(main, "commit", "-q", "-m", "seed federation")
+
+            # Add a linked worktree on a fresh branch. The child repo's
+            # ``.git`` lives only at the main checkout: a fresh linked
+            # worktree never carries nested git repositories.
+            wt = tmp_path / "wt"
+            _git(main, "worktree", "add", "-q", str(wt), "-b", "feature")
+            self.assertFalse((wt / "services" / "api" / ".git").exists())
+
+            # Recurse from the worktree must still resolve the child via
+            # the main checkout (resolve_child_root fallback) and discover
+            # it; without the fix the recurse loop computes the worktree
+            # path and fails to refresh, so the root meta-graph never
+            # gains a ``repo:services-api`` node.
+            graph = discover(wt, incremental=False, recurse=True)
+            self.assertIn("repo:services-api", graph["nodes"])
+
+
 if __name__ == "__main__":
     unittest.main()

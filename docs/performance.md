@@ -42,10 +42,14 @@ It writes a deterministic Python tree with a configurable number of
 modules and intra-package imports. Two layouts are supported:
 
 - `single` -- one repository with `--files` modules in `pkg_NNNN/`
-  buckets of 256 modules each.
+  buckets of 256 modules each. Pass `--git-init` to make the layout a
+  real git repo (one commit) so `wd init` takes the faster
+  `git ls-files` path; without the flag `wd init` falls back to
+  `os.walk` and runs measurably slower.
 - `polyrepo` -- a workspace root with `--children` nested git repos,
   each containing `--files` modules. Each child is `git init`-ed so
   `wd workspace bootstrap` recognises it as a federation child.
+  (`--git-init` is a no-op for this layout.)
 
 Generated trees are not committed. They are written to a directory you
 choose (typically a `mktemp -d` path) and removed after timing.
@@ -54,9 +58,13 @@ The generator ships with the package, so anyone who installs Weld can
 rerun these scenarios:
 
 ```bash
-# Single repo, 1000 files
+# Single repo, 1000 files (os.walk fallback path -- worst case)
 python -m weld.bench.synthetic_large_repo \
   --layout single --files 1000 --output /tmp/weld-bench-1k
+
+# Single repo, 1000 files, git-initialised (typical real-world path)
+python -m weld.bench.synthetic_large_repo \
+  --layout single --files 1000 --git-init --output /tmp/weld-bench-1k-git
 
 # Polyrepo, 10 children x 1000 files each
 python -m weld.bench.synthetic_large_repo \
@@ -83,11 +91,23 @@ Wall-clock numbers are a single run on the reference environment; they
 include process start-up. `graph.json` size is the on-disk JSON the
 discovery step writes.
 
-| Files   | Generate | `wd init` | `wd discover` | `wd query` | `graph.json` |
-| ------- | -------- | --------- | ------------- | ---------- | ------------ |
-| 1 000   |   0.23 s |   0.67 s  |    2.21 s     |   0.33 s   |   3.6 MiB    |
-| 10 000  |   1.69 s |   6.22 s  |   17.53 s     |   2.42 s   |  36.1 MiB    |
-| 100 000 |  12.56 s |  50.15 s  |  173.76 s     |  26.33 s   | 357 MiB      |
+| Files   | Mode | Generate | `wd init` | `wd discover` | `wd query` | `graph.json` |
+| ------- | ---- | -------- | --------- | ------------- | ---------- | ------------ |
+| 1 000   | os.walk |   0.23 s |   0.67 s  |    2.21 s     |   0.33 s   |   3.6 MiB    |
+| 10 000  | os.walk |   1.69 s |   6.22 s  |   17.53 s     |   2.42 s   |  36.1 MiB    |
+| 100 000 | os.walk |  12.56 s |  50.15 s  |  173.76 s     |  26.33 s   | 357 MiB      |
+| 100 000 | git ls-files | -- | (faster -- see note) | -- | -- | -- |
+
+The published 100k row reflects the `os.walk` fallback in
+`weld/repo_boundary.py:iter_repo_files`, which is what the synthetic
+generator produces by default. Real-world single repos are git-tracked
+and `wd init` takes the `git ls-files` branch instead, which is
+measurably faster on large trees because git already has the file list
+indexed. To reproduce numbers that match a real repo, regenerate with
+`--git-init` (see recipe below). Concrete `git ls-files` numbers are
+left to the operator running the bench so the table reflects the
+publisher's machine, not a stale run; the `os.walk` row remains a
+worst-case ceiling.
 
 A few things worth calling out:
 
@@ -236,6 +256,16 @@ rm -rf "$WORK"
 WORK=$(mktemp -d -t weld-bench-100k.XXXXXX)
 python -m weld.bench.synthetic_large_repo \
   --layout single --files 100000 --output "$WORK"
+time wd init "$WORK"
+time wd discover --full --output "$WORK/.weld/graph.json" "$WORK"
+( cd "$WORK" && time wd query helper --limit 5 )
+rm -rf "$WORK"
+
+# 100k single repo, git-initialised (matches a real-world git repo,
+# faster wd init via the `git ls-files` path)
+WORK=$(mktemp -d -t weld-bench-100k-git.XXXXXX)
+python -m weld.bench.synthetic_large_repo \
+  --layout single --files 100000 --git-init --output "$WORK"
 time wd init "$WORK"
 time wd discover --full --output "$WORK/.weld/graph.json" "$WORK"
 ( cd "$WORK" && time wd query helper --limit 5 )
