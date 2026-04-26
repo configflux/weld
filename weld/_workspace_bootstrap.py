@@ -189,6 +189,7 @@ def _init_child(
     name: str,
     *,
     ignore_all: bool = False,
+    track_graphs: bool = False,
 ) -> None:
     """Run ``wd init`` inside a child that has ``.git/`` but no discover.yaml.
 
@@ -199,7 +200,9 @@ def _init_child(
     """
     weld_dir = child_root / ".weld"
     if _child_has_discover_yaml(child_root):
-        write_weld_gitignore(weld_dir, ignore_all=ignore_all)
+        write_weld_gitignore(
+            weld_dir, ignore_all=ignore_all, track_graphs=track_graphs,
+        )
         return
     output = weld_dir / "discover.yaml"
     try:
@@ -209,7 +212,9 @@ def _init_child(
         return
     if wrote:
         result.children_initialized.append(name)
-    write_weld_gitignore(weld_dir, ignore_all=ignore_all)
+    write_weld_gitignore(
+        weld_dir, ignore_all=ignore_all, track_graphs=track_graphs,
+    )
 
 
 def bootstrap_workspace(
@@ -217,6 +222,7 @@ def bootstrap_workspace(
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
     ignore_all: bool = False,
+    track_graphs: bool = False,
 ) -> BootstrapResult:
     """Run the 5-step polyrepo bootstrap sequence on *root* and return a summary.
 
@@ -229,9 +235,13 @@ def bootstrap_workspace(
         ``--max-depth`` flag on ``wd init``.
     ignore_all:
         When ``True``, the per-child and root ``.weld/.gitignore`` files
-        ignore every weld file (``*`` / ``!.gitignore``). Default is the
-        selective policy: ignore per-machine state, track config and the
-        canonical graph. See :mod:`weld._gitignore_writer`.
+        ignore every weld file (``*`` / ``!.gitignore``). Mutually
+        exclusive with ``track_graphs``. See :mod:`weld._gitignore_writer`.
+    track_graphs:
+        When ``True``, the per-child and root ``.weld/.gitignore`` files
+        track the canonical graphs (``graph.json`` + ``agent-graph.json``)
+        in addition to config. Default ignores generated graphs.
+        Mutually exclusive with ``ignore_all``.
 
     Returns
     -------
@@ -257,7 +267,11 @@ def bootstrap_workspace(
 
     # Step 1: root init if needed.
     result.root_init_ran = _run_root_init(root_path)
-    write_weld_gitignore(root_path / ".weld", ignore_all=ignore_all)
+    write_weld_gitignore(
+        root_path / ".weld",
+        ignore_all=ignore_all,
+        track_graphs=track_graphs,
+    )
 
     # Step 2: scan nested git repos and write workspaces.yaml when needed.
     workspaces_yaml = root_path / ".weld" / "workspaces.yaml"
@@ -307,7 +321,11 @@ def bootstrap_workspace(
     # Step 3: per-child init for children lacking discover.yaml.
     for child in children:
         _init_child(
-            root_path / child.path, result, child.name, ignore_all=ignore_all,
+            root_path / child.path,
+            result,
+            child.name,
+            ignore_all=ignore_all,
+            track_graphs=track_graphs,
         )
 
     # Step 4 + 5: recurse-discover then rebuild root meta-graph + ledger

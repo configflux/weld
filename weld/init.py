@@ -387,21 +387,20 @@ def main(argv: list[str] | None = None) -> None:
         "--max-depth", type=int, default=4,
         help="Max depth when scanning for nested git repos (default: 4)",
     )
-    parser.add_argument(
-        "--ignore-all", action="store_true",
-        help="Write a fully-ignoring .weld/.gitignore (every weld file ignored)",
-    )
+    gi = parser.add_mutually_exclusive_group()
+    gi.add_argument("--ignore-all", action="store_true",
+        help="Write a fully-ignoring .weld/.gitignore (every weld file ignored)")
+    gi.add_argument("--track-graphs", action="store_true",
+        help="Track graph.json + agent-graph.json (default ignores them)")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     output = Path(args.output) if args.output else root / ".weld" / "discover.yaml"
-
     success = init(root, output, force=args.force)
     workspaces_out = root / ".weld" / "workspaces.yaml"
-    if _init_workspace(
-        root, workspaces_out, force=args.force, max_depth=args.max_depth,
-    ):
+    if _init_workspace(root, workspaces_out, force=args.force, max_depth=args.max_depth):
         print(f"Wrote {workspaces_out}", file=sys.stderr)
-    write_weld_gitignore(output.parent, ignore_all=args.ignore_all)
+    write_weld_gitignore(output.parent,
+        ignore_all=args.ignore_all, track_graphs=args.track_graphs)
     if not success:
         sys.exit(1)
 

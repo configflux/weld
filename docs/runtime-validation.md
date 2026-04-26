@@ -19,12 +19,17 @@ least one real-client validation record must appear below.
 Until that happens, public-facing claims should:
 
 - Use the per-row **Public status** in the
-  [platform support matrix](platform-support.md), not unqualified "supports
-  all major platforms" wording.
+  [platform support matrix](platform-support.md), not unqualified
+  blanket-support wording.
 - Reference this document so readers can see what has and has not been
   validated against a live client.
 
 ## Record format
+
+The schema below is a **stable contract** for runtime-validation records.
+Field names and the set of required fields are fixed; new optional fields
+may be added later but existing fields will not be removed or renamed
+without a deprecation window.
 
 Each runtime validation entry follows this YAML-style block:
 
@@ -85,7 +90,7 @@ point this page must list a record meeting the format above.
 ### Supported rows that still need a record
 
 The following Supported rows currently lack a live-client validation record
-and must obtain one before any "broadly supported" public claim:
+and must obtain one before any wider public-launch claim:
 
 - `Generic SKILL.md` / Agent Skills — generated copies need client
   validation.
@@ -94,6 +99,42 @@ and must obtain one before any "broadly supported" public claim:
 read by humans and by clients in the same way as a README). Its fixture
 coverage is considered sufficient evidence and it does not require a live
 client record.
+
+### Required-before-broad-launch records
+
+Three live-client runtime-validation records must land here before the next
+broad-launch communication ships. Each record is captured by exercising a
+real client install end-to-end:
+
+- [ ] **Codex `AGENTS.md` + skill**: Codex CLI installed, `wd bootstrap codex`
+  applied, `.codex/config.toml` and `.codex/skills/weld/SKILL.md` consumed at
+  runtime, the embedded Weld skill invoked, and the resulting tool call
+  observed in Codex.
+- [ ] **Claude Code MCP + skill/subagent**: Claude Code installed,
+  `.mcp.json` and `wd bootstrap claude` applied, the Weld MCP server reachable
+  via stdio, the generated `.claude/commands/weld.md` invoked, and the
+  resulting MCP tool call observed in Claude Code.
+- [ ] **VS Code / Copilot custom instructions**: VS Code with GitHub Copilot
+  installed, `wd bootstrap copilot` applied, `.github/copilot-instructions.md`
+  and `.github/instructions/weld.instructions.md` consumed by Copilot at
+  runtime, and the documented behavior observed.
+
+A row stays unchecked until its YAML record appears under **Records** below.
+
+### Checklist before merging a record
+
+- The `platform` field uses the exact wording from the platform support
+  matrix.
+- All required fields (`platform`, `client_version`, `date_tested`,
+  `tested_by`, `os`, `scenario`, `result`) are populated.
+- `client_version` matches what the client itself reports.
+- `scenario` covers install, configuration, invocation, and observation.
+- `result` is one of `pass`, `partial`, or `fail`.
+- If `result` is `partial` or `fail`, `notes` explains why and points at any
+  follow-up issue.
+- If the record changes the row's effective Public status (for example,
+  Partial → Supported), the [platform support matrix](platform-support.md)
+  is updated in the same change set.
 
 ## Records
 

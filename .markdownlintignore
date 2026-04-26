@@ -1,0 +1,17 @@
+# Paths excluded from markdownlint scanning.
+# The lint scope is README.md, CHANGELOG.md, and docs/**/*.md (see
+# tools/lint_repo.py); this ignore file keeps incidental invocations of
+# markdownlint-cli2 from descending into generated, vendored, or
+# internal-tooling trees.
+
+.claude/
+.git/
+.weld/
+bazel-*/
+build/
+dist/
+node_modules/
+out/
+public/
+examples/
+weld/tests/fixtures/

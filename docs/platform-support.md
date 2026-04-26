@@ -19,7 +19,7 @@ apply to that platform or format.
 | Platform / format | Discovery | Audit | Impact | Plan-change | Render/export | Bootstrap | MCP config | Runtime validation | Public status | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Generic `AGENTS.md` | Supported | Supported | Supported | Supported | Not supported | Not supported | Not supported | Fixture-tested static discovery; no live client required. | Supported | Static instruction asset used by Codex and other agents. |
-| Generic `SKILL.md` / Agent Skills | Supported | Supported | Supported | Supported | Experimental | Partial | Not supported | Fixture-tested static discovery; generated copies need client validation. | Supported | Portable skill inventory and relationships first; rendering remains experimental. |
+| Generic `SKILL.md` / Agent Skills | Supported | Supported | Supported | Supported | Experimental | Partial | Not supported | Fixture-tested static discovery; generated copies need client validation. | Static discovery; runtime validation pending | Portable skill inventory and relationships first; rendering remains experimental. |
 | GitHub Copilot repository instructions | Supported | Partial | Partial | Supported | Experimental | Supported | Not supported | Fixture-tested; real Copilot behavior still needs validation. | Partial | Covers `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md`. |
 | GitHub Copilot / VS Code custom agents | Partial | Partial | Partial | Supported | Experimental | Partial | Not supported | Fixture-tested only. | Partial | Covers `.github/agents/*.agent.md`; validate runtime behavior in VS Code/GitHub Copilot. |
 | VS Code MCP | Not supported | Not supported | Not supported | Not supported | Not supported | Partial | Supported | Config shape is generated; real VS Code runtime validation pending. | Partial | `wd mcp config --client=vscode` prints `.vscode/mcp.json`. |
@@ -55,8 +55,9 @@ Rules of thumb tied to that page:
   upgraded to **Supported**.
 
 No live-client runtime validation records are published yet. Public claims
-should therefore use the matrix above and avoid unqualified "supports all major
-platforms" wording.
+should therefore use the matrix above and avoid unqualified blanket-support
+wording. Defer to the per-row Public status and the runtime-validation page
+instead.
 
 ## References
 

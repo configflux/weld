@@ -149,12 +149,11 @@ wd agents plan-change "planner should always include test strategy"
 Use `--json` on `list`, `explain`, `impact`, `audit`, and `plan-change` for
 agent-friendly output. Use `wd agents rediscover` when you want an explicit
 refresh of `.weld/agent-graph.json` before inspecting the persisted graph.
-Weld discovers common AI customization formats and exposes them through a
-local graph; the
+Static discovery and configuration generation are available for several
+agent platforms; runtime validation is tracked per client in the
+[platform support matrix](docs/platform-support.md). The
 [Agent Graph guide](docs/agent-graph.md) documents node and edge types,
-authority and drift, and the read-only-first policy, and runtime behavior is
-validated per client in the
-[platform support matrix](docs/platform-support.md).
+authority and drift, and the read-only-first policy.
 
 ### Agent-first onboarding
 
@@ -233,14 +232,17 @@ grammar package is not installed.
 To enable tree-sitter support:
 
 ```bash
-pip install -e "weld/[tree-sitter]"
+uv tool install "configflux-weld[tree-sitter]"
 ```
 
 To use the built-in semantic enrichment providers:
 
 ```bash
-pip install -e "weld/[openai]"     # or [anthropic], [ollama], or [llm]
+uv tool install "configflux-weld[openai]"     # or [anthropic], [ollama], or [llm]
 ```
+
+For a source-checkout install (contributors editing Weld itself), see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 Agents can also enrich nodes without provider extras or API keys by reading the
 relevant source or documentation and writing reviewed enrichment manually:
@@ -318,27 +320,53 @@ of bundled strategies.
 
 `wd init` and `wd workspace bootstrap` write a managed `.weld/.gitignore`
 the first time they touch a `.weld/` directory (idempotent — never
-overwrites an existing file). The default policy is *selective*: it
-tracks `discover.yaml`, `workspaces.yaml`, `agents.yaml`, `graph.json`,
-`agent-graph.json`, and the `strategies/` / `adapters/` subdirs, while
-ignoring per-machine state (`discovery-state.json`, `graph-previous.json`,
-`workspace-state.json`, `workspace.lock`, `query_state.bin`). Tracking the
-canonical graph keeps it warm for CI, the MCP server, and other developers;
-ignoring volatile state keeps `git status` clean.
+overwrites an existing file). Three policies are available:
 
-If you'd rather not commit any weld state yet (early experimentation,
-test installs), pass `--ignore-all`:
+- **Default — config-only.** Tracks the source-of-truth config
+  (`discover.yaml`, `workspaces.yaml`, `agents.yaml`, `strategies/`,
+  `adapters/`, `README.md`) and ignores everything else weld writes,
+  including the generated graphs (`graph.json`, `agent-graph.json`)
+  and per-machine state (`discovery-state.json`, `graph-previous.json`,
+  `workspace-state.json`, `workspace.lock`, `query_state.bin`). A
+  fresh contributor gets a clean `git status` after the first run.
+- **Track-graphs (opt-in).** Pass `--track-graphs` to widen the default
+  so the canonical graphs are committed alongside config. Use this for
+  warm-CI / warm-MCP workflows where every contributor should share a
+  pre-built graph:
+
+  ```bash
+  wd init --track-graphs
+  wd workspace bootstrap --track-graphs
+  ```
+
+- **Ignore-all (opt-in).** Pass `--ignore-all` for early experimentation
+  or test installs where no weld state should be committed yet:
+
+  ```bash
+  wd init --ignore-all
+  wd workspace bootstrap --ignore-all
+  ```
+
+  This writes a heavy-handed `*` / `!.gitignore` so every weld file is
+  ignored.
+
+`--track-graphs` and `--ignore-all` are mutually exclusive; passing both
+is a usage error.
+
+**Migration from earlier versions.** Pre-existing `.weld/.gitignore`
+files written by older `wd init` / `wd workspace bootstrap` runs are
+**not** rewritten — the helper is idempotent. To pick up the new
+default, delete the file and re-run init:
 
 ```bash
-wd init --ignore-all
-wd workspace bootstrap --ignore-all
+rm .weld/.gitignore
+wd init                  # config-only default, generated graphs ignored
+# or wd init --track-graphs   to keep tracking the graphs as before
 ```
 
-This writes a heavy-handed `*` / `!.gitignore` so every weld file is
-ignored. Switch back later by deleting the file; the next init or
-bootstrap reseeds the selective default. To opt out entirely, just delete
-`.weld/.gitignore` after init — the skip-if-exists guard means it won't
-be recreated.
+To opt out entirely, just delete `.weld/.gitignore` after init — the
+skip-if-exists guard means it won't be recreated until the next init
+or bootstrap.
 
 ### Custom strategies
 
@@ -513,9 +541,10 @@ rm .weld/workspace-state.json
 
 | Command | Description |
 |---|---|
-| `wd init` | Bootstrap `.weld/discover.yaml` (and `workspaces.yaml` when nested repos are detected); seed managed `.weld/.gitignore` |
+| `wd init` | Bootstrap `.weld/discover.yaml` (and `workspaces.yaml` when nested repos are detected); seed managed `.weld/.gitignore` (config-only default ignores generated graphs) |
 | `wd init --max-depth N` | Limit nested repo scan depth during init (default: 4) |
-| `wd init --ignore-all` | Write a fully-ignoring `.weld/.gitignore` instead of the selective default |
+| `wd init --track-graphs` | Seed `.weld/.gitignore` so canonical graphs (`graph.json` + `agent-graph.json`) stay tracked alongside config (warm-CI / warm-MCP workflow) |
+| `wd init --ignore-all` | Write a fully-ignoring `.weld/.gitignore` instead of the config-only default; mutually exclusive with `--track-graphs` |
 | `wd discover` | Run discovery, emit graph JSON (federation mode when `workspaces.yaml` is present) |
 | `wd agents discover` | Scan AI customization assets and write `.weld/agent-graph.json` |
 | `wd agents rediscover` | Refresh `.weld/agent-graph.json` from a new static scan |
@@ -526,8 +555,9 @@ rm .weld/workspace-state.json
 | `wd agents plan-change "<request>"` | Plan a static AI customization behavior change |
 | `wd workspace status` | Show workspace child ledger: lifecycle status, git ref, dirty state |
 | `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
-| `wd workspace bootstrap` | One-shot polyrepo bootstrap: init root + every nested child, recurse-discover, rebuild root meta-graph |
-| `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child |
+| `wd workspace bootstrap` | One-shot polyrepo bootstrap: init root + every nested child, recurse-discover, rebuild root meta-graph (config-only `.weld/.gitignore` default) |
+| `wd workspace bootstrap --track-graphs` | Bootstrap and seed `.weld/.gitignore` in root and every child to track canonical graphs alongside config |
+| `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child; mutually exclusive with `--track-graphs` |
 | `wd build-index` | Regenerate file index |
 | `wd query <term>` | Hybrid-ranked tokenized graph search |
 | `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`) |
@@ -599,7 +629,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.8.1`.
+terminal snippets captured against `wd 0.10.0`.
 
 ## Install
 
@@ -663,18 +693,10 @@ to pin a specific release tag.
 
 #### From a local checkout (development)
 
-For contributors editing Weld itself:
-
-```bash
-pip install -e weld/
-wd --help
-```
-
-For tree-sitter language support (Go, Rust, TypeScript, C++):
-
-```bash
-pip install -e "weld/[tree-sitter]"
-```
+If you want to edit Weld itself, use a source-checkout install. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full developer setup, including
+editable installs and optional-extras commands for `tree-sitter`, `mcp`,
+`openai`, `anthropic`, `ollama`, and `llm`.
 
 #### From a Git URL
 

@@ -134,6 +134,20 @@ jobs:
           wd mcp config --client=vscode >/dev/null
           wd mcp config --client=cursor >/dev/null
 
+      - name: MCP extra handshake on built wheel
+        # Wire-level JSON-RPC handshake against the [mcp] extra of the
+        # freshly built wheel. Catches packaging regressions where the
+        # extra is declared but the wheel cannot serve MCP at runtime.
+        # Runs before the irreversible PyPI upload so a drift between
+        # the registry and the embedded fixture in
+        # tools/release_mcp_handshake.py fails the release here.
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/weld-mcp-smoke
+          wheel_path=$(ls weld/dist/configflux_weld-*.whl | head -n1)
+          /tmp/weld-mcp-smoke/bin/pip install --no-cache-dir "${wheel_path}[mcp]"
+          /tmp/weld-mcp-smoke/bin/python tools/release_mcp_handshake.py
+
       - name: Publish to PyPI
         # Pinned to an immutable commit SHA for supply-chain hardening.
         # Re-verify and bump when upstream ships a new release you have
@@ -263,3 +277,19 @@ jobs:
           wd mcp config --client=claude >/dev/null
           wd mcp config --client=vscode >/dev/null
           wd mcp config --client=cursor >/dev/null
+
+
+      - name: MCP extra handshake on PyPI-installed wheel
+        # Mirror of the build-phase handshake against the artifact PyPI
+        # actually serves. Catches a packaging regression that only
+        # surfaces after PyPI's CDN is exercised (cached metadata,
+        # missing files in the published wheel, post-upload tampering).
+        # If this fails, the release was bad even though the upload
+        # succeeded; the failing job flags it before users discover it.
+        env:
+          PKG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/weld-mcp-verify
+          /tmp/weld-mcp-verify/bin/pip install --no-cache-dir "configflux-weld[mcp]==${PKG_VERSION}"
+          /tmp/weld-mcp-verify/bin/python tools/release_mcp_handshake.py

@@ -53,10 +53,20 @@ cd weld
 pip install -e weld/
 ```
 
-For tree-sitter language support (Go, Rust, TypeScript, C++):
+### Optional extras (source checkout)
+
+Editable source-checkout installs for the optional extras. Use these only
+when developing Weld itself; end users should install via
+`uv tool install "configflux-weld[<extra>]"` (see the root
+[README.md](README.md)).
 
 ```bash
-pip install -e "weld/[tree-sitter]"
+pip install -e "weld/[tree-sitter]"   # broader language extraction (Go, Rust, TypeScript, C++)
+pip install -e "weld/[mcp]"           # run python -m weld.mcp_server (stdio MCP server)
+pip install -e "weld/[openai]"        # OpenAI enrichment provider
+pip install -e "weld/[anthropic]"     # Anthropic enrichment provider
+pip install -e "weld/[ollama]"        # Ollama enrichment provider
+pip install -e "weld/[llm]"           # llm-cli enrichment provider
 ```
 
 ### Verify

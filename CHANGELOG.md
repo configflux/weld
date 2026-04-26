@@ -27,14 +27,36 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.10.0 - 2026-04-26
+
+### Added
+
+- `wd init --track-graphs` is now actually shipped in the wheel. The opt-in keeps generated graphs (`graph.json`, `query_state.bin`, etc.) tracked in git so warm-CI / warm-MCP setups continue to work; without the flag the managed `.weld/.gitignore` follows the config-only default.
+- Public PyPI publish workflow runs an MCP-handshake smoke against the freshly built wheel before the irreversible upload. If the wheel cannot start the MCP server end-to-end, the upload is aborted.
+- `markdownlint-cli2` is now part of the repo lint pass, scoped to shipped docs (README, `docs/**/*.md`).
+- `tools/doc_version_lint.py` blocks stale `wd <version>` references in shipped docs so older versions cannot leak into a newer release's documentation.
+- Public install/contributor docs split into separate audiences in `README.md` and `CONTRIBUTING.md` so downstream consumers do not have to skim past contributor-only setup.
+
+### Changed
+
+- Public-facing runtime-validation copy tightened, and a dedicated `runtime_claims_lint` checks that documented runtime claims match the code.
+
+### Fixed
+
+- Publish allowlist accepts the new `.markdownlint.json` and `.markdownlintignore` files at the repo root, so the markdownlint addition does not block `tools/audit_publish.sh`. A redundant entry in the markdownlint ignore that referenced the bd ledger directory was also removed; markdownlint was never scanning that path.
+
+### Release Safety
+
+- v0.9.0's CHANGELOG promised `wd init --track-graphs`, but the implementing commit landed after the v0.9.0 tag. The v0.9.0 PyPI wheel therefore does **not** contain the flag. v0.10.0 closes that gap; users on v0.9.0 should upgrade to get the documented behavior.
+
 ## v0.9.0 - 2026-04-26
 
 ### Added
 
 - `wd agents audit --strict` surfaces ADR-0029-suppressed groups (canonical/rendered pairs no longer hide audit findings when strict mode is set).
 - `WELD_INIT_FRAMEWORK_CAP` env override lets forensic re-runs of `wd init` raise or remove the per-language framework sample cap; `0` disables the cap, custom positive integers set a custom cap, unset/empty/negative/non-numeric values fall back to the built-in default silently.
-- Query state sidecar (ADR 0031): `wd query` now persists the inverted index and BM25 corpus to `.weld/query-state.bin` after `wd discover`, so cold-path query startup drops from ~1.28 s to ~0.54 s on a representative 100k-node graph (about 58% faster). The sidecar is content-addressed via blake2b digest + node count + weld schema version + format-version envelope; on freshness mismatch or corruption the sidecar is silently rebuilt.
-- `wd init` seeds a selective `.weld/.gitignore` on init and bootstrap so per-checkout artifacts (graph, sidecar, query-state) stay out of version control by default while curated config (`discover.yaml`, `enrich.yaml`, `mcp.config.json`) remains tracked.
+- Query state sidecar (ADR 0031): `wd query` now persists the inverted index and BM25 corpus to `.weld/query_state.bin` after `wd discover`, so cold-path query startup drops from ~1.28 s to ~0.54 s on a representative 100k-node graph (about 58% faster). The sidecar is content-addressed via blake2b digest + node count + weld schema version + format-version envelope; on freshness mismatch or corruption the sidecar is silently rebuilt.
+- `wd init` and `wd workspace bootstrap` seed a managed `.weld/.gitignore` on init and bootstrap. The default policy is **config-only**: it tracks source-of-truth config (`discover.yaml`, `workspaces.yaml`, `agents.yaml`, `strategies/`, `adapters/`) and ignores everything weld can rebuild, including generated graphs (`graph.json`, `agent-graph.json`) and per-machine state (`discovery-state.json`, `graph-previous.json`, `workspace-state.json`, `workspace.lock`, `query_state.bin`). Pass `--track-graphs` to also commit the canonical graphs (warm-CI / warm-MCP workflow), or `--ignore-all` to ignore every weld file. The two opt-in flags are mutually exclusive. Pre-existing `.weld/.gitignore` files are not rewritten; manual migration is `rm .weld/.gitignore && wd init`.
 - `wd demo polyrepo --init` auto-bootstraps the workspace before discovery so the first run produces a populated graph instead of an empty one.
 - Bootstrap traceback surfaced under `WELD_DEBUG=1` in `wd demo polyrepo` so the demo's bootstrap exception handler shows the underlying cause when set.
 
@@ -70,21 +92,21 @@ in [`docs/launch.md`](docs/launch.md) links here.
 
 ### Added
 
-- `tools/mcp_tool_count_consistency_test.py` (`bazel test //tools:mcp_tool_count_consistency_test`)
-  asserts that the MCP tool count and names stay in sync across
-  `weld/_mcp_tools.py`, `weld/tests/mcp_expected_tools.py`, `docs/mcp.md`,
-  and `CHANGELOG.md`. CI fails on drift.
-- `tools/version_consistency_test.py` now also pins the `description` field
-  in `weld/pyproject.toml` (non-empty, not the deprecated v0.7 string) and
-  checks `public/weld/pyproject.toml` description matches when the publish
-  staging directory is present.
-- `tools/release_smoke.sh` now exercises `wd security`, `wd doctor --security`,
-  `wd demo list`, `wd demo monorepo --init`, `wd demo polyrepo --init`, and
-  `wd agents render --help` against the installed wheel.
-- `tools/release_smoke.sh` runs an installed-extra MCP phase that builds
-  the wheel, installs `configflux-weld[mcp]`, performs the stdio JSON-RPC
-  `initialize` + `tools/list` handshake against `python -m weld.mcp_server`,
-  and asserts the wire response lists exactly the 13 expected tools.
+- Internal release gate now asserts the MCP tool count and names stay in
+  sync across the in-process registry, the expected-tools fixture,
+  `docs/mcp.md`, and `CHANGELOG.md`. CI fails on drift.
+- Internal release gate pins the `description` field in
+  `weld/pyproject.toml` against the deprecated v0.7 string, so a stale
+  description cannot ship.
+- Internal release smoke now exercises `wd security`,
+  `wd doctor --security`, `wd demo list`, `wd demo monorepo --init`,
+  `wd demo polyrepo --init`, and `wd agents render --help` against the
+  installed wheel.
+- Internal release smoke installs `configflux-weld[mcp]` and runs a
+  stdio JSON-RPC `initialize` + `tools/list` handshake against
+  `python -m weld.mcp_server`, asserting the wire response lists the
+  expected 13 tools. The public publish workflow ships an equivalent
+  wire-handshake check (see v0.9.0 release safety wiring).
 
 ## v0.8.2 - 2026-04-25
 

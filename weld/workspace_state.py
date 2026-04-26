@@ -280,7 +280,10 @@ def _run_bootstrap_subcommand(args: argparse.Namespace) -> int:
 
     try:
         result = bootstrap_workspace(
-            args.root, max_depth=args.max_depth, ignore_all=args.ignore_all,
+            args.root,
+            max_depth=args.max_depth,
+            ignore_all=args.ignore_all,
+            track_graphs=args.track_graphs,
         )
     except FileNotFoundError as exc:
         print(f"[weld] error: {exc}", file=sys.stderr)
@@ -359,12 +362,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Emit a JSON summary of what the bootstrap did",
     )
-    bootstrap_parser.add_argument(
+    bootstrap_gitignore = bootstrap_parser.add_mutually_exclusive_group()
+    bootstrap_gitignore.add_argument(
         "--ignore-all",
         action="store_true",
         help="Write a fully-ignoring .weld/.gitignore in the root and every "
-             "child (every weld file ignored). Default is selective: track "
-             "config and the canonical graph, ignore per-machine state.",
+             "child (every weld file ignored). Default ignores generated "
+             "graphs but tracks config; pass --track-graphs to also track "
+             "graph.json + agent-graph.json.",
+    )
+    bootstrap_gitignore.add_argument(
+        "--track-graphs",
+        action="store_true",
+        help="Track canonical graphs (graph.json + agent-graph.json) in "
+             "addition to config in every .weld/.gitignore the bootstrap "
+             "writes. Default ignores generated graphs.",
     )
 
     args = parser.parse_args(argv)

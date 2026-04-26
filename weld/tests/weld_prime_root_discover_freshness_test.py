@@ -148,11 +148,12 @@ class PrimeCustomerFiveStepReproTest(unittest.TestCase):
             _run(["git", "commit", "-qm", "seed sources"], root)
 
             # Step 2: discover then commit graph + state.
-            # discovery-state.json is per-machine state and is ignored by the
-            # selective .weld/.gitignore that wd init now writes; force-add
-            # to faithfully reproduce the customer scenario.
+            # graph.json AND discovery-state.json are both ignored by the
+            # config-only .weld/.gitignore that wd init now writes by
+            # default; force-add to faithfully reproduce the customer
+            # scenario (which committed both files to the repo).
             self._wd(["discover", "--output", ".weld/graph.json"], root)
-            _run(["git", "add", ".weld/graph.json"], root)
+            _run(["git", "add", "-f", ".weld/graph.json"], root)
             _run(
                 ["git", "add", "-f", ".weld/discovery-state.json"],
                 root,
