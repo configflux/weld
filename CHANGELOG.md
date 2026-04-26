@@ -27,6 +27,14 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.10.1 - 2026-04-26
+
+### Release Safety
+
+- v0.10.0 was tagged on both repos and a GitHub Release page was created, but the wheel was never uploaded to PyPI: the new wire-level MCP-handshake gate added in v0.10.0 (`tools/release_mcp_handshake.py` invoked from `publish-pypi.yml`) hung on Python 3.11 in CI — the server returned the `initialize` response but no `tools/list` response after stdin EOF, and the gate aborted the upload before the irreversible PyPI step. Local smokes on Python 3.12 pass against the same wheel, so this is a CI-environment bug, not a wheel bug.
+- v0.10.1 unblocks the publish path by pinning `publish-pypi.yml` to Python 3.12 for both the build-and-publish and verify-install jobs. Root-cause investigation of the 3.11 hang is tracked in a follow-up bd issue; the gate's expected-tool fixture and behavior are unchanged.
+- Users who saw the v0.10.0 GitHub Release should install v0.10.1 — `pip install configflux-weld` continued to serve v0.9.0 in the gap between the v0.10.0 tag and v0.10.1.
+
 ## v0.10.0 - 2026-04-26
 
 ### Added
