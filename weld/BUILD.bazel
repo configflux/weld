@@ -86,6 +86,7 @@ py_library(
         "_init_ros2.py",
         "_staleness.py",
         "_workspace_bootstrap.py",
+        "_workspace_bootstrap_result.py",
         "_workspace_inspect.py",
         "_workspace_lock.py",
         "arch_lint.py",

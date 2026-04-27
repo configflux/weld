@@ -126,6 +126,45 @@ class InitWorkspaceTest(unittest.TestCase):
         self.assertEqual(data["scan"]["max_depth"], 3)
 
 
+class MergeYamlAndScanChildrenTest(unittest.TestCase):
+    """bd-...-9slg: yaml-authoritative + scan-augmenting merge predicate."""
+
+    def test_force_false_with_existing_yaml_reads_yaml_via_merge(self) -> None:
+        """Existing yaml + scan empty -> merge surfaces yaml children.
+
+        Before the fix, ``init_workspace`` returned False on existing
+        yaml without reading it (treating presence as a no-op), and the
+        bootstrap orchestrator's FS-only re-scan masked out yaml-listed
+        children that the scan could not reach. The merge helper is the
+        unified replacement; this test pins its read-yaml-when-present
+        behaviour.
+        """
+        from weld.init_workspace import merge_yaml_and_scan_children
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            yaml_text = (
+                "version: 1\n"
+                "scan:\n"
+                "  max_depth: 4\n"
+                "  exclude_paths: []\n"
+                "children:\n"
+                "  - name: services-api\n"
+                "    path: services/api\n"
+                "cross_repo_strategies: []\n"
+            )
+            (root / ".weld").mkdir(parents=True, exist_ok=True)
+            (root / ".weld" / "workspaces.yaml").write_text(
+                yaml_text, encoding="utf-8",
+            )
+
+            merged = merge_yaml_and_scan_children(root)
+
+            paths = sorted(c.path for c in merged.children)
+            self.assertEqual(paths, ["services/api"])
+            self.assertIsNone(merged.yaml_error)
+
+
 class CliIntegrationTest(unittest.TestCase):
     """``wd init`` end-to-end: scaffolds both discover.yaml and workspaces.yaml."""
 

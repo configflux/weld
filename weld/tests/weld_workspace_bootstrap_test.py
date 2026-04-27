@@ -15,6 +15,8 @@ Re-running on an already-bootstrapped workspace must be a no-op modulo
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import subprocess
 import sys
@@ -134,6 +136,13 @@ class BootstrapWorkspaceUnitTest(unittest.TestCase):
                 ["libs-shared", "services-api"],
                 "every nested child must reach status=present after one invocation",
             )
+
+            # bd-...-9slg: ``wd workspace status`` must succeed post-bootstrap.
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(0, workspace_main(
+                    ["status", "--root", str(root), "--json"]))
+            self.assertIn("services-api", buf.getvalue())
 
             # (b) root graph.json contains repo:<name> per child
             root_graph_text = (root / ".weld" / "graph.json").read_text(
@@ -338,9 +347,6 @@ class BootstrapCliIntegrationTest(unittest.TestCase):
 
     def test_cli_bootstrap_help_listed_under_workspace(self) -> None:
         """``wd workspace --help`` mentions the bootstrap subcommand."""
-        import io
-        import contextlib
-
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             # No args -> prints help.
@@ -356,9 +362,6 @@ class BootstrapCliIntegrationTest(unittest.TestCase):
         failed. Narration is now on stderr; stdout carries only the JSON
         payload.
         """
-        import io
-        import contextlib
-
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             _make_polyrepo(root, ["svc/api", "svc/auth"])

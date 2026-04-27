@@ -10,6 +10,7 @@ from pathlib import Path
 from weld._gitignore_writer import write_weld_gitignore
 from weld._init_classify import classify_files
 from weld._init_ros2 import ros2_source_entries
+from weld.init_workspace import init_polyrepo_children as _init_polyrepo_children
 from weld.init_workspace import init_workspace as _init_workspace
 from weld.init_detect import (
     detect_all_from_classified,
@@ -383,10 +384,8 @@ def main(argv: list[str] | None = None) -> None:
         "--force", "-f", action="store_true",
         help="Overwrite existing discover.yaml / workspaces.yaml",
     )
-    parser.add_argument(
-        "--max-depth", type=int, default=4,
-        help="Max depth when scanning for nested git repos (default: 4)",
-    )
+    parser.add_argument("--max-depth", type=int, default=4,
+        help="Max depth when scanning for nested git repos (default: 4)")
     gi = parser.add_mutually_exclusive_group()
     gi.add_argument("--ignore-all", action="store_true",
         help="Write a fully-ignoring .weld/.gitignore (every weld file ignored)")
@@ -399,6 +398,7 @@ def main(argv: list[str] | None = None) -> None:
     workspaces_out = root / ".weld" / "workspaces.yaml"
     if _init_workspace(root, workspaces_out, force=args.force, max_depth=args.max_depth):
         print(f"Wrote {workspaces_out}", file=sys.stderr)
+    _init_polyrepo_children(root, force=args.force, max_depth=args.max_depth)
     write_weld_gitignore(output.parent,
         ignore_all=args.ignore_all, track_graphs=args.track_graphs)
     if not success:

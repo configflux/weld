@@ -27,6 +27,13 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.11.3 - 2026-04-27
+
+### Fixed
+
+- `wd workspace bootstrap` no longer misroutes a nested-git polyrepo to single-service mode after a `.weld/` reset. Two federation predicates disagreed: `wd discover` decides federation by config presence, while bootstrap used a filesystem-only scan that honoured root `.gitignore`, `DEFAULT_MAX_DEPTH=4`, and `_BUILTIN_EXCLUDE_DIRS`. After `rm -rf .weld/` the FS scan could return zero even when the operator had restored a valid `.weld/workspaces.yaml`, leaving the workspace stuck without `.weld/workspace-state.json` and breaking `wd workspace status`. Bootstrap now uses a unified merge predicate where `workspaces.yaml` is authoritative when present and the FS scan augments it; corrupt yaml falls back to scan with the parse failure surfaced in `BootstrapResult.errors`. `wd init` at a polyrepo root now also runs per-child init so every child gets its own `.weld/discover.yaml`.
+  <!-- verify: file=weld/_workspace_bootstrap.py grep=yaml_listed_but_missing -->
+
 ## v0.11.2 - 2026-04-27
 
 ### Release Safety

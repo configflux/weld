@@ -28,13 +28,13 @@ modulo ``meta.generated_at`` / ``meta.updated_at`` stamps.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from weld._gitignore_writer import write_weld_gitignore
+from weld._workspace_bootstrap_result import BootstrapResult
 from weld.init import init as _root_init
-from weld.init_workspace import discover_children, init_workspace
-from weld.workspace import DEFAULT_MAX_DEPTH
+from weld.init_workspace import merge_yaml_and_scan_children
+from weld.workspace import DEFAULT_MAX_DEPTH, ChildEntry, ScanConfig, WorkspaceConfig
 from weld.workspace_state import (
     atomic_write_text,
     build_workspace_state,
@@ -43,126 +43,6 @@ from weld.workspace_state import (
 )
 
 __all__ = ["BootstrapResult", "bootstrap_workspace"]
-
-
-@dataclass
-class BootstrapResult:
-    """Structured outcome of a bootstrap run, useful for tests and CLI output.
-
-    Field contract
-    --------------
-    ``root_init_ran``
-        ``True`` when step 1 wrote a new ``.weld/discover.yaml`` at the
-        root. ``False`` when the file was already present (no-op re-run).
-    ``workspace_yaml_written``
-        ``True`` when step 2 wrote a new ``.weld/workspaces.yaml``.
-        ``False`` when that file was already present.
-    ``children_discovered``
-        Sorted names of every nested git repo found by the step 2 scan,
-        regardless of their current ledger status. This is the
-        denominator for "how many children does this polyrepo have".
-    ``children_initialized``
-        Subset of ``children_discovered`` for which step 3 actually ran
-        ``wd init`` this run (they had ``.git/`` but no discover.yaml).
-        Already-initialized children are silently skipped and do NOT
-        appear here.
-    ``children_recursed``
-        Names of children that step 4 (:func:`recurse_children`)
-        successfully visited AND wrote a fresh ``.weld/graph.json`` for,
-        during THIS run. Recurse considers only children whose ledger
-        status at the start of step 4 is ``present`` or ``uninitialized``;
-        children with status ``missing`` or ``corrupt`` are skipped and
-        never appear here. A child whose ``_discover_single_repo`` raises
-        is also omitted from this list -- the failure is logged to stderr
-        AND mirrored into :attr:`errors` as
-        ``"recurse <name>: <ExcType>: <msg>"`` so programmatic callers
-        inspecting the result can see per-child recurse failures.
-        Recurse is unconditional for eligible children: an
-        already-``present`` child is re-discovered and its graph rewritten
-        with equivalent content, so on a healthy idempotent re-run this
-        list contains every eligible child.
-    ``children_present``
-        Names of children whose ledger status is ``present`` at the END
-        of the run, computed by re-running :func:`build_workspace_state`
-        AFTER step 4. This is the set that :func:`_present_children` and
-        the root meta-graph observe going forward.
-    ``errors``
-        Free-form human-readable error strings accumulated from step 3
-        (per-child ``wd init`` failures), from step 4 per-child recurse
-        failures (``"recurse <name>: <ExcType>: <msg>"``), and from the
-        step 4 guard when ``workspaces.yaml`` is missing.
-
-    Divergence between ``children_recursed`` and ``children_present``
-    ----------------------------------------------------------------
-    The two lists are related but not identical; operators reading both
-    should understand the following cases:
-
-    * Common case (healthy run): every eligible child appears in both
-      lists and the sets are equal modulo children whose status at the
-      start of step 4 was ``missing`` or ``corrupt`` (those never enter
-      ``children_recursed`` and, without external intervention, they
-      also do not reach ``children_present``).
-    * In ``children_recursed`` but NOT in ``children_present``: step 4
-      wrote the child graph successfully, but the post-step-4 inspection
-      in :func:`_graph_status` classified the on-disk graph as
-      ``corrupt`` or ``uninitialized``. In practice this means the
-      graph file was removed or truncated between the atomic write and
-      the ledger rebuild (filesystem anomaly). Extremely rare.
-    * In ``children_present`` but NOT in ``children_recursed``: the
-      child was ``present`` at the start of step 4 (a prior run left a
-      valid ``.weld/graph.json`` on disk) and this run's
-      ``_discover_single_repo`` call raised. The pre-existing graph is
-      untouched, so inspection still classifies the child as
-      ``present``, but the current run did not refresh it. The failure
-      surfaces on stderr AND as a ``"recurse <name>: ..."`` entry in
-      :attr:`errors`.
-
-    For operators: :attr:`children_present` is the ground-truth set
-    that downstream federation tools will use;
-    :attr:`children_recursed` answers "what did this run actually do".
-    """
-
-    root_init_ran: bool = False
-    workspace_yaml_written: bool = False
-    children_discovered: list[str] = field(default_factory=list)
-    children_initialized: list[str] = field(default_factory=list)
-    children_recursed: list[str] = field(default_factory=list)
-    children_present: list[str] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
-
-    def summary_lines(self) -> list[str]:
-        """Human-readable bullet summary of a bootstrap run."""
-        lines = [
-            f"Bootstrapped workspace at: {len(self.children_discovered)} "
-            f"child repo(s) discovered",
-        ]
-        if self.root_init_ran:
-            lines.append("  * root init: wrote .weld/discover.yaml")
-        else:
-            lines.append("  * root init: already initialized (no-op)")
-        if self.workspace_yaml_written:
-            lines.append("  * workspaces.yaml: written")
-        else:
-            lines.append("  * workspaces.yaml: already present (no-op)")
-        if self.children_initialized:
-            lines.append(
-                "  * per-child init: "
-                + ", ".join(sorted(self.children_initialized)),
-            )
-        else:
-            lines.append("  * per-child init: all children already initialized")
-        if self.children_recursed:
-            lines.append(
-                "  * discover: "
-                + ", ".join(sorted(self.children_recursed)),
-            )
-        lines.append(
-            f"  * present after bootstrap: {len(self.children_present)} "
-            f"of {len(self.children_discovered)}",
-        )
-        for err in self.errors:
-            lines.append(f"  ! {err}")
-        return lines
 
 
 def _run_root_init(root: Path) -> bool:
@@ -215,6 +95,27 @@ def _init_child(
     write_weld_gitignore(
         weld_dir, ignore_all=ignore_all, track_graphs=track_graphs,
     )
+
+
+def _write_workspaces_yaml(
+    output: Path, children: list[ChildEntry], max_depth: int,
+) -> None:
+    """Write a deterministic ``workspaces.yaml`` from the merged child set.
+
+    Distinct from :func:`weld.init_workspace.init_workspace`, which only
+    writes when the FS scan is non-empty. The bootstrap merge path may
+    have a non-empty merged set composed entirely of yaml-listed children
+    that the FS scan cannot see (gitignore / max_depth / excluded dirs);
+    we still want to persist that set so step 4's loader sees a stable
+    registry.
+    """
+    from weld.workspace import dump_workspaces_yaml
+
+    cfg = WorkspaceConfig(
+        scan=ScanConfig(max_depth=max_depth),
+        children=list(children),
+    )
+    dump_workspaces_yaml(cfg, output)
 
 
 def bootstrap_workspace(
@@ -273,17 +174,20 @@ def bootstrap_workspace(
         track_graphs=track_graphs,
     )
 
-    # Step 2: scan nested git repos and write workspaces.yaml when needed.
+    # Step 2 (bd-...-9slg): unified federation predicate.
+    # ``merge_yaml_and_scan_children`` is the single source of truth: yaml
+    # is authoritative when present, FS scan augments. This matches
+    # ``wd discover``'s config-based federation predicate
+    # (``load_workspace_config(root_path) is not None``) so a polyrepo
+    # root cannot misroute to single-service when the yaml lists children
+    # that the FS scan misses (gitignore, max_depth, _BUILTIN_EXCLUDE_DIRS).
     workspaces_yaml = root_path / ".weld" / "workspaces.yaml"
-    if not workspaces_yaml.is_file():
-        result.workspace_yaml_written = init_workspace(
-            root_path, workspaces_yaml, force=False, max_depth=max_depth,
-        )
-
-    # Re-scan to learn children regardless of whether workspaces.yaml existed
-    # already; the yaml may be stale or we may be bootstrapping a root that
-    # was partially initialized on a previous run.
-    children = discover_children(root_path, max_depth=max_depth)
+    merged = merge_yaml_and_scan_children(root_path, max_depth=max_depth)
+    if merged.yaml_error is not None:
+        result.errors.append(merged.yaml_error)
+    result.yaml_listed_but_missing = list(merged.yaml_listed_but_missing)
+    result.excluded_by_gitignore = list(merged.excluded_by_gitignore)
+    children = merged.children
     result.children_discovered = sorted(c.name for c in children)
 
     if not children:
@@ -292,36 +196,47 @@ def bootstrap_workspace(
         # children_discovered list as "non-polyrepo".
         return result
 
-    # Step 2.5 (bd-72n): if the filesystem scan found children that the
-    # persisted workspaces.yaml does not list (e.g. a new nested repo was
-    # added after the first bootstrap), refresh workspaces.yaml with
-    # force=True so step 4's ``load_workspace_config`` sees the full set.
-    # Without this, step 3 would init the new child's discover.yaml but
-    # step 4 (which iterates ``config.children`` loaded from disk) would
-    # skip it, leaving the new child as ``uninitialized`` in the ledger
-    # until a second bootstrap run. Idempotency still holds: when the FS
-    # scan matches the persisted set, the yaml is left alone.
-    if workspaces_yaml.is_file():
-        persisted = load_workspace_config(root_path)
-        persisted_names: set[str] = (
-            {entry.name for entry in persisted.children}
-            if persisted is not None
-            else set()
+    # Surface yaml-listed-but-missing children in errors so callers see
+    # them without inspecting the dedicated field.
+    for name in merged.yaml_listed_but_missing:
+        result.errors.append(
+            f"workspaces.yaml lists child {name!r} whose path does not "
+            f"resolve under the workspace root",
         )
-        scanned_names = {c.name for c in children}
-        if scanned_names != persisted_names:
-            init_workspace(
-                root_path,
-                workspaces_yaml,
-                force=True,
-                max_depth=max_depth,
+
+    # Persist the effective set to workspaces.yaml so step 4's loader sees
+    # the merged registry. Three cases land here:
+    #   (a) yaml absent -> write from the merged set (which is scan-only).
+    #   (b) yaml present + scan augments -> rewrite to capture new children.
+    #   (c) yaml corrupt -> rewrite from the merged set (scan only) so the
+    #       loader downstream can succeed.
+    if not workspaces_yaml.is_file():
+        _write_workspaces_yaml(workspaces_yaml, children, max_depth)
+        result.workspace_yaml_written = True
+    else:
+        persisted_names: set[str] = set()
+        if merged.yaml_error is None:
+            persisted = load_workspace_config(root_path)
+            persisted_names = (
+                {entry.name for entry in persisted.children}
+                if persisted is not None
+                else set()
             )
+        merged_names = {c.name for c in children}
+        if merged.yaml_error is not None or merged_names != persisted_names:
+            _write_workspaces_yaml(workspaces_yaml, children, max_depth)
             result.workspace_yaml_written = True
 
-    # Step 3: per-child init for children lacking discover.yaml.
+    # Step 3: per-child init for children lacking discover.yaml. Iterates
+    # the merged set so yaml-only children (outside FS scan reach) are
+    # initialised when their paths exist on disk; missing paths are
+    # skipped and logged.
     for child in children:
+        child_root = root_path / child.path
+        if not child_root.is_dir():
+            continue
         _init_child(
-            root_path / child.path,
+            child_root,
             result,
             child.name,
             ignore_all=ignore_all,
