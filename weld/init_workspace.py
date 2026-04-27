@@ -100,6 +100,22 @@ def init_workspace(
         exclude_paths=exclude_paths,
     )
     if not children:
+        # Linked-worktree fallback (bd-cacx): a linked git worktree does
+        # not contain copies of its sibling child repos -- those live only
+        # at the main checkout. When main has a workspaces.yaml, mirror it
+        # so federation discover can resolve each child via
+        # resolve_child_root's worktree fallback (ADR 0028).
+        from weld._git import git_main_checkout_path
+        main_checkout = git_main_checkout_path(Path(root))
+        if main_checkout is not None:
+            main_yaml = main_checkout / ".weld" / "workspaces.yaml"
+            if main_yaml.is_file():
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(
+                    main_yaml.read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+                return True
         return False
 
     cfg = WorkspaceConfig(

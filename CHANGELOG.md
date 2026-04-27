@@ -27,6 +27,18 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.11.5 - 2026-04-27
+
+### Fixed
+
+- `wd init` inside a linked git worktree of a bootstrapped polyrepo now mirrors the main checkout's `.weld/workspaces.yaml` instead of silently degrading to a single-service graph. Linked worktrees do not contain copies of nested-git child repos (git does not clone them), so the FS scan returns empty and the worktree had no way to participate in federation -- `wd discover` produced a tiny local graph (~73 nodes for the reporter) instead of the federated one. The federation **discover** path already handles linked worktrees via `resolve_child_root` (ADR 0028); `wd init` now uses the same `git_main_checkout_path` helper to inherit the registry. After this fix, `wd init` in a worktree produces `workspaces.yaml`, `workspace-state.json`, and a federated `wd discover` graph with no manual yaml restore needed. Operator-authored worktree-local yaml is preserved (`force=False` is honoured).
+  <!-- verify: file=weld/init_workspace.py grep=Linked-worktree fallback -->
+
+### Release Safety
+
+- `tools/release_polyrepo_smoke.sh` gains Variant 3: linked-worktree-of-polyrepo scenarios. The gate now runs 10 scenario runs total (8 for variants 1+2, 2 for variant 3 W1/W2 covering gitignored and non-gitignored shapes). Variant 3 reproduces the v0.11.4 worktree silent-degrade bug exactly when run against pre-fix code (12 assertion failures: missing yaml mirror, missing workspace-state.json, missing `repo:services-*` nodes in the meta-graph) and is green after. Wired into `tools/publish.sh` via the existing `check_polyrepo_smoke` precondition; any regression in the worktree-init path now fails locally before any tag push.
+  <!-- verify: file=tools/release_polyrepo_smoke.sh grep=10 scenario runs total -->
+
 ## v0.11.4 - 2026-04-27
 
 ### Fixed

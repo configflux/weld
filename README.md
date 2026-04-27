@@ -629,7 +629,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.11.4`.
+terminal snippets captured against `wd 0.11.5`.
 
 ## Install
 
