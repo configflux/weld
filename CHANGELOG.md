@@ -27,6 +27,16 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.11.1 - 2026-04-27
+
+### Release Safety
+
+- v0.11.0 was tagged on both repos but the wheel never reached PyPI: the new `pre-tag-verify` job (ADR 0032) added in v0.10.2 cycle invokes `tools/release_claims_lint.py`, which is internal-only (`.publishignore`) and therefore absent on the public mirror. The job failed with `No such file or directory`, blocking `build-and-publish` via its `needs: pre-tag-verify` dependency. The wheel content is unchanged from v0.11.0 — same matter-of-substance release.
+  <!-- verify: file=tools/publish_overlays/publish-pypi.yml grep=release_claims_lint.py not present -->
+- v0.11.1 makes the public-repo `pre-tag-verify` step skip cleanly when the verifier is missing. The same check still runs locally via `./local-task-gate` before any tag push, so the strict CHANGELOG-vs-tree assertion is not lost — it is enforced where the script actually lives.
+- Users who saw the v0.11.0 tag should install v0.11.1; `pip install configflux-weld` continued to serve v0.10.1 in the gap between the v0.11.0 tag and v0.11.1.
+  <!-- verify: file=weld/pyproject.toml grep=0.11.1 -->
+
 ## v0.11.0 - 2026-04-27
 
 ### Added

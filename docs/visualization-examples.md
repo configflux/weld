@@ -459,7 +459,7 @@ The full MCP install story (including the `[mcp]` extra) is covered in
 
 ## Reproducing locally
 
-Snippets on this page were captured against `wd 0.11.0` from a Linux
+Snippets on this page were captured against `wd 0.11.1` from a Linux
 host. To reproduce them on your own machine:
 
 ```bash

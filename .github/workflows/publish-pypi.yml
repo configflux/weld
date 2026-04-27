@@ -66,8 +66,18 @@ jobs:
           python-version: "3.12"
 
       - name: Run release-claim verifier
+        # The verifier (ADR 0032) lives in the internal repo only --
+        # ``tools/release_claims_lint.py`` is in ``.publishignore`` so the
+        # public wheel does not ship it. ``./local-task-gate`` already
+        # runs the same check before any tag push, so this CI step is a
+        # belt-and-braces redundancy. Skip cleanly when the file is
+        # absent (always the case on the public mirror).
         run: |
-          python tools/release_claims_lint.py --strict
+          if [ -f tools/release_claims_lint.py ]; then
+            python tools/release_claims_lint.py --strict
+          else
+            echo "release_claims_lint.py not present (internal-only); enforced pre-tag by ./local-task-gate."
+          fi
 
   build-and-publish:
     name: Build and publish to PyPI
