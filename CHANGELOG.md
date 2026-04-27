@@ -27,6 +27,20 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.11.4 - 2026-04-27
+
+### Fixed
+
+- `wd workspace bootstrap` no longer misses nested-git children when the children dir matches a root `.gitignore` pattern. The FS scanner previously folded root gitignore into its exclusion set (originally for the bd-5038-rkt publish-overlay case); polyrepos whose operator added `services/` (or any common children-dir name) to root `.gitignore` were silently masked, sending bootstrap to single-service mode and leaving `wd workspace status` permanently broken until manual recovery. A nested `.git` directory is now treated as a workspace child by definition — gitignore tracks VCS state, not workspace topology. Callers that need project-specific exclusions must now pass them explicitly via `exclude_paths`.
+  <!-- verify: file=weld/workspace.py grep=Root ``.gitignore`` is intentionally NOT consulted -->
+- `wd init --force` at a polyrepo root now materialises `workspace-state.json` and runs the federated graph build (delegates to `bootstrap_workspace` after the per-child init step). Previously `wd init` only wrote yaml + per-child `discover.yaml`, leaving `wd workspace status` to fail until the operator separately ran `wd workspace bootstrap`.
+  <!-- verify: file=weld/init_workspace.py grep=def maybe_bootstrap_polyrepo -->
+
+### Release Safety
+
+- New `tools/release_polyrepo_smoke.sh`: hermetic, no-network release-gate that builds the wheel locally, installs it in a fresh venv, constructs a synthetic polyrepo (root + 3 children), and runs the full `wd workspace` lifecycle under TWO variants (children gitignored / not gitignored) and FOUR scenarios each (fresh init, post-reset+restored-yaml, full wipe rediscover, `wd init --force`). 8 scenario runs total. Wired into `tools/publish.sh` as `check_polyrepo_smoke` so any regression in the polyrepo bootstrap path fails locally before any tag push. The user's bd-9slg/bd-gpt4 reports were both reproducible by this gate before the fix; both are green after.
+  <!-- verify: file=tools/release_polyrepo_smoke.sh grep=8 scenario runs total -->
+
 ## v0.11.3 - 2026-04-27
 
 ### Fixed

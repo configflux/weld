@@ -244,6 +244,25 @@ def _is_under(child: Path, parent: Path) -> bool:
     return True
 
 
+def maybe_bootstrap_polyrepo(
+    root: Path | str,
+    *,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+) -> None:
+    """Run full bootstrap_workspace if a workspaces.yaml exists at ``root``.
+
+    Called from ``wd init`` so a polyrepo root materialises the per-child
+    init + ledger + federated graph in one shot, instead of leaving the
+    operator to also run ``wd workspace bootstrap``. Imports lazily because
+    ``weld._workspace_bootstrap`` already imports ``weld.init`` (line 35),
+    so a top-level import here would cycle. (bd-gpt4)
+    """
+    if not (Path(root) / ".weld" / "workspaces.yaml").exists():
+        return
+    from weld._workspace_bootstrap import bootstrap_workspace
+    bootstrap_workspace(root, max_depth=max_depth)
+
+
 def init_polyrepo_children(
     root: Path | str,
     *,

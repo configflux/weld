@@ -300,6 +300,5 @@ class BootstrapAfterResetTest(unittest.TestCase):
                     f"wd init must scaffold discover.yaml inside {rel}",
                 )
 
-
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

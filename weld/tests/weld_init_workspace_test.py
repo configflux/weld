@@ -216,15 +216,23 @@ class GitignoreSkipTest(unittest.TestCase):
     publish overlay) must NOT register that clone as a federation child.
     """
 
-    def test_gitignored_nested_repo_is_skipped(self) -> None:
+    # bd-gpt4: the FS scan no longer folds root .gitignore into its
+    # exclusion set. A nested .git directory is a workspace child by
+    # definition. Polyrepos whose children dir matches a gitignore
+    # pattern were silently masked under the old rule. The publish-overlay
+    # case (bd-5038-rkt, originally motivating the fold) must pass an
+    # explicit ``exclude_paths`` to opt out of registration.
+
+    def test_gitignored_nested_repo_is_registered(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / ".gitignore").write_text("/public/\n", encoding="utf-8")
             _make_git_repo(root, "public")
             children = discover_children(root)
-        self.assertEqual(children, [])
+        names = sorted(c.name for c in children)
+        self.assertEqual(names, ["public"])
 
-    def test_gitignored_deeper_nested_repo_is_skipped(self) -> None:
+    def test_gitignored_deeper_nested_repo_is_registered(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / ".gitignore").write_text(
@@ -232,40 +240,30 @@ class GitignoreSkipTest(unittest.TestCase):
             )
             _make_git_repo(root, "tools/publish_overlays/pypi")
             children = discover_children(root)
-        self.assertEqual(children, [])
+        names = sorted(c.name for c in children)
+        self.assertEqual(names, ["tools-publish_overlays-pypi"])
 
-    def test_non_gitignored_sibling_still_registered(self) -> None:
+    def test_explicit_exclude_paths_still_works_for_publish_overlay(self) -> None:
+        """The publish-overlay opt-out path (bd-5038-rkt)."""
+        from weld.workspace import scan_nested_repos
+
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            (root / ".gitignore").write_text("/public/\n", encoding="utf-8")
-            _make_git_repo(root, "public")  # gitignored -> skipped
-            _make_git_repo(root, "services/api")  # not ignored -> kept
-            children = discover_children(root)
+            _make_git_repo(root, "public")  # excluded explicitly
+            _make_git_repo(root, "services/api")  # kept
+            children = scan_nested_repos(root, exclude_paths=["public"])
         names = sorted(c.name for c in children)
         self.assertEqual(names, ["services-api"])
 
     def test_absent_gitignore_falls_back_to_normal_scan(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            # No .gitignore at the root -- the scanner must not invent a skip.
             _make_git_repo(root, "public")
             children = discover_children(root)
         names = sorted(c.name for c in children)
         self.assertEqual(names, ["public"])
 
-    def test_negation_entries_do_not_skip(self) -> None:
-        # Fail-safe: a negated pattern must not cause the scanner to skip.
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            (root / ".gitignore").write_text(
-                "!/public/\n", encoding="utf-8",
-            )
-            _make_git_repo(root, "public")
-            children = discover_children(root)
-        names = sorted(c.name for c in children)
-        self.assertEqual(names, ["public"])
-
-    def test_wd_init_skips_gitignored_nested_repos(self) -> None:
+    def test_wd_init_registers_gitignored_nested_repos(self) -> None:
         from weld.init import main as init_main
 
         with tempfile.TemporaryDirectory() as td:
@@ -274,9 +272,9 @@ class GitignoreSkipTest(unittest.TestCase):
             _make_git_repo(root, "public")
             init_main([str(root), "--force"])
             workspaces = root / ".weld" / "workspaces.yaml"
-            self.assertFalse(
+            self.assertTrue(
                 workspaces.exists(),
-                "wd init must NOT register a gitignored nested repo as a child",
+                "wd init must register the nested repo even when gitignored",
             )
 
 

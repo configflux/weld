@@ -10,8 +10,8 @@ from pathlib import Path
 from weld._gitignore_writer import write_weld_gitignore
 from weld._init_classify import classify_files
 from weld._init_ros2 import ros2_source_entries
-from weld.init_workspace import init_polyrepo_children as _init_polyrepo_children
 from weld.init_workspace import init_workspace as _init_workspace
+from weld.init_workspace import maybe_bootstrap_polyrepo as _maybe_bootstrap_polyrepo
 from weld.init_detect import (
     detect_all_from_classified,
     detect_frameworks,
@@ -398,7 +398,7 @@ def main(argv: list[str] | None = None) -> None:
     workspaces_out = root / ".weld" / "workspaces.yaml"
     if _init_workspace(root, workspaces_out, force=args.force, max_depth=args.max_depth):
         print(f"Wrote {workspaces_out}", file=sys.stderr)
-    _init_polyrepo_children(root, force=args.force, max_depth=args.max_depth)
+    _maybe_bootstrap_polyrepo(root, max_depth=args.max_depth)
     write_weld_gitignore(output.parent,
         ignore_all=args.ignore_all, track_graphs=args.track_graphs)
     if not success:
