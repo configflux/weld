@@ -23,6 +23,18 @@ Exit codes:
 * 0 -- handshake succeeded; ``tools/list`` matched the embedded names.
 * 1 -- any handshake or assertion failure (full diagnostic on stderr).
 
+Implementation note (race-freedom): the handshake is fully
+synchronous on both sides. The wrapper sends ``initialize``, waits
+for the ``id=1`` response on stdout (with a per-step timeout), and
+only then sends ``notifications/initialized`` followed immediately
+by ``tools/list``. It then waits for the ``id=2`` response on
+stdout. No reliance on stdin EOF semantics, no inter-message
+``time.sleep`` heuristics. This shape was chosen after
+v0.10.0/v0.11.0 publish failures where the ``subprocess.run(...,
+input=...)`` and ``Popen + sleep + communicate()`` shapes both
+raced the mcp server's anyio task group on github.com runners
+(initialize response observed; tools/list response missing).
+
 The script is intentionally self-contained: stdlib only, plus the
 ``mcp`` package brought in by the ``[mcp]`` extra at install time.
 The expected name list is embedded sorted at the top of the file so
@@ -37,7 +49,7 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
+import threading
 
 # The 13 tool names exposed by weld's MCP server registry. Embedded
 # sorted so a reader can audit the assertion locally without grepping
@@ -60,65 +72,111 @@ _EXPECTED_TOOL_NAMES = [
     "weld_trace",
 ]
 
+# Per-step timeout (seconds). The handshake should complete in well
+# under a second on the happy path; a generous cap here keeps the
+# publish pipeline snappy while still tolerating cold-import latency
+# on slow CI runners.
+_RESPONSE_TIMEOUT_S = 30.0
 
-def _build_messages() -> list[dict]:
-    """Return the JSON-RPC messages used by the handshake, in send order."""
-    return [
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "release-handshake", "version": "0"},
-            },
+
+def _initialize_msg() -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "release-handshake", "version": "0"},
         },
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-    ]
+    }
 
 
-def _find_tools_list_response(stdout: str) -> dict | None:
-    """Return the JSON-RPC response with ``id == 2`` (tools/list), if any."""
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
+def _initialized_notification() -> dict:
+    return {"jsonrpc": "2.0", "method": "notifications/initialized"}
+
+
+def _tools_list_msg() -> dict:
+    return {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+
+
+def _send(proc: subprocess.Popen, msg: dict) -> None:
+    """Write one JSON-RPC line + flush. Raises if the pipe is closed."""
+    assert proc.stdin is not None
+    proc.stdin.write(json.dumps(msg) + "\n")
+    proc.stdin.flush()
+
+
+def _read_response_with_id(
+    proc: subprocess.Popen,
+    expected_id: int,
+    captured_lines: list[str],
+    timeout_s: float = _RESPONSE_TIMEOUT_S,
+) -> dict:
+    """Block until a stdout line parses as JSON-RPC with ``id=expected_id``.
+
+    Lines that don't match (notifications, log lines, etc.) are kept in
+    ``captured_lines`` for a diagnostic dump on failure. Raises on
+    timeout, EOF before the response, or a server crash.
+    """
+    assert proc.stdout is not None
+    result: dict[str, dict] = {}
+    error: dict[str, BaseException] = {}
+
+    def reader() -> None:
         try:
-            msg = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if msg.get("id") == 2:
-            return msg
-    return None
+            for raw in proc.stdout:  # type: ignore[union-attr]
+                line = raw.rstrip("\n")
+                captured_lines.append(line)
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    msg = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if msg.get("id") == expected_id:
+                    result["msg"] = msg
+                    return
+        except BaseException as exc:  # noqa: BLE001 -- diagnostic surface
+            error["exc"] = exc
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    t.join(timeout=timeout_s)
+    if t.is_alive():
+        raise TimeoutError(
+            f"no response with id={expected_id} within {timeout_s}s"
+        )
+    if "exc" in error:
+        raise error["exc"]
+    if "msg" not in result:
+        raise RuntimeError(
+            f"server stdout closed before id={expected_id} response"
+        )
+    return result["msg"]
 
 
-# Inter-message pause that gives the mcp stdio server time to drain each
-# JSON-RPC line through its anyio reader/writer task pair before we feed
-# it the next one (or signal EOF). 200ms is comfortably above the
-# observed processing latency on every supported interpreter
-# (3.10-3.13) while still keeping the publish-pipeline handshake under
-# a second on the happy path. Without this pause the wrapper is racy:
-# `subprocess.run(..., input=payload)` writes all three messages and
-# closes stdin in one shot, and the server's task group can tear down
-# on EOF before the third line is delivered to the request loop -- the
-# observed CI symptom on Python 3.11 and reproducible locally on 3.10
-# and 3.12 with mcp 1.27.0.
-_MESSAGE_PAUSE_S = 0.2
+def _format_diagnostic(stdout_lines: list[str], proc: subprocess.Popen) -> str:
+    """Render captured output for a failure message."""
+    stderr = ""
+    if proc.stderr is not None:
+        try:
+            stderr = proc.stderr.read() or ""
+        except Exception:  # noqa: BLE001
+            stderr = "<stderr drain failed>"
+    return (
+        "--- stdout ---\n"
+        + "\n".join(stdout_lines)
+        + "\n--- stderr ---\n"
+        + stderr
+    )
 
 
 def run_handshake(work_dir: str) -> int:
     """Run the handshake against ``python -m weld.mcp_server``.
 
     Returns the exit code the CLI should propagate.
-
-    Implementation note: messages are sent through ``Popen.stdin`` one
-    at a time with a small flush+pause between each so the mcp stdio
-    server has a chance to consume every line before we close stdin.
-    The previous ``subprocess.run(..., input=...)`` form wrote the full
-    payload and EOF'd in a single syscall, which raced the server's
-    anyio task group and left ``tools/list`` (id=2) unanswered.
     """
     expected = sorted(_EXPECTED_TOOL_NAMES)
 
@@ -130,53 +188,64 @@ def run_handshake(work_dir: str) -> int:
         text=True,
         bufsize=1,
     )
-    assert proc.stdin is not None  # guaranteed by stdin=PIPE
+    captured: list[str] = []
     try:
-        for msg in _build_messages():
-            try:
-                proc.stdin.write(json.dumps(msg) + "\n")
-                proc.stdin.flush()
-            except (BrokenPipeError, OSError):
-                # Server exited (e.g., crashed) before we finished
-                # sending. Stop writing and let the diagnostic block
-                # below report the non-zero return code via
-                # ``communicate()``.
-                break
-            time.sleep(_MESSAGE_PAUSE_S)
-        # ``communicate()`` will close stdin and drain stdout/stderr.
+        # Phase 1: send initialize, wait for id=1 response.
         try:
-            stdout, stderr = proc.communicate(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, stderr = proc.communicate()
+            _send(proc, _initialize_msg())
+        except (BrokenPipeError, OSError) as exc:
             sys.stderr.write(
-                "server did not exit within 30s of EOF\n"
-                f"--- stderr ---\n{stderr}\n"
-                f"--- stdout ---\n{stdout}\n"
+                f"server pipe closed before initialize was sent: {exc}\n"
+                + _format_diagnostic(captured, proc)
+                + "\n"
+            )
+            return 1
+        try:
+            _read_response_with_id(proc, expected_id=1, captured_lines=captured)
+        except (TimeoutError, RuntimeError) as exc:
+            sys.stderr.write(
+                f"initialize handshake failed: {exc}\n"
+                + _format_diagnostic(captured, proc)
+                + "\n"
+            )
+            return 1
+
+        # Phase 2: notifications/initialized + tools/list, wait for id=2.
+        try:
+            _send(proc, _initialized_notification())
+            _send(proc, _tools_list_msg())
+        except (BrokenPipeError, OSError) as exc:
+            sys.stderr.write(
+                f"server pipe closed before tools/list was sent: {exc}\n"
+                + _format_diagnostic(captured, proc)
+                + "\n"
+            )
+            return 1
+        try:
+            resp = _read_response_with_id(
+                proc, expected_id=2, captured_lines=captured
+            )
+        except (TimeoutError, RuntimeError) as exc:
+            sys.stderr.write(
+                f"tools/list handshake failed: {exc}\n"
+                + _format_diagnostic(captured, proc)
+                + "\n"
             )
             return 1
     finally:
-        # Defensive: kill if still alive (shouldn't happen after
-        # communicate, but keeps a stray child from outliving us).
-        if proc.poll() is None:
+        # Close stdin to signal end-of-input, then drain. The server
+        # will tear down on EOF; communicate() collects whatever is
+        # left and reaps the child.
+        try:
+            if proc.stdin is not None and not proc.stdin.closed:
+                proc.stdin.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
             proc.kill()
-
-    if proc.returncode not in (0, None):
-        sys.stderr.write(
-            f"server exited rc={proc.returncode}\n"
-            f"--- stderr ---\n{stderr}\n"
-            f"--- stdout ---\n{stdout}\n"
-        )
-        return 1
-
-    resp = _find_tools_list_response(stdout)
-    if resp is None:
-        sys.stderr.write(
-            "no tools/list response in stdout\n"
-            f"--- stdout ---\n{stdout}\n"
-            f"--- stderr ---\n{stderr}\n"
-        )
-        return 1
+            proc.wait()
 
     names = sorted(t["name"] for t in resp.get("result", {}).get("tools", []))
     if names != expected:

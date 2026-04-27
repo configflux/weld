@@ -27,6 +27,16 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.11.2 - 2026-04-27
+
+### Release Safety
+
+- v0.11.0 and v0.11.1 were tagged but the wheel never reached PyPI: the public CI's `MCP extra handshake on built wheel` step returned only the `initialize` response (id=1) and not the `tools/list` response (id=2). The local task gate, smoke tests, and the new local CI replica all passed against the same wheel — a github.com-runner-specific stdio race in the wrapper's `Popen + sleep + communicate()` shape. Wheel content unchanged.
+  <!-- verify: file=tools/publish_overlays/release_mcp_handshake.py grep=_read_response_with_id -->
+- The handshake wrapper is now fully synchronous on both sides: send `initialize`, **block on the id=1 response from stdout** with a per-step timeout, then send `notifications/initialized` + `tools/list`, then **block on the id=2 response**. No reliance on stdin EOF or sleep heuristics. The previous race is structurally impossible.
+- New `tools/local_publish_dryrun.sh`: builds the wheel locally, installs into a fresh venv with `[mcp]`, runs the OVERLAY handshake — the exact chain the public CI runs. Wired into `tools/publish.sh` as a precondition so any future overlay-vs-CI drift fails locally before any tag is pushed.
+  <!-- verify: file=tools/local_publish_dryrun.sh grep=Local replica of the public -->
+
 ## v0.11.1 - 2026-04-27
 
 ### Release Safety
