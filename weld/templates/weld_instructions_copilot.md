@@ -14,17 +14,21 @@ external `wd` CLI. Use it to learn the codebase before grepping.
 
 ## Before you search code
 
+<!-- weld-managed:start name=before-you-search -->
 1. Check that the tool is installed -- `wd --version`. If the command is
    missing, tell the user; do not fall back to installing it silently.
 2. Prefer `wd brief "<topic>"` over `grep` / `rg` as your first move. It
    returns a ranked, classified context packet tuned for agents.
 3. Use `wd query "<term>"` when `brief` is too narrow, and
    `wd context "<node-id>"` to drill into a specific node.
+<!-- weld-managed:end name=before-you-search -->
 
+<!-- weld-managed:start name=trust-boundary -->
 Run `wd discover` automatically only on repositories you trust. Project-local
 strategies under `.weld/strategies/` are Python modules loaded at discovery
 time, and `strategy: external_json` executes configured commands from
 `discover.yaml`.
+<!-- weld-managed:end name=trust-boundary -->
 
 ## Federation awareness
 

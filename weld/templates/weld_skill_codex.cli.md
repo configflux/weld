@@ -16,6 +16,7 @@ Use it to answer "where does this live?", "what depends on what?", and
 
 ## Retrieval commands
 
+<!-- weld-managed:start name=retrieval-commands -->
 Start with `wd brief` — it returns a ranked, classified context packet
 designed for agent consumption.
 
@@ -26,6 +27,7 @@ designed for agent consumption.
 | `wd context <node-id>` | Deep dive — node details plus immediate neighborhood |
 | `wd path <from> <to>` | Shortest path between two nodes (dependency/data-flow tracing) |
 | `wd find <keyword>` | File-level keyword search using the inverted index |
+<!-- weld-managed:end name=retrieval-commands -->
 
 ### Usage pattern
 
@@ -45,6 +47,7 @@ wd find "session"
 
 ## Maintenance commands
 
+<!-- weld-managed:start name=maintenance-commands -->
 | Command | Purpose |
 |---------|---------|
 | `wd prime` | Check setup status and get next-step guidance |
@@ -53,13 +56,16 @@ wd find "session"
 | `wd build-index` | Rebuild the keyword file index |
 | `wd init` | Bootstrap `.weld/discover.yaml` for a new project |
 | `wd graph stats` | Graph summary (node/edge counts, description coverage) |
+<!-- weld-managed:end name=maintenance-commands -->
 
 ## Trust boundary
 
+<!-- weld-managed:start name=trust-boundary -->
 Run `wd discover` automatically only on repositories you trust. Project-local
 strategies under `.weld/strategies/` are Python modules loaded at discovery
 time, and `strategy: external_json` executes configured commands from
 `discover.yaml`.
+<!-- weld-managed:end name=trust-boundary -->
 
 ## When to refresh
 

@@ -37,10 +37,10 @@ template matrix.
 from __future__ import annotations
 
 import argparse
-import difflib
 import sys
 from pathlib import Path
 
+from weld.bootstrap_writer import process_template_dest
 from weld.workspace_state import find_workspaces_yaml
 
 # Federation guidance appended in-code (rather than a 4x template matrix) to
@@ -52,9 +52,11 @@ from weld.workspace_state import find_workspaces_yaml
 _FEDERATION_PARAGRAPH = """
 ## Federation mode
 
+<!-- weld-managed:start name=federation -->
 This workspace is a polyrepo (`.weld/workspaces.yaml` present). Root
 discovery is federated. Use `wd workspace status` to list child repos, then
 re-run `wd brief` or `wd query` inside the child you want to inspect.
+<!-- weld-managed:end name=federation -->
 """
 
 # Templates whose content depends on repo topology. The bootstrap appends
@@ -153,54 +155,25 @@ def _process_template(
     diff: bool,
     cwd: Path | None,
     append: str | None,
+    framework: str,
+    include_unmanaged: bool = False,
 ) -> bool:
     """Render template, then write/diff/compare against *dest*.
 
-    Returns True when a diff was detected (i.e. *dest* either does not
-    exist, or exists with different content) during a ``diff`` pass. In
-    write mode (``diff=False``) the return value is unused.
+    Region-aware (ADR 0033): when the template carries managed-region
+    markers, comparison is scoped inside the markers and operator-curated
+    content outside the markers is left untouched. Whole-file behaviour is
+    preserved for templates without markers.
+
+    Returns True when a diff/refusal was signalled, False on no-op or write.
     """
     rendered = _render_template(template_name, append=append)
     display = _display_path(dest, cwd=cwd)
-
-    if diff:
-        existing = (
-            dest.read_text(encoding="utf-8") if dest.is_file() else ""
-        )
-        if existing == rendered:
-            return False
-        diff_text = "".join(
-            difflib.unified_diff(
-                existing.splitlines(keepends=True),
-                rendered.splitlines(keepends=True),
-                fromfile=f"{display} (on disk)",
-                tofile=f"{display} (template)",
-            )
-        )
-        if diff_text:
-            print(diff_text, end="" if diff_text.endswith("\n") else "\n")
-        else:
-            # Fallback for edge cases difflib emits empty output on
-            # (e.g. empty vs empty, which we already returned False for).
-            print(f"{display} differs from the current template.")
-        return True
-
-    if dest.exists() and not force:
-        existing = dest.read_text(encoding="utf-8")
-        if existing == rendered:
-            print(f"{display} is up-to-date, skipping.")
-        else:
-            print(
-                f"{display} differs from the current template. "
-                f"Run `wd bootstrap <framework> --diff` to inspect or "
-                f"`--force` to update."
-            )
-        return False
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(rendered, encoding="utf-8")
-    print(f"Wrote {display}")
-    return False
+    return process_template_dest(
+        rendered, dest, display,
+        force=force, diff=diff,
+        framework=framework, include_unmanaged=include_unmanaged,
+    )
 
 
 def _display_path(path: Path, *, cwd: Path | None = None) -> str:
@@ -220,6 +193,7 @@ def bootstrap(
     no_enrich: bool = False,
     cli_only: bool = False,
     diff: bool = False,
+    include_unmanaged: bool = False,
 ) -> int:
     """Write (or diff) onboarding assets for *framework* into *root*.
 
@@ -281,6 +255,7 @@ def bootstrap(
         if _process_template(
             template_name, dest,
             force=force, diff=diff, cwd=root, append=append,
+            framework=framework, include_unmanaged=include_unmanaged,
         ):
             diff_count += 1
 
@@ -370,8 +345,25 @@ def main(argv: list[str] | None = None) -> None:
             "--cli-only", action="store_true", dest="cli_only",
             help="Shortcut for --no-mcp --no-enrich",
         )
+        fw_parser.add_argument(
+            "--include-unmanaged",
+            action="store_true",
+            dest="include_unmanaged",
+            help=(
+                "With --diff, fall back to the whole-file unified diff "
+                "(default --diff is region-scoped per ADR 0033). "
+                "Requires --diff; rejected otherwise."
+            ),
+        )
 
     args = parser.parse_args(argv)
+
+    # --include-unmanaged only affects the diff path: it toggles whole-file vs
+    # region-scoped comparison (ADR 0033). In write mode the flag is a silent
+    # no-op, which is confusing UX -- reject the combination at parse time so
+    # operators get a clear, argparse-style error (exit code 2 to stderr).
+    if args.include_unmanaged and not args.diff:
+        parser.error("--include-unmanaged requires --diff")
 
     try:
         diff_count = bootstrap(
@@ -382,6 +374,7 @@ def main(argv: list[str] | None = None) -> None:
             no_enrich=args.no_enrich,
             cli_only=args.cli_only,
             diff=args.diff,
+            include_unmanaged=args.include_unmanaged,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"[weld] error: {exc}", file=sys.stderr)

@@ -156,7 +156,7 @@ py_test(
 py_test(name = "weld_workspace_state_test", srcs = ["weld_workspace_state_test.py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"])
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"]) for _n in ("weld_federation_test", "weld_federation_cache_test", "weld_context_fallback_test")]
 py_test(name = "weld_init_workspace_test", srcs = ["weld_init_workspace_test.py"], deps = ["//weld:runtime", "//weld:yaml"], local = True, tags = ["no-sandbox"])
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"]) for _n in ("weld_root_discovery_test", "discover_recurse_test", "weld_workspace_bootstrap_test", "weld_workspace_bootstrap_gitignore_test", "weld_discover_output_test", "weld_federation_worktree_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], env = {"PYTHONHASHSEED": "0"}, local = True, tags = ["no-sandbox"]) for _n in ("weld_root_discovery_test", "discover_recurse_test", "weld_workspace_bootstrap_test", "weld_workspace_bootstrap_gitignore_test", "weld_discover_output_test", "weld_federation_worktree_test", "weld_federation_freshness_test")]
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld/strategies"], local = True, tags = ["no-sandbox"]) for _n in ("weld_discover_safe_mode_test", "weld_discover_safe_warn_test", "weld_discover_safe_mode_integration_test")]
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"]) for _n in ("weld_root_write_safety_test", "weld_atomic_write_bytes_test")]
 py_test(name = "weld_cross_repo_base_test", srcs = ["weld_cross_repo_base_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
@@ -406,7 +406,7 @@ py_test(
     tags = ["no-sandbox"],
 )
 
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_cli_docs_surface_test", "weld_cli_graph_namespace_test", "weld_readme_docs_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_cli_docs_surface_test", "weld_cli_graph_namespace_test", "weld_platform_support_references_test", "weld_readme_docs_test")]
 
 py_test(
     name = "weld_docs_validation_test",
@@ -440,7 +440,7 @@ py_test(
     deps = ["//weld:contract", "//weld:runtime"],
     local = True,
     tags = ["no-sandbox"],
-) for _name in ("weld_brief_test", "weld_brief_v2_test", "weld_trace_test", "weld_warnings_test")]
+) for _name in ("weld_brief_test", "weld_brief_v2_test", "weld_trace_test", "weld_warnings_test", "weld_brief_or_fallback_test")]
 
 py_test(name = "weld_ranking_test", srcs = ["weld_ranking_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_enrich_test", "weld_enrich_safe_mode_test")]
@@ -702,7 +702,7 @@ py_test(
 )
 
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_prime_test", "weld_prime_active_agent_test", "weld_prime_freshness_test", "weld_prime_root_discover_freshness_test", "weld_doctor_test", "weld_doctor_sections_test", "weld_doctor_exit_code_test")]
-[py_test(name = _n, srcs = [_n + ".py"], data = ["//weld/templates"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_bootstrap_test", "weld_bootstrap_optout_test", "weld_bootstrap_federation_test", "weld_bootstrap_diff_test")]
+[py_test(name = _n, srcs = [_n + ".py"], data = ["//weld/templates"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_bootstrap_test", "weld_bootstrap_optout_test", "weld_bootstrap_federation_test", "weld_bootstrap_diff_test", "weld_bootstrap_copilot_install_wording_test", "weld_bootstrap_managed_test", "weld_bootstrap_managed_migration_test")]
 
 py_test(
     name = "weld_rust_extraction_test",

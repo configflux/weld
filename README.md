@@ -56,7 +56,7 @@ were not designed to provide.
 |---|---|---|
 | grep / ripgrep | Fast literal and regex search over file contents. | Typed nodes and edges -- a symbol, route, doc, or config is an addressable entity with neighbours, not a line of text. |
 | ctags / LSP | Symbol navigation and go-to-definition inside one language. | A cross-language graph that also covers docs, CI, configs, service contracts, and repo boundaries -- surfaces an IDE was never meant to index. |
-| Sourcegraph | Hosted code search and references across large fleets of repos. | A local, repo-local graph you commit with your code. No server, no indexing fleet; agents query it offline through CLI or MCP. |
+| Sourcegraph | Hosted code search and references across large fleets of repos. | A local, repo-local graph that lives next to your code. By default Weld tracks only config and lets you opt in (`wd init --track-graphs`) to commit the generated graph for warm-CI / warm-MCP setups. No server, no indexing fleet; agents query it offline through CLI or MCP. |
 | vector DB / RAG | Embedding-based semantic recall over chunks of text. | Deterministic structure. Query results are exact nodes and edges with provenance, not top-k fuzzy matches, so agents can follow relationships instead of guessing. |
 | Copilot / Claude Code / OpenCode | In-editor and agentic code generation and chat. | Shared repo context those agents can read through MCP -- the same graph across sessions and tools, instead of each agent rediscovering the repo on every run. |
 
@@ -629,7 +629,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.10.1`.
+terminal snippets captured against `wd 0.11.0`.
 
 ## Install
 
@@ -720,6 +720,29 @@ python -m weld --help
 Runtime installs support Python 3.10 through 3.13. Contributor builds and
 Bazel tests use the Python 3.12 toolchain pinned in `MODULE.bazel`, so the
 development toolchain can be narrower than the runtime support window.
+
+## Release policy
+
+`main` is the source of truth for the next release: the version recorded
+in [`VERSION`](VERSION) and `weld/pyproject.toml` matches the latest
+`publish/vX.Y.Z` git tag, except during a deliberately-staged window
+where `main` is bumped ahead of the latest tag.
+
+The drift shape that produced the v0.9.0 and v0.10.1 incidents -- `main`
+silently regressing below the latest published wheel -- is now caught
+post-release by `tools/check_main_release_consistency.py` (ADR 0015
+check 11; runs as part of `/release-audit`). To document a deliberate
+"`main` is ahead of the latest tag" window, add a comment marker to
+this README:
+
+```html
+<!-- release-lag: 0.11.0 staged for 2026-05-12 launch window -->
+```
+
+The check then turns the lag into a `WARN` and surfaces the reason
+instead of failing. Remove the marker when the matching tag is cut.
+See [`docs/release.md`](docs/release.md) for the full release
+checklist (the post-release consistency check is step 9).
 
 ## Documentation
 

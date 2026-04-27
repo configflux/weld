@@ -4,6 +4,7 @@
 # `wd bootstrap codex` writes this file so Codex can use both the local
 # `weld` MCP server and Context7 developer docs in the same project.
 
+# weld-managed:start name=mcp-servers
 [mcp_servers.weld]
 command = "python"
 args = ["-m", "weld.mcp_server"]
@@ -11,3 +12,4 @@ args = ["-m", "weld.mcp_server"]
 [mcp_servers.context7]
 command = "npx"
 args = ["-y", "@upstash/context7-mcp"]
+# weld-managed:end name=mcp-servers

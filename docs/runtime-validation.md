@@ -43,13 +43,22 @@ scenario:
   - <step 1>
   - <step 2>
   - ...
-result: pass | partial | fail
+result: pass | partial | fail | pending
 notes: "<observations, follow-ups, screenshots reference>"
 ```
 
 Required fields: `platform`, `client_version`, `date_tested`, `tested_by`,
 `os`, `scenario`, `result`. `notes` is optional but strongly recommended for
 any partial or fail result.
+
+`result: pending` marks a stub block that holds a row open against an
+upcoming live-client test. Stubs must be clearly tagged (record heading
+ends with "(stub, pending live test)") and must include an HTML comment
+above the YAML block naming the human action and the steps to fill in.
+The launch-copy guard (`tools/runtime_claims_lint.py` -> launch rule) will
+allow `docs/launch.md` to reference a row backed by a `pending` stub --
+swap the stub for a real `pass`/`partial`/`fail` record once the live
+test runs.
 
 A scenario should cover, at minimum: install Weld, configure the integration
 (MCP, skill, AGENTS.md, etc.), invoke the asset, and observe expected output
@@ -106,20 +115,26 @@ Three live-client runtime-validation records must land here before the next
 broad-launch communication ships. Each record is captured by exercising a
 real client install end-to-end:
 
-- [ ] **Codex `AGENTS.md` + skill**: Codex CLI installed, `wd bootstrap codex`
+- [~] **Codex `AGENTS.md` + skill**: Codex CLI installed, `wd bootstrap codex`
   applied, `.codex/config.toml` and `.codex/skills/weld/SKILL.md` consumed at
   runtime, the embedded Weld skill invoked, and the resulting tool call
-  observed in Codex.
+  observed in Codex. *Bootstrap-and-asset evidence recorded
+  2026-04-26 (`result: partial`); live-client run still required.*
 - [ ] **Claude Code MCP + skill/subagent**: Claude Code installed,
   `.mcp.json` and `wd bootstrap claude` applied, the Weld MCP server reachable
   via stdio, the generated `.claude/commands/weld.md` invoked, and the
-  resulting MCP tool call observed in Claude Code.
+  resulting MCP tool call observed in Claude Code. *Stub recorded
+  (`result: pending`); live tester action needed.*
 - [ ] **VS Code / Copilot custom instructions**: VS Code with GitHub Copilot
   installed, `wd bootstrap copilot` applied, `.github/copilot-instructions.md`
   and `.github/instructions/weld.instructions.md` consumed by Copilot at
-  runtime, and the documented behavior observed.
+  runtime, and the documented behavior observed. *Stub recorded
+  (`result: pending`); live tester action needed.*
 
-A row stays unchecked until its YAML record appears under **Records** below.
+A row stays unchecked until a YAML record with `result: pass` (or
+`partial`/`fail` with a remediation plan) appears under **Records** below.
+A `pending` stub keeps the row on this page so the launch-copy guard
+allows references, but does not satisfy the broad-launch requirement.
 
 ### Checklist before merging a record
 
@@ -129,39 +144,139 @@ A row stays unchecked until its YAML record appears under **Records** below.
   `tested_by`, `os`, `scenario`, `result`) are populated.
 - `client_version` matches what the client itself reports.
 - `scenario` covers install, configuration, invocation, and observation.
-- `result` is one of `pass`, `partial`, or `fail`.
+- `result` is one of `pass`, `partial`, `fail`, or `pending` (the last is
+  reserved for stubs awaiting a live-client test).
 - If `result` is `partial` or `fail`, `notes` explains why and points at any
-  follow-up issue.
+  follow-up issue. If `result` is `pending`, the block is preceded by an
+  HTML comment naming the human action and steps to fill in.
 - If the record changes the row's effective Public status (for example,
   Partial → Supported), the [platform support matrix](platform-support.md)
   is updated in the same change set.
 
 ## Records
 
-No live-client runtime validation records have been recorded yet. Add new
-entries below using the template at the top of this document. Place the
-newest record first.
+Newest record first. Stubs (`result: pending`) are explicitly tagged: they
+hold the row open against an upcoming live-client test and are surfaced by
+the launch-copy guard so the matrix can be referenced in launch material
+without claiming a pass that has not happened yet.
 
-<!-- Example template (uncomment and fill in when adding a real record):
-
-### YYYY-MM-DD — <platform key>
+### 2026-04-26 — Codex `AGENTS.md` + skill (automated, partial)
 
 ```yaml
-platform: <platform key from the matrix>
-client_version: "..."
-date_tested: "YYYY-MM-DD"
-tested_by: "..."
-os: "..."
+platform: Codex `AGENTS.md`
+client_version: "n/a (no Codex CLI installed; weld 0.10.1 only)"
+date_tested: "2026-04-26"
+tested_by: "automated (claude-code session)"
+os: "linux (devcontainer)"
 scenario:
-  - install weld
-  - configure the integration
-  - invoke the agent or skill
-  - verify Weld tool call or generated asset behavior
-result: pass
-notes: "..."
+  - run `wd bootstrap codex` in a fresh git scratch repo
+  - confirm `.codex/config.toml` registers the `weld` MCP server with
+    `command = "python"` and `args = ["-m", "weld.mcp_server"]`
+  - confirm `.codex/skills/weld/SKILL.md` is generated and parses as
+    Markdown with the expected `## What it is`, `## When to use it`, and
+    `## Retrieval commands` sections
+  - run `wd discover --output .weld/graph.json` and `wd query weld`
+    against the scratch repo to confirm the underlying Weld surface the
+    skill points at is functional
+result: partial
+notes: |
+  Observed locally from a non-interactive session:
+    - bootstrap succeeds and writes the documented file set
+    - the generated SKILL.md is well-formed and references the same `wd`
+      commands that are documented in the matrix's Codex `AGENTS.md` row
+    - `wd discover` + `wd query` work end-to-end against the scratch repo
+  Not observed (genuinely requires a live Codex client, which this
+  session cannot drive):
+    - Codex CLI loading `.codex/config.toml` and starting the `weld` MCP
+      server over stdio
+    - the embedded skill being invoked from a Codex turn and producing a
+      tool-call back into the local Weld MCP surface
+  Treat this as bootstrap-and-asset evidence rather than end-to-end
+  Codex-client evidence; the row stays `Partial` on the matrix until a
+  live Codex run is recorded.
 ```
 
+### TBD — Claude Code MCP + skill/subagent (stub, pending live test)
+
+<!--
+Tester: open Claude Code on a repo where this Weld repo is on PATH.
+Steps:
+  1. From the project root, run `wd bootstrap claude` and confirm
+     `.claude/commands/weld.md` is written.
+  2. Ensure `.mcp.json` registers the `weld` MCP server (see project
+     root `.mcp.json` for the canonical shape).
+  3. Start Claude Code and verify the `weld` MCP server attaches
+     (look for `weld_query`, `weld_find`, `weld_context` in the tool
+     list).
+  4. From a Claude Code turn, invoke `/weld <term>` (the bundled
+     command) and confirm a `weld_query` tool call returns matches
+     against the local graph.
+Fill in `client_version`, `date_tested`, `tested_by`, `os`, the
+observed `result` (pass / partial / fail), and detailed notes. Replace
+the `result: pending` line with the real outcome.
 -->
+
+```yaml
+platform: Claude Code skills/subagents
+client_version: "TBD (e.g. claude-code 0.x.y as reported by `claude --version`)"
+date_tested: "TBD"
+tested_by: "TBD (human handle)"
+os: "TBD"
+scenario:
+  - run `wd bootstrap claude` in a real repo
+  - confirm `.claude/commands/weld.md` and a working `.mcp.json` are
+    in place
+  - launch Claude Code and confirm the `weld` MCP server attaches
+  - invoke `/weld <term>` from a Claude Code turn
+  - observe a `weld_query` tool call returning matches from the local
+    graph
+result: pending
+notes: |
+  Stub. No live Claude Code client has been driven against this
+  repository yet. Replace `result` with `pass` / `partial` / `fail`
+  once the steps above have been executed against a real install.
+```
+
+### TBD — VS Code / Copilot custom instructions (stub, pending live test)
+
+<!--
+Tester: open VS Code with the GitHub Copilot extension installed and
+authenticated. Steps:
+  1. From the project root, run `wd bootstrap copilot` and confirm
+     `.github/copilot-instructions.md`,
+     `.github/instructions/weld.instructions.md`, and
+     `.github/skills/weld/SKILL.md` are written.
+  2. Reload the VS Code window so Copilot picks up the new
+     instructions files.
+  3. From the Copilot Chat panel, ask a project question that should
+     trigger the Weld instructions (for example: "Where is X
+     defined?"). Verify Copilot's reply references the language /
+     idioms from `.github/instructions/weld.instructions.md`.
+Fill in `client_version`, `date_tested`, `tested_by`, `os`, the
+observed `result`, and notes describing what Copilot did and did not
+respect. Replace the `result: pending` line with the real outcome.
+-->
+
+```yaml
+platform: GitHub Copilot repository instructions
+client_version: "TBD (e.g. Copilot extension version + VS Code version)"
+date_tested: "TBD"
+tested_by: "TBD (human handle)"
+os: "TBD"
+scenario:
+  - run `wd bootstrap copilot` in a real repo
+  - confirm `.github/copilot-instructions.md` and
+    `.github/instructions/weld.instructions.md` are written
+  - reload VS Code so Copilot picks up the new instructions
+  - ask Copilot a project question via Copilot Chat
+  - observe Copilot honoring the wording / scope from the instructions
+    files
+result: pending
+notes: |
+  Stub. No live VS Code + Copilot session has been driven against this
+  repository yet. Replace `result` with `pass` / `partial` / `fail`
+  once the steps above have been executed against a real install.
+```
 
 ## How to add a record
 

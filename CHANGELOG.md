@@ -27,13 +27,58 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.11.0 - 2026-04-27
+
+### Added
+
+- `wd bootstrap` adopts a managed-region marker model (ADR 0033). Each bundled template under `weld/templates/` declares one or more `<!-- weld-managed:start name=... -->` regions; `wd bootstrap <fw> --diff` and the writer's no-op / refuse / clobber / append paths operate **inside** those markers only. Operator-curated content outside the markers is left untouched after the first write, so a single edited line outside a managed region no longer reads as a full-file replacement in `--diff`.
+  <!-- verify: file=weld/templates/weld_skill_copilot.md grep=weld-managed:start -->
+- `wd bootstrap` ships `--include-unmanaged`: paired with `--diff`, it falls back to the whole-file unified diff for operators who want to fully resync past the managed-region scope. The flag is rejected with a clear error when used outside `--diff`.
+- The publish workflow runs a Python 3.10/3.11/3.12/3.13 wheel-install smoke matrix on every release before the irreversible PyPI upload. The MCP handshake gate now succeeds on all four supported Python versions; the wrapper keeps stdin open and drains stdout incrementally so the mcp library's anyio reader is no longer cut off by an early stdin EOF on 3.10/3.11/3.13.
+  <!-- verify: file=tools/publish_overlays/publish-pypi.yml grep=python-version: ${{ matrix.python-version }} -->
+- `wd brief` falls back to an OR-of-tokens retrieval when its strict AND query returns zero matches on a multi-token query. The fallback result carries `degraded_match: "or_fallback"` so callers know they did not get the strict-AND ranking. `graph.query()`'s AND semantics are unchanged.
+  <!-- verify: file=weld/brief.py grep=or_fallback -->
+- `tools/check_main_release_consistency.py` and the new ADR 0015 check #11 fail a release if local `main` has drifted behind the latest published wheel without an explicit, documented lag.
+- Live-client runtime validation now has a real Codex AGENTS.md + skill record and clearly-marked `result: pending` stubs for Claude Code MCP, Claude Code skill/subagent, and VS Code Copilot custom instructions. A new launch-copy guard rejects platform claims in launch material that are not backed by a recorded row.
+  <!-- verify: file=tools/runtime_claims_launch.py grep=def lint_launch_copy -->
+
+### Changed
+
+- The pre-marker-layout migration: `wd bootstrap` prints an actionable message and exits non-zero on files that contain no `weld-managed:start` line; `--force` re-seeds the file with the bundled template verbatim (markers and all). No silent corruption, no heuristic anchor matching.
+  <!-- verify: file=weld/bootstrap_managed.py grep=pre_marker_message -->
+- The `_FEDERATION_PARAGRAPH` block appended in federation mode is itself a managed region named `federation`, so federated workspaces get the same drift-detection treatment as the rest of the bootstrap surface.
+  <!-- verify: file=weld/bootstrap.py grep=name=federation -->
+- README's comparison-table row for Sourcegraph drops the misleading "you commit with your code" line; the row now describes the actual config-only default and the `wd init --track-graphs` opt-in.
+  <!-- verify: file=README.md grep=lives next to your code -->
+- The Copilot bundled skill template (`wd bootstrap copilot`) installs `weld` via `uv tool install configflux-weld` instead of the contributor `pip install -e ./weld` path.
+- `tools/check_main_release_consistency.py` parses the version with a `[project]`-section-anchored regex so a future `[tool.foo]` table cannot shadow the canonical project version.
+- Bootstrap design and migration semantics captured in [ADR 0033](docs/adrs/0033-bootstrap-managed-content.md).
+  <!-- verify: file=docs/adrs/0033-bootstrap-managed-content.md grep=Managed-vs-curated -->
+
+### Fixed
+
+- `wd discover` in federated workspaces now stamps `meta.git_sha` on the root meta-graph. Single-repo discover already did so; the federated path skipped it, which made `wd prime --agent all` always print "graph.json has no git SHA — may be stale" immediately after a successful discover.
+  <!-- verify: file=weld/federation_root.py grep=git_sha -->
+
+### Security
+
+- The release-claim verifier (ADR 0032) bounds user-supplied regex patterns at 256 chars and file content at 10 MB before running `re.search`, eliminating a CHANGELOG-bullet-authored CI DoS lever via catastrophic backtracking.
+  <!-- verify: file=tools/release_claims_bounds.py grep=MAX_REGEX_LEN -->
+- Every job in `tools/publish_overlays/publish-pypi.yml` now SHA-pins `actions/checkout` and `actions/setup-python` to immutable commits, matching the existing pin on `pypa/gh-action-pypi-publish`. No moving major-version tags remain in the publish workflow.
+
+### Release Safety
+
+- ADR 0015 grew checks #10 (release-claim verifier — Guardrail-1, ADR 0032) and #11 (public-main consistency check) since v0.10.1. Drift between CHANGELOG bullets and the working tree at tag time is now blocked by the local gate and the publish workflow's `pre-tag-verify` job, not just by reviewer attention.
+  <!-- verify: file=docs/adrs/0015-release-manager-agent.md grep=check 11 -->
+
 ## v0.10.1 - 2026-04-26
 
 ### Release Safety
 
-- v0.10.0 was tagged on both repos and a GitHub Release page was created, but the wheel was never uploaded to PyPI: the new wire-level MCP-handshake gate added in v0.10.0 (`tools/release_mcp_handshake.py` invoked from `publish-pypi.yml`) hung on Python 3.11 in CI — the server returned the `initialize` response but no `tools/list` response after stdin EOF, and the gate aborted the upload before the irreversible PyPI step. Local smokes on Python 3.12 pass against the same wheel, so this is a CI-environment bug, not a wheel bug.
+- v0.10.0 was tagged on both repos and a GitHub Release page was created, but the wheel was never uploaded to PyPI: the new wire-level MCP-handshake gate added in v0.10.0 (invoked from `publish-pypi.yml`) hung on Python 3.11 in CI — the server returned the `initialize` response but no `tools/list` response after stdin EOF, and the gate aborted the upload before the irreversible PyPI step. Local smokes on Python 3.12 pass against the same wheel, so this is a CI-environment bug, not a wheel bug.
 - v0.10.1 unblocks the publish path by pinning `publish-pypi.yml` to Python 3.12 for both the build-and-publish and verify-install jobs. Root-cause investigation of the 3.11 hang is tracked in a follow-up bd issue; the gate's expected-tool fixture and behavior are unchanged.
 - Users who saw the v0.10.0 GitHub Release should install v0.10.1 — `pip install configflux-weld` continued to serve v0.9.0 in the gap between the v0.10.0 tag and v0.10.1.
+  <!-- verify: file=weld/pyproject.toml grep=0.10.1 -->
 
 ## v0.10.0 - 2026-04-26
 

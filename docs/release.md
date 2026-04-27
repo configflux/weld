@@ -309,6 +309,42 @@ capture the error, open a release-blocker issue (`bd create ... --priority
 
 ---
 
+## 9. Post-release: confirm main has not silently drifted
+
+After the tag is pushed and the PyPI workflow is green, run the
+public-main consistency check (ADR 0015 check 11) so a future bump on
+`main` is not invisibly mismatched against the latest published wheel.
+
+```bash
+python3 tools/check_main_release_consistency.py
+# or, with PyPI cross-check (opt-in; network failures soft-warn):
+python3 tools/check_main_release_consistency.py --pypi
+```
+
+**Verify:** exit 0 with `[main-consistency] PASS: VERSION X.Y.Z matches
+latest tag vX.Y.Z.` Any other verdict means main and the latest tag have
+drifted apart and the next release will inherit the drift unless the
+operator decides between two outcomes:
+
+- **Tag the new version next.** Bump `VERSION`, `weld/pyproject.toml`,
+  and `MODULE.bazel` together (step 1) and run this check again before
+  step 5.
+- **Document an intentional lag.** If main is meant to sit ahead of the
+  latest tag (e.g., a staged release dated to a future Tuesday), add a
+  marker to `README.md`:
+
+  ```html
+  <!-- release-lag: 0.11.0 staged for 2026-05-12 launch window -->
+  ```
+
+  The check will then verdict `WARN` and surface the reason instead of
+  failing. Remove the marker on the day the matching tag is cut.
+
+`/release-audit` invokes the same script as check 11; running it here
+keeps the post-release state clean for the next pre-release audit.
+
+---
+
 ## Rollback and recovery
 
 - **Bad version file:** fix `VERSION` and both `pyproject.toml` files, re-run
@@ -328,7 +364,9 @@ capture the error, open a release-blocker issue (`bd create ... --priority
 ## See also
 
 - `docs/adrs/0015-release-manager-agent.md` -- read-only pre-release audit
-  (nine checks; GO/NO-GO report).
+  (eleven checks; GO/NO-GO report).
+- `tools/check_main_release_consistency.py` -- post-release consistency
+  guard (ADR 0015 check 11).
 - `docs/adrs/0014-pypi-auto-publish.md` -- PyPI publish workflow, trusted
   publishing, Actions allowlist.
 - `docs/publish.md` -- publish-pipeline mechanics (overlays,

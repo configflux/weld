@@ -37,6 +37,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 # The 13 tool names exposed by weld's MCP server registry. Embedded
 # sorted so a reader can audit the assertion locally without grepping
@@ -60,9 +61,9 @@ _EXPECTED_TOOL_NAMES = [
 ]
 
 
-def _build_payload() -> str:
-    """Return newline-delimited JSON-RPC messages for the handshake."""
-    msgs = [
+def _build_messages() -> list[dict]:
+    """Return the JSON-RPC messages used by the handshake, in send order."""
+    return [
         {
             "jsonrpc": "2.0",
             "id": 1,
@@ -76,7 +77,6 @@ def _build_payload() -> str:
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
     ]
-    return "".join(json.dumps(m) + "\n" for m in msgs)
 
 
 def _find_tools_list_response(stdout: str) -> dict | None:
@@ -94,34 +94,87 @@ def _find_tools_list_response(stdout: str) -> dict | None:
     return None
 
 
+# Inter-message pause that gives the mcp stdio server time to drain each
+# JSON-RPC line through its anyio reader/writer task pair before we feed
+# it the next one (or signal EOF). 200ms is comfortably above the
+# observed processing latency on every supported interpreter
+# (3.10-3.13) while still keeping the publish-pipeline handshake under
+# a second on the happy path. Without this pause the wrapper is racy:
+# `subprocess.run(..., input=payload)` writes all three messages and
+# closes stdin in one shot, and the server's task group can tear down
+# on EOF before the third line is delivered to the request loop -- the
+# observed CI symptom on Python 3.11 and reproducible locally on 3.10
+# and 3.12 with mcp 1.27.0.
+_MESSAGE_PAUSE_S = 0.2
+
+
 def run_handshake(work_dir: str) -> int:
     """Run the handshake against ``python -m weld.mcp_server``.
 
     Returns the exit code the CLI should propagate.
+
+    Implementation note: messages are sent through ``Popen.stdin`` one
+    at a time with a small flush+pause between each so the mcp stdio
+    server has a chance to consume every line before we close stdin.
+    The previous ``subprocess.run(..., input=...)`` form wrote the full
+    payload and EOF'd in a single syscall, which raced the server's
+    anyio task group and left ``tools/list`` (id=2) unanswered.
     """
     expected = sorted(_EXPECTED_TOOL_NAMES)
 
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         [sys.executable, "-m", "weld.mcp_server", work_dir],
-        input=_build_payload(),
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=30,
+        bufsize=1,
     )
+    assert proc.stdin is not None  # guaranteed by stdin=PIPE
+    try:
+        for msg in _build_messages():
+            try:
+                proc.stdin.write(json.dumps(msg) + "\n")
+                proc.stdin.flush()
+            except (BrokenPipeError, OSError):
+                # Server exited (e.g., crashed) before we finished
+                # sending. Stop writing and let the diagnostic block
+                # below report the non-zero return code via
+                # ``communicate()``.
+                break
+            time.sleep(_MESSAGE_PAUSE_S)
+        # ``communicate()`` will close stdin and drain stdout/stderr.
+        try:
+            stdout, stderr = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            sys.stderr.write(
+                "server did not exit within 30s of EOF\n"
+                f"--- stderr ---\n{stderr}\n"
+                f"--- stdout ---\n{stdout}\n"
+            )
+            return 1
+    finally:
+        # Defensive: kill if still alive (shouldn't happen after
+        # communicate, but keeps a stray child from outliving us).
+        if proc.poll() is None:
+            proc.kill()
+
     if proc.returncode not in (0, None):
         sys.stderr.write(
             f"server exited rc={proc.returncode}\n"
-            f"--- stderr ---\n{proc.stderr}\n"
-            f"--- stdout ---\n{proc.stdout}\n"
+            f"--- stderr ---\n{stderr}\n"
+            f"--- stdout ---\n{stdout}\n"
         )
         return 1
 
-    resp = _find_tools_list_response(proc.stdout)
+    resp = _find_tools_list_response(stdout)
     if resp is None:
         sys.stderr.write(
             "no tools/list response in stdout\n"
-            f"--- stdout ---\n{proc.stdout}\n"
-            f"--- stderr ---\n{proc.stderr}\n"
+            f"--- stdout ---\n{stdout}\n"
+            f"--- stderr ---\n{stderr}\n"
         )
         return 1
 

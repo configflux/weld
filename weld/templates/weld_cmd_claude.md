@@ -56,6 +56,7 @@ For the top matches, expand context on the most relevant one.
 
 ## Retrieval surfaces
 
+<!-- weld-managed:start name=retrieval-surfaces -->
 | Command | When to use |
 |---------|-------------|
 | `wd brief <term>` | Default starting point — ranked, classified context packet |
@@ -63,15 +64,18 @@ For the top matches, expand context on the most relevant one.
 | `wd context <id>` | Deep dive into a specific node and its neighbors |
 | `wd path <from> <to>` | Trace dependency or data-flow paths |
 | `wd find <keyword>` | File-level keyword search (uses inverted index) |
+<!-- weld-managed:end name=retrieval-surfaces -->
 
 ---
 
 ## Trust boundary
 
+<!-- weld-managed:start name=trust-boundary -->
 Run `wd discover` automatically only on repositories you trust. Project-local
 strategies under `.weld/strategies/` are Python modules loaded at discovery
 time, and `strategy: external_json` executes configured commands from
 `discover.yaml`.
+<!-- weld-managed:end name=trust-boundary -->
 
 ---
 

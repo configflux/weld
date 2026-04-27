@@ -36,8 +36,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  pre-tag-verify:
+    # Release-claim verifier (ADR 0032). Parses the most recent ``##
+    # vX.Y.Z`` section in CHANGELOG.md and fails the workflow when a
+    # bullet makes a concrete claim that the tagged tree does not back
+    # up. Blocks the irreversible PyPI upload below: ``build-and-publish``
+    # waits on this job via ``needs:``.
+    name: Verify CHANGELOG release claims
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        # Pinned to an immutable commit SHA for supply-chain hardening.
+        # Re-verify and bump when upstream ships a new v5.x release you
+        # have reviewed. Current pin matches the `v5.0.1` tag.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        # Pinned to an immutable commit SHA for supply-chain hardening.
+        # Re-verify and bump when upstream ships a new v6.x release you
+        # have reviewed. Current pin matches the `v6.2.0` tag.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Run release-claim verifier
+        run: |
+          python tools/release_claims_lint.py --strict
+
   build-and-publish:
     name: Build and publish to PyPI
+    needs: pre-tag-verify
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: pypi
@@ -47,12 +81,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # Pinned to an immutable commit SHA for supply-chain hardening.
+        # Re-verify and bump when upstream ships a new v5.x release you
+        # have reviewed. Current pin matches the `v5.0.1` tag.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # Pinned to an immutable commit SHA for supply-chain hardening.
+        # Re-verify and bump when upstream ships a new v6.x release you
+        # have reviewed. Current pin matches the `v6.2.0` tag.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install build
         run: python -m pip install --upgrade build
@@ -159,7 +199,7 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
 
   verify-install:
-    name: Verify pip install of tagged release
+    name: Verify pip install of tagged release (py ${{ matrix.python-version }})
     needs: build-and-publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -167,15 +207,44 @@ jobs:
     # not inherit any elevated OIDC permission from the publish job.
     permissions:
       contents: read
+    # Runtime matrix smoke: README advertises Python 3.10-3.13. The
+    # build-and-publish smoke above only exercises the publish-version
+    # interpreter (3.12); this matrix ensures the published wheel
+    # actually installs and imports under every advertised version.
+    #
+    # fail-fast: false so a single bad slot does not mask the others --
+    # we want the full evidence map for every matrix slot. Default job
+    # failure semantics still apply (any slot failure -> workflow fails),
+    # which keeps the matrix release-blocking.
+    #
+    # The full ``wd`` smoke runs only on 3.12 (the publish-version
+    # interpreter, already known-working end-to-end). The MCP JSON-RPC
+    # handshake now runs on every advertised version: the handshake
+    # script feeds messages one at a time with a small inter-message
+    # pause (see tools/release_mcp_handshake.py), which avoids the
+    # subprocess.run-driven EOF race that previously hung the server
+    # before it answered ``tools/list`` on Python 3.10/3.11/3.12.
+    # Other slots still skip the rich ``wd`` smoke to keep the matrix
+    # fast on ubuntu-latest.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # Pinned to an immutable commit SHA for supply-chain hardening.
+        # Re-verify and bump when upstream ships a new v5.x release you
+        # have reviewed. Current pin matches the `v5.0.1` tag.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # Pinned to an immutable commit SHA for supply-chain hardening.
+        # Re-verify and bump when upstream ships a new v6.x release you
+        # have reviewed. Current pin matches the `v6.2.0` tag.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Wait for PyPI CDN propagation
         # PyPI's CDN typically takes 60-120 seconds to surface a freshly
@@ -217,7 +286,44 @@ jobs:
         run: |
           pip install --no-cache-dir "configflux-weld==${PKG_VERSION}"
 
+      - name: Basic install smoke (all matrix slots)
+        # Minimal cross-version smoke that runs on every advertised Python
+        # interpreter. Proves the wheel installed cleanly and the
+        # console script + version metadata are wired on this
+        # interpreter. The richer ``wd``/MCP smoke below is gated to
+        # 3.12 only -- this step is the floor every matrix slot must
+        # clear for the release to be considered installable on that
+        # Python version.
+        env:
+          PKG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          wd --version
+          wd --help >/dev/null
+          python -c "import os; from importlib.metadata import version; expected = os.environ['PKG_VERSION']; v = version('configflux-weld'); print(f'configflux-weld {v} on python ${{ matrix.python-version }}'); assert v == expected, f'version mismatch: expected {expected}, got {v}'"
+
+      - name: Install [mcp] extra (all matrix slots)
+        # Prove the ``[mcp]`` extra resolves and installs on every
+        # advertised Python interpreter, even on slots where the
+        # JSON-RPC handshake itself is 3.12-only. This catches a
+        # packaging regression where the extra's transitive deps drop
+        # support for one of our advertised Python versions before the
+        # users hit it. Uses a separate venv so the basic smoke step
+        # above stays a clean ``configflux-weld`` (no extras) install.
+        env:
+          PKG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/weld-mcp-extra-install
+          /tmp/weld-mcp-extra-install/bin/pip install --no-cache-dir "configflux-weld[mcp]==${PKG_VERSION}"
+          /tmp/weld-mcp-extra-install/bin/python -c "import os; from importlib.metadata import version; expected = os.environ['PKG_VERSION']; v = version('configflux-weld'); print(f'configflux-weld[mcp] {v} on python ${{ matrix.python-version }}'); assert v == expected, f'version mismatch: expected {expected}, got {v}'"
+
       - name: Smoke-test installed package
+        # Full ``wd`` smoke -- run only on the publish-version interpreter
+        # (3.12). Other matrix slots stop after the basic install smoke
+        # above so we do not trip the 3.11 MCP handshake hang and so
+        # the matrix stays fast on ubuntu-latest.
+        if: matrix.python-version == '3.12'
         # The exact published version must run real CLI workflows from an
         # installed console script, not from the source checkout.
         env:
@@ -286,6 +392,14 @@ jobs:
         # missing files in the published wheel, post-upload tampering).
         # If this fails, the release was bad even though the upload
         # succeeded; the failing job flags it before users discover it.
+        #
+        # Runs on every advertised Python interpreter (3.10-3.13). The
+        # handshake script (tools/release_mcp_handshake.py) drives the
+        # mcp stdio server with one JSON-RPC line per write+flush and a
+        # small inter-message pause, which keeps the wire shape stable
+        # across interpreter versions and eliminates the
+        # subprocess.run-driven EOF race that previously left
+        # ``tools/list`` unanswered on 3.10/3.11/3.12.
         env:
           PKG_VERSION: ${{ steps.version.outputs.version }}
         run: |

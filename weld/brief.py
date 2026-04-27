@@ -19,6 +19,7 @@ from weld.contract import (
     PROTOCOL_VALUES,
     SURFACE_KIND_VALUES,
 )
+from weld.graph_query import query_or_fallback
 from weld.ranking import rank_key as _rank_key
 from weld.warnings import check_confidence_gaps, check_freshness, check_partial_coverage
 
@@ -213,12 +214,30 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
     """
     warnings: list[str] = []
     interaction_relevant = _query_is_interaction_relevant(term)
+    degraded_match: str | None = None
 
     # Run the same tokenized query as ``wd query``.
     query_result = graph.query(term, limit=limit * 3)  # over-fetch
     matches = query_result.get("matches", [])
     neighbors = query_result.get("neighbors", [])
     edges = query_result.get("edges", [])
+
+    # OR-fallback (Bug-3): when strict-AND zeroes on a multi-token query,
+    # retry via a softer per-group union. Tag the result so consumers see
+    # they did not get strict-AND. Single-token queries skip this path
+    # because OR == AND for one group -- the retry would be identical.
+    if not matches and len(term.split()) > 1:
+        fallback = query_or_fallback(graph, term, limit=limit * 3)
+        fallback_matches = fallback.get("matches", [])
+        if fallback_matches:
+            matches = fallback_matches
+            neighbors = fallback.get("neighbors", [])
+            edges = fallback.get("edges", [])
+            degraded_match = "or_fallback"
+            warnings.append(
+                f"Strict AND returned no matches for {term!r}; "
+                f"retried with OR fallback (degraded_match=or_fallback)."
+            )
 
     if not matches:
         warnings.append(f"No matches found for query: {term!r}")
@@ -313,7 +332,7 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
     # set of keys, not their order, but Python preserves insertion order
     # and agents often rely on it for readability.
     if interaction_relevant:
-        return {
+        envelope = {
             "brief_version": BRIEF_VERSION,
             "query": term,
             "interfaces": interfaces,
@@ -325,18 +344,22 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
             "provenance": provenance,
             "warnings": warnings,
         }
-    return {
-        "brief_version": BRIEF_VERSION,
-        "query": term,
-        "primary": primary,
-        "interfaces": interfaces,
-        "docs": docs,
-        "build": build,
-        "boundaries": boundaries,
-        "edges": edges,
-        "provenance": provenance,
-        "warnings": warnings,
-    }
+    else:
+        envelope = {
+            "brief_version": BRIEF_VERSION,
+            "query": term,
+            "primary": primary,
+            "interfaces": interfaces,
+            "docs": docs,
+            "build": build,
+            "boundaries": boundaries,
+            "edges": edges,
+            "provenance": provenance,
+            "warnings": warnings,
+        }
+    if degraded_match is not None:
+        envelope["degraded_match"] = degraded_match
+    return envelope
 
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point for ``wd brief``."""

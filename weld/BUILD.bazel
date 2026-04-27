@@ -110,6 +110,8 @@ py_library(
         "agent_graph_storage.py",
         "bm25.py",
         "bootstrap.py",
+        "bootstrap_managed.py",
+        "bootstrap_writer.py",
         "brief.py",
         "cli.py",
         "demo.py",

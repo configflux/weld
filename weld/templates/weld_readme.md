@@ -6,11 +6,13 @@ extensions for the repository's connected structure.
 
 ## Files
 
+<!-- weld-managed:start name=files-table -->
 | File | Purpose | Rebuild command |
 |------|---------|-----------------|
 | `discover.yaml` | Declarative discovery config — defines which files, strategies, and topology feed the graph | `wd init` (bootstrap) or edit manually |
 | `graph.json` | Built connected structure (nodes, edges, metadata) | `wd discover --output .weld/graph.json` |
 | `file-index.json` | Inverted keyword-to-file index for `wd find` | `wd build-index` |
+<!-- weld-managed:end name=files-table -->
 
 ## Optional directories
 
@@ -21,6 +23,7 @@ extensions for the repository's connected structure.
 
 ## Maintenance workflow
 
+<!-- weld-managed:start name=maintenance-workflow -->
 ```bash
 # 1. Check what needs attention
 wd prime
@@ -43,6 +46,7 @@ wd find "keyword"          # file-index keyword search
 wd stale                   # compare graph to current git HEAD
 wd prime                   # full status check with next-step guidance
 ```
+<!-- weld-managed:end name=maintenance-workflow -->
 
 ## Adding project-local extensions
 

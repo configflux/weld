@@ -98,12 +98,12 @@ class BootstrapOverwriteTest(unittest.TestCase):
             with patch("sys.stdout", output):
                 bootstrap("claude", root, force=False)
             self.assertEqual(readme.read_text(encoding="utf-8"), "sentinel")
-            # File differs from the bundled template, so bootstrap must now
-            # surface the --diff / --force upgrade path instead of a silent
-            # "already exists" message.
-            self.assertIn("differs", output.getvalue())
-            self.assertIn("--diff", output.getvalue())
-            self.assertIn("--force", output.getvalue())
+            # The seeded file contains no managed-region markers, so the
+            # writer routes through the explicit pre-marker migration path
+            # (ADR 0033 §3): file untouched, actionable message printed.
+            text = output.getvalue()
+            self.assertIn("pre-marker layout", text)
+            self.assertIn("--force", text)
 
     def test_force_overwrites(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -289,6 +289,42 @@ class BootstrapTemplatesLoadableTest(unittest.TestCase):
         self.assertTrue(
             (_TEMPLATES_DIR / "weld_instructions_copilot.md").is_file()
         )
+
+
+class BootstrapCuratedSkillRegressionTest(unittest.TestCase):
+    """Regression: a curated copilot skill yields empty ``--diff`` outside markers.
+
+    Reproduces the v0.10.1 user-reported case from ADR 0033: the operator
+    edits a single line that lives outside any managed region (e.g. an extra
+    bullet under "## When to use it"). With managed-region markers in place,
+    ``wd bootstrap copilot --diff`` must exit 0 and not emit a unified diff.
+    """
+
+    def test_curated_line_outside_region_yields_clean_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bootstrap("copilot", root, force=True)
+            skill = root / ".github" / "skills" / "weld" / "SKILL.md"
+            text = skill.read_text(encoding="utf-8")
+            # Insert a curated line OUTSIDE any managed region: under the
+            # "## When to use it" bullet list, which the bundled template
+            # leaves unmanaged.
+            text = text.replace(
+                "## When to use it\n",
+                "## When to use it\n\n- Curated trigger phrase for this repo\n",
+            )
+            skill.write_text(text, encoding="utf-8")
+            buf = io.StringIO()
+            with patch("sys.stdout", buf):
+                with self.assertRaises(SystemExit) as cm:
+                    cli_main([
+                        "bootstrap", "copilot",
+                        "--root", str(root), "--diff",
+                    ])
+            self.assertEqual(cm.exception.code, 0)
+            output = buf.getvalue()
+            self.assertNotIn("---", output)
+            self.assertNotIn("+++", output)
 
 
 class BootstrapCliDispatchTest(unittest.TestCase):

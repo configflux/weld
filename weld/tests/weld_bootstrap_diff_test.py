@@ -81,7 +81,15 @@ class DifferingFileWordingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             cmd = _seed_claude_tree(root)
-            cmd.write_text("# customised\n", encoding="utf-8")
+            # Edit inside a managed region (ADR 0033): change the trust-boundary
+            # body so the writer detects in-region drift instead of routing
+            # through the pre-marker migration path.
+            text = cmd.read_text(encoding="utf-8")
+            text = text.replace(
+                "Run `wd discover` automatically only on repositories you trust.",
+                "Run `wd discover` ONLY ON TRUSTED REPOS.",
+            )
+            cmd.write_text(text, encoding="utf-8")
             buf = io.StringIO()
             with patch("sys.stdout", buf):
                 bootstrap("claude", root, force=False)
@@ -91,13 +99,16 @@ class DifferingFileWordingTest(unittest.TestCase):
             self.assertIn("--force", output)
             # The file must still be preserved -- default bootstrap is a
             # dry warning only, never a silent overwrite.
-            self.assertEqual(cmd.read_text(encoding="utf-8"), "# customised\n")
+            self.assertIn("ONLY ON TRUSTED REPOS", cmd.read_text(encoding="utf-8"))
 
     def test_differing_codex_mcp_config_points_at_diff_and_force(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             config = _seed_codex_tree(root)
-            config.write_text("# custom\n", encoding="utf-8")
+            text = config.read_text(encoding="utf-8")
+            # In-region edit on the mcp-servers region.
+            text = text.replace('command = "python"', 'command = "python3"')
+            config.write_text(text, encoding="utf-8")
             buf = io.StringIO()
             with patch("sys.stdout", buf):
                 bootstrap("codex", root, force=False)
@@ -105,14 +116,17 @@ class DifferingFileWordingTest(unittest.TestCase):
             self.assertIn("differs", output)
             self.assertIn("--diff", output)
             self.assertIn("--force", output)
-            self.assertEqual(config.read_text(encoding="utf-8"), "# custom\n")
+            self.assertIn('command = "python3"', config.read_text(encoding="utf-8"))
 
     def test_differing_readme_points_at_diff_and_force(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _seed_claude_tree(root)
             readme = root / ".weld" / "README.md"
-            readme.write_text("# customised\n", encoding="utf-8")
+            text = readme.read_text(encoding="utf-8")
+            # In-region edit on the files-table region.
+            text = text.replace("`discover.yaml`", "`discover.yml`", 1)
+            readme.write_text(text, encoding="utf-8")
             buf = io.StringIO()
             with patch("sys.stdout", buf):
                 bootstrap("claude", root, force=False)
@@ -143,7 +157,14 @@ class DiffFlagTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             cmd = _seed_claude_tree(root)
-            cmd.write_text("# customised\n", encoding="utf-8")
+            text = cmd.read_text(encoding="utf-8")
+            # In-region edit so --diff produces a region-scoped unified diff
+            # instead of routing through the pre-marker migration path.
+            text = text.replace(
+                "Run `wd discover` automatically only on repositories you trust.",
+                "Run `wd discover` ONLY ON TRUSTED REPOS.",
+            )
+            cmd.write_text(text, encoding="utf-8")
             buf = io.StringIO()
             with patch("sys.stdout", buf):
                 with self.assertRaises(SystemExit) as cm:
@@ -154,9 +175,12 @@ class DiffFlagTest(unittest.TestCase):
             self.assertIn("---", output)
             self.assertIn("+++", output)
             # The customised line should appear on the "-" side.
-            self.assertIn("-# customised", output)
+            self.assertIn("ONLY ON TRUSTED REPOS", output)
             # --diff must not mutate the file.
-            self.assertEqual(cmd.read_text(encoding="utf-8"), "# customised\n")
+            self.assertIn(
+                "ONLY ON TRUSTED REPOS",
+                cmd.read_text(encoding="utf-8"),
+            )
 
     def test_diff_does_not_write_missing_files(self) -> None:
         """--diff against an empty tree must not create files."""
@@ -176,7 +200,10 @@ class DiffFlagTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             config = _seed_codex_tree(root)
-            config.write_text("# custom\n", encoding="utf-8")
+            text = config.read_text(encoding="utf-8")
+            # In-region edit so --diff emits a region-scoped unified diff.
+            text = text.replace('command = "python"', 'command = "python3"')
+            config.write_text(text, encoding="utf-8")
             buf = io.StringIO()
             with patch("sys.stdout", buf):
                 with self.assertRaises(SystemExit) as cm:
@@ -187,7 +214,10 @@ class DiffFlagTest(unittest.TestCase):
             self.assertIn("---", output)
             self.assertIn("+++", output)
             # Content untouched.
-            self.assertEqual(config.read_text(encoding="utf-8"), "# custom\n")
+            self.assertIn(
+                'command = "python3"',
+                config.read_text(encoding="utf-8"),
+            )
 
 
 class ForceFlagPreservesBehaviourTest(unittest.TestCase):
@@ -227,17 +257,29 @@ class ForceFlagPreservesBehaviourTest(unittest.TestCase):
             self.assertIn("wd workspace status", content)
 
     def test_force_preserves_codex_no_mcp_opt_out(self) -> None:
+        # Per ADR 0033 §6, sibling variants (.md and .cli.md) declare the same
+        # managed-region names with byte-identical bodies, so swapping variants
+        # on a previously-seeded file does NOT re-trigger migration. The
+        # operator-owned content outside the markers (including any MCP
+        # mentions left over from the .md variant) is preserved -- exactly the
+        # property the marker model is meant to guarantee.
+        #
+        # The relevant invariants for --force --no-mcp are: (a) the codex MCP
+        # config file is removed from the write list, and (b) the skill file
+        # is left in a parseable state (no broken marker pairs).
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _seed_codex_tree(root)
             bootstrap("codex", root, force=True, no_mcp=True)
-            # --no-mcp still drops codex config.toml on a force upgrade.
-            # Pre-existing config.toml remains on disk because --no-mcp
-            # removes it from the write list entirely; we only assert the
-            # skill was overwritten to the cli.md variant.
             skill = root / ".codex" / "skills" / "weld" / "SKILL.md"
             content = skill.read_text(encoding="utf-8")
-            self.assertNotIn("mcp", content.lower())
+            # Marker pairs survived the variant swap intact.
+            self.assertIn(
+                "<!-- weld-managed:start name=retrieval-commands -->", content,
+            )
+            self.assertIn(
+                "<!-- weld-managed:end name=retrieval-commands -->", content,
+            )
 
 
 class DiffFlagCliWiringTest(unittest.TestCase):
@@ -251,6 +293,70 @@ class DiffFlagCliWiringTest(unittest.TestCase):
         output = buf.getvalue()
         self.assertIn("--diff", output)
         self.assertIn("--force", output)
+
+
+class IncludeUnmanagedRequiresDiffTest(unittest.TestCase):
+    """`--include-unmanaged` only makes sense with `--diff`.
+
+    The flag toggles whole-file vs region-scoped comparison (ADR 0033) and is
+    silently ignored in write mode. Reject it at parse time so operators get a
+    clear error instead of silently-incorrect behaviour. See bd
+    1776099136-5038-tkxt for the UX rationale.
+    """
+
+    def test_include_unmanaged_without_diff_exits_two(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            err = io.StringIO()
+            with patch("sys.stderr", err):
+                with self.assertRaises(SystemExit) as cm:
+                    cli_main([
+                        "bootstrap", "copilot", "--root", str(root),
+                        "--include-unmanaged",
+                    ])
+            # argparse-style validation -> exit 2 with a clear stderr message.
+            self.assertEqual(cm.exception.code, 2)
+            stderr = err.getvalue()
+            self.assertIn("--include-unmanaged", stderr)
+            self.assertIn("--diff", stderr)
+            # Nothing should have been written without --diff.
+            self.assertFalse(
+                (root / ".github" / "skills" / "weld" / "SKILL.md").exists()
+            )
+
+    def test_include_unmanaged_with_diff_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            buf = io.StringIO()
+            with patch("sys.stdout", buf):
+                with self.assertRaises(SystemExit) as cm:
+                    cli_main([
+                        "bootstrap", "copilot", "--root", str(root),
+                        "--diff", "--include-unmanaged",
+                    ])
+            # Empty tree vs templates -> diff exits 1; the important property
+            # for this test is that argparse did NOT reject the combination.
+            self.assertIn(cm.exception.code, (0, 1))
+
+    def test_include_unmanaged_without_diff_rejected_for_every_framework(
+        self,
+    ) -> None:
+        for framework in ("claude", "codex", "copilot"):
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                err = io.StringIO()
+                with patch("sys.stderr", err):
+                    with self.assertRaises(SystemExit) as cm:
+                        cli_main([
+                            "bootstrap", framework, "--root", str(root),
+                            "--include-unmanaged",
+                        ])
+                self.assertEqual(
+                    cm.exception.code, 2,
+                    f"{framework}: expected exit 2 without --diff",
+                )
+                self.assertIn("--include-unmanaged", err.getvalue())
+                self.assertIn("--diff", err.getvalue())
 
 
 if __name__ == "__main__":

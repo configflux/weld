@@ -19,8 +19,9 @@ The builder is deterministic by construction:
   the root graph never references an absent fixture.
 
 The module is intentionally self-contained: it depends only on
-:mod:`weld.contract`, :mod:`weld.workspace`, :mod:`weld.workspace_state`,
-and :mod:`weld.serializer` so the discover branch can stay thin.
+:mod:`weld._git` (for HEAD-SHA stamping), :mod:`weld.contract`,
+:mod:`weld.workspace`, :mod:`weld.workspace_state`, and
+:mod:`weld.serializer` so the discover branch can stay thin.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from weld._git import get_git_sha
 from weld.contract import SCHEMA_VERSION
 from weld.serializer import canonical_graph as _canonical_graph
 from weld.workspace import ChildEntry, WorkspaceConfig
@@ -144,9 +146,11 @@ def build_root_meta_graph(
     Parameters
     ----------
     root:
-        Workspace root. Reserved for future use (e.g. git SHA stamping);
-        currently the path is *not* consulted because the meta-graph's
-        content is fully determined by ``config``/``state``.
+        Workspace root. Used to stamp ``meta.git_sha`` to the current HEAD
+        (via :func:`weld._git.get_git_sha`) so downstream freshness checks
+        match the single-repo discover path. Non-git roots simply omit the
+        field; the rest of the meta-graph is fully determined by
+        ``config``/``state``.
     config:
         Validated workspace registry loaded via
         :func:`weld.workspace.load_workspaces_yaml`.
@@ -166,11 +170,6 @@ def build_root_meta_graph(
     with :func:`weld.serializer.dumps_graph` if on-disk bytes are
     required.
     """
-    # Of course this is a no-op touch of ``root`` for now, but we keep it
-    # in the signature so future drift-detection logic can use the git
-    # SHA of the workspace directory itself without a signature change.
-    Path(root)
-
     updated_at = now if now is not None else datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     # Iterate children lexicographically by name so the builder is
@@ -199,5 +198,15 @@ def build_root_meta_graph(
         # skip the Graph abstraction and emit via ``dumps_graph`` directly.
         "schema_version": META_SCHEMA_VERSION,
     }
+
+    # Stamp ``meta.git_sha`` to the workspace root's current HEAD so the
+    # federated path matches the single-repo discover behaviour
+    # (weld/discover.py:177-179) and ``compute_stale_info`` /
+    # ``wd prime`` can compare against HEAD. Non-git roots return
+    # ``None`` and the field is omitted -- ``compute_stale_info``
+    # already handles non-git roots via ``is_git_repo`` (bd-1776099136-5038-tqe2).
+    sha = get_git_sha(Path(root))
+    if sha is not None:
+        meta["git_sha"] = sha
 
     return _canonical_graph({"meta": meta, "nodes": nodes, "edges": []})
