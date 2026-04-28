@@ -32,35 +32,20 @@ in [`docs/launch.md`](docs/launch.md) links here.
 
 ### Changed
 
-- README quickstart and `weld/README.md` (PyPI README) now consistently default `wd discover` examples to `--safe` mode. Existing trust-model paragraph is cross-referenced so readers know when it is appropriate to drop the flag. The two READMEs no longer diverge on the safety default.
-- README's "When not to use Weld" bullet about `.weld/` no longer implies generated graphs are committed by default. The bullet now distinguishes config (committed) from generated graphs (gitignored) and points at the opt-in `wd init --track-graphs` team workflow for warm-CI / warm-MCP setups.
-- README carries a new evaluator note near the top: the 0.11.x line shipped five patch releases on 2026-04-27, evaluators should start at v0.11.6 (this release). The note pairs with a machine-readable `<!-- evaluator-note: latest=v0.11.6 -->` marker so the new public-surface registry can keep it in sync with `VERSION` automatically.
+- `wd discover` examples in the README quickstart and the PyPI README now default to `--safe` mode. The trust-model section explains when it is appropriate to drop the flag. Both READMEs are aligned so the GitHub and PyPI evaluators see the same first-run command.
+  <!-- verify: file=README.md grep=wd discover --safe --output -->
+- The "When not to use Weld" README bullet about `.weld/` no longer implies generated graphs are committed by default. It now distinguishes config (committed) from generated graphs (gitignored) and points at the opt-in `wd init --track-graphs` team workflow for warm-CI / warm-MCP setups.
+- README carries a new evaluator note near the top. The 0.11.x line shipped five patch releases on 2026-04-27 to chase release-pipeline drift; v0.11.6 obsoletes 0.11.0..0.11.5 and is the recommended starting point for new evaluators.
   <!-- verify: file=README.md grep=evaluator-note: latest=v0.11.6 -->
-- CHANGELOG entries for v0.11.0..v0.11.5 that referenced internal-only release tooling now carry an `[internal]` prefix and explicitly state that those paths are not shipped in the wheel. The corresponding public-visible artifact (the synced workflow file in the public repo) is named instead.
-  <!-- verify: file=CHANGELOG.md grep=[internal] -->
 
 ### Added
 
-- New runtime-pending markers in `docs/runtime-validation.md` for the three `Partial` matrix rows awaiting live-client validation (Codex, Claude Code, VS Code/Copilot). The markers are machine-readable (`<!-- runtime-pending: <client> -->`) so the public-surface registry can enforce that no row promotes to `Supported` without an actual record.
-- ADR 0034 (`docs/adrs/0034-public-surface-claim-contracts.md`): the design and policy commitment for two declarative YAML registries (`tools/release/public-surface.yaml`, `tools/release/claim-contracts.yaml`) that together replace the prior pattern of "one new tool + one new ADR-0015 amendment per release-doc-drift class" with "one YAML row per drift class". Locks the five rule kinds (`parity`, `marker_value`, `glob_must_contain`, `path_set_disjoint`, `matrix_row_constraint`) and the falsifiable closure test (four feedback batches without a sixth-kind amendment confirms closure).
-  <!-- verify: file=docs/adrs/0034-public-surface-claim-contracts.md grep=Falsification -->
-- [internal] `tools/check_public_surface.py`: the generic checker that reads the two registries above and dispatches across the five rule kinds. 8 rules ship in v1, covering the seven WELD-0116 drift classes plus two proactive contracts (release-lag-marker format, matrix-status vocabulary). Composes with existing `tools/runtime_claims_lint.py` / `tools/runtime_claims_launch.py` (calls them as subroutines for matrix-row rules; helper APIs unchanged). Internal-only tool path; not shipped in the wheel.
-  <!-- verify: file=tools/check_public_surface.py grep=def main -->
-- [internal] `tools/check_public_surface_regression_test.py`: 9-test integration suite that asserts each v1 rule fires on a constructed drift fixture. Locks the registry against silent rule weakening in future feedback rounds.
-  <!-- verify: file=tools/check_public_surface_regression_test.py grep=class -->
+- New runtime-pending markers in `docs/runtime-validation.md` for the three `Partial` matrix rows awaiting live-client validation (Codex, Claude Code, VS Code/Copilot). The markers make it explicit that those rows have not yet been validated against a real client and have not been promoted to `Supported`.
 
 ### Fixed
 
-- [internal] `tools/release_claims_lint.py` coverage probe no longer false-positives when a CHANGELOG bullet carries an explicit `<!-- verify -->` directive AND mentions a runtime-artifact path in prose. The directive is the verification; the backticked path is subject-of-change context, not a coverage-probe target. Also excludes gitignored `.claude/worktrees/` agent isolation directories from the working-tree walk.
-  <!-- verify: file=tools/release_claims_verify.py grep=has_explicit_directive -->
-- README markdown is no longer compressed into single-line paragraphs in raw form. Long prose in the description, "Try it in 5 minutes" call-out, and demo-script blurb is reflowed to <=200 characters per line. ADR 0031's metadata line was similarly reflowed.
-  <!-- verify: file=.markdownlint.json grep=MD013 -->
-
-### Release Safety
-
-- [internal] ADR 0015 grew check 12 (public-surface and claim-contract registries). The release-manager agent now runs twelve checks; the aggregate rule is unchanged. Per ADR 0034's policy, this is the last check expected to be added by amendment under the current architecture: future drift classes flow into the YAML registries as rows, not as new tools or new amendments to ADR 0015.
-  <!-- verify: file=docs/adrs/0015-release-manager-agent.md grep=check 12 -->
-- [internal] Markdown lint now enforces MD013 (line length, capped at 200 chars with tables/code/headings exempt) on the shipped doc set. The check was previously configured but the binary was not installed in CI; this release wires `markdownlint-cli2` install into the public CI workflow alongside `tools/markdown_lint.py`.
+- README markdown is no longer compressed into single-line paragraphs in raw form. Long prose in the description, "Try it in 5 minutes" call-out, and demo-script blurb is reflowed to <=200 characters per line for readability when reading the README on GitHub or via `cat`/`less`.
+  <!-- verify: file=README.md grep=Try it in 5 minutes -->
 
 ## v0.11.5 - 2026-04-27
 
