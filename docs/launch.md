@@ -18,9 +18,6 @@ For mechanics that are out of scope here:
   lives in [`docs/release.md`](release.md). Launch and release are
   related but distinct -- a launch is a public announcement; a release is
   a version cut.
-- The pre-release audit posture (eight checks, GO/NO-GO) is described in
-  [`docs/adrs/0015-release-manager-agent.md`](adrs/0015-release-manager-agent.md)
-  and invoked via the `release-manager` agent (`/release-audit`).
 - Community feedback channels live in [`docs/community.md`](community.md).
   Launch posts should link readers there. Today, GitHub Issues is the
   single feedback channel.

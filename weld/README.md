@@ -141,11 +141,8 @@ gitignored and rotates at 1 MiB.
 
 Opt out with any one of: `WELD_TELEMETRY=off`, `--no-telemetry`, or
 `wd telemetry disable`. Use `wd telemetry --help` to inspect, export, or
-clear the file.
-
-ADR 0035 documents the full schema and design:
-
-https://github.com/configflux/weld/blob/main/docs/adrs/0035-local-telemetry.md
+clear the file. The full event schema and design are documented in
+[`docs/telemetry.md`](https://github.com/configflux/weld/blob/main/docs/telemetry.md).
 
 ## Polyrepo Federation
 

@@ -28,6 +28,20 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.12.1 - 2026-04-28
+
+### Fixed
+
+- README and the PyPI long description no longer link to an internal-only ADR when describing local telemetry. The previous link 404'd on the public mirror. The full event schema, opt-out matrix, and design rationale now live in [`docs/telemetry.md`](docs/telemetry.md), which ships with the wheel.
+  <!-- verify: file=docs/telemetry.md grep=Event schema -->
+- The launch FAQ no longer points at an internal-only release-manager ADR; the bullet is dropped because the launch page already links to the public release runbook.
+  <!-- verify: file=docs/launch.md grep=launch is a public announcement -->
+
+### Release Safety
+
+- Pre-publish gate now scans the README, the PyPI long description, the launch FAQ, and the new telemetry guide for references to internal-only ADR paths, the local-task-gate script, or internal labels, and refuses to publish when any are present. Past incident: v0.12.0 README pointed at the internal telemetry ADR, which is excluded from the public wheel and 404'd on the public mirror; this rule prevents that class of dead link from shipping again.
+  <!-- verify: file=tools/release/claim-contracts.yaml grep=public-docs-no-internal-refs -->
+
 ## v0.12.0 - 2026-04-28
 
 ### Added

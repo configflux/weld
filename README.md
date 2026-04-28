@@ -13,18 +13,20 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.12.0 -->
-> **Evaluators — start with v0.12.0.** v0.12.0 builds on v0.11.6 and adds
+<!-- evaluator-note: latest=v0.12.1 -->
+> **Evaluators — start with v0.12.1.** v0.12.1 is a docs hotfix that
+> repairs dead internal-ADR links in v0.12.0's README and PyPI long
+> description (the linked ADR is internal-only and 404'd on the public
+> mirror) and ships [`docs/telemetry.md`](docs/telemetry.md) as the
+> public reference for telemetry. Otherwise identical to v0.12.0:
 > local-only telemetry (default-on, opt out with `WELD_TELEMETRY=off`,
-> `--no-telemetry`, or `wd telemetry disable`) and a new `copilot-cli`
-> enrichment provider that reuses the standalone `copilot` binary. The
-> 0.11.x line shipped five patch releases on 2026-04-27 to chase
-> release-pipeline drift; v0.11.6 obsoleted v0.11.0..v0.11.5 and added the
-> public-surface registry layer that prevents that drift from recurring.
-> There is no need to read every patch's notes unless you are debugging
-> the publish-overlay, polyrepo-bootstrap, or release-doc drift history.
-> See the [`CHANGELOG.md`](CHANGELOG.md) entry for v0.12.0 for the
-> user-visible behaviour.
+> `--no-telemetry`, or `wd telemetry disable`) and the new `copilot-cli`
+> enrichment provider. The 0.11.x line shipped five patch releases on
+> 2026-04-27 to chase release-pipeline drift; v0.11.6 obsoleted
+> v0.11.0..v0.11.5. There is no need to read every patch's notes unless
+> you are debugging the publish-overlay, polyrepo-bootstrap, or
+> release-doc drift history. See the [`CHANGELOG.md`](CHANGELOG.md)
+> entry for v0.12.1 for the user-visible behaviour.
 
 **Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
 walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
@@ -271,7 +273,7 @@ The file is gitignored and rotates at 1 MiB to keep the trailing 500 events.
 single invocation, or `wd telemetry disable` to write a persistent sentinel
 at the resolved root. Run `wd telemetry --help` for the full subcommand
 surface (`status`, `show`, `path`, `export`, `clear`, `disable`, `enable`),
-and see [ADR 0035](docs/adrs/0035-local-telemetry.md) for the full event
+and see [`docs/telemetry.md`](docs/telemetry.md) for the full event
 schema and design rationale.
 
 ## Supported languages
@@ -694,7 +696,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.12.0`.
+terminal snippets captured against `wd 0.12.1`.
 
 ## Install
 
