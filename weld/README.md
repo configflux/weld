@@ -132,7 +132,7 @@ Start with:
 ```bash
 wd init
 wd workspace status
-wd discover --output .weld/graph.json
+wd discover --safe --output .weld/graph.json
 ```
 
 Example:

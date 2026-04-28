@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 -->
 # Changelog
 
 All notable changes to this project are recorded here. The format is based on
@@ -27,6 +28,40 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.11.6 - 2026-04-28
+
+### Changed
+
+- README quickstart and `weld/README.md` (PyPI README) now consistently default `wd discover` examples to `--safe` mode. Existing trust-model paragraph is cross-referenced so readers know when it is appropriate to drop the flag. The two READMEs no longer diverge on the safety default.
+- README's "When not to use Weld" bullet about `.weld/` no longer implies generated graphs are committed by default. The bullet now distinguishes config (committed) from generated graphs (gitignored) and points at the opt-in `wd init --track-graphs` team workflow for warm-CI / warm-MCP setups.
+- README carries a new evaluator note near the top: the 0.11.x line shipped five patch releases on 2026-04-27, evaluators should start at v0.11.6 (this release). The note pairs with a machine-readable `<!-- evaluator-note: latest=v0.11.6 -->` marker so the new public-surface registry can keep it in sync with `VERSION` automatically.
+  <!-- verify: file=README.md grep=evaluator-note: latest=v0.11.6 -->
+- CHANGELOG entries for v0.11.0..v0.11.5 that referenced internal-only release tooling now carry an `[internal]` prefix and explicitly state that those paths are not shipped in the wheel. The corresponding public-visible artifact (the synced workflow file in the public repo) is named instead.
+  <!-- verify: file=CHANGELOG.md grep=[internal] -->
+
+### Added
+
+- New runtime-pending markers in `docs/runtime-validation.md` for the three `Partial` matrix rows awaiting live-client validation (Codex, Claude Code, VS Code/Copilot). The markers are machine-readable (`<!-- runtime-pending: <client> -->`) so the public-surface registry can enforce that no row promotes to `Supported` without an actual record.
+- ADR 0034 (`docs/adrs/0034-public-surface-claim-contracts.md`): the design and policy commitment for two declarative YAML registries (`tools/release/public-surface.yaml`, `tools/release/claim-contracts.yaml`) that together replace the prior pattern of "one new tool + one new ADR-0015 amendment per release-doc-drift class" with "one YAML row per drift class". Locks the five rule kinds (`parity`, `marker_value`, `glob_must_contain`, `path_set_disjoint`, `matrix_row_constraint`) and the falsifiable closure test (four feedback batches without a sixth-kind amendment confirms closure).
+  <!-- verify: file=docs/adrs/0034-public-surface-claim-contracts.md grep=Falsification -->
+- [internal] `tools/check_public_surface.py`: the generic checker that reads the two registries above and dispatches across the five rule kinds. 8 rules ship in v1, covering the seven WELD-0116 drift classes plus two proactive contracts (release-lag-marker format, matrix-status vocabulary). Composes with existing `tools/runtime_claims_lint.py` / `tools/runtime_claims_launch.py` (calls them as subroutines for matrix-row rules; helper APIs unchanged). Internal-only tool path; not shipped in the wheel.
+  <!-- verify: file=tools/check_public_surface.py grep=def main -->
+- [internal] `tools/check_public_surface_regression_test.py`: 9-test integration suite that asserts each v1 rule fires on a constructed drift fixture. Locks the registry against silent rule weakening in future feedback rounds.
+  <!-- verify: file=tools/check_public_surface_regression_test.py grep=class -->
+
+### Fixed
+
+- [internal] `tools/release_claims_lint.py` coverage probe no longer false-positives when a CHANGELOG bullet carries an explicit `<!-- verify -->` directive AND mentions a runtime-artifact path in prose. The directive is the verification; the backticked path is subject-of-change context, not a coverage-probe target. Also excludes gitignored `.claude/worktrees/` agent isolation directories from the working-tree walk.
+  <!-- verify: file=tools/release_claims_verify.py grep=has_explicit_directive -->
+- README markdown is no longer compressed into single-line paragraphs in raw form. Long prose in the description, "Try it in 5 minutes" call-out, and demo-script blurb is reflowed to <=200 characters per line. ADR 0031's metadata line was similarly reflowed.
+  <!-- verify: file=.markdownlint.json grep=MD013 -->
+
+### Release Safety
+
+- [internal] ADR 0015 grew check 12 (public-surface and claim-contract registries). The release-manager agent now runs twelve checks; the aggregate rule is unchanged. Per ADR 0034's policy, this is the last check expected to be added by amendment under the current architecture: future drift classes flow into the YAML registries as rows, not as new tools or new amendments to ADR 0015.
+  <!-- verify: file=docs/adrs/0015-release-manager-agent.md grep=check 12 -->
+- [internal] Markdown lint now enforces MD013 (line length, capped at 200 chars with tables/code/headings exempt) on the shipped doc set. The check was previously configured but the binary was not installed in CI; this release wires `markdownlint-cli2` install into the public CI workflow alongside `tools/markdown_lint.py`.
+
 ## v0.11.5 - 2026-04-27
 
 ### Fixed
@@ -36,7 +71,7 @@ in [`docs/launch.md`](docs/launch.md) links here.
 
 ### Release Safety
 
-- `tools/release_polyrepo_smoke.sh` gains Variant 3: linked-worktree-of-polyrepo scenarios. The gate now runs 10 scenario runs total (8 for variants 1+2, 2 for variant 3 W1/W2 covering gitignored and non-gitignored shapes). Variant 3 reproduces the v0.11.4 worktree silent-degrade bug exactly when run against pre-fix code (12 assertion failures: missing yaml mirror, missing workspace-state.json, missing `repo:services-*` nodes in the meta-graph) and is green after. Wired into `tools/publish.sh` via the existing `check_polyrepo_smoke` precondition; any regression in the worktree-init path now fails locally before any tag push.
+- [internal] Pre-publish polyrepo smoke harness gains Variant 3: linked-worktree-of-polyrepo scenarios. The gate now runs 10 scenario runs total (8 for variants 1+2, 2 for variant 3 W1/W2 covering gitignored and non-gitignored shapes). Variant 3 reproduces the v0.11.4 worktree silent-degrade bug exactly when run against pre-fix code (12 assertion failures: missing yaml mirror, missing workspace-state.json, missing `repo:services-*` nodes in the meta-graph) and is green after. Any regression in the worktree-init path now fails locally before any tag push. (Internal tool path: `tools/release_polyrepo_smoke.sh`, not shipped in the wheel.)
   <!-- verify: file=tools/release_polyrepo_smoke.sh grep=10 scenario runs total -->
 
 ## v0.11.4 - 2026-04-27
@@ -50,7 +85,7 @@ in [`docs/launch.md`](docs/launch.md) links here.
 
 ### Release Safety
 
-- New `tools/release_polyrepo_smoke.sh`: hermetic, no-network release-gate that builds the wheel locally, installs it in a fresh venv, constructs a synthetic polyrepo (root + 3 children), and runs the full `wd workspace` lifecycle under TWO variants (children gitignored / not gitignored) and FOUR scenarios each (fresh init, post-reset+restored-yaml, full wipe rediscover, `wd init --force`). 8 scenario runs total. Wired into `tools/publish.sh` as `check_polyrepo_smoke` so any regression in the polyrepo bootstrap path fails locally before any tag push. The user's bd-9slg/bd-gpt4 reports were both reproducible by this gate before the fix; both are green after.
+- [internal] New pre-publish polyrepo smoke harness: hermetic, no-network release-gate that builds the wheel locally, installs it in a fresh venv, constructs a synthetic polyrepo (root + 3 children), and runs the full `wd workspace` lifecycle under TWO variants (children gitignored / not gitignored) and FOUR scenarios each (fresh init, post-reset+restored-yaml, full wipe rediscover, `wd init --force`). 8 scenario runs total. Any regression in the polyrepo bootstrap path now fails locally before any tag push. The user's bd-9slg/bd-gpt4 reports were both reproducible by this gate before the fix; both are green after. (Internal tool path: `tools/release_polyrepo_smoke.sh`, not shipped in the wheel.)
   <!-- verify: file=tools/release_polyrepo_smoke.sh grep=8 scenario runs total -->
 
 ## v0.11.3 - 2026-04-27
@@ -67,7 +102,7 @@ in [`docs/launch.md`](docs/launch.md) links here.
 - v0.11.0 and v0.11.1 were tagged but the wheel never reached PyPI: the public CI's `MCP extra handshake on built wheel` step returned only the `initialize` response (id=1) and not the `tools/list` response (id=2). The local task gate, smoke tests, and the new local CI replica all passed against the same wheel — a github.com-runner-specific stdio race in the wrapper's `Popen + sleep + communicate()` shape. Wheel content unchanged.
   <!-- verify: file=tools/publish_overlays/release_mcp_handshake.py grep=_read_response_with_id -->
 - The handshake wrapper is now fully synchronous on both sides: send `initialize`, **block on the id=1 response from stdout** with a per-step timeout, then send `notifications/initialized` + `tools/list`, then **block on the id=2 response**. No reliance on stdin EOF or sleep heuristics. The previous race is structurally impossible.
-- New `tools/local_publish_dryrun.sh`: builds the wheel locally, installs into a fresh venv with `[mcp]`, runs the OVERLAY handshake — the exact chain the public CI runs. Wired into `tools/publish.sh` as a precondition so any future overlay-vs-CI drift fails locally before any tag is pushed.
+- [internal] New local-publish dryrun harness: builds the wheel locally, installs into a fresh venv with `[mcp]`, runs the OVERLAY handshake — the exact chain the public CI runs. Any future overlay-vs-CI drift now fails locally before any tag is pushed. (Internal tool path: `tools/local_publish_dryrun.sh`, not shipped in the wheel.)
   <!-- verify: file=tools/local_publish_dryrun.sh grep=Local replica of the public -->
 
 ## v0.11.1 - 2026-04-27
@@ -91,7 +126,7 @@ in [`docs/launch.md`](docs/launch.md) links here.
   <!-- verify: file=tools/publish_overlays/publish-pypi.yml grep=python-version: ${{ matrix.python-version }} -->
 - `wd brief` falls back to an OR-of-tokens retrieval when its strict AND query returns zero matches on a multi-token query. The fallback result carries `degraded_match: "or_fallback"` so callers know they did not get the strict-AND ranking. `graph.query()`'s AND semantics are unchanged.
   <!-- verify: file=weld/brief.py grep=or_fallback -->
-- `tools/check_main_release_consistency.py` and the new ADR 0015 check #11 fail a release if local `main` has drifted behind the latest published wheel without an explicit, documented lag.
+- [internal] New release-consistency check (ADR 0015 check #11) fails a release if local `main` has drifted behind the latest published wheel without an explicit, documented lag. (Internal tool path: `tools/check_main_release_consistency.py`, not shipped in the wheel.)
 - Live-client runtime validation now has a real Codex AGENTS.md + skill record and clearly-marked `result: pending` stubs for Claude Code MCP, Claude Code skill/subagent, and VS Code Copilot custom instructions. A new launch-copy guard rejects platform claims in launch material that are not backed by a recorded row.
   <!-- verify: file=tools/runtime_claims_launch.py grep=def lint_launch_copy -->
 
@@ -115,13 +150,13 @@ in [`docs/launch.md`](docs/launch.md) links here.
 
 ### Security
 
-- The release-claim verifier (ADR 0032) bounds user-supplied regex patterns at 256 chars and file content at 10 MB before running `re.search`, eliminating a CHANGELOG-bullet-authored CI DoS lever via catastrophic backtracking.
+- [internal] The release-claim verifier (ADR 0032) bounds user-supplied regex patterns at 256 chars and file content at 10 MB before running `re.search`, eliminating a CHANGELOG-bullet-authored CI DoS lever via catastrophic backtracking. (Internal tool path: `tools/release_claims_bounds.py`, not shipped in the wheel.)
   <!-- verify: file=tools/release_claims_bounds.py grep=MAX_REGEX_LEN -->
-- Every job in `tools/publish_overlays/publish-pypi.yml` now SHA-pins `actions/checkout` and `actions/setup-python` to immutable commits, matching the existing pin on `pypa/gh-action-pypi-publish`. No moving major-version tags remain in the publish workflow.
+- Every job in the public `.github/workflows/publish-pypi.yml` workflow now SHA-pins `actions/checkout` and `actions/setup-python` to immutable commits, matching the existing pin on `pypa/gh-action-pypi-publish`. No moving major-version tags remain in the publish workflow. (Source overlay: `tools/publish_overlays/publish-pypi.yml`, internal-only; the synced public-repo workflow is the visible artifact.)
 
 ### Release Safety
 
-- ADR 0015 grew checks #10 (release-claim verifier — Guardrail-1, ADR 0032) and #11 (public-main consistency check) since v0.10.1. Drift between CHANGELOG bullets and the working tree at tag time is now blocked by the local gate and the publish workflow's `pre-tag-verify` job, not just by reviewer attention.
+- [internal] ADR 0015 grew checks #10 (release-claim verifier — Guardrail-1, ADR 0032) and #11 (public-main consistency check) since v0.10.1. Drift between CHANGELOG bullets and the working tree at tag time is now blocked by the pre-publish gate and the public `pre-tag-verify` job in `.github/workflows/publish-pypi.yml`, not just by reviewer attention.
   <!-- verify: file=docs/adrs/0015-release-manager-agent.md grep=check 11 -->
 
 ## v0.10.1 - 2026-04-26

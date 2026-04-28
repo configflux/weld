@@ -74,8 +74,8 @@ uv tool install configflux-weld
 cd path/to/your/repo
 wd init
 
-# 3. Run discovery and write the graph to disk.
-wd discover --output .weld/graph.json
+# 3. Run discovery and write the graph to disk (safe mode by default).
+wd discover --safe --output .weld/graph.json
 
 # 4. Query the graph.
 wd query "authentication"

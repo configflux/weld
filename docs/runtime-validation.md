@@ -160,7 +160,9 @@ hold the row open against an upcoming live-client test and are surfaced by
 the launch-copy guard so the matrix can be referenced in launch material
 without claiming a pass that has not happened yet.
 
-### 2026-04-26 — Codex `AGENTS.md` + skill (automated, partial)
+<!-- runtime-pending: codex (live-client run still required; bootstrap-and-asset evidence only) -->
+
+### 2026-04-26 — Codex `AGENTS.md` + skill (automated, partial — pending live-client run)
 
 ```yaml
 platform: Codex `AGENTS.md`
@@ -196,7 +198,9 @@ notes: |
   live Codex run is recorded.
 ```
 
-### TBD — Claude Code MCP + skill/subagent (stub, pending live test)
+<!-- runtime-pending: claude-code (awaiting live-client session) -->
+
+### TBD — Claude Code MCP + skill/subagent (stub, pending live-client session)
 
 <!--
 Tester: open Claude Code on a repo where this Weld repo is on PATH.
@@ -237,7 +241,9 @@ notes: |
   once the steps above have been executed against a real install.
 ```
 
-### TBD — VS Code / Copilot custom instructions (stub, pending live test)
+<!-- runtime-pending: vscode-copilot (awaiting live-client session) -->
+
+### TBD — VS Code / Copilot custom instructions (stub, pending live-client session)
 
 <!--
 Tester: open VS Code with the GitHub Copilot extension installed and

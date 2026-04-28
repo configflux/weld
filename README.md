@@ -1,5 +1,6 @@
 # Weld
 
+<!-- markdownlint-disable-next-line MD013 -->
 [![CI](https://github.com/configflux/weld/actions/workflows/ci.yml/badge.svg)](https://github.com/configflux/weld/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/configflux-weld.svg)](https://pypi.org/project/configflux-weld/) [![Python versions](https://img.shields.io/pypi/pyversions/configflux-weld.svg)](https://pypi.org/project/configflux-weld/) [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 A local codebase graph for AI coding agents. Weld scans code, docs, CI, build
@@ -12,7 +13,19 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-**Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md) walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path` against demo workspaces. Spin up a clean demo with one command:
+<!-- evaluator-note: latest=v0.11.6 -->
+> **Evaluators — start with v0.11.6.** The 0.11.x line shipped five patch
+> releases on 2026-04-27 to chase release-pipeline drift, then v0.11.6 on
+> 2026-04-28 to land the WELD-0116 doc-drift fixes and the public-surface
+> registry layer that prevents that drift from recurring. v0.11.6 obsoletes
+> v0.11.0..v0.11.5. There is no need to read every patch's notes unless you
+> are debugging the publish-overlay, polyrepo-bootstrap, or release-doc
+> drift history. See the [`CHANGELOG.md`](CHANGELOG.md) entry for v0.11.6
+> for the user-visible behaviour.
+
+**Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
+walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
+against demo workspaces. Spin up a clean demo with one command:
 
 ```bash
 scripts/create-polyrepo-demo.sh /tmp/weld-polyrepo-demo
@@ -20,7 +33,11 @@ scripts/create-polyrepo-demo.sh /tmp/weld-polyrepo-demo
 scripts/create-monorepo-demo.sh /tmp/weld-monorepo-demo
 ```
 
-Each script materializes a self-contained demo directory with seeded source files, `.weld` configs, and committed git history -- ready for `wd discover`. If you have Weld installed but no source checkout, the same demos are available through the CLI: `wd demo list`, `wd demo monorepo --init <dir>`, `wd demo polyrepo --init <dir>`.
+Each script materializes a self-contained demo directory with seeded source
+files, `.weld` configs, and committed git history -- ready for `wd discover`.
+If you have Weld installed but no source checkout, the same demos are
+available through the CLI: `wd demo list`, `wd demo monorepo --init <dir>`,
+`wd demo polyrepo --init <dir>`.
 
 ## Use Weld when…
 
@@ -41,9 +58,13 @@ Each script materializes a self-contained demo directory with seeded source file
 - **You expect compiler-grade static analysis.** Weld is a pragmatic graph,
   not a type checker or dataflow engine. It will not catch every reference
   or prove correctness.
-- **You do not want repo-local configuration.** Weld lives in `.weld/`
-  (config, graph, strategies) and expects to be committed alongside your
-  code. If that is unacceptable, Weld is the wrong tool.
+- **You do not want repo-local configuration.** Weld writes config to
+  `.weld/` (`discover.yaml`, `workspaces.yaml`, `strategies/`) and
+  expects that **config** to be committed alongside your code. Generated
+  graphs (`graph.json`, `agent-graph.json`) are gitignored by default;
+  the opt-in `wd init --track-graphs` team workflow commits them for
+  warm-CI / warm-MCP setups instead. If even committing config is
+  unacceptable, Weld is the wrong tool.
 
 ## How Weld compares
 
@@ -91,8 +112,8 @@ uv tool install configflux-weld
 # Bootstrap config for your repo
 wd init
 
-# Run discovery and save the graph
-wd discover --output .weld/graph.json
+# Run discovery and save the graph (safe mode by default — see Trust model below)
+wd discover --safe --output .weld/graph.json
 
 # Query the graph
 wd query "authentication"
@@ -102,7 +123,13 @@ wd viz --no-open
 wd stale
 ```
 
-Try it on a real example: [examples/04-monorepo-typescript](examples/04-monorepo-typescript/) (monorepo) · [examples/05-polyrepo](examples/05-polyrepo/) (polyrepo federation).
+Drop `--safe` once you trust the repository's project-local strategies and
+external-JSON adapters; the [Trust model](#trust-model) section below explains
+what `--safe` disables and when it is appropriate to remove.
+
+Try it on a real example:
+[examples/04-monorepo-typescript](examples/04-monorepo-typescript/) (monorepo) ·
+[examples/05-polyrepo](examples/05-polyrepo/) (polyrepo federation).
 
 Sample output (`wd query "auth"` — trimmed):
 
@@ -329,10 +356,10 @@ overwrites an existing file). Three policies are available:
   and per-machine state (`discovery-state.json`, `graph-previous.json`,
   `workspace-state.json`, `workspace.lock`, `query_state.bin`). A
   fresh contributor gets a clean `git status` after the first run.
-- **Track-graphs (opt-in).** Pass `--track-graphs` to widen the default
-  so the canonical graphs are committed alongside config. Use this for
-  warm-CI / warm-MCP workflows where every contributor should share a
-  pre-built graph:
+- **Track-graphs (opt-in team workflow for warm CI / warm MCP).** Pass
+  `--track-graphs` to widen the default so the canonical graphs are
+  committed alongside config. Use this when every contributor should
+  share a pre-built graph:
 
   ```bash
   wd init --track-graphs
@@ -446,7 +473,7 @@ cross_repo_strategies: [service_graph]
 
 ```bash
 cd ~/workspace-root
-wd discover --output .weld/graph.json
+wd discover --safe --output .weld/graph.json
 ```
 
 When `workspaces.yaml` is present, `wd discover` operates in federation
@@ -629,7 +656,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.11.5`.
+terminal snippets captured against `wd 0.11.6`.
 
 ## Install
 
