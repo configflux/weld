@@ -168,7 +168,7 @@ py_test(name = "weld_cross_repo_compose_topology_test", srcs = ["weld_cross_repo
 py_test(name = "weld_cross_repo_overrides_test", srcs = ["weld_cross_repo_overrides_test.py"], deps = ["//weld/cross_repo", "//weld:yaml"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_package_import_resolver_test", srcs = ["weld_package_import_resolver_test.py"], deps = ["//weld/cross_repo"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_polyrepo_integration_test", srcs = ["weld_polyrepo_integration_test.py"], deps = ["//weld/cross_repo", "//weld:workspace"], local = True, tags = ["no-sandbox"])
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_query_regression_test", "weld_query_sidecar_test", "weld_gitignore_writer_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime", "//weld:workspace"], local = True, tags = ["no-sandbox"]) for _n in ("weld_query_regression_test", "weld_query_sidecar_test", "weld_gitignore_writer_test", "weld_telemetry_writer_test", "weld_telemetry_redact_test", "weld_telemetry_cli_test", "weld_telemetry_mcp_test", "weld_telemetry_first_run_test", "weld_telemetry_optout_test", "weld_telemetry_cli_failure_test", "weld_telemetry_polyrepo_test", "weld_init_external_output_test")]
 py_test(name = "weld_mcp_server_test", srcs = ["mcp_expected_tools.py", "weld_mcp_server_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_mcp_federation_test", srcs = ["weld_mcp_federation_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
 py_test(name = "weld_mcp_federation_tools_test", srcs = ["weld_mcp_federation_tools_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
@@ -443,7 +443,7 @@ py_test(
 ) for _name in ("weld_brief_test", "weld_brief_v2_test", "weld_trace_test", "weld_warnings_test", "weld_brief_or_fallback_test")]
 
 py_test(name = "weld_ranking_test", srcs = ["weld_ranking_test.py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"])
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_enrich_test", "weld_enrich_safe_mode_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_enrich_test", "weld_enrich_safe_mode_test", "weld_enrich_copilot_cli_test")]
 py_test(
     name = "weld_confidence_discrimination_test",
     srcs = ["weld_confidence_discrimination_test.py"],

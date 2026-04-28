@@ -28,6 +28,21 @@ publish), see [`docs/release.md`](docs/release.md). Launch readers asking
 "what is new?" should be pointed at this file directly; the launch material
 in [`docs/launch.md`](docs/launch.md) links here.
 
+## v0.12.0 - 2026-04-28
+
+### Added
+
+- Local-only telemetry recording success/failure of CLI invocations and MCP tool calls. Default-on; opt out with `WELD_TELEMETRY=off`, `--no-telemetry`, or `wd telemetry disable`. Run `wd telemetry --help` for details.
+  <!-- verify: file=weld/telemetry_cli.py grep=disable -->
+- New `copilot-cli` enrichment provider for `wd enrich`. Uses the standalone `copilot` binary, so no API key is required (auth lives in the binary itself). Set `WELD_COPILOT_BINARY` to override the binary path.
+  <!-- verify: file=weld/providers/copilot_cli.py grep=WELD_COPILOT_BINARY -->
+
+### Fixed
+
+- `wd init --output <dir>` now writes the polyrepo workspaces file alongside the discover config in the directory named by `--output`. Previously it was dropped at the working-directory default, which leaked into the source-of-truth `.weld/` and silently flipped subsequent `wd discover` runs into federation mode.
+  <!-- verify: file=weld/init.py grep=workspaces -->
+
+
 ## v0.11.6 - 2026-04-28
 
 ### Changed

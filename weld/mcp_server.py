@@ -281,21 +281,39 @@ def build_tools() -> list[Tool]:
         tool_cls=Tool,
     )
 
-def dispatch(
-    tool_name: str,
-    arguments: dict | None,
-    *,
-    root: Path | str = ".",
+def _dispatch_inner(
+    tool_name: str, arguments: dict | None, *, root: Path | str = ".",
 ) -> dict:
-    """Dispatch a tool call by name. Used by both tests and ``run_stdio``.
-
-    Raises ``KeyError`` if *tool_name* is not registered.
-    """
+    """Select the tool by name and invoke it. Raises ``KeyError`` on miss."""
     args = dict(arguments or {})
     for tool in build_tools():
         if tool.name == tool_name:
             return tool.handler(**args, root=root)
     raise KeyError(f"unknown weld MCP tool: {tool_name}")
+
+
+def dispatch(
+    tool_name: str, arguments: dict | None, *, root: Path | str = ".",
+) -> dict:
+    """Dispatch a tool call by name (used by tests and ``run_stdio``).
+
+    Wraps :func:`_dispatch_inner` with :class:`weld._telemetry.Recorder`
+    so every MCP tool call appends one event (ADR 0035). The Recorder
+    swallows its own writer errors -- telemetry failures never alter the
+    dispatch result or replace the original exception. MCP has no exit
+    code, so we set the schema sentinel ``exit_code = -1``. Raises
+    ``KeyError`` when *tool_name* is not registered.
+    """
+    from weld._telemetry import Recorder
+
+    # Recorder accepts root=None and falls back to Path.cwd() internally.
+    try:
+        rroot = root if isinstance(root, Path) else Path(root)
+    except (TypeError, ValueError):
+        rroot = None
+    with Recorder(surface="mcp", command=tool_name, flags=[], root=rroot) as rec:
+        rec.set_exit_code(-1)  # ADR 0035 MCP sentinel; no exit concept.
+        return _dispatch_inner(tool_name, arguments, root=root)
 
 # ---------------------------------------------------------------------------
 # Stdio entry point (optional; requires the ``mcp`` SDK)

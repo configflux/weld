@@ -395,7 +395,7 @@ def main(argv: list[str] | None = None) -> None:
     root = Path(args.root).resolve()
     output = Path(args.output) if args.output else root / ".weld" / "discover.yaml"
     success = init(root, output, force=args.force)
-    workspaces_out = root / ".weld" / "workspaces.yaml"
+    workspaces_out = output.parent / "workspaces.yaml"
     if _init_workspace(root, workspaces_out, force=args.force, max_depth=args.max_depth):
         print(f"Wrote {workspaces_out}", file=sys.stderr)
     _maybe_bootstrap_polyrepo(root, max_depth=args.max_depth)

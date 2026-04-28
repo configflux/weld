@@ -121,6 +121,32 @@ Security policy:
 
 https://github.com/configflux/weld/blob/main/SECURITY.md
 
+## Local Telemetry
+
+Weld records the success or failure of every `wd` CLI invocation and MCP tool
+call to a local-only file. Nothing leaves your machine; there is no remote
+endpoint and no upload.
+
+Each event is one JSON line with a strict allowlist: subcommand or tool name,
+exit code, duration in milliseconds, and the exception class name on failure.
+Paths, query strings, error messages, flag values, and usernames are never
+recorded. The redaction runs at write time, so the file on disk is already
+safe to attach to a bug report.
+
+In a single repo the file is `<repo>/.weld/telemetry.jsonl`. In a polyrepo
+workspace every event aggregates into `<workspace_root>/.weld/telemetry.jsonl`.
+Invocations outside any project fall back to
+`${XDG_STATE_HOME:-~/.local/state}/weld/telemetry.jsonl`. The file is
+gitignored and rotates at 1 MiB.
+
+Opt out with any one of: `WELD_TELEMETRY=off`, `--no-telemetry`, or
+`wd telemetry disable`. Use `wd telemetry --help` to inspect, export, or
+clear the file.
+
+ADR 0035 documents the full schema and design:
+
+https://github.com/configflux/weld/blob/main/docs/adrs/0035-local-telemetry.md
+
 ## Polyrepo Federation
 
 Weld supports workspace roots that contain multiple child Git repositories.

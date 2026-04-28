@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Shell tests assert behavioral CLI outputs, not telemetry side-effects.
+# Disable local telemetry by default so the first-run stderr notice
+# (ADR 0035) does not perturb stderr capture in any test that sources
+# this library. Tests that exercise telemetry directly do so via the
+# Python ``unittest`` suite, not these shell helpers.
+export WELD_TELEMETRY="${WELD_TELEMETRY:-off}"
+
 weld_test_repo_root() {
   local script_dir="$1"
 

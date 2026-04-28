@@ -13,15 +13,18 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.11.6 -->
-> **Evaluators — start with v0.11.6.** The 0.11.x line shipped five patch
-> releases on 2026-04-27 to chase release-pipeline drift, then v0.11.6 on
-> 2026-04-28 to land the WELD-0116 doc-drift fixes and the public-surface
-> registry layer that prevents that drift from recurring. v0.11.6 obsoletes
-> v0.11.0..v0.11.5. There is no need to read every patch's notes unless you
-> are debugging the publish-overlay, polyrepo-bootstrap, or release-doc
-> drift history. See the [`CHANGELOG.md`](CHANGELOG.md) entry for v0.11.6
-> for the user-visible behaviour.
+<!-- evaluator-note: latest=v0.12.0 -->
+> **Evaluators — start with v0.12.0.** v0.12.0 builds on v0.11.6 and adds
+> local-only telemetry (default-on, opt out with `WELD_TELEMETRY=off`,
+> `--no-telemetry`, or `wd telemetry disable`) and a new `copilot-cli`
+> enrichment provider that reuses the standalone `copilot` binary. The
+> 0.11.x line shipped five patch releases on 2026-04-27 to chase
+> release-pipeline drift; v0.11.6 obsoleted v0.11.0..v0.11.5 and added the
+> public-surface registry layer that prevents that drift from recurring.
+> There is no need to read every patch's notes unless you are debugging
+> the publish-overlay, polyrepo-bootstrap, or release-doc drift history.
+> See the [`CHANGELOG.md`](CHANGELOG.md) entry for v0.12.0 for the
+> user-visible behaviour.
 
 **Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
 walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
@@ -232,7 +235,7 @@ Weld's trust posture is explicit and narrow:
   for `wd enrich`. Pass `wd discover --safe` to scan an untrusted
   repository without executing any code from it; pass `wd enrich --safe`
   to refuse network egress (every currently registered provider —
-  Anthropic, OpenAI, Ollama — is refused). Safe mode produces a stable
+  Anthropic, OpenAI, Ollama, Copilot CLI — is refused). Safe mode produces a stable
   `[weld] safe mode: ...` stderr line for each refused path.
 - **Advanced strategies**: project-local strategies are Python modules
   loaded at discovery time, and `strategy: external_json` executes
@@ -240,6 +243,36 @@ Weld's trust posture is explicit and narrow:
   repositories you trust.
 
 See [SECURITY.md](SECURITY.md) for the full policy and reporting process.
+
+## Local telemetry
+
+Weld records the success or failure of every `wd` CLI invocation and every
+MCP tool call to a local-only file. There is no remote endpoint and no
+upload — the file never leaves your machine unless you explicitly export
+and share it.
+
+**What is recorded.** Each event is one JSON line with a strict allowlist
+of fields: subcommand or tool name, exit code, duration in milliseconds,
+and the exception class name on failure. Paths, query strings, error
+messages, flag values, and usernames are never recorded. The redaction is
+enforced at write time, so the file on disk is already safe to attach to a
+bug report.
+
+**Where it lives.** In a single repo, the file is
+`<repo>/.weld/telemetry.jsonl`. In a polyrepo workspace, every event from
+the root and from any child repo aggregates into
+`<workspace_root>/.weld/telemetry.jsonl` — one shareable artifact per
+workspace. Invocations outside any project (for example `wd --version` in
+`/tmp`) fall back to `${XDG_STATE_HOME:-~/.local/state}/weld/telemetry.jsonl`.
+The file is gitignored and rotates at 1 MiB to keep the trailing 500 events.
+
+**How to opt out.** Any one of these disables recording:
+`WELD_TELEMETRY=off` in the environment, the `--no-telemetry` flag on a
+single invocation, or `wd telemetry disable` to write a persistent sentinel
+at the resolved root. Run `wd telemetry --help` for the full subcommand
+surface (`status`, `show`, `path`, `export`, `clear`, `disable`, `enable`),
+and see [ADR 0035](docs/adrs/0035-local-telemetry.md) for the full event
+schema and design rationale.
 
 ## Supported languages
 
@@ -267,6 +300,11 @@ To use the built-in semantic enrichment providers:
 ```bash
 uv tool install "configflux-weld[openai]"     # or [anthropic], [ollama], or [llm]
 ```
+
+The `copilot-cli` provider needs no Python extra — install the standalone
+GitHub Copilot CLI binary (`copilot`) and run
+`wd enrich --provider copilot-cli`. Set `WELD_COPILOT_BINARY` to override
+the binary path.
 
 For a source-checkout install (contributors editing Weld itself), see
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -656,7 +694,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.11.6`.
+terminal snippets captured against `wd 0.12.0`.
 
 ## Install
 

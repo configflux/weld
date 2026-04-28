@@ -243,7 +243,15 @@ unfamiliar codebases.
 By default, no. Discovery is local; the graph is a file on disk under
 `.weld/`. The only network-touching surface is `wd enrich` with a
 configured LLM provider, and it can be locked off with `--safe`. There
-is no telemetry, no upload, and no hosted backend.
+is no upload and no hosted backend.
+
+Weld does write a local-only telemetry log at `.weld/telemetry.jsonl`
+that records the success or failure of each `wd` CLI invocation and MCP
+tool call — schema-locked to subcommand name, exit code, duration, and
+exception class only. No paths, query strings, or error messages. The
+redaction runs at write time, so the file on disk is already safe to
+attach to a bug report. Inspect it with `wd telemetry show`, and disable
+with `WELD_TELEMETRY=off`, `--no-telemetry`, or `wd telemetry disable`.
 
 ### How big a repo can Weld handle?
 

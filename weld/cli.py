@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
+from pathlib import Path
 
 
 def _install_sigpipe_handler() -> None:
@@ -79,6 +80,10 @@ Live commands:
 
 MCP commands:
   mcp            MCP server tooling (e.g. `wd mcp config --client=claude`)
+  telemetry      show / export / clear local telemetry
+
+Global flags:
+  --no-telemetry Disable local telemetry for this invocation (ADR 0035)
 
 Graph commands:
   graph stats    Graph summary counts (canonical)
@@ -133,10 +138,90 @@ def _run_export(argv: list[str]) -> int:
     return 0
 
 
+def _strip_no_telemetry(args: list[str]) -> tuple[list[str], bool]:
+    """Remove every ``--no-telemetry`` token. ADR 0035 § "Opt-out" point 1."""
+    out = [t for t in args if t != "--no-telemetry"]
+    return out, len(out) != len(args)
+
+
+def _resolve_command_name(args: list[str]) -> str:
+    """Map *args* to a telemetry ``command`` value (post-strip).
+
+    Empty / ``-h`` / ``--help`` -> ``"help"``. ``-V`` / ``--version`` ->
+    ``"version"``. First non-flag token coerced through the CLI allowlist.
+    """
+    if not args:
+        return "help"
+    if args[0] in {"-h", "--help"}:
+        return "help"
+    if args[0] in {"-V", "--version"}:
+        return "version"
+    from weld._telemetry_allowlist import coerce_command
+
+    for tok in args:
+        if tok and not tok.startswith("-"):
+            return coerce_command("cli", tok)
+    return "unknown"
+
+
+def _collect_flag_names(args: list[str]) -> list[str]:
+    """Return long/short flag tokens in *args* (``--k=v`` -> ``--k``)."""
+    names: list[str] = []
+    for tok in args:
+        if not isinstance(tok, str) or not tok or tok == "--":
+            continue
+        if tok.startswith("--"):
+            names.append(tok.split("=", 1)[0])
+        elif tok.startswith("-") and len(tok) > 1:
+            names.append(tok)
+    return names
+
+
+def _is_telemetry_clear(args: list[str]) -> bool:
+    """``wd telemetry clear ...`` must not self-record (ADR 0035 UX)."""
+    return len(args) >= 2 and args[0] == "telemetry" and args[1] == "clear"
+
+
 def main(argv: list[str] | None = None) -> int:
     _install_sigpipe_handler()
+    raw = list(sys.argv[1:] if argv is None else argv)
+    stripped, flag_seen = _strip_no_telemetry(raw)
+    # Skip telemetry entirely for ``wd telemetry clear`` so the file
+    # really is gone after the command runs (ADR 0035 § "First-run Notice").
+    skip = _is_telemetry_clear(stripped)
+    # Lazy-import the Recorder so a Python import error in telemetry
+    # cannot break ``wd`` itself (ADR 0035 § "Failure-isolated writer").
+    rec_cm = None
+    if not skip:
+        try:
+            from weld._telemetry import Recorder, resolve_path
+
+            try:
+                target = resolve_path(Path.cwd())
+                root = target.parent.parent if target is not None else None
+            except Exception:
+                root = None
+            rec_cm = Recorder(
+                surface="cli",
+                command=_resolve_command_name(stripped),
+                flags=_collect_flag_names(stripped),
+                root=root,
+                cli_flag=(False if flag_seen else None),
+            )
+        except Exception:
+            rec_cm = None
+
     try:
-        return _dispatch(argv)
+        if rec_cm is None:
+            return _dispatch(stripped)
+        with rec_cm as rec:
+            try:
+                rc = _dispatch(stripped)
+            except BrokenPipeError:
+                rec.set_exit_code(141)
+                raise
+            rec.set_exit_code(rc if isinstance(rc, int) else 0)
+            return rc
     except BrokenPipeError:
         _suppress_broken_pipe_at_exit()
         # 128 + SIGPIPE (13) is the conventional exit code for a pipe close.
@@ -281,6 +366,11 @@ def _dispatch(argv: list[str] | None) -> int:
         from weld import mcp_config as mcp_config_mod
 
         return mcp_config_mod.main(rest)
+
+    if subcmd == "telemetry":
+        from weld import telemetry_cli
+
+        return telemetry_cli.main(rest)
 
     from weld import graph as graph_mod
 

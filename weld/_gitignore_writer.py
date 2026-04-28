@@ -55,6 +55,7 @@ workspace.lock
 query_state.bin
 graph.json
 agent-graph.json
+telemetry.jsonl
 """
 
 TRACK_GRAPHS_GITIGNORE = """\
@@ -68,6 +69,7 @@ graph-previous.json
 workspace-state.json
 workspace.lock
 query_state.bin
+telemetry.jsonl
 """
 
 IGNORE_ALL_GITIGNORE = """\
