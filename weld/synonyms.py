@@ -43,6 +43,11 @@ SYNONYMS: dict[str, list[str]] = {
     "queue": ["worker", "task", "job", "celery", "redis", "pipeline"],
     "task": ["worker", "job", "queue", "pipeline", "schedule"],
     "job": ["worker", "task", "queue", "pipeline"],
+    "startup": ["entrypoint", "main", "program", "launch", "boot", "run", "runtime", "execution"],
+    "start": ["startup", "entrypoint", "main", "program", "launch", "boot", "run"],
+    "entrypoint": ["startup", "main", "program", "launch", "boot", "run"],
+    "execution": ["startup", "entrypoint", "flow", "run", "call", "invoke"],
+    "flow": ["trace", "path", "execution", "call", "invoke", "startup"],
 
     # API & HTTP
     "api": ["endpoint", "route", "handler", "rest", "http", "request", "response", "controller"],

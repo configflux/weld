@@ -31,6 +31,7 @@ if _repo_root not in sys.path:
 from weld.contract import SCHEMA_VERSION  # noqa: E402
 from weld.graph import Graph  # noqa: E402
 from weld.trace import TRACE_VERSION, main as trace_main, trace  # noqa: E402
+from weld.trace_contract import trace_contract_warnings  # noqa: E402
 
 _TS = "2026-04-09T12:00:00+00:00"
 
@@ -257,6 +258,87 @@ class TraceReuseSemanticsTest(unittest.TestCase):
         result = trace(g, term="web")
         ifaces = {n["id"] for n in result["interfaces"]}
         self.assertIn("route:GET-/users", ifaces)
+
+class TraceStartupFlowTest(unittest.TestCase):
+    """Startup-oriented queries should find runtime entrypoints and wiring."""
+
+    def _startup_graph(self) -> Graph:
+        nodes = {
+            "service:api": {
+                "type": "service", "label": "api service",
+                "props": {"description": "Service runtime startup host."},
+            },
+            "entrypoint:services/api/main": {
+                "type": "entrypoint", "label": "main",
+                "props": {
+                    "description": "Runtime startup entrypoint for execution flow.",
+                },
+            },
+            "boundary:services/api/app": {
+                "type": "boundary", "label": "FastAPI app",
+                "props": {"description": "Application runtime boundary."},
+            },
+            "deploy:docker_compose": {
+                "type": "deploy", "label": "docker-compose.yml",
+                "props": {"deploy_kind": "compose"},
+            },
+        }
+        edges = [
+            {"from": "service:api", "to": "entrypoint:services/api/main",
+             "type": "contains", "props": {}},
+            {"from": "service:api", "to": "boundary:services/api/app",
+             "type": "contains", "props": {}},
+            {"from": "boundary:services/api/app",
+             "to": "entrypoint:services/api/main",
+             "type": "exposes", "props": {}},
+            {"from": "deploy:docker_compose", "to": "service:api",
+             "type": "configures", "props": {}},
+        ]
+        return _make_graph(nodes, edges)
+
+    def test_natural_language_startup_query_uses_or_fallback(self) -> None:
+        result = trace(self._startup_graph(), term="how does this service start")
+        boundary_ids = {n["id"] for n in result["boundaries"]}
+        self.assertIn("entrypoint:services/api/main", boundary_ids)
+        self.assertIn("boundary:services/api/app", boundary_ids)
+        self.assertIn("deploy:docker_compose", boundary_ids)
+        self.assertTrue(any("or_fallback" in w for w in result["warnings"]))
+
+    def test_trace_inert_anchor_warns(self) -> None:
+        g = _make_graph({
+            "event_contract:order-created": {
+                "type": "event_contract",
+                "label": "OrderCreated",
+                "props": {},
+            },
+        })
+        result = trace(g, node_id="event_contract:order-created")
+        self.assertEqual(result["services"], [])
+        self.assertTrue(any("trace buckets" in w for w in result["warnings"]))
+
+    def test_fragment_contract_warns_for_custom_trace_inert_vocab(self) -> None:
+        warnings = trace_contract_warnings({
+            "nodes": {
+                "event_contract:order-created": {
+                    "type": "event_contract",
+                    "label": "OrderCreated",
+                    "props": {},
+                },
+                "capability:order-handler": {
+                    "type": "capability",
+                    "label": "Order handler",
+                    "props": {},
+                },
+            },
+            "edges": [
+                {"from": "event_contract:order-created",
+                 "to": "capability:order-handler",
+                 "type": "handled_by", "props": {}},
+            ],
+        })
+        joined = " ".join(warnings)
+        self.assertIn("trace bucket", joined)
+        self.assertIn("trace-followed edges", joined)
 
 class TraceCLITest(unittest.TestCase):
     """End-to-end smoke test for the CLI entry point."""

@@ -1,6 +1,6 @@
 module(
     name = "configflux-weld",
-    version = "0.13.0",
+    version = "0.13.1",
 )
 
 bazel_dep(name = "rules_python", version = "0.40.0")

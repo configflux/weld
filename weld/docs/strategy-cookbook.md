@@ -139,6 +139,8 @@ sources:
 Edit `build_fragment()` in the adapter to emit the nodes and edges your
 project needs.  The adapter runs with `cwd` set to the repo root and must
 print valid weld JSON to stdout.  Invalid output is rejected gracefully.
+If the fragment should participate in `wd trace`, map custom runtime terms
+onto the documented trace buckets and edge labels in `docs/graph-schema.md`.
 
 ## Recipe: Emit normalized metadata
 
@@ -154,10 +156,10 @@ these fields when they can do so honestly:
 
 Use the standard vocabularies:
 
-- `authority`: `authoritative`, `supporting`, `derived`
-- `confidence`: `high`, `medium`, `low`
-- `roles`: `implementation`, `documentation`, `policy`, `verification`,
-  `operations`, `build`, `entrypoint`
+- `authority`: `canonical`, `derived`, `manual`, `external`
+- `confidence`: `definite`, `inferred`, `speculative`
+- `roles`: `implementation`, `test`, `config`, `doc`, `build`,
+  `migration`, `fixture`, `script`
 
 If the strategy cannot justify a value, omit it rather than guessing.
 

@@ -68,6 +68,14 @@ class BootstrapResult:
         would otherwise mask. The yaml overrides the mask (operator
         opted in explicitly), but the diagnostic explains why an
         FS-only scan would have missed them.
+    ``excluded_by_invalid_name``
+        Workspace-relative paths of nested repos the FS scan found
+        whose auto-derived child name failed the
+        ``^[A-Za-z0-9_-]+$`` validator (typically directories with
+        leading dots or interior dots in their path segments).
+        These are skipped from the registry rather than aborting
+        bootstrap; operators see the path so they can either rename
+        the directory or add it to ``scan.exclude_paths``.
 
     Divergence between ``children_recursed`` and ``children_present``
     ----------------------------------------------------------------
@@ -108,6 +116,7 @@ class BootstrapResult:
     errors: list[str] = field(default_factory=list)
     yaml_listed_but_missing: list[str] = field(default_factory=list)
     excluded_by_gitignore: list[str] = field(default_factory=list)
+    excluded_by_invalid_name: list[str] = field(default_factory=list)
 
     def summary_lines(self) -> list[str]:
         """Human-readable bullet summary of a bootstrap run."""
@@ -148,6 +157,11 @@ class BootstrapResult:
             lines.append(
                 "  * yaml-listed but masked by root .gitignore (yaml wins): "
                 + ", ".join(sorted(self.excluded_by_gitignore)),
+            )
+        if self.excluded_by_invalid_name:
+            lines.append(
+                "  * scan-skipped (invalid auto-derived child name): "
+                + ", ".join(sorted(self.excluded_by_invalid_name)),
             )
         for err in self.errors:
             lines.append(f"  ! {err}")

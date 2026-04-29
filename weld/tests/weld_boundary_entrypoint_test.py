@@ -234,6 +234,35 @@ def compute():
             }
             assert len(boundary_nodes) == 0
 
+    def test_service_links_entrypoint_and_boundary_across_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pkg = root / "services" / "api"
+            pkg.mkdir(parents=True)
+            (pkg / "main.py").write_text('''\
+import uvicorn
+
+if __name__ == "__main__":
+    uvicorn.run("services.api.app:app")
+''')
+            (pkg / "app.py").write_text('''\
+from fastapi import FastAPI
+
+app = FastAPI()
+''')
+            result = extract(root, {"glob": "services/api/*.py"}, {})
+
+            assert "service:api" in result.nodes
+            assert result.nodes["service:api"]["type"] == "service"
+            contains_targets = {
+                edge["to"] for edge in result.edges
+                if edge["from"] == "service:api" and edge["type"] == "contains"
+            }
+            assert "entrypoint:services/api/main" in contains_targets
+            assert "boundary:services/api/app" in contains_targets
+            entry = result.nodes["entrypoint:services/api/main"]
+            assert "startup" in entry["props"]["description"]
+
 class TestMetadataContract:
     """Every node/edge must satisfy the normalized metadata contract."""
 

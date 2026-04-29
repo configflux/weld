@@ -43,8 +43,12 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from weld.brief import _classify_node
+from weld.graph_query import query_or_fallback
 from weld.ranking import rank_key as _rank_key
+from weld.trace_contract import (
+    TRACE_EDGE_TYPES,
+    bucket_for_trace as _bucket_for,
+)
 from weld.warnings import check_confidence_gaps, check_freshness, check_partial_coverage
 
 # -- Stable JSON output contract -------------------------------------------
@@ -59,64 +63,42 @@ _DEFAULT_DEPTH: int = 2
 # doesn't pull the entire graph into the slice.
 _DEFAULT_SEED_LIMIT: int = 5
 
-# Edge types that carry protocol-aware capability paths. We follow these
-# in *both* directions so a slice rooted at an interface still finds its
-# owning service, and a slice rooted at a service still finds the tests
-# that verify it. Reuses the contract's existing edge vocabulary -- no
-# new edge types are introduced.
-_TRACE_EDGE_TYPES: frozenset[str] = frozenset([
-    "contains", "exposes", "consumes", "produces",
-    "implements", "accepts", "responds_with",
-    "verifies", "tests", "documents",
-    "depends_on", "invokes", "feeds_into",
-    "enforces",
+_STARTUP_QUERY_TOKENS: frozenset[str] = frozenset([
+    "start", "starts", "startup", "entrypoint", "entrypoints",
+    "boot", "launch", "run", "runtime", "execution", "flow",
 ])
 
-# Node types that go into each bucket. ``interfaces`` is intentionally
-# omitted -- interface classification is delegated to
-# ``weld.brief._classify_node`` so the route-with-protocol promotion rule
-# applies here too.
-_SERVICE_TYPES: frozenset[str] = frozenset(["service", "package"])
-_CONTRACT_TYPES: frozenset[str] = frozenset(["contract", "enum"])
-_VERIFICATION_TYPES: frozenset[str] = frozenset([
-    "test-target", "test-suite", "gate",
-])
+def _startup_query(term: str) -> bool:
+    return any(tok in _STARTUP_QUERY_TOKENS for tok in term.lower().split())
 
-def _bucket_for(node: dict) -> str | None:
-    """Return the trace bucket name for *node*, or ``None`` to drop it.
-
-    Order matters: interfaces and boundaries are checked via
-    :func:`weld.brief._classify_node` so a ``route`` carrying ``protocol``
-    metadata still ends up in the interfaces bucket (tracked project).
-    Services and contracts use their static node type. Verifications
-    catch test/gate nodes that ``brief`` would put in its ``build``
-    bucket -- in a trace we want them surfaced as the verification arm
-    of the slice.
-    """
+def _seed_rank(node: dict, *, startup_query: bool) -> tuple[int, int, int, int, str]:
+    bucket = _bucket_for(node)
     ntype = node.get("type", "")
-    category = _classify_node(node)
-    if category == "interface":
-        return "interfaces"
-    if category == "boundary":
-        return "boundaries"
-    if ntype in _SERVICE_TYPES:
-        return "services"
-    if ntype in _CONTRACT_TYPES:
-        return "contracts"
-    if ntype in _VERIFICATION_TYPES:
-        return "verifications"
-    # Anything else (docs, generic primaries, symbols, ...) is dropped
-    # from the trace slice -- ``wd brief`` is the right surface for
-    # those. ``trace`` is intentionally narrow.
-    return None
+    startup_boost = 0
+    if startup_query:
+        if ntype == "entrypoint":
+            startup_boost = 0
+        elif ntype == "boundary":
+            startup_boost = 1
+        elif bucket is not None:
+            startup_boost = 2
+        else:
+            startup_boost = 3
+    role, authority, confidence, node_id = _rank_key(node)
+    return (startup_boost, role, authority, confidence, node_id)
 
-def _seed_from_term(graph: Any, term: str, limit: int) -> list[str]:
+def _seed_from_term(graph: Any, term: str, limit: int) -> tuple[list[str], bool]:
     """Return seed node ids from a tokenized query, biased toward
     services and interaction surfaces."""
     query_result = graph.query(term, limit=limit * 4)
     matches = query_result.get("matches", [])
+    degraded = False
+    if not matches and len(term.split()) > 1:
+        fallback = query_or_fallback(graph, term, limit=limit * 4)
+        matches = fallback.get("matches", [])
+        degraded = bool(matches)
     if not matches:
-        return []
+        return [], degraded
     # Prefer matches that are themselves a service / interface /
     # boundary / contract -- they make better trace seeds than a random
     # primary hit. Fall back to any match if no preferred seed exists.
@@ -125,10 +107,12 @@ def _seed_from_term(graph: Any, term: str, limit: int) -> list[str]:
         if _bucket_for(m) is not None
     ]
     if preferred:
-        chosen = preferred[:limit]
+        chosen = sorted(
+            preferred, key=lambda m: _seed_rank(m, startup_query=_startup_query(term))
+        )[:limit]
     else:
         chosen = matches[:limit]
-    return [m["id"] for m in chosen]
+    return [m["id"] for m in chosen], degraded
 
 def _walk(
     nodes: dict[str, dict],
@@ -168,7 +152,7 @@ def _build_adjacency(
     """Build an undirected adjacency map limited to trace edge types."""
     adj: dict[str, list[tuple[str, dict]]] = {}
     for edge in edges:
-        if edge.get("type") not in _TRACE_EDGE_TYPES:
+        if edge.get("type") not in TRACE_EDGE_TYPES:
             continue
         a, b = edge["from"], edge["to"]
         adj.setdefault(a, []).append((b, edge))
@@ -211,7 +195,12 @@ def trace(
     else:
         assert term is not None
         anchor = {"kind": "term", "term": term}
-        seeds = _seed_from_term(graph, term, seed_limit)
+        seeds, degraded = _seed_from_term(graph, term, seed_limit)
+        if degraded:
+            warnings.append(
+                f"Strict AND returned no trace anchor for {term!r}; "
+                "retried with OR fallback (degraded_match=or_fallback)."
+            )
         if not seeds:
             warnings.append(f"No anchor matches found for term: {term!r}")
 
@@ -255,6 +244,12 @@ def trace(
         e for e in walked_edges
         if e["from"] in kept_ids and e["to"] in kept_ids
     ]
+    if seeds and not kept_ids:
+        warnings.append(
+            "Anchor matched graph nodes, but none mapped to trace buckets. "
+            "Use trace-participating node types or map imported semantics "
+            "onto the trace contract."
+        )
 
     # -- provenance --
     meta = data.get("meta", {})
@@ -291,7 +286,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="wd trace",
         description=(
-            "Protocol-aware capability path surface: returns a "
+            "Startup/runtime and protocol-aware path surface: returns a "
             "service / interface / contract / boundary / verification "
             "slice for an anchor (term or node id)."
         ),

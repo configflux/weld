@@ -19,7 +19,13 @@ from pathlib import Path
 from weld._yaml import parse_yaml
 from weld.strategies import cpp_resolver as _cpp_resolver
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
-from weld.strategies import _csharp_tree_sitter, _java_tree_sitter, _ts_call_graph, _ts_parse
+from weld.strategies import (
+    _cpp_tree_sitter,
+    _csharp_tree_sitter,
+    _java_tree_sitter,
+    _ts_call_graph,
+    _ts_parse,
+)
 
 # ---------------------------------------------------------------------------
 # Optional dependency guard
@@ -261,6 +267,16 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
         # Parse symbols using tree-sitter
         symbols = _parse_file_symbols(fpath, language, queries)
+        runtime_startup = (
+            (
+                language == "csharp"
+                and _csharp_tree_sitter.is_startup_source(rel_path, source_text, symbols)
+            )
+            or (
+                language == "cpp"
+                and _cpp_tree_sitter.is_startup_source(rel_path, source_text, symbols)
+            )
+        )
 
         # Optional: also emit function-level call graph nodes/edges.
         # Gated on the per-source ``emit_calls`` flag so existing
@@ -290,7 +306,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             )
 
         exports = symbols.get("exports", [])
-        if not exports:
+        if not exports and not runtime_startup:
             continue
 
         nid = _make_node_id(rel_path, id_prefix)
@@ -320,19 +336,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         node_props["confidence"] = "definite"
         node_props["roles"] = ["implementation"]
 
-        if language == "csharp":
-            _csharp_tree_sitter.enrich_file_node(
-                nodes,
-                edges,
-                nid,
-                node_props,
-                symbols,
-                source_text,
-                source_strategy,
-            )
-
-        if language == "java":
-            _java_tree_sitter.enrich_file_node(
+        language_enricher = {
+            "cpp": _cpp_tree_sitter,
+            "csharp": _csharp_tree_sitter,
+            "java": _java_tree_sitter,
+        }.get(language)
+        if language_enricher:
+            language_enricher.enrich_file_node(
                 nodes,
                 edges,
                 nid,

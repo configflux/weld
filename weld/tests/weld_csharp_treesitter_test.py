@@ -90,6 +90,60 @@ class CSharpTreeSitterSupportTest(unittest.TestCase):
         node = next(n for n in result.nodes.values() if n["type"] == "file")
         self.assertEqual(node["props"]["source_strategy"], "csharp")
 
+    def test_program_cs_emits_startup_entrypoint_and_boundary(self) -> None:
+        from weld.strategies import tree_sitter
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            src = root / "services" / "api"
+            src.mkdir(parents=True)
+            (src / "Program.cs").write_text(
+                textwrap.dedent("""\
+                    using Microsoft.AspNetCore.Builder;
+                    using Microsoft.Extensions.Hosting;
+
+                    var builder = WebApplication.CreateBuilder(args);
+                    var app = builder.Build();
+                    app.Run();
+                """)
+            )
+            with mock.patch.object(tree_sitter, "TREE_SITTER_AVAILABLE", True), \
+                 mock.patch.object(
+                     tree_sitter,
+                     "_parse_file_symbols",
+                     return_value={
+                         "exports": [],
+                         "classes": [],
+                         "imports": [
+                             "Microsoft.AspNetCore.Builder",
+                             "Microsoft.Extensions.Hosting",
+                         ],
+                     },
+                 ):
+                result = tree_sitter.extract(
+                    root,
+                    {"glob": "**/*.cs", "language": "csharp"},
+                    {},
+                )
+
+        self.assertIn("entrypoint:services/api/Program", result.nodes)
+        self.assertIn("boundary:services/api/Program:host", result.nodes)
+        self.assertIn("service:api", result.nodes)
+        self.assertIn(
+            "startup",
+            result.nodes["entrypoint:services/api/Program"]["props"]["description"],
+        )
+        edge_keys = {(e["from"], e["to"], e["type"]) for e in result.edges}
+        self.assertIn(
+            ("boundary:services/api/Program:host",
+             "entrypoint:services/api/Program", "exposes"),
+            edge_keys,
+        )
+        self.assertIn(
+            ("service:api", "entrypoint:services/api/Program", "contains"),
+            edge_keys,
+        )
+
     def test_csharp_grammar_aliases_match_pypi_package(self) -> None:
         from weld.strategies._ts_parse import (
             grammar_module_name,

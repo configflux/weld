@@ -357,6 +357,31 @@ class ValidateFragmentCliDiagnosticsTest(unittest.TestCase):
         payload = json.loads(stdout)
         self.assertFalse(payload["valid"])
 
+    def test_trace_inert_fragment_reports_warning(self):
+        _write_graph(self._tmp, {
+            "meta": {"version": SCHEMA_VERSION,
+                     "updated_at": "2026-04-24T00:00:00Z"},
+            "nodes": {}, "edges": [],
+        })
+        frag_path = Path(self._tmp) / "frag.json"
+        frag_path.write_text(json.dumps({
+            "nodes": {
+                "tool:custom-lint": {"type": "tool", "label": "Lint",
+                                     "props": {}},
+            },
+            "edges": [],
+        }), encoding="utf-8")
+
+        exit_code, stdout, stderr = _run_and_capture([
+            "--root", self._tmp, "validate-fragment", str(frag_path),
+        ])
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["valid"])
+        self.assertTrue(payload["warnings"])
+        self.assertIn("trace bucket", " ".join(payload["warnings"]))
+        self.assertIn("trace bucket", stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

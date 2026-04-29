@@ -13,6 +13,7 @@ py_library(
     name = "strategies",
     srcs = [
         "__init__.py",
+        "_cpp_tree_sitter.py",
         "_csharp_tree_sitter.py",
         "_java_tree_sitter.py",
         "bazel.py",

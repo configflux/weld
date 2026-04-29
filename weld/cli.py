@@ -61,7 +61,7 @@ Core commands:
 
 Retrieval commands:
   brief          Agent-facing context briefing (stable JSON contract)
-  trace          Protocol-aware cross-boundary capability slice
+  trace          Startup/runtime and interaction slice
   impact         Reverse-dependency blast-radius analysis
   query          Tokenized graph search
   find           File-index keyword search

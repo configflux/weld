@@ -25,12 +25,13 @@ Public surface
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from weld._gitignore_scan import load_root_gitignore_dirs
 from weld.workspace import (
     DEFAULT_MAX_DEPTH,
+    NAME_PATTERN,
     ChildEntry,
     ScanConfig,
     WorkspaceConfig,
@@ -51,6 +52,25 @@ __all__ = [
 ]
 
 
+def _partition_by_name_validity(
+    entries: list[ChildEntry],
+) -> tuple[list[ChildEntry], list[str]]:
+    """Split scan entries into ``(valid, invalid_paths)`` by auto-derived name.
+
+    Yaml-listed children stay subject to the strict validator at config
+    load time; only scan-only entries are filtered here so a single stray
+    nested repo with a dotted directory name does not abort the run.
+    """
+    kept: list[ChildEntry] = []
+    invalid: list[str] = []
+    for entry in entries:
+        if NAME_PATTERN.match(entry.name):
+            kept.append(entry)
+        else:
+            invalid.append(entry.path)
+    return kept, invalid
+
+
 def discover_children(
     root: Path | str,
     *,
@@ -59,14 +79,19 @@ def discover_children(
 ) -> list[ChildEntry]:
     """Return :class:`ChildEntry` values for every nested git repo under ``root``.
 
-    Thin wrapper over :func:`weld.workspace.scan_nested_repos` so callers can
-    say "discover children" without knowing the scanner's function name.
+    Wraps :func:`weld.workspace.scan_nested_repos` and silently filters
+    scan-only entries whose auto-derived child name would fail the
+    workspace name validator. Callers needing the skipped paths should
+    use :func:`merge_yaml_and_scan_children`, which surfaces them on
+    :class:`MergedChildren.excluded_by_invalid_name`.
     """
-    return scan_nested_repos(
+    entries = scan_nested_repos(
         root,
         max_depth=max_depth,
         exclude_paths=exclude_paths,
     )
+    kept, _invalid = _partition_by_name_validity(entries)
+    return kept
 
 
 def init_workspace(
@@ -165,14 +190,17 @@ class MergedChildren:
     path does not resolve on disk. ``excluded_by_gitignore`` carries
     scan-found names that the yaml does not list AND that root
     ``.gitignore`` masks (informational; they are NOT auto-added).
-    ``yaml_error`` is the reason a present yaml could not be parsed,
-    or ``None`` when yaml was absent or valid.
+    ``excluded_by_invalid_name`` carries scan-found paths whose
+    auto-derived name failed ``NAME_PATTERN`` and were therefore
+    skipped. ``yaml_error`` is the reason a present yaml could not be
+    parsed, or ``None`` when yaml was absent or valid.
     """
 
     children: list[ChildEntry]
     yaml_listed_but_missing: list[str]
     excluded_by_gitignore: list[str]
     yaml_error: str | None
+    excluded_by_invalid_name: list[str] = field(default_factory=list)
 
 
 def _entry_for_scan_path(rel_path: str) -> ChildEntry:
@@ -205,15 +233,29 @@ def merge_yaml_and_scan_children(
     Scan-only directories that the root ``.gitignore`` masks are reported
     in ``excluded_by_gitignore`` as a diagnostic but never added to
     ``children`` (the yaml is the only authority for over-riding gitignore).
+
+    The effective scan exclusion set is the union of the caller-supplied
+    ``exclude_paths`` and any ``scan.exclude_paths`` configured in the
+    existing ``workspaces.yaml``. Scan-only entries whose auto-derived
+    name fails ``NAME_PATTERN`` are skipped and surfaced on
+    ``excluded_by_invalid_name`` so a stray dotted nested repo cannot
+    abort the bootstrap.
     """
     root_path = Path(root)
     cfg, yaml_error = safe_load_workspace_config(root_path)
 
-    scan_entries = discover_children(
+    effective_exclude = list(exclude_paths or [])
+    if cfg is not None:
+        for item in cfg.scan.exclude_paths:
+            if item not in effective_exclude:
+                effective_exclude.append(item)
+
+    raw_entries = scan_nested_repos(
         root_path,
         max_depth=max_depth,
-        exclude_paths=exclude_paths,
+        exclude_paths=effective_exclude or None,
     )
+    scan_entries, invalid_scan_paths = _partition_by_name_validity(raw_entries)
     scan_by_path: dict[str, ChildEntry] = {e.path: e for e in scan_entries}
 
     merged_by_path: dict[str, ChildEntry] = {}
@@ -249,6 +291,7 @@ def merge_yaml_and_scan_children(
         yaml_listed_but_missing=sorted(yaml_missing),
         excluded_by_gitignore=sorted(excluded),
         yaml_error=yaml_error,
+        excluded_by_invalid_name=sorted(invalid_scan_paths),
     )
 
 

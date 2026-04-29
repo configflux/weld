@@ -274,45 +274,12 @@ def format_workspace_status(state: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _run_bootstrap_subcommand(args: argparse.Namespace) -> int:
-    """Execute ``wd workspace bootstrap`` via the orchestrator module."""
-    from weld._workspace_bootstrap import bootstrap_workspace
-
-    try:
-        result = bootstrap_workspace(
-            args.root,
-            max_depth=args.max_depth,
-            ignore_all=args.ignore_all,
-            track_graphs=args.track_graphs,
-        )
-    except FileNotFoundError as exc:
-        print(f"[weld] error: {exc}", file=sys.stderr)
-        return 2
-
-    if args.json:
-        payload = {
-            "root_init_ran": result.root_init_ran,
-            "workspace_yaml_written": result.workspace_yaml_written,
-            "children_discovered": result.children_discovered,
-            "children_initialized": result.children_initialized,
-            "children_recursed": result.children_recursed,
-            "children_present": result.children_present,
-            "errors": result.errors,
-        }
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    else:
-        sys.stdout.write("\n".join(result.summary_lines()) + "\n")
-
-    # Non-zero exit when any discovered child is not present after the
-    # run, so scripts and CI can treat a partial bootstrap as a failure.
-    missing = set(result.children_discovered) - set(result.children_present)
-    if result.children_discovered and missing:
-        return 1
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for ``wd workspace``."""
+    from weld._workspace_bootstrap_cli import (
+        add_bootstrap_subparser,
+        run_bootstrap,
+    )
     from weld.workspace import DEFAULT_MAX_DEPTH as _WS_DEFAULT_MAX_DEPTH
 
     parser = argparse.ArgumentParser(
@@ -326,62 +293,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Show workspace child status from workspace-state.json",
     )
     status_parser.add_argument(
-        "--root",
-        default=".",
+        "--root", default=".",
         help="Workspace root directory (default: .)",
     )
     status_parser.add_argument(
-        "--json",
-        action="store_true",
+        "--json", action="store_true",
         help="Emit the raw workspace-state.json payload",
     )
 
-    bootstrap_parser = subparsers.add_parser(
-        "bootstrap",
-        help=(
-            "One-shot polyrepo bootstrap: init root, scan nested repos, "
-            "init each child, recurse-discover, rebuild root meta-graph"
-        ),
-    )
-    bootstrap_parser.add_argument(
-        "--root",
-        default=".",
-        help="Workspace root directory (default: .)",
-    )
-    bootstrap_parser.add_argument(
-        "--max-depth",
-        type=int,
-        default=_WS_DEFAULT_MAX_DEPTH,
-        help=(
-            "Maximum directory depth when scanning for nested git repos "
-            f"(default: {_WS_DEFAULT_MAX_DEPTH})"
-        ),
-    )
-    bootstrap_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit a JSON summary of what the bootstrap did",
-    )
-    bootstrap_gitignore = bootstrap_parser.add_mutually_exclusive_group()
-    bootstrap_gitignore.add_argument(
-        "--ignore-all",
-        action="store_true",
-        help="Write a fully-ignoring .weld/.gitignore in the root and every "
-             "child (every weld file ignored). Default ignores generated "
-             "graphs but tracks config; pass --track-graphs to also track "
-             "graph.json + agent-graph.json.",
-    )
-    bootstrap_gitignore.add_argument(
-        "--track-graphs",
-        action="store_true",
-        help="Track canonical graphs (graph.json + agent-graph.json) in "
-             "addition to config in every .weld/.gitignore the bootstrap "
-             "writes. Default ignores generated graphs.",
-    )
+    add_bootstrap_subparser(subparsers, _WS_DEFAULT_MAX_DEPTH)
 
     args = parser.parse_args(argv)
     if args.workspace_command == "bootstrap":
-        return _run_bootstrap_subcommand(args)
+        return run_bootstrap(args)
     if args.workspace_command != "status":
         parser.print_help()
         return 0

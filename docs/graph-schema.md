@@ -202,6 +202,28 @@ Core relationships:
 - `calls` -- symbol-to-symbol call edge (see
   `weld/docs/adr/0004-call-graph-schema-extension.md`).
 
+### Trace-participating vocabulary
+
+The schema is broader than `wd trace`. A graph fragment can be valid and
+renderable while still not appearing in trace output. Trace buckets:
+
+- services: `service`, `package`
+- interfaces: `rpc`, `channel`, ROS2 interaction nodes, or any node with
+  recognized `protocol`, `surface_kind`, or `boundary_kind` metadata
+- contracts: `contract`, `enum`
+- boundaries: `boundary`, `entrypoint`, `compose`, `dockerfile`, `deploy`
+- verifications: `test-target`, `test-suite`, `gate`
+
+Trace walks these edge types in both directions: `accepts`, `builds`,
+`calls`, `configures`, `consumes`, `contains`, `depends_on`, `documents`,
+`enforces`, `exposes`, `feeds_into`, `implements`, `invokes`,
+`orchestrates`, `produces`, `responds_with`, `tests`, and `verifies`.
+
+`wd graph import` and `wd graph validate-fragment` warn when an imported
+fragment has nodes or edges but none of them participate in this trace
+contract. To make custom semantics traceable, map them onto these buckets
+and edge labels at adapter output time.
+
 Governance and provenance (ADR 0016):
 
 - `owned_by` -- responsibility ownership.

@@ -309,7 +309,14 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
     elif cmd == "import":
         raw = sys.stdin.read() if str(args.file) == "-" else args.file.read_text(encoding="utf-8")
         data = json.loads(raw)
+        from weld.trace_contract import trace_contract_warnings
+
+        warnings = trace_contract_warnings(data)
         result = g.merge_import(data)
+        if warnings:
+            result["warnings"] = warnings
+            for warning in warnings:
+                print(f"[weld] warning: {warning}", file=sys.stderr)
         _out(result)
         mutates = True
     elif cmd == "validate":
@@ -333,7 +340,18 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
             source_label=args.source_label,
             allow_dangling_edges=args.allow_dangling,
         )
-        _out({"valid": not errs, "errors": [str(e) for e in errs]})
+        warnings = []
+        if not errs:
+            from weld.trace_contract import trace_contract_warnings
+
+            warnings = trace_contract_warnings(data)
+        _out({
+            "valid": not errs,
+            "errors": [str(e) for e in errs],
+            "warnings": warnings,
+        })
+        for warning in warnings:
+            print(f"[weld] warning: {warning}", file=sys.stderr)
         if errs:
             source = "<stdin>" if str(args.file) == "-" else str(args.file)
             sys.stderr.write(format_validation_report(errs, source=source))

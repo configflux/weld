@@ -3,6 +3,20 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.13.1 - 2026-04-29
+
+### Added
+
+- `wd discover` now models a startup flow and trace import contract, with C# and C++ tree-sitter strategies that surface native and managed startup entrypoints alongside the existing Python entrypoint detection.
+  <!-- verify: file=weld/trace_contract.py grep=TRACE_EDGE_TYPES -->
+- `wd workspace bootstrap --exclude-path PATH` (repeatable) lets you pass scan exclusions on the command line; the values are persisted into the rewritten workspaces yaml so subsequent runs respect them.
+  <!-- verify: file=weld/_workspace_bootstrap_cli.py grep=--exclude-path -->
+
+### Fixed
+
+- `wd workspace bootstrap` rescans now honor the workspace's configured `scan.exclude_paths` instead of walking ignored paths. Previously a workspace root containing operational nested repositories under an excluded prefix (e.g. a quarantine directory) could derive an invalid child name and abort bootstrap with `WorkspaceConfigError: invalid character in name`. Scan-only entries whose auto-derived child name fails validation are now filtered and reported instead of failing the whole run.
+  <!-- verify: file=weld/_workspace_bootstrap_cli.py grep=exclude_paths -->
+
 ## v0.13.0 - 2026-04-28
 
 ### Added

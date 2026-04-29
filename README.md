@@ -13,13 +13,17 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.13.0 -->
-> **Evaluators: start with v0.13.0.** v0.13.0 adds `wd agents viz`, a
-> local read-only browser explorer for `.weld/agent-graph.json`, and
-> includes the v0.12.1 documentation fixes. It is the recommended
-> starting point for agent graph visualization, local-only telemetry,
+<!-- evaluator-note: latest=v0.13.1 -->
+> **Evaluators: start with v0.13.1.** v0.13.1 extends `wd discover` with
+> C# and C++ startup entrypoint modeling and a trace import contract,
+> on top of the v0.13.0 `wd agents viz` browser explorer for
+> `.weld/agent-graph.json`. It also fixes a `wd workspace bootstrap`
+> rescan bug that aborted on excluded nested repositories. Together
+> with v0.13.0 it is the recommended starting point for cross-language
+> startup modeling, agent graph visualization, local-only telemetry,
 > and the `copilot-cli` enrichment provider. See the
-> [`CHANGELOG.md`](CHANGELOG.md) entry for v0.13.0 for details.
+> [`CHANGELOG.md`](CHANGELOG.md) entries for v0.13.1 and v0.13.0 for
+> details.
 
 **Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
 walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
@@ -83,6 +87,8 @@ were not designed to provide.
 
 - **Whole-codebase discovery** — not just source code. Covers docs, config,
   CI workflows, infrastructure, and build files.
+- **Startup and runtime flow** — models common Python, C#/.NET, and C++ entrypoints
+  and connects them to services, boundaries, and deploy/runtime surfaces.
 - **Config-driven** — point `.weld/discover.yaml` at your repo and tune
   what gets extracted.
 - **Multi-language** — bundled tree-sitter strategies for Python, TypeScript/JS,
@@ -115,6 +121,7 @@ wd discover --safe --output .weld/graph.json
 
 # Query the graph
 wd query "authentication"
+wd trace "how does this service start"
 wd find "login"
 wd context file:src/auth/handler
 wd viz --no-open
@@ -627,6 +634,7 @@ rm .weld/workspace-state.json
 | `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`) |
 | `wd context <id>` | Node + neighborhood |
 | `wd path <from> <to>` | Shortest path |
+| `wd trace <term>` | Startup/runtime and interaction slice around a term or node |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
 | `wd callers <symbol>` | Direct/transitive callers |
 | `wd viz` | Local read-only browser graph explorer |
@@ -634,6 +642,7 @@ rm .weld/workspace-state.json
 | `wd graph stats` | Graph statistics |
 | `wd stats` | Backward-compatible alias for `wd graph stats` |
 | `wd graph validate` | Validate graph against the contract |
+| `wd graph validate-fragment <file>` | Validate imported graph fragments and warn on trace-inert semantics |
 | `wd validate` | Backward-compatible alias for `wd graph validate` |
 | `wd doctor` | Check setup health; exits 0 in directories that are not Weld projects yet |
 | `wd prime` | Setup status + per-framework agent surface matrix (skill / instruction / mcp) with fix commands; `--agent {auto,claude,codex,copilot,all}` forces an agent row even when its framework files are absent |
@@ -693,7 +702,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.13.0`.
+terminal snippets captured against `wd 0.13.1`.
 
 ## Install
 

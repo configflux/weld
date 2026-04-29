@@ -178,6 +178,43 @@ def _make_node_id(node_type: str, rel_path: str) -> str:
     path_no_ext = str(p.with_suffix(""))
     return f"{node_type}:{path_no_ext}"
 
+def _owning_service_id(rel_path: str) -> str | None:
+    """Return ``service:<name>`` for conventional ``services/<name>/`` paths."""
+    parts = Path(rel_path).parts
+    if len(parts) >= 2 and parts[0] == "services":
+        return f"service:{parts[1]}"
+    return None
+
+def _service_node(service_id: str) -> dict:
+    """Build a derived service node that anchors runtime/startup surfaces."""
+    service_name = service_id.split(":", 1)[1]
+    return {
+        "type": "service",
+        "label": f"{service_name} service",
+        "props": {
+            "source_strategy": "boundary_entrypoint",
+            "authority": "derived",
+            "confidence": "inferred",
+            "roles": ["implementation"],
+            "description": (
+                "Runtime service containing startup entrypoints, execution "
+                "flow, and application boundaries."
+            ),
+        },
+    }
+
+def _contains_edge(source_id: str, target_id: str) -> dict:
+    """Build a conservative contains edge for startup neighborhood tracing."""
+    return {
+        "from": source_id,
+        "to": target_id,
+        "type": "contains",
+        "props": {
+            "source_strategy": "boundary_entrypoint",
+            "confidence": "inferred",
+        },
+    }
+
 # -- Strategy entry point --------------------------------------------------
 
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
@@ -218,6 +255,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
         rel_path = str(py.relative_to(root))
         imports = _collect_imports(tree)
+        service_id = _owning_service_id(rel_path)
 
         entrypoint_nid = None
         boundary_nid = None
@@ -233,6 +271,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 "authority": "canonical",
                 "confidence": "inferred",
                 "roles": ["implementation"],
+                "description": (
+                    "Runtime startup entrypoint for application execution flow."
+                ),
             }
             if framework:
                 props["framework"] = framework
@@ -258,8 +299,19 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "authority": "canonical",
                     "confidence": "definite",
                     "roles": ["implementation"],
+                    "description": (
+                        "Application runtime boundary reached from startup "
+                        "entrypoints and service wiring."
+                    ),
                 },
             }
+
+        if service_id and (entrypoint_nid or boundary_nid):
+            nodes.setdefault(service_id, _service_node(service_id))
+            if entrypoint_nid:
+                edges.append(_contains_edge(service_id, entrypoint_nid))
+            if boundary_nid:
+                edges.append(_contains_edge(service_id, boundary_nid))
 
         # Link boundary -> entrypoint if both exist in same file
         if boundary_nid and entrypoint_nid:

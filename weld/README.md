@@ -53,6 +53,7 @@ wd discover --safe --output .weld/graph.json
 wd build-index
 
 wd query "authentication"
+wd trace "how does this service start"
 wd find "login"
 wd brief "authentication"
 wd context file:src/auth/handler

@@ -98,7 +98,12 @@ def _init_child(
 
 
 def _write_workspaces_yaml(
-    output: Path, children: list[ChildEntry], max_depth: int,
+    output: Path,
+    children: list[ChildEntry],
+    max_depth: int,
+    *,
+    exclude_paths: list[str] | None = None,
+    cross_repo_strategies: list[str] | None = None,
 ) -> None:
     """Write a deterministic ``workspaces.yaml`` from the merged child set.
 
@@ -107,21 +112,52 @@ def _write_workspaces_yaml(
     have a non-empty merged set composed entirely of yaml-listed children
     that the FS scan cannot see (gitignore / max_depth / excluded dirs);
     we still want to persist that set so step 4's loader sees a stable
-    registry.
+    registry. ``exclude_paths`` and ``cross_repo_strategies`` are
+    preserved verbatim so a rewrite never silently drops user
+    configuration that the merge step did not touch.
     """
     from weld.workspace import dump_workspaces_yaml
 
+    scan = ScanConfig(max_depth=max_depth)
+    if exclude_paths is not None:
+        scan.exclude_paths = list(exclude_paths)
     cfg = WorkspaceConfig(
-        scan=ScanConfig(max_depth=max_depth),
+        scan=scan,
         children=list(children),
+        cross_repo_strategies=list(cross_repo_strategies or []),
     )
     dump_workspaces_yaml(cfg, output)
+
+
+def _persisted_scan_fields(
+    root: Path, cli_excludes: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Return ``(merged_exclude_paths, cross_repo_strategies)`` to persist.
+
+    Reads the current ``workspaces.yaml`` (when valid) and unions its
+    ``scan.exclude_paths`` with the caller-supplied ``cli_excludes`` so a
+    rewrite never silently drops user configuration. ``cross_repo_strategies``
+    is preserved verbatim from the existing config; an absent or invalid
+    yaml yields an empty list.
+    """
+    from weld.init_workspace import safe_load_workspace_config
+
+    cfg, _err = safe_load_workspace_config(root)
+    merged: list[str] = list(cli_excludes or [])
+    strategies: list[str] = []
+    if cfg is not None:
+        for item in cfg.scan.exclude_paths:
+            if item not in merged:
+                merged.append(item)
+        strategies = list(cfg.cross_repo_strategies)
+    return merged, strategies
 
 
 def bootstrap_workspace(
     root: Path | str,
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
+    exclude_paths: list[str] | None = None,
     ignore_all: bool = False,
     track_graphs: bool = False,
 ) -> BootstrapResult:
@@ -134,6 +170,11 @@ def bootstrap_workspace(
     max_depth:
         Maximum directory depth for the nested-repo scan, mirroring the
         ``--max-depth`` flag on ``wd init``.
+    exclude_paths:
+        Caller-supplied scan exclusions (typically ``--exclude-path`` from
+        the CLI). Combined with any ``scan.exclude_paths`` already in the
+        existing ``workspaces.yaml`` and persisted into the rewritten yaml
+        so subsequent runs stay excluded without re-passing the flag.
     ignore_all:
         When ``True``, the per-child and root ``.weld/.gitignore`` files
         ignore every weld file (``*`` / ``!.gitignore``). Mutually
@@ -182,11 +223,16 @@ def bootstrap_workspace(
     # root cannot misroute to single-service when the yaml lists children
     # that the FS scan misses (gitignore, max_depth, _BUILTIN_EXCLUDE_DIRS).
     workspaces_yaml = root_path / ".weld" / "workspaces.yaml"
-    merged = merge_yaml_and_scan_children(root_path, max_depth=max_depth)
+    merged = merge_yaml_and_scan_children(
+        root_path,
+        max_depth=max_depth,
+        exclude_paths=exclude_paths,
+    )
     if merged.yaml_error is not None:
         result.errors.append(merged.yaml_error)
     result.yaml_listed_but_missing = list(merged.yaml_listed_but_missing)
     result.excluded_by_gitignore = list(merged.excluded_by_gitignore)
+    result.excluded_by_invalid_name = list(merged.excluded_by_invalid_name)
     children = merged.children
     result.children_discovered = sorted(c.name for c in children)
 
@@ -204,6 +250,13 @@ def bootstrap_workspace(
             f"resolve under the workspace root",
         )
 
+    # Compute the persisted scan/strategy fields once: union of CLI-supplied
+    # exclusions and the existing yaml's exclusions, plus any pre-existing
+    # cross_repo_strategies. Both are preserved verbatim across rewrites.
+    persisted_exclude_paths, persisted_strategies = _persisted_scan_fields(
+        root_path, exclude_paths,
+    )
+
     # Persist the effective set to workspaces.yaml so step 4's loader sees
     # the merged registry. Three cases land here:
     #   (a) yaml absent -> write from the merged set (which is scan-only).
@@ -211,20 +264,35 @@ def bootstrap_workspace(
     #   (c) yaml corrupt -> rewrite from the merged set (scan only) so the
     #       loader downstream can succeed.
     if not workspaces_yaml.is_file():
-        _write_workspaces_yaml(workspaces_yaml, children, max_depth)
+        _write_workspaces_yaml(
+            workspaces_yaml, children, max_depth,
+            exclude_paths=persisted_exclude_paths,
+            cross_repo_strategies=persisted_strategies,
+        )
         result.workspace_yaml_written = True
     else:
         persisted_names: set[str] = set()
+        persisted_excludes_existing: list[str] | None = None
         if merged.yaml_error is None:
             persisted = load_workspace_config(root_path)
-            persisted_names = (
-                {entry.name for entry in persisted.children}
-                if persisted is not None
-                else set()
-            )
+            if persisted is not None:
+                persisted_names = {entry.name for entry in persisted.children}
+                persisted_excludes_existing = list(persisted.scan.exclude_paths)
         merged_names = {c.name for c in children}
-        if merged.yaml_error is not None or merged_names != persisted_names:
-            _write_workspaces_yaml(workspaces_yaml, children, max_depth)
+        excludes_changed = (
+            persisted_excludes_existing is not None
+            and persisted_excludes_existing != persisted_exclude_paths
+        )
+        if (
+            merged.yaml_error is not None
+            or merged_names != persisted_names
+            or excludes_changed
+        ):
+            _write_workspaces_yaml(
+                workspaces_yaml, children, max_depth,
+                exclude_paths=persisted_exclude_paths,
+                cross_repo_strategies=persisted_strategies,
+            )
             result.workspace_yaml_written = True
 
     # Step 3: per-child init for children lacking discover.yaml. Iterates
