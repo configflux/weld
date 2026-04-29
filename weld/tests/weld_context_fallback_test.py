@@ -1,6 +1,6 @@
 """Tests for ``Graph.context`` and ``FederatedGraph.context`` query fallback.
 
-bd-gv1: when ``context`` is called with a free-form string that is
+tracked issue: when ``context`` is called with a free-form string that is
 not an exact node id, fall back to ``query`` and
 return the top match's context with a ``resolved_from`` envelope so callers
 can tell the fallback fired. Prefixed child ids in the federated variant

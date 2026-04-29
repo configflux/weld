@@ -225,7 +225,7 @@ class GraphStaleBackcompatKeysTest(unittest.TestCase):
 
 class GraphOnlyCommitDriftTest(unittest.TestCase):
     """Graph-only commits must not leave the graph in a stale-after-commit
-    loop (bd-p1a.6).
+    loop (tracked issue).
 
     Workflow:
       1. Run discovery -> meta.git_sha stamped to HEAD_A.

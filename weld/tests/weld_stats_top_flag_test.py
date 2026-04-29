@@ -1,6 +1,6 @@
 """Tests for the ``--top N`` flag on ``wd stats``.
 
-Follow-up from bd-5038-3nr.3 4-eye review: ``wd stats`` previously hard-coded
+Follow-up from tracked issue 4-eye review: ``wd stats`` previously hard-coded
 its top-authority list at five entries (see
 ``weld._graph_stats._TOP_AUTHORITY_LIMIT``). Power users on larger graphs
 need to widen that window without rewriting their tooling. The change is

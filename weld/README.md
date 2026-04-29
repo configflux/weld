@@ -77,10 +77,12 @@ wd agents audit
 wd agents explain planner
 wd agents impact .github/agents/planner.agent.md
 wd agents plan-change "planner should always include test strategy"
+wd agents viz --no-open
 ```
 
 Agent Graph discovery is static and repo-bound. It reads known customization
-files and does not execute project code.
+files and does not execute project code. After discovery, `wd agents viz`
+opens a local read-only browser explorer for `.weld/agent-graph.json`.
 
 Platform coverage is tracked in the support matrix:
 

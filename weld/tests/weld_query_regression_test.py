@@ -1,4 +1,4 @@
-"""Regression tests for weld tokenized query behavior (project-ac5.1 / project-ac5.3).
+"""Regression tests for weld tokenized query behavior (tracked project / tracked project).
 
 Ensures that ``Graph.query()`` and ``Graph._match_tokens()`` correctly:
 - match single tokens against node ID segments, labels, props.file paths,
@@ -170,7 +170,7 @@ class MatchTokensTest(unittest.TestCase):
         """'verification' should match agent:qa via props.description only.
 
         The word 'verification' does not appear in the node ID, label, file,
-        or exports — only in props.description. Covers project-8r0.9.
+        or exports — only in props.description. Covers tracked project
         """
         node = _WEB_NODES["agent:qa"]
         hits = Graph._match_tokens(["verification"], "agent:qa", node)
@@ -312,7 +312,7 @@ class QueryEndToEndTest(unittest.TestCase):
         """Query for 'verification' should find agent:qa via description.
 
         The word 'verification' appears only in props.description — not in
-        the node ID, label, file, or exports. Covers project-8r0.9.
+        the node ID, label, file, or exports. Covers tracked project
         """
         result = self.graph.query("verification")
         ids = [m["id"] for m in result["matches"]]

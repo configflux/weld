@@ -1,4 +1,4 @@
-"""CLI-side composition for ``wd stats`` (bd-5038-3nr.3).
+"""CLI-side composition for ``wd stats`` (tracked issue).
 
 :meth:`weld.graph.Graph.stats` returns the pure graph-level payload
 (counts, description coverage, top authority nodes). The CLI additionally

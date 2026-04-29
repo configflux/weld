@@ -1,4 +1,4 @@
-"""Acceptance tests for event/channel interaction graph extraction (project-xoq.7.2).
+"""Acceptance tests for event/channel interaction graph extraction (tracked project).
 
 Exercises the events (channel declarations from compose env) and
 events_bindings (producer/consumer linking) strategies against the

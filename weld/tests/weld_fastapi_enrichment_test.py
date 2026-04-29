@@ -1,4 +1,4 @@
-"""Tests for enriched FastAPI extraction (project-xoq.3.1).
+"""Tests for enriched FastAPI extraction (tracked project).
 
 Verifies that the FastAPI strategy links routes to:
 
@@ -10,7 +10,7 @@ Verifies that the FastAPI strategy links routes to:
   entries, and Pydantic body parameters.
 
 It also locks in the protocol metadata stamped on every ``route`` node per
-ADR 0018 and project-xoq.1.2: ``protocol=http``, ``surface_kind=request_response``,
+ADR 0018 and tracked project: ``protocol=http``, ``surface_kind=request_response``,
 ``boundary_kind=inbound``, ``transport=http``, ``declared_in=<rel-path>``.
 
 The extraction must stay conservative and static -- no runtime hooks, no

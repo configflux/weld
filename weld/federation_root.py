@@ -204,7 +204,7 @@ def build_root_meta_graph(
     # (weld/discover.py:177-179) and ``compute_stale_info`` /
     # ``wd prime`` can compare against HEAD. Non-git roots return
     # ``None`` and the field is omitted -- ``compute_stale_info``
-    # already handles non-git roots via ``is_git_repo`` (bd-1776099136-5038-tqe2).
+    # already handles non-git roots via ``is_git_repo`` (tracked issue).
     sha = get_git_sha(Path(root))
     if sha is not None:
         meta["git_sha"] = sha

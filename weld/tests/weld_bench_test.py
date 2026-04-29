@@ -1,4 +1,4 @@
-"""Tests for the weld-bench harness (project-1bt).
+"""Tests for the weld-bench harness (tracked project).
 
 These tests build a tiny synthetic repo (with both a graph.json and a few
 text files containing the search term) and assert that:

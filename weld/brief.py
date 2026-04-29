@@ -26,7 +26,7 @@ from weld.warnings import check_confidence_gaps, check_freshness, check_partial_
 # -- Stable JSON output contract -------------------------------------------
 #
 # The brief output is a versioned JSON envelope. v2 adds the ``interfaces``
-# bucket and interaction-aware ranking per ADR 0018 and project-xoq.2.1:
+# bucket and interaction-aware ranking per ADR 0018 and tracked project:
 #
 #   {
 #     "brief_version": 2,
@@ -319,7 +319,7 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
         "updated_at": meta.get("updated_at"),
     }
 
-    # -- Interaction-retrieval warnings (project-xoq.7.3) --
+    # -- Interaction-retrieval warnings (tracked project) --
     # Emit freshness and partial-coverage warnings so consuming agents
     # can judge confidence in the interaction data.
     warnings.extend(check_freshness(graph))
@@ -385,7 +385,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Surface a friendly first-run message when the graph has not been
     # built yet; mirrors the behaviour of read commands in _graph_cli
-    # (bd-5038-3nr.2).
+    # (tracked issue).
     ensure_graph_exists(args.root, _build_retry_hint("brief", args.term))
     g = Graph(args.root)
     g.load()

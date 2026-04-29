@@ -1,6 +1,6 @@
 """Tests for the ``wd prime --agent`` selector.
 
-These tests cover the active-agent override added for bd-p1a.2: when the
+These tests cover the active-agent override added for tracked issue: when the
 caller (or the environment) identifies the current agent, ``wd prime`` must
 force that framework's row into the surface matrix even if no
 framework-specific files are configured yet, so a Codex user does not see

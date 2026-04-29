@@ -1,6 +1,6 @@
 """Freshness guidance tests for `wd prime` (ADR 0017 alignment).
 
-bd-5038-p1a.4: prime used a local SHA-only drift check and nudged users
+tracked issue: prime used a local SHA-only drift check and nudged users
 toward `wd discover` whenever `meta.git_sha != HEAD`. That destroyed
 curated enrichment on graphs whose sources were unchanged. These tests
 pin prime to the ADR 0017 source-file freshness model:
@@ -9,7 +9,7 @@ pin prime to the ADR 0017 source-file freshness model:
   `wd discover` action.
 - source-stale cases must recommend the atomic
   `wd discover --output .weld/graph.json` form introduced by
-  bd-5038-p1a.3.
+  tracked issue
 - A graph with high description coverage and no tracked source changes
   must not receive a full-discovery recommendation.
 """
@@ -158,7 +158,7 @@ class PrimeShaOnlyDriftTest(unittest.TestCase):
 
             output = prime(root)
 
-            # Primary acceptance criterion for bd-5038-p1a.4:
+            # Primary acceptance criterion for tracked issue:
             self.assertNotIn("wd discover", output, output)
             # The graph itself should be reported as current for this case.
             # We accept either "No actions needed" (when nothing else
@@ -203,7 +203,7 @@ class PrimeSourceStaleTest(unittest.TestCase):
 
 
 class PrimeGraphOnlyCommitTest(unittest.TestCase):
-    """End-to-end workflow test for bd-p1a.6.
+    """End-to-end workflow test for tracked issue
 
     Simulates: `wd touch` stamps meta.git_sha to HEAD, user commits just
     .weld/graph.json, HEAD advances. Prime must then emit no graph

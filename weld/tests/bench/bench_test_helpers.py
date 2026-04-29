@@ -1,4 +1,4 @@
-"""Shared fixtures for weld benchmark quality tests (project-xoq.7.1).
+"""Shared fixtures for weld benchmark quality tests (tracked project).
 
 Provides the synthetic interaction-surface repo used by the quality
 benchmark test suite. Extracted to keep individual test files under
@@ -124,8 +124,8 @@ def setup_interaction_repo() -> str:
             "type": "gate",
             "label": "local_task_gate",
             "props": {
-                "file": "local-task-gate",
-                "description": "Local task gate script.",
+                "file": "local-verification",
+                "description": "Local verification script.",
             },
         },
     }

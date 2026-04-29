@@ -7,7 +7,7 @@ where ``brief`` ranks classification buckets across a tokenized search,
 service / interface / contract / boundary / verification slice that
 agents can consume directly.
 
-Per ADR 0018 and project-xoq.2.2 this surface MUST:
+Per ADR 0018 and tracked project this surface MUST:
 
   - reuse the existing graph semantics -- node classification is
     delegated to ``weld.brief._classify_node`` so we never invent a second
@@ -87,7 +87,7 @@ def _bucket_for(node: dict) -> str | None:
 
     Order matters: interfaces and boundaries are checked via
     :func:`weld.brief._classify_node` so a ``route`` carrying ``protocol``
-    metadata still ends up in the interfaces bucket (project-xoq.2.1).
+    metadata still ends up in the interfaces bucket (tracked project).
     Services and contracts use their static node type. Verifications
     catch test/gate nodes that ``brief`` would put in its ``build``
     bucket -- in a trace we want them surfaced as the verification arm
@@ -263,7 +263,7 @@ def trace(
         "updated_at": meta.get("updated_at"),
     }
 
-    # -- Interaction-retrieval warnings (project-xoq.7.3) --
+    # -- Interaction-retrieval warnings (tracked project) --
     # Emit freshness and partial-coverage warnings so consuming agents
     # can judge confidence in the interaction data.
     warnings.extend(check_freshness(graph))
@@ -329,7 +329,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Surface a friendly first-run message when the graph has not been
     # built yet; mirrors the behaviour of read commands in _graph_cli
-    # (bd-5038-3nr.2 / bd-5038-uqo).
+    # (tracked issue / tracked issue).
     retry_cmd = (
         _build_retry_hint("trace", args.term)
         if args.term is not None

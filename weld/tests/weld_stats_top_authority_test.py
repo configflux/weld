@@ -1,6 +1,6 @@
 """Tests for the ``top_authority_nodes`` field in :meth:`weld.graph.Graph.stats`.
 
-PM audit (bd-5038-3nr.3) wants ``wd stats`` to surface the graph's
+PM audit (tracked issue) wants ``wd stats`` to surface the graph's
 most-connected nodes so reviewers can see at a glance what the high-signal
 hubs look like. "Authority" here is the simple, explainable metric: total
 degree (in_degree + out_degree), ties broken by node id for determinism.

@@ -304,7 +304,7 @@ class DetectFrameworksBoundedScanTest(unittest.TestCase):
 class DetectFrameworksEnvCapOverrideTest(unittest.TestCase):
     """``WELD_INIT_FRAMEWORK_CAP`` env override for forensic re-runs.
 
-    Acceptance (from bd issue):
+    Acceptance (from tracked issue):
       - unset env preserves the default ``_MAX_FILES_PER_LANG`` cap
       - ``=0`` disables the cap (unbounded scan)
       - ``=N`` for N>0 sets a custom cap

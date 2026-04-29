@@ -1,4 +1,4 @@
-"""Tests for synonym/alias expansion in wd query (project-8r0.10).
+"""Tests for synonym/alias expansion in wd query (tracked project).
 
 Verifies that conceptual queries like 'authentication', 'database', and
 'pipeline' return relevant matches by expanding query terms into their

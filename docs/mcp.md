@@ -155,8 +155,8 @@ editing, trace before changing, check freshness before trusting the graph.
 Before touching an unfamiliar module, call `weld_brief` to get a stable
 envelope of primary matches, interfaces, and boundaries for that area.
 
-> I need to change how the publish audit enforces allowlist compliance.
-> Before editing, call `weld_brief` with `area="publish audit"` and
+> I need to change how workspace bootstrap handles nested repositories.
+> Before editing, call `weld_brief` with `area="workspace bootstrap"` and
 > summarise the returned interfaces and authoritative docs. Propose a
 > plan that respects the boundaries it reports.
 

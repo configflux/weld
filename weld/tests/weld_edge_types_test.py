@@ -1,4 +1,4 @@
-"""Tests for the edge-type vocabulary extension (ADR 0016, bd-asu).
+"""Tests for the edge-type vocabulary extension (ADR 0016, tracked issue).
 
 Covers:
 - The eight new edge types are present in ``VALID_EDGE_TYPES``.

@@ -1,4 +1,4 @@
-"""Strategy: static HTTP client interactions (project-xoq.3.2).
+"""Strategy: static HTTP client interactions (tracked project).
 
 Extracts outbound HTTP call sites where both the HTTP method and the
 target URL (or path template) are statically knowable from the parsed
@@ -28,7 +28,7 @@ Out of scope (by design):
   ``axios`` extraction under the same vocabulary.
 
 Every emitted ``rpc`` node is stamped with protocol metadata per
-ADR 0018 and project-xoq.1.2:
+ADR 0018 and tracked project:
 
     protocol="http", surface_kind="request_response",
     transport="http", boundary_kind="outbound",
@@ -236,7 +236,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "confidence": "definite",
                     "roles": ["implementation"],
                     # Interaction-surface metadata (ADR 0018,
-                    # project-xoq.1.2). Every entry is a client-side
+                    # tracked project). Every entry is a client-side
                     # request/response over HTTP; boundary_kind is
                     # outbound because the call leaves the module.
                     "protocol": "http",

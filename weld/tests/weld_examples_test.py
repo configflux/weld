@@ -31,8 +31,8 @@ _FASTAPI_DIR = _EXAMPLES_DIR / "01-python-fastapi"
 _CUSTOM_DIR = _EXAMPLES_DIR / "02-custom-strategy"
 
 # Patterns that must never appear in public-facing example content.
-# Constructed indirectly so THIS file itself does not trigger the danger-pattern
-# scanner during publish audit.
+# Constructed indirectly so THIS file itself does not trigger the public
+# danger-pattern scanner.
 _PRIVATE_PATTERNS = [
     re.compile(r"\b" + "weld" + "-" + "internal" + r"\b", re.IGNORECASE),
     re.compile(r"\b" + "tilbuds" + "radar" + r"\b", re.IGNORECASE),

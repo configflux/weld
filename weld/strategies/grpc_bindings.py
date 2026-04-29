@@ -1,4 +1,4 @@
-"""Strategy: static gRPC server and client bindings (project-xoq.5.2).
+"""Strategy: static gRPC server and client bindings (tracked project).
 
 Links Python server implementations and client stub call sites back
 to the ``rpc:grpc:<package>.<Service>.<Method>`` nodes emitted by the

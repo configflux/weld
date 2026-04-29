@@ -1,4 +1,4 @@
-"""Acceptance tests for ROS2 interaction graph extraction (project-xoq.7.2).
+"""Acceptance tests for ROS2 interaction graph extraction (tracked project).
 
 Exercises the ros2_topology (Python), ros2_interfaces, and
 ros2_package strategies against the ``ros2_accept`` fixture and

@@ -117,7 +117,7 @@ def commits_behind(root: Path, old_sha: str, new_sha: str) -> int:
 
 # Weld's own bookkeeping files written by ``wd discover`` / ``wd touch``.
 # These are never user *source*: they are outputs of discovery and must
-# not contribute to ``source_stale`` (bd-5038-yb89), even when a broad
+# not contribute to ``source_stale`` (tracked issue), even when a broad
 # ``discovered_from`` (e.g. ``['./']`` from default ``wd init``) would
 # otherwise match them. Keep this set small and explicit; do not extend
 # it to user-visible files.
@@ -133,7 +133,7 @@ _WELD_BOOKKEEPING_PATHS = frozenset({
 
 def drift_is_graph_only(root: Path, graph_sha: str) -> bool:
     """Return True if every file changed between *graph_sha* and HEAD is
-    a weld-bookkeeping file (ADR 0017, bd-p1a.6, bd-5038-yb89).
+    a weld-bookkeeping file (ADR 0017, tracked issue, tracked issue).
 
     ``wd touch`` stamps ``meta.git_sha = HEAD`` before the user commits
     the graph. Committing ``.weld/graph.json`` (and possibly
@@ -186,7 +186,7 @@ def source_files_changed_since(
     outputs of discovery, never user source, and a broad ``tracked``
     such as ``['./']`` (default ``wd init``) would otherwise match
     them on every graph-commit and produce a false ``source_stale``
-    (bd-5038-yb89).
+    (tracked issue).
 
     Returns ``[]`` when the diff cannot be computed (git missing, SHA
     unreachable, force-push): callers must treat that as "unknown" and

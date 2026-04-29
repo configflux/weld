@@ -155,7 +155,7 @@ day the submission is opened:
   the current development version; do not freeze it here.
 - **`maintainers`** -- contact handles for the registry's review
   thread. Kept out of the draft to avoid promoting individual
-  maintainers in a public-facing internal doc.
+  maintainers in reusable submission material.
 - **`screenshot_urls` / `demo_url`** -- if the registry asks for
   screenshots or a hosted demo, these should be stable public URLs
   selected at submission time, not historical dev links. Leave blank

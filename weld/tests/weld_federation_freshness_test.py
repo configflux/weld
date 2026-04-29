@@ -1,4 +1,4 @@
-"""Regression tests for federated meta-graph SHA stamping (bd-1776099136-5038-tqe2).
+"""Regression tests for federated meta-graph SHA stamping (tracked issue).
 
 Background
 ----------

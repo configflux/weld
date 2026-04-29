@@ -159,7 +159,7 @@ def _make_node_id(rel_path: str, id_prefix: str) -> str:
     return f"file:{stem}"
 
 # ---------------------------------------------------------------------------
-# C++ cross-file include resolver (layer 2; project-f7y.2)
+# C++ cross-file include resolver (layer 2; tracked project)
 # ---------------------------------------------------------------------------
 #
 # The full implementation lives in ``weld.strategies.cpp_resolver`` so this

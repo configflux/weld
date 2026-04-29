@@ -1,4 +1,4 @@
-"""Tests for the static HTTP-client interaction extractor (project-xoq.3.2).
+"""Tests for the static HTTP-client interaction extractor (tracked project).
 
 The ``http_client`` strategy extracts outbound HTTP call sites where both
 the HTTP method and the URL/path argument are statically knowable from the

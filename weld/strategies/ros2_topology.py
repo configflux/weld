@@ -20,7 +20,7 @@ without a prior declare still emitting ``declared: false``.
 
 Low-level helpers live in ``weld/strategies/_ros2_cpp.py`` (C++ tokens)
 and ``weld/strategies/_ros2_py.py`` (rclpy ``ast`` walker, bd
-project-f7y.7) so this dispatcher stays inside the 400-line budget.
+tracked project) so this dispatcher stays inside the 400-line budget.
 """
 
 from __future__ import annotations

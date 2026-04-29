@@ -1,4 +1,4 @@
-"""Acceptance tests for gRPC interaction graph extraction (project-xoq.7.2).
+"""Acceptance tests for gRPC interaction graph extraction (tracked project).
 
 Exercises the grpc_proto (declarations) and grpc_bindings (server +
 client linking) strategies against the ``grpc_accept`` fixture and

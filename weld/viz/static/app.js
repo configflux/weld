@@ -8,6 +8,9 @@ const state = {
 };
 
 const colors = {
+  agent: "#1f7a8c",
+  command: "#344054",
+  config: "#667085",
   repo: "#118c8b",
   service: "#2f855a",
   package: "#2f855a",
@@ -19,6 +22,17 @@ const colors = {
   entity: "#b7791f",
   contract: "#b7791f",
   boundary: "#1f7a8c",
+  hook: "#be3f83",
+  instruction: "#4f46e5",
+  "mcp-server": "#118c8b",
+  permission: "#b54747",
+  platform: "#2f855a",
+  prompt: "#7c3aed",
+  scope: "#b7791f",
+  skill: "#7c3aed",
+  subagent: "#1f7a8c",
+  tool: "#344054",
+  workflow: "#b7791f",
   default: "#4b5563",
 };
 
@@ -64,6 +78,7 @@ async function init() {
 }
 
 function populateControls(summary) {
+  $("graph-title").textContent = summary.title || "Weld Graph";
   $("status").textContent = `${summary.counts.total_nodes} nodes / ${summary.counts.total_edges} edges`;
   fillSelect($("scope-select"), summary.scopes || ["root"], false);
   fillSelect($("node-type-select"), Object.keys(summary.counts.nodes_by_type || {}).sort(), true);

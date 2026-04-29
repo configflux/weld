@@ -1,6 +1,6 @@
 """Tests for the weld normalized metadata contract and graph validation.
 
-ROS2-vocabulary tests for project-f7y.3 live in weld_contract_ros2_test.py.
+ROS2-vocabulary tests for tracked project live in weld_contract_ros2_test.py.
 """
 
 from __future__ import annotations
@@ -345,7 +345,7 @@ class VocabularyConstantsTest(unittest.TestCase):
         expected = {"source_strategy", "confidence"}
         self.assertTrue(expected.issubset(set(EDGE_OPTIONAL_PROPS)))
 
-    # -- project-0hh: agent-relevant vocabulary expansion --
+    # -- tracked project: agent-relevant vocabulary expansion --
 
     _AGENT_NODE_TYPES = ["policy", "runbook", "build-target", "test-target", "boundary", "entrypoint"]
     _AGENT_EDGE_TYPES = ["enforces", "verifies", "exposes"]

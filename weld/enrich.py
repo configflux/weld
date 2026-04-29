@@ -366,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", dest="json_output", action="store_true", help="Emit machine-readable JSON")
     parser.add_argument("--safe", action="store_true", help="Refuse network/LLM providers (ADR 0024 trust boundary, extended to enrich)")
     args = parser.parse_args(argv)
-    # Friendly first-run guidance when graph.json is missing (bd-5038-uqo).
+    # Friendly first-run guidance when graph.json is missing (tracked issue).
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
     ensure_graph_exists(args.root, _build_retry_hint("enrich", node=args.node_id) if args.node_id else _build_retry_hint("enrich"))
     graph = Graph(args.root)

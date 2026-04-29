@@ -258,7 +258,7 @@ class MarkdownMetadataTest(unittest.TestCase):
             for nid, node in result.nodes.items():
                 _assert_valid_source_strategy(self, node["props"], "markdown")
                 _assert_valid_metadata_values(self, node["props"], "markdown")
-                # guides are supporting references, not authoritative (project-ayd)
+                # guides are supporting references, not authoritative (tracked project)
                 self.assertEqual(node["props"]["authority"], "derived")
                 self.assertEqual(node["props"]["confidence"], "definite")
                 self.assertIn("doc", node["props"]["roles"])

@@ -1,4 +1,4 @@
-"""Tests for the declared-channel extractor (project-xoq.6.1).
+"""Tests for the declared-channel extractor (tracked project).
 
 The ``events`` strategy extracts declared async channels (Kafka topics,
 Redis pub/sub channels, Celery queues, etc.) from two conservative
@@ -16,7 +16,7 @@ sources:
    static-truth policy.
 
 Every emitted node is a ``channel`` node stamped with protocol metadata
-per ADR 0018 / project-xoq.1.2:
+per ADR 0018 / tracked project:
 
     protocol="event", surface_kind="pub_sub",
     transport=<kafka|tcp|amqp>, boundary_kind="internal",
@@ -24,7 +24,7 @@ per ADR 0018 / project-xoq.1.2:
 
 and a ``contains`` edge links the declaring file node to the channel
 node. Producer/consumer linking is explicitly out of scope here; that
-lives in project-xoq.6.2.
+lives in tracked project
 """
 
 from __future__ import annotations

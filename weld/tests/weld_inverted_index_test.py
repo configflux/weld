@@ -138,7 +138,7 @@ class InvertedIndexBuildTest(unittest.TestCase):
             )
 
     def test_index_contains_description_tokens(self) -> None:
-        """Tokens from props.description should be indexed (project-8r0.9)."""
+        """Tokens from props.description should be indexed (tracked project)."""
         g = _make_graph(_TEST_NODES)
         idx = g._inverted_index
         # "verification" comes only from agent:qa's description

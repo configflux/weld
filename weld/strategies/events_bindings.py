@@ -1,8 +1,8 @@
-"""Strategy: channel producer/consumer/payload linking (project-xoq.6.2).
+"""Strategy: channel producer/consumer/payload linking (tracked project).
 
 Links Python producer and consumer call sites back to the
 ``channel:<transport>:<name>`` nodes emitted by the ``events`` strategy
-(project-xoq.6.1). Per ADR 0018's static-truth policy, detection is
+(tracked project). Per ADR 0018's static-truth policy, detection is
 purely structural: no runtime, no data-flow, no instance tracking.
 
 Supported shapes:

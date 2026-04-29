@@ -1,6 +1,6 @@
 """Fallback helpers for ``Graph.context`` and ``FederatedGraph.context``.
 
-bd-gv1: when ``context`` is called with a
+tracked issue: when ``context`` is called with a
 free-form string that is not an exact node id, call ``query`` with limit 1
 and, if a match is returned, surface the matched node's context plus an
 envelope ``resolved_from`` so callers can detect fallback fired.

@@ -1,4 +1,4 @@
-"""Proto text parser for the grpc_proto strategy (project-xoq.5.1).
+"""Proto text parser for the grpc_proto strategy (tracked project).
 
 Parses ``.proto`` declarations into small in-memory dataclasses. Per
 ADR 0018's static-truth policy, parsing is text-only: no ``protoc``

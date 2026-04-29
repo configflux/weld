@@ -123,7 +123,7 @@ class BootstrapWorkspaceUnitTest(unittest.TestCase):
             )
 
     def test_bootstrap_end_to_end_polyrepo_matches_acceptance(self) -> None:
-        """The three acceptance conditions from bd-ogy on a fresh polyrepo."""
+        """The three acceptance conditions from tracked issue on a fresh polyrepo."""
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             _make_polyrepo(root, ["services/api", "libs/shared"])
@@ -232,7 +232,7 @@ class BootstrapWorkspaceUnitTest(unittest.TestCase):
             self.assertEqual(sorted(result.children_present), ["a", "b"])
 
     def test_bootstrap_picks_up_new_child_added_after_first_run(self) -> None:
-        """bd-72n: rerun after adding a nested repo must reach status=present.
+        """tracked issue: rerun after adding a nested repo must reach status=present.
 
         Before the fix, the second bootstrap wrote the new child's
         discover.yaml but step 4 iterated the stale workspaces.yaml
@@ -273,7 +273,7 @@ class BootstrapWorkspaceUnitTest(unittest.TestCase):
     def test_bootstrap_records_recurse_failures_in_errors(self) -> None:
         """Step 4 recurse failures must be mirrored into BootstrapResult.errors.
 
-        Regression test for the docstring contract landed in bd-xa1: every
+        Regression test for the docstring contract landed in tracked issue: every
         child that step 4 attempted to visit must either appear in
         ``children_recursed`` (success) or leave a breadcrumb in
         ``errors`` (per-child discovery raised). A silent stderr-only log
@@ -354,7 +354,7 @@ class BootstrapCliIntegrationTest(unittest.TestCase):
         self.assertIn("bootstrap", buf.getvalue())
 
     def test_cli_bootstrap_json_stdout_is_parseable(self) -> None:
-        """bd-c8s: ``bootstrap --json`` stdout must be JSON, narration on stderr.
+        """tracked issue: ``bootstrap --json`` stdout must be JSON, narration on stderr.
 
         Regression guard: ``init()`` used to emit ``Scanning for files...``
         and ``Wrote <path>`` to stdout for every root and per-child call,

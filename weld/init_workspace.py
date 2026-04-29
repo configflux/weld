@@ -100,7 +100,7 @@ def init_workspace(
         exclude_paths=exclude_paths,
     )
     if not children:
-        # Linked-worktree fallback (bd-cacx): a linked git worktree does
+        # Linked-worktree fallback (tracked issue): a linked git worktree does
         # not contain copies of its sibling child repos -- those live only
         # at the main checkout. When main has a workspaces.yaml, mirror it
         # so federation discover can resolve each child via
@@ -271,7 +271,7 @@ def maybe_bootstrap_polyrepo(
     init + ledger + federated graph in one shot, instead of leaving the
     operator to also run ``wd workspace bootstrap``. Imports lazily because
     ``weld._workspace_bootstrap`` already imports ``weld.init`` (line 35),
-    so a top-level import here would cycle. (bd-gpt4)
+    so a top-level import here would cycle. (tracked issue)
     """
     if not (Path(root) / ".weld" / "workspaces.yaml").exists():
         return

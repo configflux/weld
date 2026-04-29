@@ -296,8 +296,7 @@ notes: |
    Supported), open a follow-up to update the
    [platform support matrix](platform-support.md) in the same change set so
    the two pages stay consistent.
-5. Run the local task gate (`./local-task-gate --scope=auto`) before
-   landing.
+5. Run the repository's configured local verification before landing.
 
 ## Cross-references
 

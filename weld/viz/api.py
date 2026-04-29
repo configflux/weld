@@ -48,6 +48,8 @@ class VizApi:
         config = load_workspace_config(self.root)
         payload = {
             "viz_api_version": VIZ_API_VERSION,
+            "graph_kind": "code",
+            "title": "Weld Graph",
             "root": ".",
             "graph_path": ".weld/graph.json",
             "graph_exists": (self.root / ".weld" / "graph.json").is_file(),

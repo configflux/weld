@@ -1,13 +1,13 @@
-"""Bootstrap regression tests for the gitignored-children case (bd-gpt4).
+"""Bootstrap regression tests for the gitignored-children case (tracked issue).
 
 The FS scan in ``weld.workspace.scan_nested_repos`` previously folded the
-root ``.gitignore`` into its exclusion set (originally for the bd-5038-rkt
+root ``.gitignore`` into its exclusion set (originally for the tracked issue
 publish-overlay case). Polyrepos whose children dir matched a gitignore
 pattern (operator-added ``services/`` rule, or anything else listed at
 the top level) were silently masked, sending ``wd workspace bootstrap``
 to single-service mode and breaking ``wd workspace status`` permanently.
 
-bd-gpt4 removes the gitignore fold from ``_normalised_exclude_paths``: a
+tracked issue removes the gitignore fold from ``_normalised_exclude_paths``: a
 nested ``.git`` directory is a workspace child by definition, regardless
 of VCS-tracking state. These tests pin both the unit-level scanner
 behaviour and the end-to-end bootstrap path.

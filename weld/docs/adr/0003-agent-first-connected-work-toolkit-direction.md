@@ -230,5 +230,5 @@ onboarding roadmap established here.
 
 ## Related Issues
 
-- project-scw: direction ADR and roadmap for weld agenting-toolkit work
-- project-ac5: completed query/source-hygiene foundation work
+- tracked project: direction ADR and roadmap for weld agenting-toolkit work
+- tracked project: completed query/source-hygiene foundation work

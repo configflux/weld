@@ -219,7 +219,7 @@ class PrimeAgentIntegrationHintTest(unittest.TestCase):
         """All framework-specific copilot surfaces present; only shared .mcp.json
         missing -> matrix row still shows `mcp no` but NO bootstrap hint anywhere.
 
-        Regression for bd-5ob: _framework_line and _check_agent_integration used
+        Regression for tracked issue: _framework_line and _check_agent_integration used
         _SURFACE_ORDER (which includes `mcp`) for the missing-detection that
         drives the next-step hint, causing a spurious `wd bootstrap copilot`
         even though `mcp` is a shared surface and not part of

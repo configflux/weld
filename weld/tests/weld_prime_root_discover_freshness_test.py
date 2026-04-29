@@ -1,4 +1,4 @@
-"""Customer 5-step repro for bd-5038-yb89.
+"""Customer 5-step repro for tracked issue
 
 Default ``wd init`` writes a discover.yaml whose strategies record
 ``discovered_from=['./']`` -- the repo-root marker meaning "any path is
@@ -111,7 +111,7 @@ class PrimeRootDiscoveredFromTest(unittest.TestCase):
 
 
 class PrimeCustomerFiveStepReproTest(unittest.TestCase):
-    """End-to-end subprocess repro for bd-5038-yb89.
+    """End-to-end subprocess repro for tracked issue
 
     Replays the customer's exact 5-step scenario through the real
     ``python -m weld`` CLI: init, discover --output, commit graph,

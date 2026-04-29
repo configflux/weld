@@ -2,7 +2,7 @@
 
 ``wd trace`` returns a coherent cross-boundary slice for a task area or
 node, including service, contract, interface, boundary, and verification
-context. Per project-xoq.2.2 the surface must:
+context. Per tracked project the surface must:
 
   - model output around service / contract / interface / boundary /
     verification links

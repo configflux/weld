@@ -383,16 +383,16 @@ decorator removal.
 
 ## 4. Follow-ups
 
-The following are created as separate bd issues (T2 and beyond do not
+The following are created as separate follow-up issues (T2 and beyond do not
 absorb them):
 
 - **`hashlib`-only lint rule.** ADR 0012 §"What this ADR does NOT
-  cover" already lists this as follow-up. A new bd issue tracks adding
+  cover" already lists this as follow-up. A new tracked issue tracks adding
   a `tools/lint_repo` check that greps `weld/` production paths for
   `\bhash\(`. Created: see the worker's `follow_ups` return value.
 - **`file-index.json` canonicalization.** ADR 0012 scope is
   `graph.json`; file-index determinism is related but distinct. Created
-  as a separate bd issue so T2 can choose whether to bundle it.
+  as a separate tracked issue so T2 can choose whether to bundle it.
 
 ## 5. Verification protocol (for T2 reviewer)
 

@@ -1,4 +1,4 @@
-"""CLI-level tests for the extended ``wd stats`` breakdown (bd-5038-3nr.3).
+"""CLI-level tests for the extended ``wd stats`` breakdown (tracked issue).
 
 PM audit requires ``wd stats`` to surface, in addition to node/edge counts:
 

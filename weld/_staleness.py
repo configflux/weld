@@ -31,7 +31,7 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
     ``stale`` is aliased to ``source_stale`` for back-compat callers.
     Non-git roots keep the legacy ``stale=False`` + ``reason`` shape.
 
-    Graph-only commits (bd-p1a.6) are collapsed: when the only commits
+    Graph-only commits (tracked issue) are collapsed: when the only commits
     between ``graph_sha`` and HEAD touched nothing but
     ``.weld/graph.json``, ``sha_behind`` is reported False as well. The
     graph is effectively fresh -- reporting drift in that state drives

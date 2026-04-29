@@ -1,4 +1,4 @@
-"""Federation-aware validation helpers (bd-5038-6zm).
+"""Federation-aware validation helpers (tracked issue).
 
 Centralises the bypass logic that ``validate_edge`` / ``validate_graph``
 apply to graphs whose ``meta.schema_version == 2`` (federation root, ADR

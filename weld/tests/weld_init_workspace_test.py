@@ -211,16 +211,16 @@ class CliIntegrationTest(unittest.TestCase):
 class GitignoreSkipTest(unittest.TestCase):
     """Federation auto-scan honours the root repository's .gitignore.
 
-    Regression for bd-5038-rkt: running ``wd init`` at a repo whose root
+    Regression for tracked issue: running ``wd init`` at a repo whose root
     ``.gitignore`` excludes a nested git clone (e.g. ``/public/`` for the
     publish overlay) must NOT register that clone as a federation child.
     """
 
-    # bd-gpt4: the FS scan no longer folds root .gitignore into its
+    # tracked issue: the FS scan no longer folds root .gitignore into its
     # exclusion set. A nested .git directory is a workspace child by
     # definition. Polyrepos whose children dir matches a gitignore
     # pattern were silently masked under the old rule. The publish-overlay
-    # case (bd-5038-rkt, originally motivating the fold) must pass an
+    # case (tracked issue, originally motivating the fold) must pass an
     # explicit ``exclude_paths`` to opt out of registration.
 
     def test_gitignored_nested_repo_is_registered(self) -> None:
@@ -244,7 +244,7 @@ class GitignoreSkipTest(unittest.TestCase):
         self.assertEqual(names, ["tools-publish_overlays-pypi"])
 
     def test_explicit_exclude_paths_still_works_for_publish_overlay(self) -> None:
-        """The publish-overlay opt-out path (bd-5038-rkt)."""
+        """The publish-overlay opt-out path (tracked issue)."""
         from weld.workspace import scan_nested_repos
 
         with tempfile.TemporaryDirectory() as td:

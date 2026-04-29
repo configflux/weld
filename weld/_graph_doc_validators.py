@@ -28,7 +28,7 @@ def _is_federation_root(graph: dict) -> bool:
     True. The check insists on an *integer* schema_version equal to
     :data:`ROOT_FEDERATED_SCHEMA_VERSION` (currently ``2``); a
     non-integer or unexpected value disables the bypass so the standard
-    diagnostics still name the offending node (bd-5038-6zm).
+    diagnostics still name the offending node (tracked issue).
     """
     meta = graph.get("meta")
     if not isinstance(meta, dict):

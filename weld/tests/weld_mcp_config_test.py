@@ -81,7 +81,7 @@ class TargetPathTests(unittest.TestCase):
 
 class CliPrintTests(unittest.TestCase):
     """The default invocation prints valid JSON to stdout (the behaviour the
-    bd issue and ADR 0023 require). Errors must surface as non-zero exits."""
+    tracked issue and ADR 0023 require). Errors must surface as non-zero exits."""
 
     def _run(self, *args: str) -> tuple[int, str, str]:
         out = io.StringIO()

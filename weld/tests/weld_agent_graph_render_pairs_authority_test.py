@@ -267,7 +267,7 @@ class AuditCliNonCanonicalRenderPathsClaimTest(unittest.TestCase):
     ``duplicate_name`` finding when the only thing connecting two
     same-name agents is a non-canonical node forging a ``render_paths``
     declaration. This is the exact attack the trust-boundary tightening
-    closes (security follow-up of bd-88ey)."""
+    closes (security follow-up of tracked issue)."""
 
     def test_non_canonical_render_paths_claim_does_not_suppress(self) -> None:
         with tempfile.TemporaryDirectory() as td:

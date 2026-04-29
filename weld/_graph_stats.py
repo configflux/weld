@@ -7,7 +7,7 @@ returns a plain dict, so both :meth:`weld.graph.Graph.stats` and the
 ``wd stats`` CLI path in :mod:`weld._graph_cli` can share it without
 carrying a :class:`~weld.graph.Graph` dependency into test fixtures.
 
-PM audit (bd-5038-3nr.3) requires ``wd stats`` to cover:
+PM audit (tracked issue) requires ``wd stats`` to cover:
 
 - counts by node/edge type (``nodes_by_type`` / ``edges_by_type``)
 - description coverage (missing-docs signal)

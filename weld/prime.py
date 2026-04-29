@@ -245,7 +245,7 @@ def _framework_line(fw: str, surfaces: dict[str, bool]) -> str:
 def _detect_active_agent_from_env(env: dict[str, str] | None = None) -> str | None:
     """Guess the active agent from well-known environment variables.
 
-    Currently we only surface Codex this way because it is the case bd-5038
+    Currently we only surface Codex this way because it is the case tracked issue
     targets (a Codex user not seeing Codex in the matrix). Any ``CODEX_*`` env
     var is treated as a signal that Codex is the active agent. Returns the
     framework name or ``None`` when no signal is present.

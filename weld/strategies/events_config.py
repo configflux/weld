@@ -1,4 +1,4 @@
-"""Declared-channel extraction from config surfaces (project-xoq.6.1).
+"""Declared-channel extraction from config surfaces (tracked project).
 
 Config-first half of the ``events`` strategy. Walks declared YAML/env
 surfaces (today: ``docker-compose*.yml``) for channel env-var entries

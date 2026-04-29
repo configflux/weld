@@ -31,9 +31,13 @@ def make_server(
     *,
     host: str = "127.0.0.1",
     port: int = 0,
+    graph_kind: str = "code",
 ) -> ThreadingHTTPServer:
     """Create a configured visualizer HTTP server."""
-    api = VizApi(root)
+    api = _api_for(root, graph_kind)
+    ensure_available = getattr(api, "ensure_available", None)
+    if ensure_available is not None:
+        ensure_available()
     handler_cls = _handler_for(api)
     return ThreadingHTTPServer((host, port), handler_cls)
 
@@ -44,12 +48,14 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 0,
     open_browser: bool = True,
+    graph_kind: str = "code",
 ) -> int:
     """Serve the visualizer until interrupted."""
-    httpd = make_server(root, host=host, port=port)
+    httpd = make_server(root, host=host, port=port, graph_kind=graph_kind)
     actual_host, actual_port = httpd.server_address
     url = f"http://{actual_host}:{actual_port}/"
-    print(f"Weld graph visualizer: {url}", flush=True)
+    label = "Weld Agent Graph" if graph_kind == "agent" else "Weld graph"
+    print(f"{label} visualizer: {url}", flush=True)
     if open_browser:
         webbrowser.open(url)
     try:
@@ -61,11 +67,41 @@ def serve(
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="wd viz",
-        description="Serve a local read-only browser visualizer for .weld/graph.json.",
+def main(argv: list[str] | None = None, *, graph_kind: str = "code") -> int:
+    prog = "wd agents viz" if graph_kind == "agent" else "wd viz"
+    description = (
+        "Serve a local read-only browser visualizer for .weld/agent-graph.json."
+        if graph_kind == "agent"
+        else "Serve a local read-only browser visualizer for .weld/graph.json."
     )
+    parser = argparse.ArgumentParser(
+        prog=prog,
+        description=description,
+    )
+    add_server_arguments(parser)
+    args = parser.parse_args(argv)
+    if not args.allow_remote and not _is_loopback_host(args.host):
+        print(
+            f"error: --host={args.host!r} is not a loopback address; "
+            "refusing to bind. Pass --allow-remote to acknowledge the exposure risk.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        return serve(
+            args.root,
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_open,
+            graph_kind=graph_kind,
+        )
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+
+def add_server_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the shared local visualizer server flags to *parser*."""
     parser.add_argument("--root", default=".", help="Project root directory")
     parser.add_argument(
         "--host",
@@ -79,20 +115,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Allow binding to a non-loopback host (exposes the visualizer beyond this machine)",
     )
-    args = parser.parse_args(argv)
-    if not args.allow_remote and not _is_loopback_host(args.host):
-        print(
-            f"error: --host={args.host!r} is not a loopback address; "
-            "refusing to bind. Pass --allow-remote to acknowledge the exposure risk.",
-            file=sys.stderr,
-        )
-        return 2
-    return serve(
-        args.root,
-        host=args.host,
-        port=args.port,
-        open_browser=not args.no_open,
-    )
+
+
+def _api_for(root: str, graph_kind: str) -> object:
+    if graph_kind == "code":
+        return VizApi(root)
+    if graph_kind == "agent":
+        from weld.viz.agent_api import AgentVizApi
+
+        return AgentVizApi(root)
+    raise ValueError(f"unknown graph kind: {graph_kind!r}")
 
 
 def _is_loopback_host(host: str) -> bool:

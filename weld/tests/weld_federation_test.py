@@ -263,7 +263,7 @@ class FederatedGraphCliTest(unittest.TestCase):
         self.assertEqual(cross_edge["to_display"], "repo-b::file:src/b-mid.py")
 
     def test_context_free_form_string_surfaces_resolved_from_envelope(self) -> None:
-        """bd-gv1 follow-up: exercise the CLI end-to-end for the free-form
+        """tracked issue follow-up: exercise the CLI end-to-end for the free-form
         query fallback. A term that is not an exact node id must resolve
         through query() and return the matched node's context plus a
         ``resolved_from`` envelope identifying the query, matched id, and

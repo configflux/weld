@@ -1,4 +1,4 @@
-"""Strategy: proto service, rpc, message, and enum extraction (project-xoq.5.1).
+"""Strategy: proto service, rpc, message, and enum extraction (tracked project).
 
 Parses declared ``.proto`` files into weld nodes per ADR 0018's static-truth
 policy. The heavy lifting lives in :mod:`weld.strategies.grpc_proto_parser`;

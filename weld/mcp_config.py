@@ -2,7 +2,7 @@
 
 Renders the JSON snippet that configures Weld's stdio MCP server in the
 three documented clients (Claude Code, VS Code, Cursor). Default behaviour
-is to print the snippet -- the bd issue acceptance bar -- with optional
+is to print the snippet -- the tracked issue acceptance bar -- with optional
 ``--write`` / ``--merge`` / ``--force`` / ``--dry-run`` flags for safer
 in-place edits of the client-appropriate file.
 
@@ -314,7 +314,7 @@ def _cli_main(argv: list[str]) -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 2
 
-    # Default behaviour: print the snippet. This is the bd-issue acceptance
+    # Default behaviour: print the snippet. This is the tracked issue acceptance
     # bar and stays true even when --write/--merge/--dry-run are also set,
     # so users can pipe the same output into ``jq`` or a clipboard.
     sys.stdout.write(snippet)

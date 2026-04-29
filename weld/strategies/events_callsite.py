@@ -1,4 +1,4 @@
-"""Declared-channel extraction from Python call sites (project-xoq.6.1).
+"""Declared-channel extraction from Python call sites (tracked project).
 
 Code half of the ``events`` strategy. Walks Python files for calls
 shaped ``<Root>.<verb>("literal", ...)`` where ``<Root>`` is a known

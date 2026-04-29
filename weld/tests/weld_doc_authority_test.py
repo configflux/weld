@@ -190,21 +190,21 @@ class GateNodeTest(unittest.TestCase):
             weld_dir = root / ".weld"
             weld_dir.mkdir()
             # Create a gate script so path check passes
-            (root / "local-task-gate").write_text("#!/bin/bash\nexit 0")
+            (root / "local-verification").write_text("#!/bin/bash\nexit 0")
             (weld_dir / "discover.yaml").write_text(textwrap.dedent("""\
                 sources: []
                 topology:
                   nodes:
-                    - id: "gate:local-task-gate"
+                    - id: "gate:local-verification"
                       type: gate
-                      label: Local Task Gate
+                      label: Local Verification
                       props:
-                        file: "local-task-gate"
+                        file: "local-verification"
                         doc_kind: "gate"
                   edges: []
             """))
             graph = discover(root)
-            node = graph["nodes"].get("gate:local-task-gate")
+            node = graph["nodes"].get("gate:local-verification")
             self.assertIsNotNone(node, "gate node should exist")
             self.assertEqual(node["type"], "gate")
             self.assertEqual(node["props"].get("doc_kind"), "gate")
@@ -216,14 +216,14 @@ class GateNodeTest(unittest.TestCase):
             "type": "gate",
             "label": "Local Task Gate",
             "props": {
-                "file": "local-task-gate",
+                "file": "local-verification",
                 "doc_kind": "gate",
                 "source_strategy": "topology",
                 "authority": "manual",
                 "confidence": "definite",
             },
         }
-        errors = validate_node("gate:local-task-gate", node)
+        errors = validate_node("gate:local-verification", node)
         self.assertEqual(errors, [])
 
 class GovernsEdgeTest(unittest.TestCase):

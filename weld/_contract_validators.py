@@ -210,7 +210,7 @@ def validate_node(
     """Validate a single node definition.
 
     *source_label* is an optional producer label prefixed onto every
-    diagnostic path (project-xoq.1.3).
+    diagnostic path (tracked project).
     """
     errors: list[ValidationError] = []
     path = _prefix(source_label, f"nodes.{node_id}")
@@ -270,11 +270,11 @@ def validate_edge(
 
     *node_ids* is the set of all valid node IDs for referential integrity.
     When *check_refs* is False, referential-integrity checks are skipped.
-    *source_label* prefixes diagnostic paths (project-xoq.1.3).
+    *source_label* prefixes diagnostic paths (tracked project).
     *federation* gates the cross-repo bypasses (separator-bearing IDs and
     ``cross_repo:<suffix>`` edge types). It is set to True by
     :func:`validate_graph` when the containing graph advertises
-    ``meta.schema_version == 2`` (bd-5038-6zm). Callers handling
+    ``meta.schema_version == 2`` (tracked issue). Callers handling
     fragments under federation may pass it explicitly. Even with
     ``federation=True`` the bypass requires a *well-formed* id/prefix --
     pathological strings still fail with a diagnostic naming the offender.

@@ -3,7 +3,7 @@
 Split from ``weld_brief_test.py`` to keep that file under the 400-line lint
 cap while v1 coverage stays intact. The v1 classification/ranking/limit
 tests remain in ``weld_brief_test.py``; this module owns the contract that
-came from bd ``project-xoq.2.1``:
+came from bd ``tracked project``:
 
   - ``brief_version`` is 2
   - ``interfaces`` bucket exists and classifies rpc/channel/ROS2 surfaces

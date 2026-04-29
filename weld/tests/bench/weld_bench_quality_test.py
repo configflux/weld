@@ -1,4 +1,4 @@
-"""Tests for the weld first-context quality benchmark (project-xoq.7.1).
+"""Tests for the weld first-context quality benchmark (tracked project).
 
 These tests build a synthetic repo with interaction-surface nodes
 (grpc routes, event channels, boundaries, services, contracts) and

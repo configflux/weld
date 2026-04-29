@@ -16,7 +16,7 @@ each route to:
 
 Protocol metadata (``protocol``, ``surface_kind``, ``transport``,
 ``boundary_kind``, ``declared_in``) is stamped on every route node per
-ADR 0018 and project-xoq.1.2, so cross-protocol retrieval can treat FastAPI
+ADR 0018 and tracked project, so cross-protocol retrieval can treat FastAPI
 routes as full interaction surfaces rather than bare URL stubs.
 
 The extractor stays strictly static: no imports are followed, no runtime
@@ -160,7 +160,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "authority": "canonical",
                     "confidence": "definite",
                     "roles": ["implementation"],
-                    # Interaction-surface metadata (ADR 0018, project-xoq.1.2).
+                    # Interaction-surface metadata (ADR 0018, tracked project).
                     # Every FastAPI route is an inbound HTTP request/response
                     # surface over TCP/HTTP; the router file is the static
                     # declaration site.

@@ -1,4 +1,4 @@
-"""Tests for federation-gated bypasses in ``validate_graph`` (bd-5038-6zm).
+"""Tests for federation-gated bypasses in ``validate_graph`` (tracked issue).
 
 The ASCII Unit Separator (``\\x1f``) bypass for dangling-reference checks
 and the ``cross_repo:<suffix>`` bypass for invalid-edge-type checks are
@@ -242,7 +242,7 @@ class ValidateGraphFederationBypassTest(unittest.TestCase):
 class ValidateGraphMalformedScopeTest(unittest.TestCase):
     """Malformed federation constructs are rejected even when federated.
 
-    These cover the bypass-tightening from bd-5038-6zm: the bypass only
+    These cover the bypass-tightening from tracked issue: the bypass only
     applies to *well-formed* federation IDs / ``cross_repo:`` edge types.
     Pathological strings remain dangling/invalid so the diagnostic
     still names the offending edge.

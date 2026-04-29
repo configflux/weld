@@ -274,13 +274,9 @@ issue template; maintainers triage from there. See
 
 ### How do I keep up with releases?
 
-The [`CHANGELOG.md`](../CHANGELOG.md) at the repo root follows the
-Keep-a-Changelog convention with `Added` / `Changed` / `Fixed` /
-`Removed` sections per release. The release process itself --
-versioning, publish, smoke test, tag pair -- is documented in
-[`docs/release.md`](release.md). Watch the GitHub repo or the PyPI
-project page for new versions; tags are signed and paired across the
-internal and public repositories.
+The [`CHANGELOG.md`](../CHANGELOG.md) at the repo root lists
+user-facing changes by release. Watch the GitHub repo or the PyPI
+project page for new versions.
 
 ---
 

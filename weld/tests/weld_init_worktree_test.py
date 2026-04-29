@@ -1,4 +1,4 @@
-"""Linked-worktree polyrepo init tests (bd-cacx).
+"""Linked-worktree polyrepo init tests (tracked issue).
 
 Pin the contract that ``wd init`` inside a linked git worktree of a
 bootstrapped polyrepo mirrors the main checkout's ``workspaces.yaml``.

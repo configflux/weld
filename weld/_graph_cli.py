@@ -100,7 +100,7 @@ def _retry_hint(cmd: str, args) -> str:
 
 
 def missing_graph_message(retry_cmd: str) -> str:
-    """Return the friendly missing-graph guidance block (bd-5038-3nr.2 / -uqo).
+    """Return the friendly missing-graph guidance block (tracked issue / -uqo).
 
     Used by graph-backed read commands (``wd brief`` / ``query`` /
     ``context`` / ``path`` / ``callers`` / ``references`` / ``trace`` /
@@ -243,7 +243,7 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
             return
     if cmd in _READ_COMMANDS:
         # Single-repo read path: surface a friendly first-run message when
-        # the graph has not been built yet (bd-5038-3nr.2).
+        # the graph has not been built yet (tracked issue).
         ensure_graph_exists(args.root, _retry_hint(cmd, args))
     g = Graph(args.root)
     g.load()

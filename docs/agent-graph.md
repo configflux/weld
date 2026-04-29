@@ -195,10 +195,13 @@ output.
 | `wd agents impact <asset>` | Show what other assets are affected by changing one asset, including same-name platform variants and same-purpose variants, with a recommended change checklist. |
 | `wd agents audit` | Run static consistency checks over the persisted graph. |
 | `wd agents plan-change "<request>"` | Rank assets by relevance to a free-text request and emit a deterministic primary / secondary / validation plan. |
+| `wd agents viz` | Open a local read-only browser explorer for the persisted Agent Graph. |
 
 `wd agents discover` writes `.weld/agent-graph.json` by default, so other
 `wd agents` commands operate on that file. If the file does not exist
 they exit with a clear error pointing at `wd agents discover`.
+`wd agents viz` follows the same rule: run `wd agents discover` first, then
+start the browser explorer.
 
 ### Audit findings
 

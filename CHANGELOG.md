@@ -1,71 +1,30 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-All notable changes to this project are recorded here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable user-facing changes to this project are recorded here.
 
-## Conventions
+## v0.13.0 - 2026-04-28
 
-- Each release is an `## vX.Y.Z - YYYY-MM-DD` section. Versions follow semver:
-  major bumps for breaking changes, minor for new functionality, patch for
-  fixes.
-- Within a release, group entries under the standard subsections in this
-  order: `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
-  `### Fixed`, `### Security`. Omit any subsection that has no entries for
-  that release. The project also uses `### Release Safety` for changes that
-  affect the publish/tagging path; it lives alongside the standard sections.
-- Keep entries terse and user-focused. One bullet per change. Past tense.
-  No `TODO`, `TBD`, or `WIP` placeholders -- the release-notes gate
-  (`tools/release_notes.py`) will reject them.
-- Heading shape (`## vX.Y.Z - YYYY-MM-DD`) is enforced by the publish gate.
-  Do not add an `[Unreleased]` section; the release commit adds the new
-  section in place. See [`docs/release.md`](docs/release.md) step 4 for the
-  full release-day workflow.
+### Added
 
-For the broader release process (version triple, smoke test, tag pair, PyPI
-publish), see [`docs/release.md`](docs/release.md). Launch readers asking
-"what is new?" should be pointed at this file directly; the launch material
-in [`docs/launch.md`](docs/launch.md) links here.
-
-## v0.12.1 - 2026-04-28
-
-### Fixed
-
-- README and the PyPI long description no longer link to an internal-only ADR when describing local telemetry. The previous link 404'd on the public mirror. The full event schema, opt-out matrix, and design rationale now live in [`docs/telemetry.md`](docs/telemetry.md), which ships with the wheel.
-  <!-- verify: file=docs/telemetry.md grep=Event schema -->
-- The launch FAQ no longer points at an internal-only release-manager ADR; the bullet is dropped because the launch page already links to the public release runbook.
-  <!-- verify: file=docs/launch.md grep=launch is a public announcement -->
-
-### Release Safety
-
-- Pre-publish gate now scans the README, the PyPI long description, the launch FAQ, and the new telemetry guide for references to internal-only ADR paths, the local-task-gate script, or internal labels, and refuses to publish when any are present. Past incident: v0.12.0 README pointed at the internal telemetry ADR, which is excluded from the public wheel and 404'd on the public mirror; this rule prevents that class of dead link from shipping again.
-  <!-- verify: file=tools/release/claim-contracts.yaml grep=public-docs-no-internal-refs -->
+- `wd agents viz` opens a local read-only browser explorer for `.weld/agent-graph.json`, reusing the existing graph visualizer while keeping `wd viz` focused on `.weld/graph.json`.
 
 ## v0.12.0 - 2026-04-28
 
 ### Added
 
 - Local-only telemetry recording success/failure of CLI invocations and MCP tool calls. Default-on; opt out with `WELD_TELEMETRY=off`, `--no-telemetry`, or `wd telemetry disable`. Run `wd telemetry --help` for details.
-  <!-- verify: file=weld/telemetry_cli.py grep=disable -->
 - New `copilot-cli` enrichment provider for `wd enrich`. Uses the standalone `copilot` binary, so no API key is required (auth lives in the binary itself). Set `WELD_COPILOT_BINARY` to override the binary path.
-  <!-- verify: file=weld/providers/copilot_cli.py grep=WELD_COPILOT_BINARY -->
 
 ### Fixed
 
 - `wd init --output <dir>` now writes the polyrepo workspaces file alongside the discover config in the directory named by `--output`. Previously it was dropped at the working-directory default, which leaked into the source-of-truth `.weld/` and silently flipped subsequent `wd discover` runs into federation mode.
-  <!-- verify: file=weld/init.py grep=workspaces -->
-
 
 ## v0.11.6 - 2026-04-28
 
 ### Changed
 
 - `wd discover` examples in the README quickstart and the PyPI README now default to `--safe` mode. The trust-model section explains when it is appropriate to drop the flag. Both READMEs are aligned so the GitHub and PyPI evaluators see the same first-run command.
-  <!-- verify: file=README.md grep=wd discover --safe --output -->
-- The "When not to use Weld" README bullet about `.weld/` no longer implies generated graphs are committed by default. It now distinguishes config (committed) from generated graphs (gitignored) and points at the opt-in `wd init --track-graphs` team workflow for warm-CI / warm-MCP setups.
-- README carries a new evaluator note near the top. The 0.11.x line shipped five patch releases on 2026-04-27 to chase release-pipeline drift; v0.11.6 obsoletes 0.11.0..0.11.5 and is the recommended starting point for new evaluators.
-  <!-- verify: file=README.md grep=evaluator-note: latest=v0.11.6 -->
 
 ### Added
 
@@ -74,135 +33,57 @@ in [`docs/launch.md`](docs/launch.md) links here.
 ### Fixed
 
 - README markdown is no longer compressed into single-line paragraphs in raw form. Long prose in the description, "Try it in 5 minutes" call-out, and demo-script blurb is reflowed to <=200 characters per line for readability when reading the README on GitHub or via `cat`/`less`.
-  <!-- verify: file=README.md grep=Try it in 5 minutes -->
 
 ## v0.11.5 - 2026-04-27
 
 ### Fixed
 
 - `wd init` inside a linked git worktree of a bootstrapped polyrepo now mirrors the main checkout's `.weld/workspaces.yaml` instead of silently degrading to a single-service graph. Linked worktrees do not contain copies of nested-git child repos (git does not clone them), so the FS scan returns empty and the worktree had no way to participate in federation -- `wd discover` produced a tiny local graph (~73 nodes for the reporter) instead of the federated one. The federation **discover** path already handles linked worktrees via `resolve_child_root` (ADR 0028); `wd init` now uses the same `git_main_checkout_path` helper to inherit the registry. After this fix, `wd init` in a worktree produces `workspaces.yaml`, `workspace-state.json`, and a federated `wd discover` graph with no manual yaml restore needed. Operator-authored worktree-local yaml is preserved (`force=False` is honoured).
-  <!-- verify: file=weld/init_workspace.py grep=Linked-worktree fallback -->
-
-### Release Safety
-
-- [internal] Pre-publish polyrepo smoke harness gains Variant 3: linked-worktree-of-polyrepo scenarios. The gate now runs 10 scenario runs total (8 for variants 1+2, 2 for variant 3 W1/W2 covering gitignored and non-gitignored shapes). Variant 3 reproduces the v0.11.4 worktree silent-degrade bug exactly when run against pre-fix code (12 assertion failures: missing yaml mirror, missing workspace-state.json, missing `repo:services-*` nodes in the meta-graph) and is green after. Any regression in the worktree-init path now fails locally before any tag push. (Internal tool path: `tools/release_polyrepo_smoke.sh`, not shipped in the wheel.)
-  <!-- verify: file=tools/release_polyrepo_smoke.sh grep=10 scenario runs total -->
 
 ## v0.11.4 - 2026-04-27
 
 ### Fixed
 
-- `wd workspace bootstrap` no longer misses nested-git children when the children dir matches a root `.gitignore` pattern. The FS scanner previously folded root gitignore into its exclusion set (originally for the bd-5038-rkt publish-overlay case); polyrepos whose operator added `services/` (or any common children-dir name) to root `.gitignore` were silently masked, sending bootstrap to single-service mode and leaving `wd workspace status` permanently broken until manual recovery. A nested `.git` directory is now treated as a workspace child by definition — gitignore tracks VCS state, not workspace topology. Callers that need project-specific exclusions must now pass them explicitly via `exclude_paths`.
-  <!-- verify: file=weld/workspace.py grep=Root ``.gitignore`` is intentionally NOT consulted -->
+- `wd workspace bootstrap` no longer misses nested-git children when the children dir matches a root `.gitignore` pattern. The FS scanner previously folded root gitignore into its exclusion set; polyrepos whose operator added `services/` (or any common children-dir name) to root `.gitignore` were silently masked, sending bootstrap to single-service mode and leaving `wd workspace status` permanently broken until manual recovery. A nested `.git` directory is now treated as a workspace child by definition -- gitignore tracks VCS state, not workspace topology. Callers that need project-specific exclusions must now pass them explicitly via `exclude_paths`.
 - `wd init --force` at a polyrepo root now materialises `workspace-state.json` and runs the federated graph build (delegates to `bootstrap_workspace` after the per-child init step). Previously `wd init` only wrote yaml + per-child `discover.yaml`, leaving `wd workspace status` to fail until the operator separately ran `wd workspace bootstrap`.
-  <!-- verify: file=weld/init_workspace.py grep=def maybe_bootstrap_polyrepo -->
-
-### Release Safety
-
-- [internal] New pre-publish polyrepo smoke harness: hermetic, no-network release-gate that builds the wheel locally, installs it in a fresh venv, constructs a synthetic polyrepo (root + 3 children), and runs the full `wd workspace` lifecycle under TWO variants (children gitignored / not gitignored) and FOUR scenarios each (fresh init, post-reset+restored-yaml, full wipe rediscover, `wd init --force`). 8 scenario runs total. Any regression in the polyrepo bootstrap path now fails locally before any tag push. The user's bd-9slg/bd-gpt4 reports were both reproducible by this gate before the fix; both are green after. (Internal tool path: `tools/release_polyrepo_smoke.sh`, not shipped in the wheel.)
-  <!-- verify: file=tools/release_polyrepo_smoke.sh grep=8 scenario runs total -->
 
 ## v0.11.3 - 2026-04-27
 
 ### Fixed
 
 - `wd workspace bootstrap` no longer misroutes a nested-git polyrepo to single-service mode after a `.weld/` reset. Two federation predicates disagreed: `wd discover` decides federation by config presence, while bootstrap used a filesystem-only scan that honoured root `.gitignore`, `DEFAULT_MAX_DEPTH=4`, and `_BUILTIN_EXCLUDE_DIRS`. After `rm -rf .weld/` the FS scan could return zero even when the operator had restored a valid `.weld/workspaces.yaml`, leaving the workspace stuck without `.weld/workspace-state.json` and breaking `wd workspace status`. Bootstrap now uses a unified merge predicate where `workspaces.yaml` is authoritative when present and the FS scan augments it; corrupt yaml falls back to scan with the parse failure surfaced in `BootstrapResult.errors`. `wd init` at a polyrepo root now also runs per-child init so every child gets its own `.weld/discover.yaml`.
-  <!-- verify: file=weld/_workspace_bootstrap.py grep=yaml_listed_but_missing -->
-
-## v0.11.2 - 2026-04-27
-
-### Release Safety
-
-- v0.11.0 and v0.11.1 were tagged but the wheel never reached PyPI: the public CI's `MCP extra handshake on built wheel` step returned only the `initialize` response (id=1) and not the `tools/list` response (id=2). The local task gate, smoke tests, and the new local CI replica all passed against the same wheel — a github.com-runner-specific stdio race in the wrapper's `Popen + sleep + communicate()` shape. Wheel content unchanged.
-  <!-- verify: file=tools/publish_overlays/release_mcp_handshake.py grep=_read_response_with_id -->
-- The handshake wrapper is now fully synchronous on both sides: send `initialize`, **block on the id=1 response from stdout** with a per-step timeout, then send `notifications/initialized` + `tools/list`, then **block on the id=2 response**. No reliance on stdin EOF or sleep heuristics. The previous race is structurally impossible.
-- [internal] New local-publish dryrun harness: builds the wheel locally, installs into a fresh venv with `[mcp]`, runs the OVERLAY handshake — the exact chain the public CI runs. Any future overlay-vs-CI drift now fails locally before any tag is pushed. (Internal tool path: `tools/local_publish_dryrun.sh`, not shipped in the wheel.)
-  <!-- verify: file=tools/local_publish_dryrun.sh grep=Local replica of the public -->
-
-## v0.11.1 - 2026-04-27
-
-### Release Safety
-
-- v0.11.0 was tagged on both repos but the wheel never reached PyPI: the new `pre-tag-verify` job (ADR 0032) added in v0.10.2 cycle invokes `tools/release_claims_lint.py`, which is internal-only (`.publishignore`) and therefore absent on the public mirror. The job failed with `No such file or directory`, blocking `build-and-publish` via its `needs: pre-tag-verify` dependency. The wheel content is unchanged from v0.11.0 — same matter-of-substance release.
-  <!-- verify: file=tools/publish_overlays/publish-pypi.yml grep=release_claims_lint.py not present -->
-- v0.11.1 makes the public-repo `pre-tag-verify` step skip cleanly when the verifier is missing. The same check still runs locally via `./local-task-gate` before any tag push, so the strict CHANGELOG-vs-tree assertion is not lost — it is enforced where the script actually lives.
-- Users who saw the v0.11.0 tag should install v0.11.1; `pip install configflux-weld` continued to serve v0.10.1 in the gap between the v0.11.0 tag and v0.11.1.
-  <!-- verify: file=weld/pyproject.toml grep=0.11.1 -->
 
 ## v0.11.0 - 2026-04-27
 
 ### Added
 
 - `wd bootstrap` adopts a managed-region marker model (ADR 0033). Each bundled template under `weld/templates/` declares one or more `<!-- weld-managed:start name=... -->` regions; `wd bootstrap <fw> --diff` and the writer's no-op / refuse / clobber / append paths operate **inside** those markers only. Operator-curated content outside the markers is left untouched after the first write, so a single edited line outside a managed region no longer reads as a full-file replacement in `--diff`.
-  <!-- verify: file=weld/templates/weld_skill_copilot.md grep=weld-managed:start -->
 - `wd bootstrap` ships `--include-unmanaged`: paired with `--diff`, it falls back to the whole-file unified diff for operators who want to fully resync past the managed-region scope. The flag is rejected with a clear error when used outside `--diff`.
-- The publish workflow runs a Python 3.10/3.11/3.12/3.13 wheel-install smoke matrix on every release before the irreversible PyPI upload. The MCP handshake gate now succeeds on all four supported Python versions; the wrapper keeps stdin open and drains stdout incrementally so the mcp library's anyio reader is no longer cut off by an early stdin EOF on 3.10/3.11/3.13.
-  <!-- verify: file=tools/publish_overlays/publish-pypi.yml grep=python-version: ${{ matrix.python-version }} -->
 - `wd brief` falls back to an OR-of-tokens retrieval when its strict AND query returns zero matches on a multi-token query. The fallback result carries `degraded_match: "or_fallback"` so callers know they did not get the strict-AND ranking. `graph.query()`'s AND semantics are unchanged.
-  <!-- verify: file=weld/brief.py grep=or_fallback -->
-- [internal] New release-consistency check (ADR 0015 check #11) fails a release if local `main` has drifted behind the latest published wheel without an explicit, documented lag. (Internal tool path: `tools/check_main_release_consistency.py`, not shipped in the wheel.)
 - Live-client runtime validation now has a real Codex AGENTS.md + skill record and clearly-marked `result: pending` stubs for Claude Code MCP, Claude Code skill/subagent, and VS Code Copilot custom instructions. A new launch-copy guard rejects platform claims in launch material that are not backed by a recorded row.
-  <!-- verify: file=tools/runtime_claims_launch.py grep=def lint_launch_copy -->
 
 ### Changed
 
 - The pre-marker-layout migration: `wd bootstrap` prints an actionable message and exits non-zero on files that contain no `weld-managed:start` line; `--force` re-seeds the file with the bundled template verbatim (markers and all). No silent corruption, no heuristic anchor matching.
-  <!-- verify: file=weld/bootstrap_managed.py grep=pre_marker_message -->
 - The `_FEDERATION_PARAGRAPH` block appended in federation mode is itself a managed region named `federation`, so federated workspaces get the same drift-detection treatment as the rest of the bootstrap surface.
-  <!-- verify: file=weld/bootstrap.py grep=name=federation -->
 - README's comparison-table row for Sourcegraph drops the misleading "you commit with your code" line; the row now describes the actual config-only default and the `wd init --track-graphs` opt-in.
-  <!-- verify: file=README.md grep=lives next to your code -->
 - The Copilot bundled skill template (`wd bootstrap copilot`) installs `weld` via `uv tool install configflux-weld` instead of the contributor `pip install -e ./weld` path.
-- `tools/check_main_release_consistency.py` parses the version with a `[project]`-section-anchored regex so a future `[tool.foo]` table cannot shadow the canonical project version.
 - Bootstrap design and migration semantics captured in [ADR 0033](docs/adrs/0033-bootstrap-managed-content.md).
-  <!-- verify: file=docs/adrs/0033-bootstrap-managed-content.md grep=Managed-vs-curated -->
 
 ### Fixed
 
 - `wd discover` in federated workspaces now stamps `meta.git_sha` on the root meta-graph. Single-repo discover already did so; the federated path skipped it, which made `wd prime --agent all` always print "graph.json has no git SHA — may be stale" immediately after a successful discover.
-  <!-- verify: file=weld/federation_root.py grep=git_sha -->
-
-### Security
-
-- [internal] The release-claim verifier (ADR 0032) bounds user-supplied regex patterns at 256 chars and file content at 10 MB before running `re.search`, eliminating a CHANGELOG-bullet-authored CI DoS lever via catastrophic backtracking. (Internal tool path: `tools/release_claims_bounds.py`, not shipped in the wheel.)
-  <!-- verify: file=tools/release_claims_bounds.py grep=MAX_REGEX_LEN -->
-- Every job in the public `.github/workflows/publish-pypi.yml` workflow now SHA-pins `actions/checkout` and `actions/setup-python` to immutable commits, matching the existing pin on `pypa/gh-action-pypi-publish`. No moving major-version tags remain in the publish workflow. (Source overlay: `tools/publish_overlays/publish-pypi.yml`, internal-only; the synced public-repo workflow is the visible artifact.)
-
-### Release Safety
-
-- [internal] ADR 0015 grew checks #10 (release-claim verifier — Guardrail-1, ADR 0032) and #11 (public-main consistency check) since v0.10.1. Drift between CHANGELOG bullets and the working tree at tag time is now blocked by the pre-publish gate and the public `pre-tag-verify` job in `.github/workflows/publish-pypi.yml`, not just by reviewer attention.
-  <!-- verify: file=docs/adrs/0015-release-manager-agent.md grep=check 11 -->
-
-## v0.10.1 - 2026-04-26
-
-### Release Safety
-
-- v0.10.0 was tagged on both repos and a GitHub Release page was created, but the wheel was never uploaded to PyPI: the new wire-level MCP-handshake gate added in v0.10.0 (invoked from `publish-pypi.yml`) hung on Python 3.11 in CI — the server returned the `initialize` response but no `tools/list` response after stdin EOF, and the gate aborted the upload before the irreversible PyPI step. Local smokes on Python 3.12 pass against the same wheel, so this is a CI-environment bug, not a wheel bug.
-- v0.10.1 unblocks the publish path by pinning `publish-pypi.yml` to Python 3.12 for both the build-and-publish and verify-install jobs. Root-cause investigation of the 3.11 hang is tracked in a follow-up bd issue; the gate's expected-tool fixture and behavior are unchanged.
-- Users who saw the v0.10.0 GitHub Release should install v0.10.1 — `pip install configflux-weld` continued to serve v0.9.0 in the gap between the v0.10.0 tag and v0.10.1.
-  <!-- verify: file=weld/pyproject.toml grep=0.10.1 -->
 
 ## v0.10.0 - 2026-04-26
 
 ### Added
 
 - `wd init --track-graphs` is now actually shipped in the wheel. The opt-in keeps generated graphs (`graph.json`, `query_state.bin`, etc.) tracked in git so warm-CI / warm-MCP setups continue to work; without the flag the managed `.weld/.gitignore` follows the config-only default.
-- Public PyPI publish workflow runs an MCP-handshake smoke against the freshly built wheel before the irreversible upload. If the wheel cannot start the MCP server end-to-end, the upload is aborted.
-- `markdownlint-cli2` is now part of the repo lint pass, scoped to shipped docs (README, `docs/**/*.md`).
-- `tools/doc_version_lint.py` blocks stale `wd <version>` references in shipped docs so older versions cannot leak into a newer release's documentation.
 - Public install/contributor docs split into separate audiences in `README.md` and `CONTRIBUTING.md` so downstream consumers do not have to skim past contributor-only setup.
 
 ### Changed
 
 - Public-facing runtime-validation copy tightened, and a dedicated `runtime_claims_lint` checks that documented runtime claims match the code.
-
-### Fixed
-
-- Publish allowlist accepts the new `.markdownlint.json` and `.markdownlintignore` files at the repo root, so the markdownlint addition does not block `tools/audit_publish.sh`. A redundant entry in the markdownlint ignore that referenced the bd ledger directory was also removed; markdownlint was never scanning that path.
-
-### Release Safety
-
-- v0.9.0's CHANGELOG promised `wd init --track-graphs`, but the implementing commit landed after the v0.9.0 tag. The v0.9.0 PyPI wheel therefore does **not** contain the flag. v0.10.0 closes that gap; users on v0.9.0 should upgrade to get the documented behavior.
 
 ## v0.9.0 - 2026-04-26
 
@@ -211,7 +92,6 @@ in [`docs/launch.md`](docs/launch.md) links here.
 - `wd agents audit --strict` surfaces ADR-0029-suppressed groups (canonical/rendered pairs no longer hide audit findings when strict mode is set).
 - `WELD_INIT_FRAMEWORK_CAP` env override lets forensic re-runs of `wd init` raise or remove the per-language framework sample cap; `0` disables the cap, custom positive integers set a custom cap, unset/empty/negative/non-numeric values fall back to the built-in default silently.
 - Query state sidecar (ADR 0031): `wd query` now persists the inverted index and BM25 corpus to `.weld/query_state.bin` after `wd discover`, so cold-path query startup drops from ~1.28 s to ~0.54 s on a representative 100k-node graph (about 58% faster). The sidecar is content-addressed via blake2b digest + node count + weld schema version + format-version envelope; on freshness mismatch or corruption the sidecar is silently rebuilt.
-- `wd init` and `wd workspace bootstrap` seed a managed `.weld/.gitignore` on init and bootstrap. The default policy is **config-only**: it tracks source-of-truth config (`discover.yaml`, `workspaces.yaml`, `agents.yaml`, `strategies/`, `adapters/`) and ignores everything weld can rebuild, including generated graphs (`graph.json`, `agent-graph.json`) and per-machine state (`discovery-state.json`, `graph-previous.json`, `workspace-state.json`, `workspace.lock`, `query_state.bin`). Pass `--track-graphs` to also commit the canonical graphs (warm-CI / warm-MCP workflow), or `--ignore-all` to ignore every weld file. The two opt-in flags are mutually exclusive. Pre-existing `.weld/.gitignore` files are not rewritten; manual migration is `rm .weld/.gitignore && wd init`.
 - `wd demo polyrepo --init` auto-bootstraps the workspace before discovery so the first run produces a populated graph instead of an empty one.
 - Bootstrap traceback surfaced under `WELD_DEBUG=1` in `wd demo polyrepo` so the demo's bootstrap exception handler shows the underlying cause when set.
 
@@ -227,13 +107,6 @@ in [`docs/launch.md`](docs/launch.md) links here.
 - Go gin framework detection now matches the canonical `github.com/gin-gonic/gin` import path; the quoted-path matcher pre-filters block comments and raw-string literals so commented-out imports and string-fixture content no longer trigger false positives.
 - `unused_skill` audit suppression tightened to a word-boundary regex match and respects skill name mentions in agent body / instruction text, eliminating substring false positives.
 - Bench `test_discover_stability` no longer flakes against tiny-time clocks (sub-millisecond mtime resolution).
-- Internal references sanitized in the gitignore writer so the seeded `.weld/.gitignore` does not leak internal-repo conventions.
-
-### Refactor (internal)
-
-- `agent_graph_assets` extracted to break a circular import in the agent-graph rendering path.
-- `_CLEAR_DESCRIPTION_TYPES` and `_VAGUE_DESCRIPTIONS` shared via `_agent_graph_constants` to remove duplicate audit constants.
-- `atomic_write_bytes` promoted to a shared workspace-state helper alongside `atomic_write_text` for binary sidecar writes.
 
 ## v0.8.3 - 2026-04-25
 
@@ -244,24 +117,6 @@ in [`docs/launch.md`](docs/launch.md) links here.
   (matching `docs/mcp.md` and the in-process registry); the entry is
   corrected here so changelog readers and PyPI long-description match the
   shipped surface.
-
-### Added
-
-- Internal release gate now asserts the MCP tool count and names stay in
-  sync across the in-process registry, the expected-tools fixture,
-  `docs/mcp.md`, and `CHANGELOG.md`. CI fails on drift.
-- Internal release gate pins the `description` field in
-  `weld/pyproject.toml` against the deprecated v0.7 string, so a stale
-  description cannot ship.
-- Internal release smoke now exercises `wd security`,
-  `wd doctor --security`, `wd demo list`, `wd demo monorepo --init`,
-  `wd demo polyrepo --init`, and `wd agents render --help` against the
-  installed wheel.
-- Internal release smoke installs `configflux-weld[mcp]` and runs a
-  stdio JSON-RPC `initialize` + `tools/list` handshake against
-  `python -m weld.mcp_server`, asserting the wire response lists the
-  expected 13 tools. The public publish workflow ships an equivalent
-  wire-handshake check (see v0.9.0 release safety wiring).
 
 ## v0.8.2 - 2026-04-25
 
@@ -321,23 +176,6 @@ in [`docs/launch.md`](docs/launch.md) links here.
   the changelog no longer reference GitHub Discussions. Open-ended
   feedback is routed to GitHub Issues; Discussions is deferred until
   there is a concrete reason to enable it.
-- Public publish allowlist now includes `scripts/`, so the demo
-  bootstrap scripts ship in the public package.
-
-## v0.8.1 - 2026-04-25
-
-### Fixed
-
-- Hotfix: include the `weld.cross_repo`, `weld.bench`, and
-  `weld.bench_tasks` subpackages in the published wheel. v0.8.0
-  shipped without `weld.cross_repo`, so any fresh install crashed
-  on `wd discover --help` with
-  `ModuleNotFoundError: No module named 'weld.cross_repo'`. Users
-  on 0.8.0 should upgrade to 0.8.1 immediately.
-- Public CI: the agent-graph maintainer asset discovery test no
-  longer asserts the presence of the internal-only
-  `.claude/skills/agent-system-maintainer/SKILL.md`, which is
-  excluded from the public overlay by `.publishignore`.
 
 ## v0.8.0 - 2026-04-25
 
@@ -385,38 +223,19 @@ in [`docs/launch.md`](docs/launch.md) links here.
   `examples/05-polyrepo` makes its `api` and `auth` services runnable
   via `uvicorn` and adds three children plus a cross-repo edge for
   federation demos.
-- Docs: new `docs/mcp.md`, `docs/launch.md`, `docs/release.md`,
-  `docs/community.md`, `docs/graph-schema.md`, and a 5-minute tutorial.
-  README adds badges (CI, PyPI, Python versions, license),
-  "Use Weld when…", "When not to use Weld", a comparison table, a
-  trust-model section, sample output, an MCP section, and leads
-  install with `uv tool install`.
 - GitHub: issue templates and contact routing for incoming community
   reports; `docs/community.md` documents how feedback is organized.
 
 ### Changed
 
-- The publish flow now ships a curated release-notes gate plus an
-  install-test job that runs `wd doctor` (including against the public
-  overlay) so packaging regressions surface before publish. ADR 0015
-  formalizes a read-only `release-manager` agent that runs the
-  pre-tag audit.
 - `wd-retry-hint` formatting is centralized so retry guidance is
   consistent across CLI commands.
-- `CHANGELOG.md` documents Keep-a-Changelog conventions and links to
-  `docs/release.md`.
 
 ### Fixed
 
 - `wd discover` honors brace globs (e.g. `**/*.{ts,tsx}`) in the
   `typescript_exports` strategy.
 - `wd doctor` no longer fails when run inside an empty directory.
-
-### Release Safety
-
-- ADR 0015 release-manager agent + structured GO/NO-GO audit.
-- Install-test job mirrored into the public overlay to catch
-  packaging regressions in both surfaces.
 
 ## v0.7.0 - 2026-04-23
 
@@ -426,15 +245,6 @@ in [`docs/launch.md`](docs/launch.md) links here.
   parsing the current graph. A corrupt `graph.json` now leaves the last
   good recovery snapshot intact so `wd diff` and manual recovery keep
   working.
-- Repo boundary checks evaluate excludes against the logical
-  (non-resolved) path first, so Bazel runfiles under `.cache/bazel/...`
-  that symlink back into the repo no longer leak into `discovered_from`
-  or graph nodes. `.cache` is now part of the always-excluded directory
-  set.
-- Recursive `glob:` patterns in `.weld/discover.yaml` no longer traverse
-  excluded subtrees. Discovery uses an `os.walk`-based iterator that
-  prunes `EXCLUDED_DIR_NAMES`, nested repo copies, and user `exclude`
-  directories before descent; symlinks are not followed.
 
 ### Changed
 
@@ -457,7 +267,6 @@ in [`docs/launch.md`](docs/launch.md) links here.
   bootstrap files can be compared with, or upgraded to, the bundled templates.
 - Added `wd prime --agent {auto,claude,codex,copilot,all}` to surface missing
   bootstrap files for the active agent framework.
-- Added a curated release-notes gate to the publish flow.
 
 ### Changed
 
@@ -473,11 +282,6 @@ in [`docs/launch.md`](docs/launch.md) links here.
   quietly instead of printing a `BrokenPipeError` traceback.
 - Graph-only commits after `wd touch` no longer cause repeated stale-graph
   prompts when source files are unchanged.
-
-### Release Safety
-
-- Public release commits and public annotated tags now force the configured
-  release author/committer identity instead of inheriting local git config.
 
 ## v0.5.1 - 2026-04-21
 
@@ -514,16 +318,3 @@ in [`docs/launch.md`](docs/launch.md) links here.
 - Recursive bootstrap failures are mirrored into `BootstrapResult.errors`.
 - The bundled Weld README template no longer contains the placeholder project
   URL.
-
-### Release Safety
-
-- Public and private release tags are now validated against the expected commits
-  instead of being silently skipped when they already exist.
-- Public and private tag annotations now record both sides of the release
-  mapping: version, private source commit, public commit, paired tag name, and
-  UTC publish timestamp.
-- Public release commits now carry both `Source-SHA:` and `Source-Tag:` lines.
-- Publish version checks now require `VERSION`, `weld/pyproject.toml`, and
-  `MODULE.bazel` to agree.
-- The local release smoke now builds the staged public package from the same
-  parent directory shape used by public CI.

@@ -1,4 +1,4 @@
-"""Missing-graph guidance for read commands (bd-5038-3nr.2, bd-5038-uqo).
+"""Missing-graph guidance for read commands (tracked issue, tracked issue).
 
 When a user runs a graph-backed read command (``wd brief`` / ``wd query`` /
 ``wd context`` / ``wd path`` / ``wd callers`` / ``wd references`` /
@@ -133,7 +133,7 @@ class MissingGraphGuidanceTest(unittest.TestCase):
         self.assertNotEqual(exit_code, 0)
         self._assert_guidance(stderr, "wd references")
 
-    # ----- trace / impact / diff / enrich (bd-5038-uqo) -----------------
+    # ----- trace / impact / diff / enrich (tracked issue) -----------------
 
     def test_trace_missing_graph(self):
         exit_code, _stdout, stderr = _run_and_capture(

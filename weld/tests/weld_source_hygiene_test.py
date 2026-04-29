@@ -1,4 +1,4 @@
-"""Regression tests for weld source hygiene — worktree exclusion (project-ac5.2 / project-ac5.3).
+"""Regression tests for weld source hygiene — worktree exclusion (tracked project / tracked project).
 
 Ensures that the shared exclusion policy in ``weld.strategies._helpers`` and the
 file-index builder in ``weld/file_index.py`` correctly:

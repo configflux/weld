@@ -20,7 +20,7 @@ Design notes
   root: a gitignore entry that names a non-existent path cannot mask a
   nested ``.git`` directory.
 
-See bd-5038-rkt.
+See tracked issue
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ after `install.sh`:
 These assertions previously only ran in CI, so any regression in the
 top-level CLI flag handling was caught after publish instead of before.
 This Bazel test reproduces the same three assertions in-process so
-`./local-task-gate` catches them before a publish.
+local verification catches them before a publish.
 
 The test invokes `weld.cli.main` directly (mirroring
 ``weld_brief_cli_test.py``) so it runs reliably in the Bazel sandbox

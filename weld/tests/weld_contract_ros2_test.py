@@ -32,7 +32,7 @@ _ROS2_NODE_TYPES = [
 ]
 
 class Ros2SchemaTest(unittest.TestCase):
-    """project-f7y.3: ROS2 vocabulary and SCHEMA_VERSION bump (ADR 0016)."""
+    """tracked project: ROS2 vocabulary and SCHEMA_VERSION bump (ADR 0016)."""
 
     def test_schema_version_at_least_three(self) -> None:
         # ROS2 vocabulary landed in v3; later bumps (e.g. v4 for the

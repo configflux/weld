@@ -1,4 +1,4 @@
-"""Acceptance tests for HTTP interaction graph extraction (project-xoq.7.2).
+"""Acceptance tests for HTTP interaction graph extraction (tracked project).
 
 Exercises the FastAPI (server) and http_client (outbound) strategies
 against the ``http_accept`` fixture and verifies the resulting

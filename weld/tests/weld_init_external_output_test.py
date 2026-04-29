@@ -1,4 +1,4 @@
-"""Regression test for bd-2g54: ``wd init --output`` must not leak into ``<root>/.weld/``.
+"""Regression test for tracked issue: ``wd init --output`` must not leak into ``<root>/.weld/``.
 
 Before the fix, ``wd init`` always wrote ``workspaces.yaml`` to
 ``<root>/.weld/workspaces.yaml`` (where ``root`` came from ``args.root`` or
@@ -88,13 +88,13 @@ class InitExternalOutputTest(unittest.TestCase):
             self.assertFalse(
                 root_workspaces.exists(),
                 "wd init with external --output must not create "
-                "<root>/.weld/workspaces.yaml (bd-2g54)",
+                "<root>/.weld/workspaces.yaml (tracked issue)",
             )
             root_discover = tmp_root / ".weld" / "discover.yaml"
             self.assertFalse(
                 root_discover.exists(),
                 "wd init with external --output must not create "
-                "<root>/.weld/discover.yaml (bd-2g54)",
+                "<root>/.weld/discover.yaml (tracked issue)",
             )
 
     def test_default_output_still_writes_to_root_weld(self) -> None:

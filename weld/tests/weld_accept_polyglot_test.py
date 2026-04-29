@@ -1,11 +1,11 @@
-"""Polyglot acceptance test: cross-protocol interaction graph (project-xoq.7.2).
+"""Polyglot acceptance test: cross-protocol interaction graph (tracked project).
 
 Runs all four protocol families (HTTP, gRPC, events, ROS2) through
 their respective extraction strategies, merges the resulting fragments
 into a single graph, and verifies cross-boundary questions can be
 answered without dynamic traces.
 
-This is the capstone acceptance test for project-xoq.7.2.
+This is the capstone acceptance test for tracked project
 """
 
 from __future__ import annotations

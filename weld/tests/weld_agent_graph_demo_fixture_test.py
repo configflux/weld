@@ -221,7 +221,7 @@ class AgentGraphMaintainerAssetTest(unittest.TestCase):
         paths = {asset.path for asset in assets}
 
         # Paths shipped in both internal and public overlays. The
-        # internal-only `.claude/skills/agent-system-maintainer/SKILL.md`
+        # non-published `.claude/skills/agent-system-maintainer/SKILL.md`
         # is excluded by `.publishignore`, so asserting it would break
         # public CI.
         self.assertTrue({

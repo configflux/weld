@@ -1,4 +1,4 @@
-"""Bootstrap-after-reset regression tests (bd-9slg).
+"""Bootstrap-after-reset regression tests (tracked issue).
 
 External user report: after ``rm -rf .weld/`` at a polyrepo root, rerunning
 ``wd workspace bootstrap`` misroutes the root to single-service mode. Even

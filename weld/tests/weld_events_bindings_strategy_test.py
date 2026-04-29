@@ -1,8 +1,8 @@
-"""Tests for the channel producer/consumer/payload linking strategy (project-xoq.6.2).
+"""Tests for the channel producer/consumer/payload linking strategy (tracked project).
 
 The ``events_bindings`` strategy statically links Python producer and
 consumer call sites back to ``channel:<transport>:<name>`` node ids
-emitted by the ``events`` strategy (project-xoq.6.1). Detection is
+emitted by the ``events`` strategy (tracked project). Detection is
 structural only per ADR 0018's static-truth policy:
 
 - Producer binding: a call shaped ``<Root>.<verb>("literal", ...)``

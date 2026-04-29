@@ -2,7 +2,7 @@
 #
 # Both C and C++ are folded into this single grammar because the
 # tree-sitter-cpp grammar parses both. (layer 1
-# of the cpp-ros2 epic) and ADR 0005 (deferred to project-f7y.10).
+# of the cpp-ros2 epic) and ADR 0005 (deferred to tracked project).
 #
 # Deliberate limitations (do NOT file as bugs
 # only if a real downstream user reports the missing data):
@@ -13,7 +13,7 @@
 #   - Argument-dependent lookup (ADL) is out of scope.
 #   - Templates are extracted at the definition site, not per
 #     instantiation. Template parameters are stripped from names.
-#   - Cross-file include resolution is layer 2 (project-f7y.2). Layer 1
+#   - Cross-file include resolution is layer 2 (tracked project). Layer 1
 #     emits ``symbol:unresolved:<name>`` sentinels for every call.
 #
 # Capture conventions:

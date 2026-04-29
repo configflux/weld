@@ -1,4 +1,4 @@
-"""Tests for the static gRPC bindings strategy (project-xoq.5.2).
+"""Tests for the static gRPC bindings strategy (tracked project).
 
 The ``grpc_bindings`` strategy statically links Python server
 implementations and client stub call sites back to rpc node ids

@@ -1,10 +1,10 @@
-"""Shared channel-node helpers for the events strategy (project-xoq.6.1).
+"""Shared channel-node helpers for the events strategy (tracked project).
 
 Both :mod:`weld.strategies.events_config` and
 :mod:`weld.strategies.events_callsite` produce ``channel`` nodes with
 the same shape. Centralizing the constructor keeps protocol metadata
 in one place and guarantees the two halves of the strategy can never
-drift out of sync on ADR 0018 / project-xoq.1.2 vocabulary.
+drift out of sync on ADR 0018 / tracked project vocabulary.
 
 The module intentionally has no knowledge of which half called it --
 the rel_path and transport come in from the caller.
@@ -39,7 +39,7 @@ def channel_node(*, transport: str, name: str, rel_path: str) -> dict:
             "authority": "canonical",
             "confidence": "definite",
             "roles": ["implementation"],
-            # Interaction-surface metadata (ADR 0018, project-xoq.1.2).
+            # Interaction-surface metadata (ADR 0018, tracked project).
             "protocol": "event",
             "surface_kind": "pub_sub",
             "transport": transport,

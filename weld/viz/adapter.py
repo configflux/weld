@@ -16,19 +16,13 @@ HARD_MAX_NODES = 2000
 HARD_MAX_EDGES = 6000
 
 _NODE_TYPE_PRIORITY = {
-    "repo": 0,
-    "service": 1,
-    "package": 2,
-    "ros_package": 2,
-    "boundary": 3,
-    "entrypoint": 3,
-    "route": 4,
-    "rpc": 4,
-    "channel": 4,
-    "entity": 5,
-    "contract": 5,
-    "enum": 5,
-    "file": 8,
+    "repo": 0, "platform": 0,
+    "service": 1, "agent": 1, "subagent": 1, "workflow": 1,
+    "package": 2, "ros_package": 2, "skill": 2, "mcp-server": 2,
+    "boundary": 3, "entrypoint": 3, "instruction": 3, "prompt": 3,
+    "route": 4, "rpc": 4, "channel": 4, "command": 4, "hook": 4,
+    "entity": 5, "contract": 5, "enum": 5, "permission": 5, "scope": 5,
+    "file": 8, "config": 8, "tool": 8,
     "symbol": 12,
 }
 

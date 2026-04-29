@@ -429,7 +429,7 @@ def _normalised_exclude_paths(
     """Split user-provided exclude_paths into directory names vs absolute paths.
 
     A bare name applies to any directory of that name; a path with separators
-    is resolved against ``root``. Root ``.gitignore`` is NOT consulted (bd-gpt4):
+    is resolved against ``root``. Root ``.gitignore`` is NOT consulted (tracked issue):
     a nested ``.git`` is a workspace child by definition. Pass project-specific
     exclusions via ``exclude_paths``.
     """

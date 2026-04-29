@@ -15,11 +15,11 @@ packaging and that are load-bearing for connected-work consumers:
 - ``rosidl_generate_interfaces(<target> <files...>)``
   → ``builds`` edge from the package to an interface-generation hint node
     ``ros_interface:<pkg>:<target>``. A later layer
-    (``ros2_interfaces``, project-f7y.5) fills in the per-message detail.
+    (``ros2_interfaces``, tracked project) fills in the per-message detail.
 - ``rclcpp_components_register_nodes(<target> "ns::Class" ...)``
   → ``ros_node:<ns::Class>`` hint node + an ``implements`` edge from the
     build target to the component node. A later layer
-    (``ros2_topology``, project-f7y.6/7) fills in topic wiring.
+    (``ros2_topology``, tracked project/7) fills in topic wiring.
 
 Owning package resolution: the strategy walks upward from the
 ``CMakeLists.txt`` file until it finds a sibling ``package.xml`` and reads

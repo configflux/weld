@@ -1,4 +1,4 @@
-"""Strategy: declared async channels (project-xoq.6.1).
+"""Strategy: declared async channels (tracked project).
 
 Thin facade that dispatches to one of two conservative extractors:
 
@@ -15,14 +15,14 @@ Thin facade that dispatches to one of two conservative extractors:
   dropped per ADR 0018's static-truth policy.
 
 Both halves emit ``channel`` nodes stamped with ADR 0018 /
-project-xoq.1.2 metadata::
+tracked project metadata::
 
     protocol="event", surface_kind="pub_sub",
     transport=<kafka|tcp|amqp>, boundary_kind="internal",
     declared_in="<rel-path>"
 
 plus a ``contains`` edge from the declaring ``file:<rel-path>`` node
-to the channel. Producer/consumer linking lives in project-xoq.6.2
+to the channel. Producer/consumer linking lives in tracked project
 and is explicitly out of scope here.
 """
 

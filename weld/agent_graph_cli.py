@@ -30,6 +30,12 @@ from weld.serializer import dumps_graph
 
 def main(argv: list[str] | None = None) -> int:
     """Run ``wd agents`` subcommands."""
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] == "viz":
+        from weld.viz.server import main as viz_main
+
+        return viz_main(raw[1:], graph_kind="agent")
+
     parser = argparse.ArgumentParser(
         prog="wd agents",
         description=(
@@ -53,8 +59,12 @@ def main(argv: list[str] | None = None) -> int:
     _add_impact_parser(subparsers)
     _add_audit_parser(subparsers)
     _add_plan_change_parser(subparsers)
+    subparsers.add_parser(
+        "viz",
+        help="Serve a local read-only browser explorer for .weld/agent-graph.json.",
+    )
     add_render_parser(subparsers)
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
     if args.command in {"discover", "rediscover"}:
         return _run_discover(args)
     if args.command == "list":
@@ -69,6 +79,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_plan_change(args)
     if args.command == "render":
         return run_render(args)
+    if args.command == "viz":
+        from weld.viz.server import main as viz_main
+
+        return viz_main([], graph_kind="agent")
     parser.error(f"unknown agents command: {args.command}")
     return 2
 

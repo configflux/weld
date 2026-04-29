@@ -118,7 +118,7 @@ class TestRuntimeContractExtract:
                 if e["type"] == "verifies" and e["to"] == doc_id
             ]
             froms = {e["from"] for e in gate_edges}
-            assert "gate:local-task-gate" in froms
+            assert "gate:local-verification" in froms
             assert "gate:run-e2e" in froms
 
     def test_deploy_context_hook_emits_relates_to_edges(self) -> None:

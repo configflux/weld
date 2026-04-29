@@ -33,7 +33,7 @@ _MAX_FILES_PER_LANG: int = 1000
 
 # Env var that allows operators to override the per-language sampling cap
 # for forensic re-runs (e.g. adversarial repo layouts where the real entry
-# module sits past the first 1000 no-import files). See bd-mil4 follow-up.
+# module sits past the first 1000 no-import files). See tracked issue follow-up.
 _CAP_ENV_VAR: str = "WELD_INIT_FRAMEWORK_CAP"
 
 

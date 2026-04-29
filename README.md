@@ -13,20 +13,13 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.12.1 -->
-> **Evaluators — start with v0.12.1.** v0.12.1 is a docs hotfix that
-> repairs dead internal-ADR links in v0.12.0's README and PyPI long
-> description (the linked ADR is internal-only and 404'd on the public
-> mirror) and ships [`docs/telemetry.md`](docs/telemetry.md) as the
-> public reference for telemetry. Otherwise identical to v0.12.0:
-> local-only telemetry (default-on, opt out with `WELD_TELEMETRY=off`,
-> `--no-telemetry`, or `wd telemetry disable`) and the new `copilot-cli`
-> enrichment provider. The 0.11.x line shipped five patch releases on
-> 2026-04-27 to chase release-pipeline drift; v0.11.6 obsoleted
-> v0.11.0..v0.11.5. There is no need to read every patch's notes unless
-> you are debugging the publish-overlay, polyrepo-bootstrap, or
-> release-doc drift history. See the [`CHANGELOG.md`](CHANGELOG.md)
-> entry for v0.12.1 for the user-visible behaviour.
+<!-- evaluator-note: latest=v0.13.0 -->
+> **Evaluators: start with v0.13.0.** v0.13.0 adds `wd agents viz`, a
+> local read-only browser explorer for `.weld/agent-graph.json`, and
+> includes the v0.12.1 documentation fixes. It is the recommended
+> starting point for agent graph visualization, local-only telemetry,
+> and the `copilot-cli` enrichment provider. See the
+> [`CHANGELOG.md`](CHANGELOG.md) entry for v0.13.0 for details.
 
 **Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
 walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
@@ -176,11 +169,14 @@ wd agents audit
 wd agents explain planner
 wd agents impact .github/agents/planner.agent.md
 wd agents plan-change "planner should always include test strategy"
+wd agents viz --no-open
 ```
 
 Use `--json` on `list`, `explain`, `impact`, `audit`, and `plan-change` for
 agent-friendly output. Use `wd agents rediscover` when you want an explicit
 refresh of `.weld/agent-graph.json` before inspecting the persisted graph.
+Use `wd agents viz` after discovery to open a local read-only browser explorer
+for the persisted Agent Graph.
 Static discovery and configuration generation are available for several
 agent platforms; runtime validation is tracked per client in the
 [platform support matrix](docs/platform-support.md). The
@@ -620,6 +616,7 @@ rm .weld/workspace-state.json
 | `wd agents impact <asset>` | Show affected Agent Graph assets for a proposed customization change |
 | `wd agents audit` | Audit AI customization assets for static consistency issues |
 | `wd agents plan-change "<request>"` | Plan a static AI customization behavior change |
+| `wd agents viz` | Local read-only browser explorer for `.weld/agent-graph.json` |
 | `wd workspace status` | Show workspace child ledger: lifecycle status, git ref, dirty state |
 | `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
 | `wd workspace bootstrap` | One-shot polyrepo bootstrap: init root + every nested child, recurse-discover, rebuild root meta-graph (config-only `.weld/.gitignore` default) |
@@ -696,7 +693,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.12.1`.
+terminal snippets captured against `wd 0.13.0`.
 
 ## Install
 

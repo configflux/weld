@@ -1,6 +1,6 @@
 """Tests for diff-aware wd bootstrap upgrades.
 
-Covers the `--diff` / `--force` UX added by bd-5038-p1a.1. The
+Covers the `--diff` / `--force` UX added by tracked issue The
 pre-existing silent-skip behaviour for identical files is preserved
 with richer wording; for differing files, the default bootstrap now
 tells the user the file differs and points them at `--diff` / `--force`.

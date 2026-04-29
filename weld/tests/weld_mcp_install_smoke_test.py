@@ -263,8 +263,8 @@ class WheelInstallSmokeTest(unittest.TestCase):
       wheel does not match what users actually install.
 
     Skipped when ``ensurepip`` is missing (devcontainer / sandboxed Bazel
-    on machines without pip), so ``./local-task-gate`` stays green while
-    CI exercises the full path.
+    on machines without pip), so local verification stays green while CI
+    exercises the full path.
     """
 
     def setUp(self) -> None:

@@ -1,4 +1,4 @@
-"""Diagnostic-message helpers for the graph validator (bd-5038-eds.3).
+"""Diagnostic-message helpers for the graph validator (tracked issue).
 
 Split out of :mod:`weld._contract_validators` to keep the validator module
 under the 400-line cap. The helpers here compute *actionable fix hints* --
@@ -25,7 +25,7 @@ from typing import Iterable, Sequence
 from weld.contract import ValidationError
 
 # Canonical fix hint shared by any diagnostic whose remedy is to rebuild the
-# graph file from source-of-truth discovery (bd-5038-eds.3). Kept as a module
+# graph file from source-of-truth discovery (tracked issue). Kept as a module
 # constant so wording stays stable for docs and test assertions.
 REGEN_HINT = (
     "run `wd discover --output .weld/graph.json` to regenerate the graph "

@@ -1,4 +1,4 @@
-"""Tests for the grpc_proto strategy (project-xoq.5.1).
+"""Tests for the grpc_proto strategy (tracked project).
 
 Extracts services, rpc methods, message contracts, and enums from
 declared ``.proto`` files. Per ADR 0018's static-truth policy,

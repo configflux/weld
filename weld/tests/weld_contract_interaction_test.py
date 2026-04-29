@@ -1,7 +1,7 @@
 """Contract tests for the generalized interaction-surface vocabulary.
 
-- project-xoq.1.2: ``rpc``/``channel`` nodes and protocol metadata.
-- project-xoq.1.3: explicit validation of interaction metadata and
+- tracked project: ``rpc``/``channel`` nodes and protocol metadata.
+- tracked project: explicit validation of interaction metadata and
   boundary semantics, with actionable diagnostics for bundled strategies
   and external adapters.
 
@@ -56,7 +56,7 @@ _INTERACTION_OPTIONAL_PROPS = [
 
 
 class InteractionSchemaTest(unittest.TestCase):
-    """project-xoq.1.2: rpc/channel vocabulary and protocol metadata."""
+    """tracked project: rpc/channel vocabulary and protocol metadata."""
 
     def test_schema_version_at_least_four(self) -> None:
         self.assertGreaterEqual(SCHEMA_VERSION, 4)

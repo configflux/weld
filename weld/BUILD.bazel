@@ -168,6 +168,7 @@ py_library(
         "telemetry_cli.py",
         "trace.py",
         "viz/__init__.py",
+        "viz/agent_api.py",
         "viz/adapter.py",
         "viz/api.py",
         "viz/server.py",

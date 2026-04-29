@@ -11,7 +11,7 @@ from weld.strategies.runbook import extract
 _ACQUISITION_RUNBOOK = """\
 # Acquisition Worker Runbook
 
-This runbook covers the bounded acquisition worker added in `project-67v.9`.
+This runbook covers the bounded acquisition worker added in `tracked project`.
 
 ## Runtime Contract
 

@@ -48,7 +48,7 @@ _BOUNDARY_TO_SERVICE: dict[str, str] = {
 #: Gate nodes declared in the static topology that verify the runtime
 #: contract when the contract doc is present.
 _RUNTIME_VERIFICATION_GATES: tuple[str, ...] = (
-    "gate:local-task-gate",
+    "gate:local-verification",
     "gate:run-e2e",
 )
 

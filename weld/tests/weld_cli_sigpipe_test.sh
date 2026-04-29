@@ -4,7 +4,7 @@
 # When downstream consumers (like `head`) close their stdin early, Python
 # emits a BrokenPipeError traceback unless the CLI handles SIGPIPE
 # explicitly. Covers one graph command (`list`) and one non-graph command
-# (`--help`) per acceptance criteria on bd issue p1a.5.
+# (`--help`) per acceptance criteria on tracked issue p1a.5.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=weld/tests/weld_test_lib.sh
