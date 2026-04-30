@@ -3,6 +3,21 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.13.2 - 2026-04-30
+
+### Added
+
+- Workspace child scans can now opt into Git ignore rules with
+  `scan.respect_gitignore: true`, `wd init --respect-gitignore`, or
+  `wd workspace bootstrap --respect-gitignore`. The default remains
+  compatibility-safe: gitignored child repos are still discovered unless the
+  workspace opts in.
+  <!-- verify: file=weld/_workspace_bootstrap_cli.py grep=--respect-gitignore -->
+- `scan.exclude_paths` now accepts workspace-relative glob patterns with `*`
+  and `**` in addition to bare directory names and exact paths, so workspace
+  bootstraps can skip folders or extension-shaped generated directories.
+  <!-- verify: file=weld/workspace_scan_filter.py grep=matches_exclude -->
+
 ## v0.13.1 - 2026-04-29
 
 ### Added

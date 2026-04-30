@@ -372,20 +372,17 @@ def main(argv: list[str] | None = None) -> None:
         prog="wd init",
         description="Bootstrap a .weld/discover.yaml by scanning the project",
     )
-    parser.add_argument(
-        "root", nargs="?", default=".",
-        help="Project root directory (default: current directory)",
-    )
-    parser.add_argument(
-        "--output", "-o", default=None,
-        help="Output path (default: <root>/.weld/discover.yaml)",
-    )
-    parser.add_argument(
-        "--force", "-f", action="store_true",
-        help="Overwrite existing discover.yaml / workspaces.yaml",
-    )
+    parser.add_argument("root", nargs="?", default=".",
+        help="Project root directory (default: current directory)")
+    parser.add_argument("--output", "-o", default=None,
+        help="Output path (default: <root>/.weld/discover.yaml)")
+    parser.add_argument("--force", "-f", action="store_true",
+        help="Overwrite existing discover.yaml / workspaces.yaml")
     parser.add_argument("--max-depth", type=int, default=4,
         help="Max depth when scanning for nested git repos (default: 4)")
+    parser.add_argument("--respect-gitignore", action="store_true",
+        help="Skip gitignored scan-only child repos when writing workspaces.yaml",
+    )
     gi = parser.add_mutually_exclusive_group()
     gi.add_argument("--ignore-all", action="store_true",
         help="Write a fully-ignoring .weld/.gitignore (every weld file ignored)")
@@ -396,11 +393,13 @@ def main(argv: list[str] | None = None) -> None:
     output = Path(args.output) if args.output else root / ".weld" / "discover.yaml"
     success = init(root, output, force=args.force)
     workspaces_out = output.parent / "workspaces.yaml"
-    if _init_workspace(root, workspaces_out, force=args.force, max_depth=args.max_depth):
+    if _init_workspace(root, workspaces_out, force=args.force,
+                       max_depth=args.max_depth,
+                       respect_gitignore=args.respect_gitignore):
         print(f"Wrote {workspaces_out}", file=sys.stderr)
     _maybe_bootstrap_polyrepo(root, max_depth=args.max_depth)
-    write_weld_gitignore(output.parent,
-        ignore_all=args.ignore_all, track_graphs=args.track_graphs)
+    write_weld_gitignore(output.parent, ignore_all=args.ignore_all,
+                         track_graphs=args.track_graphs)
     if not success:
         sys.exit(1)
 

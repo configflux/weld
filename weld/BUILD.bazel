@@ -57,8 +57,12 @@ py_library(
     srcs = [
         "_gitignore_scan.py",
         "workspace.py",
+        "workspace_scan_filter.py",
     ],
-    deps = [":yaml"],
+    deps = [
+        ":glob_match",
+        ":yaml",
+    ],
 )
 
 py_library(
@@ -177,6 +181,7 @@ py_library(
         "warnings.py",
         "watch.py",
         "workspace.py",
+        "workspace_scan_filter.py",
         "workspace_state.py",
     ],
     data = [

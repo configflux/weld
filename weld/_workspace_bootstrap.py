@@ -103,6 +103,7 @@ def _write_workspaces_yaml(
     max_depth: int,
     *,
     exclude_paths: list[str] | None = None,
+    respect_gitignore: bool = False,
     cross_repo_strategies: list[str] | None = None,
 ) -> None:
     """Write a deterministic ``workspaces.yaml`` from the merged child set.
@@ -121,6 +122,7 @@ def _write_workspaces_yaml(
     scan = ScanConfig(max_depth=max_depth)
     if exclude_paths is not None:
         scan.exclude_paths = list(exclude_paths)
+    scan.respect_gitignore = respect_gitignore
     cfg = WorkspaceConfig(
         scan=scan,
         children=list(children),
@@ -130,27 +132,30 @@ def _write_workspaces_yaml(
 
 
 def _persisted_scan_fields(
-    root: Path, cli_excludes: list[str] | None,
-) -> tuple[list[str], list[str]]:
-    """Return ``(merged_exclude_paths, cross_repo_strategies)`` to persist.
+    root: Path,
+    cli_excludes: list[str] | None,
+    cli_respect_gitignore: bool | None,
+) -> tuple[list[str], bool, list[str]]:
+    """Return ``(exclude_paths, respect_gitignore, strategies)`` to persist.
 
     Reads the current ``workspaces.yaml`` (when valid) and unions its
     ``scan.exclude_paths`` with the caller-supplied ``cli_excludes`` so a
-    rewrite never silently drops user configuration. ``cross_repo_strategies``
-    is preserved verbatim from the existing config; an absent or invalid
-    yaml yields an empty list.
+    rewrite never silently drops user configuration. The opt-in gitignore
+    flag and ``cross_repo_strategies`` are preserved from existing config.
     """
     from weld.init_workspace import safe_load_workspace_config
 
     cfg, _err = safe_load_workspace_config(root)
     merged: list[str] = list(cli_excludes or [])
+    respect_gitignore = bool(cli_respect_gitignore)
     strategies: list[str] = []
     if cfg is not None:
         for item in cfg.scan.exclude_paths:
             if item not in merged:
                 merged.append(item)
+        respect_gitignore = respect_gitignore or cfg.scan.respect_gitignore
         strategies = list(cfg.cross_repo_strategies)
-    return merged, strategies
+    return merged, respect_gitignore, strategies
 
 
 def bootstrap_workspace(
@@ -158,6 +163,7 @@ def bootstrap_workspace(
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
     exclude_paths: list[str] | None = None,
+    respect_gitignore: bool | None = None,
     ignore_all: bool = False,
     track_graphs: bool = False,
 ) -> BootstrapResult:
@@ -175,6 +181,10 @@ def bootstrap_workspace(
         the CLI). Combined with any ``scan.exclude_paths`` already in the
         existing ``workspaces.yaml`` and persisted into the rewritten yaml
         so subsequent runs stay excluded without re-passing the flag.
+    respect_gitignore:
+        When ``True``, skip scan-only child repos masked by Git standard
+        ignore rules and persist ``scan.respect_gitignore: true``. ``None``
+        preserves any setting already present in ``workspaces.yaml``.
     ignore_all:
         When ``True``, the per-child and root ``.weld/.gitignore`` files
         ignore every weld file (``*`` / ``!.gitignore``). Mutually
@@ -215,7 +225,7 @@ def bootstrap_workspace(
         track_graphs=track_graphs,
     )
 
-    # Step 2 (bd-...-9slg): unified federation predicate.
+    # Step 2: unified federation predicate.
     # ``merge_yaml_and_scan_children`` is the single source of truth: yaml
     # is authoritative when present, FS scan augments. This matches
     # ``wd discover``'s config-based federation predicate
@@ -227,12 +237,14 @@ def bootstrap_workspace(
         root_path,
         max_depth=max_depth,
         exclude_paths=exclude_paths,
+        respect_gitignore=respect_gitignore,
     )
     if merged.yaml_error is not None:
         result.errors.append(merged.yaml_error)
     result.yaml_listed_but_missing = list(merged.yaml_listed_but_missing)
     result.excluded_by_gitignore = list(merged.excluded_by_gitignore)
     result.excluded_by_invalid_name = list(merged.excluded_by_invalid_name)
+    result.skipped_by_gitignore = list(merged.skipped_by_gitignore)
     children = merged.children
     result.children_discovered = sorted(c.name for c in children)
 
@@ -253,8 +265,12 @@ def bootstrap_workspace(
     # Compute the persisted scan/strategy fields once: union of CLI-supplied
     # exclusions and the existing yaml's exclusions, plus any pre-existing
     # cross_repo_strategies. Both are preserved verbatim across rewrites.
-    persisted_exclude_paths, persisted_strategies = _persisted_scan_fields(
-        root_path, exclude_paths,
+    (
+        persisted_exclude_paths,
+        persisted_respect_gitignore,
+        persisted_strategies,
+    ) = _persisted_scan_fields(
+        root_path, exclude_paths, respect_gitignore,
     )
 
     # Persist the effective set to workspaces.yaml so step 4's loader sees
@@ -267,12 +283,14 @@ def bootstrap_workspace(
         _write_workspaces_yaml(
             workspaces_yaml, children, max_depth,
             exclude_paths=persisted_exclude_paths,
+            respect_gitignore=persisted_respect_gitignore,
             cross_repo_strategies=persisted_strategies,
         )
         result.workspace_yaml_written = True
     else:
         persisted_names: set[str] = set()
         persisted_excludes_existing: list[str] | None = None
+        persisted: WorkspaceConfig | None = None
         if merged.yaml_error is None:
             persisted = load_workspace_config(root_path)
             if persisted is not None:
@@ -283,14 +301,20 @@ def bootstrap_workspace(
             persisted_excludes_existing is not None
             and persisted_excludes_existing != persisted_exclude_paths
         )
+        respect_changed = (
+            persisted is not None
+            and persisted.scan.respect_gitignore != persisted_respect_gitignore
+        )
         if (
             merged.yaml_error is not None
             or merged_names != persisted_names
             or excludes_changed
+            or respect_changed
         ):
             _write_workspaces_yaml(
                 workspaces_yaml, children, max_depth,
                 exclude_paths=persisted_exclude_paths,
+                respect_gitignore=persisted_respect_gitignore,
                 cross_repo_strategies=persisted_strategies,
             )
             result.workspace_yaml_written = True

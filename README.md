@@ -13,17 +13,15 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.13.1 -->
-> **Evaluators: start with v0.13.1.** v0.13.1 extends `wd discover` with
-> C# and C++ startup entrypoint modeling and a trace import contract,
-> on top of the v0.13.0 `wd agents viz` browser explorer for
-> `.weld/agent-graph.json`. It also fixes a `wd workspace bootstrap`
-> rescan bug that aborted on excluded nested repositories. Together
-> with v0.13.0 it is the recommended starting point for cross-language
-> startup modeling, agent graph visualization, local-only telemetry,
-> and the `copilot-cli` enrichment provider. See the
-> [`CHANGELOG.md`](CHANGELOG.md) entries for v0.13.1 and v0.13.0 for
-> details.
+<!-- evaluator-note: latest=v0.13.2 -->
+> **Evaluators: start with v0.13.2.** v0.13.2 adds opt-in
+> gitignore-aware workspace scans and glob-capable workspace scan
+> exclusions on top of the v0.13.1 C# / C++ startup entrypoint modeling
+> and trace import contract. It is the recommended starting point for
+> cross-language startup modeling, polyrepo workspace bootstrapping,
+> agent graph visualization, local-only telemetry, and the `copilot-cli`
+> enrichment provider. See the [`CHANGELOG.md`](CHANGELOG.md) entries
+> for v0.13.2 and v0.13.1 for details.
 
 **Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
 walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
@@ -489,7 +487,8 @@ resolvers are active:
 version: 1
 scan:
   max_depth: 4
-  exclude_paths: [.worktrees, vendor]
+  respect_gitignore: false
+  exclude_paths: [.worktrees, vendor, "scratch/**", "generated/**/*.tmp"]
 children:
   - name: services-api
     path: services/api
@@ -504,7 +503,10 @@ cross_repo_strategies: [service_graph]
 
 - **version**: Schema version (currently `1`).
 - **scan**: Controls automatic child detection. `max_depth` sets how deep
-  the scanner walks; `exclude_paths` lists directories to skip.
+  the scanner walks; `respect_gitignore` opts scan-only children into Git
+  ignore rules; `exclude_paths` lists directory names, relative paths, or
+  glob patterns to skip. Explicit `children` entries remain authoritative
+  even when gitignored.
 - **children**: Each entry has a `path` (relative to the workspace root)
   and an optional `name` (auto-derived from the path if omitted, e.g.
   `services/api` becomes `services-api`). Optional `tags` provide
@@ -613,6 +615,7 @@ rm .weld/workspace-state.json
 |---|---|
 | `wd init` | Bootstrap `.weld/discover.yaml` (and `workspaces.yaml` when nested repos are detected); seed managed `.weld/.gitignore` (config-only default ignores generated graphs) |
 | `wd init --max-depth N` | Limit nested repo scan depth during init (default: 4) |
+| `wd init --respect-gitignore` | Skip scan-only nested repos ignored by Git when writing `workspaces.yaml`; explicit children can still be added later |
 | `wd init --track-graphs` | Seed `.weld/.gitignore` so canonical graphs (`graph.json` + `agent-graph.json`) stay tracked alongside config (warm-CI / warm-MCP workflow) |
 | `wd init --ignore-all` | Write a fully-ignoring `.weld/.gitignore` instead of the config-only default; mutually exclusive with `--track-graphs` |
 | `wd discover` | Run discovery, emit graph JSON (federation mode when `workspaces.yaml` is present) |
@@ -627,6 +630,7 @@ rm .weld/workspace-state.json
 | `wd workspace status` | Show workspace child ledger: lifecycle status, git ref, dirty state |
 | `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
 | `wd workspace bootstrap` | One-shot polyrepo bootstrap: init root + every nested child, recurse-discover, rebuild root meta-graph (config-only `.weld/.gitignore` default) |
+| `wd workspace bootstrap --respect-gitignore` | Skip scan-only child repos ignored by Git and persist `scan.respect_gitignore: true` into `workspaces.yaml` |
 | `wd workspace bootstrap --track-graphs` | Bootstrap and seed `.weld/.gitignore` in root and every child to track canonical graphs alongside config |
 | `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child; mutually exclusive with `--track-graphs` |
 | `wd build-index` | Regenerate file index |
@@ -702,7 +706,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.13.1`.
+terminal snippets captured against `wd 0.13.2`.
 
 ## Install
 

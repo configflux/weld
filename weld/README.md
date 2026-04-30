@@ -161,6 +161,12 @@ wd workspace status
 wd discover --safe --output .weld/graph.json
 ```
 
+Workspace child scans discover gitignored child repos by default for
+compatibility. To opt into Git ignore rules for scan-only children, set
+`scan.respect_gitignore: true` in `.weld/workspaces.yaml` or run
+`wd workspace bootstrap --respect-gitignore`. `scan.exclude_paths` also
+accepts bare directory names, relative paths, and `*` / `**` glob patterns.
+
 Example:
 
 https://github.com/configflux/weld/tree/main/examples/05-polyrepo

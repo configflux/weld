@@ -1,31 +1,8 @@
-"""Polyrepo workspace registry: ``workspaces.yaml`` schema, loader, validator, scanner.
+"""Polyrepo workspace registry schema, validator, dumper, and scanner.
 
-ADR 0011 describes the federation model: a workspace root may contain several
-child git repositories, each owning its own ``.weld/`` directory. The root
-registry enumerates those children and declares which cross-repo resolvers are
-active.
-
-This module is intentionally self-contained -- it depends only on the standard
-library and the minimal YAML parser in ``weld._yaml``. It is safe to import
-from ``weld.init`` without triggering any heavyweight dependency.
-
-Public surface
---------------
-
-* :class:`WorkspaceConfig`, :class:`ScanConfig`, :class:`ChildEntry` -- schema
-  dataclasses.
-* :class:`WorkspaceConfigError` -- validation and load errors.
-* :func:`load_workspaces_yaml` -- parse a YAML file and return a validated
-  :class:`WorkspaceConfig` (auto-derives missing names and tags).
-* :func:`dump_workspaces_yaml` -- write a canonical, deterministic YAML file.
-* :func:`validate_config` -- raise :class:`WorkspaceConfigError` if the config
-  violates the schema rules (version, child name charset, uniqueness,
-  relative-path constraint, known cross-repo strategies).
-* :func:`scan_nested_repos` -- walk a directory tree looking for nested
-  ``.git`` repositories, honouring ``max_depth`` and ``exclude_paths``;
-  returns :class:`ChildEntry` objects with auto-derived names and tags.
-* :func:`auto_derive_name`, :func:`auto_derive_tags` -- pure helpers exposed
-  for tests and for callers that want to derive without a full scan.
+ADR 0011 defines the federation model: a workspace root enumerates child git
+repositories and declares cross-repo resolvers. This module owns the YAML
+contract plus auto-discovery helpers used by ``wd init`` and bootstrap.
 """
 
 from __future__ import annotations
@@ -36,9 +13,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from weld._yaml import parse_yaml
+from weld.workspace_scan_filter import (
+    gitignored_child_paths,
+    normalise_scan_exclude_patterns,
+    path_matches_scan_exclude,
+)
 
 __all__ = [
     "ChildEntry",
+    "NestedRepoScanResult",
     "ScanConfig",
     "WorkspaceConfig",
     "WorkspaceConfigError",
@@ -46,6 +29,7 @@ __all__ = [
     "auto_derive_tags",
     "dump_workspaces_yaml",
     "load_workspaces_yaml",
+    "scan_nested_repos_with_diagnostics",
     "scan_nested_repos",
     "validate_config",
 ]
@@ -107,6 +91,7 @@ class WorkspaceConfigError(ValueError):
 @dataclass
 class ScanConfig:
     max_depth: int = DEFAULT_MAX_DEPTH
+    respect_gitignore: bool = False
     exclude_paths: list[str] = field(
         default_factory=lambda: list(DEFAULT_EXCLUDE_PATHS),
     )
@@ -126,6 +111,12 @@ class WorkspaceConfig:
     scan: ScanConfig = field(default_factory=ScanConfig)
     children: list[ChildEntry] = field(default_factory=list)
     cross_repo_strategies: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class NestedRepoScanResult:
+    children: list[ChildEntry]
+    skipped_by_gitignore: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -197,10 +188,17 @@ def _parse_scan_block(raw: object) -> ScanConfig:
         raise WorkspaceConfigError(
             f"scan.max_depth must be >= 1, got {max_depth}",
         )
+    respect_gitignore = block.get("respect_gitignore", False)
+    if not isinstance(respect_gitignore, bool):
+        raise WorkspaceConfigError("scan.respect_gitignore must be a boolean")
     excludes_raw = block.get("exclude_paths", list(DEFAULT_EXCLUDE_PATHS))
     excludes = _as_list(excludes_raw, "scan.exclude_paths")
     exclude_paths = [str(x) for x in excludes]
-    return ScanConfig(max_depth=max_depth, exclude_paths=exclude_paths)
+    return ScanConfig(
+        max_depth=max_depth,
+        respect_gitignore=respect_gitignore,
+        exclude_paths=exclude_paths,
+    )
 
 
 def _parse_child(raw: object, index: int) -> ChildEntry:
@@ -308,6 +306,9 @@ def dump_workspaces_yaml(cfg: WorkspaceConfig, path: Path | str) -> None:
     lines.append(f"version: {cfg.version}")
     lines.append("scan:")
     lines.append(f"  max_depth: {cfg.scan.max_depth}")
+    lines.append(
+        f"  respect_gitignore: {_yaml_scalar(cfg.scan.respect_gitignore)}",
+    )
     lines.append(f"  exclude_paths: {_emit_inline_list(cfg.scan.exclude_paths)}")
     if cfg.children:
         lines.append("children:")
@@ -353,6 +354,10 @@ def validate_config(cfg: WorkspaceConfig) -> None:
     if not isinstance(cfg.scan.max_depth, int) or cfg.scan.max_depth < 1:
         raise WorkspaceConfigError(
             f"scan.max_depth must be >= 1, got {cfg.scan.max_depth!r}",
+        )
+    if not isinstance(cfg.scan.respect_gitignore, bool):
+        raise WorkspaceConfigError(
+            "scan.respect_gitignore must be a boolean",
         )
 
     seen: dict[str, int] = {}
@@ -413,56 +418,22 @@ def _validate_child_path(path: str, index: int) -> None:
 # Nested-repo scanner
 # ---------------------------------------------------------------------------
 
-def _should_skip_dir(name: str, extra: frozenset[str]) -> bool:
+def _should_skip_dir(name: str) -> bool:
     if name in _BUILTIN_EXCLUDE_DIRS:
-        return True
-    if name in extra:
         return True
     if name.startswith("bazel-"):
         return True
     return False
 
 
-def _normalised_exclude_paths(
-    root: Path, exclude_paths: list[str] | None,
-) -> tuple[frozenset[str], frozenset[Path]]:
-    """Split user-provided exclude_paths into directory names vs absolute paths.
-
-    A bare name applies to any directory of that name; a path with separators
-    is resolved against ``root``. Root ``.gitignore`` is NOT consulted (tracked issue):
-    a nested ``.git`` is a workspace child by definition. Pass project-specific
-    exclusions via ``exclude_paths``.
-    """
-    defaults = list(DEFAULT_EXCLUDE_PATHS)
-    raw = defaults if exclude_paths is None else list(exclude_paths) + defaults
-    names: set[str] = set()
-    absolute: set[Path] = set()
-    for item in raw:
-        s = str(item).strip().replace("\\", "/")
-        if not s:
-            continue
-        if "/" in s:
-            absolute.add((root / s).resolve())
-        else:
-            names.add(s)
-    return frozenset(names), frozenset(absolute)
-
-
-def scan_nested_repos(
+def scan_nested_repos_with_diagnostics(
     root: Path | str,
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
     exclude_paths: list[str] | None = None,
-) -> list[ChildEntry]:
-    """Walk ``root`` looking for nested ``.git`` directories.
-
-    Returns a list of :class:`ChildEntry` values sorted lexicographically by
-    relative path. Traversal stops descending into any directory that is a
-    git repo, so repos-inside-repos are not registered as siblings. The
-    workspace root itself is never registered (a root-level ``.git`` is
-    ignored so that the root of a mixed mono+polyrepo layout still reports
-    its children correctly).
-    """
+    respect_gitignore: bool = False,
+) -> NestedRepoScanResult:
+    """Walk ``root`` looking for nested ``.git`` directories."""
     if max_depth < 1:
         raise WorkspaceConfigError(
             f"max_depth must be >= 1, got {max_depth}",
@@ -471,7 +442,9 @@ def scan_nested_repos(
     if not root_path.is_dir():
         raise WorkspaceConfigError(f"scan root is not a directory: {root_path}")
 
-    exclude_names, exclude_abs = _normalised_exclude_paths(root_path, exclude_paths)
+    exclude_patterns = normalise_scan_exclude_patterns(
+        exclude_paths, DEFAULT_EXCLUDE_PATHS,
+    )
     found: list[ChildEntry] = []
 
     def _walk(current: Path, depth: int) -> None:
@@ -497,12 +470,37 @@ def scan_nested_repos(
             sub = current / entry
             if not sub.is_dir() or sub.is_symlink():
                 continue
-            if _should_skip_dir(entry, exclude_names):
+            if _should_skip_dir(entry):
                 continue
-            if sub.resolve() in exclude_abs:
+            if path_matches_scan_exclude(root_path, sub, exclude_patterns):
                 continue
             _walk(sub, depth + 1)
 
     _walk(root_path, 0)
     found.sort(key=lambda c: c.path)
-    return found
+    if not respect_gitignore:
+        return NestedRepoScanResult(children=found)
+    skipped = gitignored_child_paths(root_path, [entry.path for entry in found])
+    if not skipped:
+        return NestedRepoScanResult(children=found)
+    kept = [entry for entry in found if entry.path not in skipped]
+    return NestedRepoScanResult(
+        children=kept,
+        skipped_by_gitignore=sorted(skipped),
+    )
+
+
+def scan_nested_repos(
+    root: Path | str,
+    *,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    exclude_paths: list[str] | None = None,
+    respect_gitignore: bool = False,
+) -> list[ChildEntry]:
+    """Walk ``root`` looking for nested ``.git`` directories."""
+    return scan_nested_repos_with_diagnostics(
+        root,
+        max_depth=max_depth,
+        exclude_paths=exclude_paths,
+        respect_gitignore=respect_gitignore,
+    ).children

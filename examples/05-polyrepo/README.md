@@ -125,6 +125,7 @@ The pre-committed registry lists three children and enables
 version: 1
 scan:
   max_depth: 3
+  respect_gitignore: false
   exclude_paths: [.worktrees, vendor]
 children:
   - name: services-api
@@ -147,6 +148,10 @@ Child names are auto-derived from paths (`services/api` becomes
 of the outbound URL in `services/api/src/server.py` is
 `services-auth` -- it names a sibling by child name, which is what
 lets `service_graph` resolve the call statically.
+
+Set `scan.respect_gitignore: true` when scan-only child detection should
+follow the root `.gitignore`. Explicit `children` entries still win, and
+`scan.exclude_paths` accepts names, relative paths, and `*` / `**` patterns.
 
 ## Step 4: Run discovery at the workspace root
 

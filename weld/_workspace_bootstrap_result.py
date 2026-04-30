@@ -58,12 +58,12 @@ class BootstrapResult:
         (per-child ``wd init`` failures), from step 4 per-child recurse
         failures (``"recurse <name>: <ExcType>: <msg>"``), and from the
         step 4 guard when ``workspaces.yaml`` is missing.
-    ``yaml_listed_but_missing`` (bd-...-9slg)
+    ``yaml_listed_but_missing``
         Names declared in workspaces.yaml whose path does not currently
         resolve on disk. Bootstrap still attempts per-child init in case
         the path materialises during recovery, but operators see the
         missing paths in the result and stderr summary.
-    ``excluded_by_gitignore`` (bd-...-9slg)
+    ``excluded_by_gitignore``
         Names declared in workspaces.yaml that the root ``.gitignore``
         would otherwise mask. The yaml overrides the mask (operator
         opted in explicitly), but the diagnostic explains why an
@@ -76,6 +76,10 @@ class BootstrapResult:
         These are skipped from the registry rather than aborting
         bootstrap; operators see the path so they can either rename
         the directory or add it to ``scan.exclude_paths``.
+    ``skipped_by_gitignore``
+        Workspace-relative paths of scan-only nested repos skipped because
+        ``scan.respect_gitignore`` or ``--respect-gitignore`` opted into
+        Git standard ignore rules. Explicit yaml-listed children still win.
 
     Divergence between ``children_recursed`` and ``children_present``
     ----------------------------------------------------------------
@@ -117,6 +121,7 @@ class BootstrapResult:
     yaml_listed_but_missing: list[str] = field(default_factory=list)
     excluded_by_gitignore: list[str] = field(default_factory=list)
     excluded_by_invalid_name: list[str] = field(default_factory=list)
+    skipped_by_gitignore: list[str] = field(default_factory=list)
 
     def summary_lines(self) -> list[str]:
         """Human-readable bullet summary of a bootstrap run."""
@@ -162,6 +167,11 @@ class BootstrapResult:
             lines.append(
                 "  * scan-skipped (invalid auto-derived child name): "
                 + ", ".join(sorted(self.excluded_by_invalid_name)),
+            )
+        if self.skipped_by_gitignore:
+            lines.append(
+                "  * scan-skipped (gitignore): "
+                + ", ".join(sorted(self.skipped_by_gitignore)),
             )
         for err in self.errors:
             lines.append(f"  ! {err}")

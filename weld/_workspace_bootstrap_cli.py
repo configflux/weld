@@ -42,9 +42,20 @@ def add_bootstrap_subparser(
     bootstrap_parser.add_argument(
         "--exclude-path", action="append", default=None, metavar="PATH",
         help=(
-            "Directory name or workspace-relative path to exclude from the "
-            "nested-repo scan. Repeatable. Persisted into workspaces.yaml so "
-            "subsequent bootstraps stay excluded without re-passing the flag."
+            "Directory name, workspace-relative path, or glob pattern to "
+            "exclude from the nested-repo scan. Repeatable. Persisted into "
+            "workspaces.yaml so subsequent bootstraps stay excluded without "
+            "re-passing the flag."
+        ),
+    )
+    bootstrap_parser.add_argument(
+        "--respect-gitignore",
+        action="store_true",
+        default=None,
+        help=(
+            "Skip scan-only child repos ignored by Git standard ignore rules "
+            "and persist scan.respect_gitignore=true in workspaces.yaml. "
+            "Explicit children listed in workspaces.yaml still win."
         ),
     )
     bootstrap_parser.add_argument(
@@ -81,6 +92,7 @@ def run_bootstrap(args: argparse.Namespace) -> int:
             args.root,
             max_depth=args.max_depth,
             exclude_paths=args.exclude_path,
+            respect_gitignore=args.respect_gitignore,
             ignore_all=args.ignore_all,
             track_graphs=args.track_graphs,
         )
@@ -97,6 +109,7 @@ def run_bootstrap(args: argparse.Namespace) -> int:
             "children_recursed": result.children_recursed,
             "children_present": result.children_present,
             "excluded_by_invalid_name": result.excluded_by_invalid_name,
+            "skipped_by_gitignore": result.skipped_by_gitignore,
             "errors": result.errors,
         }
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")

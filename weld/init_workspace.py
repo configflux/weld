@@ -19,8 +19,8 @@ Public surface
 * :func:`merge_yaml_and_scan_children` -- the unified federation predicate
   used by ``wd workspace bootstrap`` and ``wd init`` at a polyrepo root:
   yaml is authoritative when present; FS scan augments. Returns the merged
-  set plus diagnostics (yaml-only-missing, scan-only-but-gitignored,
-  yaml-corrupt-error).
+  set plus diagnostics for missing yaml children, gitignore filtering,
+  invalid scan-derived names, and corrupt yaml fallback.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from weld._gitignore_scan import load_root_gitignore_dirs
+from weld.workspace_scan_filter import gitignored_child_paths
 from weld.workspace import (
     DEFAULT_MAX_DEPTH,
     NAME_PATTERN,
@@ -40,6 +40,7 @@ from weld.workspace import (
     auto_derive_tags,
     dump_workspaces_yaml,
     scan_nested_repos,
+    scan_nested_repos_with_diagnostics,
 )
 
 __all__ = [
@@ -76,6 +77,7 @@ def discover_children(
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
     exclude_paths: list[str] | None = None,
+    respect_gitignore: bool = False,
 ) -> list[ChildEntry]:
     """Return :class:`ChildEntry` values for every nested git repo under ``root``.
 
@@ -89,6 +91,7 @@ def discover_children(
         root,
         max_depth=max_depth,
         exclude_paths=exclude_paths,
+        respect_gitignore=respect_gitignore,
     )
     kept, _invalid = _partition_by_name_validity(entries)
     return kept
@@ -101,6 +104,7 @@ def init_workspace(
     force: bool = False,
     max_depth: int = DEFAULT_MAX_DEPTH,
     exclude_paths: list[str] | None = None,
+    respect_gitignore: bool = False,
 ) -> bool:
     """Scaffold ``workspaces.yaml`` at ``output`` if ``root`` has nested repos.
 
@@ -123,6 +127,7 @@ def init_workspace(
         root,
         max_depth=max_depth,
         exclude_paths=exclude_paths,
+        respect_gitignore=respect_gitignore,
     )
     if not children:
         # Linked-worktree fallback (tracked issue): a linked git worktree does
@@ -144,7 +149,10 @@ def init_workspace(
         return False
 
     cfg = WorkspaceConfig(
-        scan=ScanConfig(max_depth=max_depth),
+        scan=ScanConfig(
+            max_depth=max_depth,
+            respect_gitignore=respect_gitignore,
+        ),
         children=children,
     )
     dump_workspaces_yaml(cfg, out)
@@ -188,8 +196,8 @@ class MergedChildren:
     ``children`` is the effective merged set (yaml-authoritative, scan
     augments). ``yaml_listed_but_missing`` carries names whose declared
     path does not resolve on disk. ``excluded_by_gitignore`` carries
-    scan-found names that the yaml does not list AND that root
-    ``.gitignore`` masks (informational; they are NOT auto-added).
+    yaml-listed child names masked by root ``.gitignore``. ``skipped_by_gitignore``
+    carries scan-only paths skipped when gitignore filtering is enabled.
     ``excluded_by_invalid_name`` carries scan-found paths whose
     auto-derived name failed ``NAME_PATTERN`` and were therefore
     skipped. ``yaml_error`` is the reason a present yaml could not be
@@ -201,6 +209,7 @@ class MergedChildren:
     excluded_by_gitignore: list[str]
     yaml_error: str | None
     excluded_by_invalid_name: list[str] = field(default_factory=list)
+    skipped_by_gitignore: list[str] = field(default_factory=list)
 
 
 def _entry_for_scan_path(rel_path: str) -> ChildEntry:
@@ -216,10 +225,11 @@ def merge_yaml_and_scan_children(
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
     exclude_paths: list[str] | None = None,
+    respect_gitignore: bool | None = None,
 ) -> MergedChildren:
     """Unified federation predicate: yaml is authoritative; FS scan augments.
 
-    Behaviour matrix (bd-...-9slg):
+    Behaviour matrix:
 
     * yaml present and valid -> children = yaml ++ scan-only entries.
       Yaml entries whose path does not exist on disk land in
@@ -230,9 +240,9 @@ def merge_yaml_and_scan_children(
       ``yaml_error`` describes the parse failure for operator visibility.
     * yaml absent -> children = scan only.
 
-    Scan-only directories that the root ``.gitignore`` masks are reported
-    in ``excluded_by_gitignore`` as a diagnostic but never added to
-    ``children`` (the yaml is the only authority for over-riding gitignore).
+    If gitignore filtering is enabled, scan-only nested repos masked by root
+    ``.gitignore`` are reported in ``skipped_by_gitignore`` and not added to
+    ``children``. Yaml-listed children remain authoritative.
 
     The effective scan exclusion set is the union of the caller-supplied
     ``exclude_paths`` and any ``scan.exclude_paths`` configured in the
@@ -245,17 +255,24 @@ def merge_yaml_and_scan_children(
     cfg, yaml_error = safe_load_workspace_config(root_path)
 
     effective_exclude = list(exclude_paths or [])
+    effective_respect_gitignore = bool(respect_gitignore)
     if cfg is not None:
         for item in cfg.scan.exclude_paths:
             if item not in effective_exclude:
                 effective_exclude.append(item)
+        effective_respect_gitignore = (
+            effective_respect_gitignore or cfg.scan.respect_gitignore
+        )
 
-    raw_entries = scan_nested_repos(
+    scan_result = scan_nested_repos_with_diagnostics(
         root_path,
         max_depth=max_depth,
         exclude_paths=effective_exclude or None,
+        respect_gitignore=effective_respect_gitignore,
     )
-    scan_entries, invalid_scan_paths = _partition_by_name_validity(raw_entries)
+    scan_entries, invalid_scan_paths = _partition_by_name_validity(
+        scan_result.children,
+    )
     scan_by_path: dict[str, ChildEntry] = {e.path: e for e in scan_entries}
 
     merged_by_path: dict[str, ChildEntry] = {}
@@ -272,17 +289,14 @@ def merge_yaml_and_scan_children(
         merged_by_path.setdefault(path, entry)
 
     # Diagnostics: scan-found-and-yaml-listed paths covered above; the
-    # reciprocal "scan would have found this if not gitignored" is
-    # interesting only when the yaml lists the path -- the operator
-    # explicitly opted in. We surface every yaml-listed path that the
-    # gitignore would have masked.
+    # Surface every yaml-listed path that gitignore would have masked.
     excluded: list[str] = []
     if cfg is not None:
-        ignored_dirs = load_root_gitignore_dirs(root_path)
+        ignored_paths = gitignored_child_paths(
+            root_path, [child.path for child in cfg.children],
+        )
         for child in cfg.children:
-            resolved = (root_path / child.path).resolve()
-            if any(resolved == g or _is_under(resolved, g)
-                   for g in ignored_dirs):
+            if child.path in ignored_paths:
                 excluded.append(child.name)
 
     children = sorted(merged_by_path.values(), key=lambda e: e.path)
@@ -292,16 +306,8 @@ def merge_yaml_and_scan_children(
         excluded_by_gitignore=sorted(excluded),
         yaml_error=yaml_error,
         excluded_by_invalid_name=sorted(invalid_scan_paths),
+        skipped_by_gitignore=sorted(scan_result.skipped_by_gitignore),
     )
-
-
-def _is_under(child: Path, parent: Path) -> bool:
-    try:
-        child.relative_to(parent)
-    except ValueError:
-        return False
-    return True
-
 
 def maybe_bootstrap_polyrepo(
     root: Path | str,
