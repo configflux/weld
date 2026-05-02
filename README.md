@@ -13,15 +13,18 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.13.2 -->
-> **Evaluators: start with v0.13.2.** v0.13.2 adds opt-in
-> gitignore-aware workspace scans and glob-capable workspace scan
-> exclusions on top of the v0.13.1 C# / C++ startup entrypoint modeling
-> and trace import contract. It is the recommended starting point for
+<!-- evaluator-note: latest=v0.14.0 -->
+> **Evaluators: start with v0.14.0.** v0.14.0 lands deterministic
+> multi-language graph closure, two new discovery strategies
+> (`concept_from_bd`, `test_peer`), module-level Python constants in
+> `wd find` and `wd query`, and a `copilot-cli` probe in `wd doctor`,
+> on top of the v0.13.2 opt-in gitignore-aware workspace scans, the
+> v0.13.1 C# / C++ startup entrypoint modeling, and the v0.13.0 trace
+> import contract. It is the recommended starting point for
 > cross-language startup modeling, polyrepo workspace bootstrapping,
 > agent graph visualization, local-only telemetry, and the `copilot-cli`
 > enrichment provider. See the [`CHANGELOG.md`](CHANGELOG.md) entries
-> for v0.13.2 and v0.13.1 for details.
+> for v0.14.0, v0.13.2, and v0.13.1 for details.
 
 **Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
 walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
@@ -90,7 +93,7 @@ were not designed to provide.
 - **Config-driven** — point `.weld/discover.yaml` at your repo and tune
   what gets extracted.
 - **Multi-language** — bundled tree-sitter strategies for Python, TypeScript/JS,
-  Go, Rust, C#, C++, and ROS2.
+  Go, Rust, C#, C++, Java, and ROS2.
 - **Plugin architecture** — drop a `.py` file in `.weld/strategies/` to
   extract anything repo-specific.
 - **Agent Graph** — discover agents, skills, prompts, commands, hooks,
@@ -290,7 +293,12 @@ grammar package is not installed.
 | Rust | exports, types, imports | `tree-sitter-rust` |
 | C# | types, methods, properties, attributes, namespaces, using dependencies | `tree-sitter-c-sharp` |
 | C++ | exports, classes, imports, best-effort call graph | `tree-sitter-cpp` |
+| Java | classes, methods, annotations, imports, package dependencies | `tree-sitter-java` |
 | ROS2 | packages, nodes, topics, services, actions, parameters | (reuses Python + C++) |
+
+Discovery also adds deterministic closure edges from files to source-backed
+symbols and from import/include/use declarations to local files or external
+package nodes across every listed language.
 
 To enable tree-sitter support:
 
@@ -656,6 +664,28 @@ rm .weld/workspace-state.json
 | `wd enrich` | LLM-assisted semantic enrichment |
 | `wd lint` | Lint the graph for architectural violations |
 
+`wd doctor` reports each finding at one of four levels: `[ok ]` for
+healthy state, `[note]` for soft recommendations (a missing optional
+provider, no MCP config), `[warn]` for a currently-degraded state (a
+stale graph, missing tree-sitter grammars), and `[fail]` for invalid
+setup. Only `[fail]` raises the exit code; notes and warnings are
+visible but never fatal. Each note carries a stable id (e.g.
+`(id: optional-copilot-cli-missing)`) that you can dismiss per project:
+
+```bash
+wd doctor --ack optional-copilot-cli-missing   # write to .weld/doctor.yaml
+wd doctor --unack optional-copilot-cli-missing # restore
+wd doctor --list-acks                          # list current dismissals
+```
+
+The valid note ids are `mcp-config-missing`, `optional-mcp-missing`,
+`optional-anthropic-missing`, `optional-openai-missing`,
+`optional-ollama-missing`, and `optional-copilot-cli-missing`. The
+`copilot-cli` probe walks `WELD_COPILOT_BINARY` and `PATH` for the
+standalone GitHub Copilot CLI binary, so its install hint points at
+[github.com/en/copilot](https://docs.github.com/en/copilot/how-tos/use-copilot-cli)
+rather than a `pip install` line.
+
 `wd lint` also loads custom edge rules from `.weld/lint-rules.yaml` when
 present:
 
@@ -706,7 +736,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.13.2`.
+terminal snippets captured against `wd 0.14.0`.
 
 ## Install
 

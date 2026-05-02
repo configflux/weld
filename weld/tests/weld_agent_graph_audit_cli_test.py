@@ -181,6 +181,13 @@ class AgentGraphAuditUnusedSkillSuppressionTest(unittest.TestCase):
                 and any(n["name"] == "planner-helper" for n in f["nodes"])
             ]
             self.assertEqual(offending, [], msg=findings)
+            graph = json.loads((root / ".weld" / "agent-graph.json").read_text())
+            text_only_edges = [
+                e for e in graph["edges"]
+                if e.get("type") == "uses_skill"
+                and e.get("to", "").endswith(":planner-helper")
+            ]
+            self.assertEqual(text_only_edges, [])
 
     def test_unmentioned_skill_still_flagged(self) -> None:
         """Suppression is text-driven; a truly unreferenced skill fires."""

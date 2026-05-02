@@ -159,6 +159,9 @@ def extract_call_edges(
                             "source_strategy": "tree_sitter",
                             "confidence": "speculative",
                             "resolved": False,
+                            "raw": callee,
+                            "resolution": "unresolved",
+                            "provenance": _provenance(rel_path, n),
                         },
                     }
                 )
@@ -166,3 +169,18 @@ def extract_call_edges(
         pass
 
     return nodes, edges
+
+
+def _provenance(rel_path: str, node) -> dict:
+    """Return deterministic file/line provenance for a captured node."""
+    provenance = {"file": rel_path}
+    point = getattr(node, "start_point", None)
+    if point is None:
+        point = getattr(node, "startPosition", None)
+    if isinstance(point, tuple) and point:
+        provenance["line"] = int(point[0]) + 1
+        return provenance
+    row = getattr(point, "row", None)
+    if row is not None:
+        provenance["line"] = int(row) + 1
+    return provenance

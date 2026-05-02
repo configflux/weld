@@ -25,7 +25,14 @@ def _split_field(value: str) -> list[str]:
 def node_tokens(nid: str, node: dict) -> list[str]:
     """Extract lowercased tokens from a node for indexing.
 
-    Sources: node ID, label, props.file, props.exports, props.description.
+    Sources: node ID, label, props.file, props.exports, props.constants,
+    props.description.
+
+    ``props.constants`` carries module-level Python constants
+    (``UPPER_CASE`` / ``_UPPER_CASE``) emitted by the ``python_module``
+    strategy. Indexing them here is what makes ``wd query <CONSTANT>``
+    return the file node that owns the constant. The constant slice is
+    upstream-bounded by ``weld.file_index`` to keep the index small.
     """
     tokens: list[str] = _split_field(nid)
 
@@ -42,6 +49,10 @@ def node_tokens(nid: str, node: dict) -> list[str]:
     for exp in props.get("exports", []):
         if isinstance(exp, str):
             tokens.append(exp.lower())
+
+    for const in props.get("constants", []):
+        if isinstance(const, str):
+            tokens.extend(_split_field(const))
 
     desc_val = props.get("description") or ""
     if desc_val:

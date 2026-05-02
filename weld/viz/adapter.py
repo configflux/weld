@@ -265,6 +265,10 @@ def normalize_graph_data(
 
     if requested_node_ids is None:
         ordered_ids = sorted(nodes, key=lambda nid: _overview_key(nid, nodes[nid], degree))
+        if node_types is None:
+            ordered_ids = [
+                nid for nid in ordered_ids if not nid.startswith("symbol:unresolved:")
+            ]
     else:
         ordered_ids = _dedupe(requested_node_ids)
 

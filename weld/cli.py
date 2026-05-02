@@ -240,8 +240,6 @@ def _dispatch(argv: list[str] | None) -> int:
 
             print(f"wd {version('configflux-weld')}")
         except Exception:
-            from pathlib import Path
-
             version_file = Path(__file__).resolve().parent.parent / "VERSION"
             if version_file.exists():
                 print(f"wd {version_file.read_text().strip()}")

@@ -247,6 +247,12 @@ def resolve_source_files(
         matched = walk_glob(root, glob_pattern, excludes=excludes)
         files = [str(p.relative_to(root)) for p in matched]
 
+    path_entry = source.get("path")
+    if path_entry and (root / path_entry).exists():
+        rel = str((root / path_entry).relative_to(root))
+        if not excludes or not matches_exclude(Path(rel).as_posix(), excludes):
+            files.append(rel)
+
     for f in source.get("files", []):
         if not (root / f).exists():
             continue

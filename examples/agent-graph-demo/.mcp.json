@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "description": "Local repository file context."
+    },
+    "github": {
+      "description": "GitHub API access for repo metadata."
+    }
+  }
+}

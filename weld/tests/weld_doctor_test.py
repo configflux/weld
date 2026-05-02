@@ -168,13 +168,19 @@ class DoctorMcpConfigTest(unittest.TestCase):
             self.assertTrue(ok_mcp)
             self.assertIn(".codex/config.toml", ok_mcp[0].message)
 
-    def test_warn_missing(self):
+    def test_note_missing(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _setup_dir(root)
             results = doctor(root)
-            warn_mcp = [r for r in results if "mcp" in r.message.lower() and r.level == "warn"]
-            self.assertTrue(warn_mcp)
+            # MCP-missing is now a recommendation-level note, not a warning.
+            note_mcp = [
+                r for r in results
+                if "mcp" in r.message.lower()
+                and r.level == "note"
+                and getattr(r, "note_id", None) == "mcp-config-missing"
+            ]
+            self.assertTrue(note_mcp)
 
 
 class DoctorStrategyTest(unittest.TestCase):
@@ -305,7 +311,7 @@ class DoctorOutputFormatTest(unittest.TestCase):
             _setup_dir(root)
             results = doctor(root)
             for r in results:
-                self.assertIn(r.level, ("ok", "warn", "fail"))
+                self.assertIn(r.level, ("ok", "note", "warn", "fail"))
 
 
 class DoctorMainExitCodeTest(unittest.TestCase):

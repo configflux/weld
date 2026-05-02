@@ -205,11 +205,18 @@ class Graph:
         props = node.get("props") or {}
         file_l = (props.get("file") or "").lower()
         exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
+        # ``constants`` carries module-level Python constants
+        # (``UPPER_CASE`` / ``_UPPER_CASE``) emitted by the
+        # ``python_module`` strategy. Lowercased here so substring match
+        # against query tokens works the same way as for ``exports``.
+        constants_l = [c.lower() for c in props.get("constants", []) if isinstance(c, str)]
         desc_l = (props.get("description") or "").lower()
         hits = 0
         for group in token_groups:
             if any(
-                t in nid_l or t in label_l or t in file_l or t in desc_l or any(t in e for e in exports_l)
+                t in nid_l or t in label_l or t in file_l or t in desc_l
+                or any(t in e for e in exports_l)
+                or any(t in c for c in constants_l)
                 for t in group
             ):
                 hits += 1

@@ -264,3 +264,115 @@ def _parse_scalar(val: str) -> str | int | float | bool | list:
     except ValueError:
         pass
     return val
+
+
+def dump_yaml(data: object) -> str:
+    """Minimal block-style YAML emitter.
+
+    Produces output readable by ``parse_yaml`` and by full YAML loaders
+    (e.g. ``pyyaml.safe_load``). Handles dicts, lists, strings, ints,
+    floats, bools, and ``None`` -- the same value space ``parse_yaml``
+    consumes. Lists of pure scalars are emitted in flow style;
+    everything else uses block style.
+    """
+    out: list[str] = []
+    _emit(data, out, 0)
+    return "\n".join(out) + "\n"
+
+
+def _emit(data: object, out: list[str], depth: int) -> None:
+    pad = "  " * depth
+    if isinstance(data, dict):
+        if not data:
+            out.append(f"{pad}{{}}")
+            return
+        for key, value in data.items():
+            _emit_kv(str(key), value, out, depth)
+    elif isinstance(data, list):
+        if not data:
+            out.append(f"{pad}[]")
+            return
+        for item in data:
+            _emit_item(item, out, depth)
+    else:
+        out.append(f"{pad}{_emit_scalar(data)}")
+
+
+def _emit_kv(key: str, value: object, out: list[str], depth: int) -> None:
+    pad = "  " * depth
+    if isinstance(value, dict):
+        if not value:
+            out.append(f"{pad}{key}: {{}}")
+            return
+        out.append(f"{pad}{key}:")
+        for k2, v2 in value.items():
+            _emit_kv(str(k2), v2, out, depth + 1)
+    elif isinstance(value, list):
+        if not value:
+            out.append(f"{pad}{key}: []")
+            return
+        if all(not isinstance(it, (dict, list)) for it in value):
+            inline = ", ".join(_emit_scalar(it) for it in value)
+            out.append(f"{pad}{key}: [{inline}]")
+            return
+        out.append(f"{pad}{key}:")
+        for item in value:
+            _emit_item(item, out, depth + 1)
+    else:
+        out.append(f"{pad}{key}: {_emit_scalar(value)}")
+
+
+def _emit_item(item: object, out: list[str], depth: int) -> None:
+    pad = "  " * depth
+    if isinstance(item, dict):
+        if not item:
+            out.append(f"{pad}- {{}}")
+            return
+        keys = list(item.keys())
+        first_k = str(keys[0])
+        first_v = item[first_k]
+        if isinstance(first_v, dict) and first_v:
+            out.append(f"{pad}- {first_k}:")
+            for k2, v2 in first_v.items():
+                _emit_kv(str(k2), v2, out, depth + 2)
+        elif isinstance(first_v, list) and first_v:
+            if all(not isinstance(it, (dict, list)) for it in first_v):
+                inline = ", ".join(_emit_scalar(it) for it in first_v)
+                out.append(f"{pad}- {first_k}: [{inline}]")
+            else:
+                out.append(f"{pad}- {first_k}:")
+                for it in first_v:
+                    _emit_item(it, out, depth + 2)
+        else:
+            out.append(f"{pad}- {first_k}: {_emit_scalar(first_v)}")
+        for k in keys[1:]:
+            _emit_kv(str(k), item[k], out, depth + 1)
+    elif isinstance(item, list):
+        out.append(f"{pad}-")
+        for it in item:
+            _emit_item(it, out, depth + 1)
+    else:
+        out.append(f"{pad}- {_emit_scalar(item)}")
+
+
+def _emit_scalar(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    s = str(value)
+    needs_quote = (
+        s == ""
+        or s in ("null", "true", "false", "yes", "no", "True", "False", "None")
+        or s[0] in " \t-?:,[]{}#&*!|>'\"%@`"
+        or s[-1] in " \t"
+        or ":" in s
+        or "\n" in s
+        or "\t" in s
+    )
+    if needs_quote:
+        escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return s

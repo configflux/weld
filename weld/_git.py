@@ -128,6 +128,13 @@ _WELD_BOOKKEEPING_PATHS = frozenset({
     # ``wd discover`` and refreshed on cache misses by ``Graph.load``
     # (ADR 0031). Same trust boundary, same "never user source" rule.
     ".weld/query_state.bin",
+    # Keyword-to-file index written by ``wd discover`` and ``wd
+    # build-index``. Functionally a sibling of graph.json -- output of
+    # discovery, never user source. Without this entry a user who
+    # commits .weld/file-index.json alongside graph.json would see
+    # ``wd prime`` report spurious source drift and fall into the same
+    # touch/commit loop the other bookkeeping entries already prevent.
+    ".weld/file-index.json",
 })
 
 

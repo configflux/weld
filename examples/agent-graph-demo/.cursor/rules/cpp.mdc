@@ -1,6 +1,9 @@
 ---
 description: Cursor C++ conventions.
 applyTo: [src/**]
+globs: ["src/**/*.cpp", "src/**/*.h"]
 ---
 
 Prefer explicit ownership boundaries.
+
+See @docs/architecture/principles.md for cross-language guidance.

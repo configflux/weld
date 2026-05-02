@@ -1,13 +1,23 @@
 """Regression tests for whole-codebase artifact class discoverability.
 
-Ensures that ``wd discover`` running against the repo's own
-``.weld/discover.yaml`` produces nodes for every configured artifact
-class (node type).
+Two complementary suites:
 
-Expectations are derived from discover.yaml so the tests are portable
-across any repo that uses weld discovery.  If a strategy is removed, a
-discover.yaml entry is deleted, or a glob pattern stops matching, these
-tests will fail — protecting the whole-codebase value proposition.
+1. Host-repo suites (``ArtifactClassPresenceTest`` etc.) run against
+   the repository's own ``.weld/discover.yaml`` when present. They give
+   the strongest signal because they exercise every configured strategy
+   and glob in real conditions, but they are gated on the host config
+   being present.
+2. Synthetic suites (``SyntheticArtifactClass*Test``) always run. They
+   build a minimal fixture (``.weld/discover.yaml`` plus a tiny Python
+   module and a tiny markdown file) inside a temp directory and exercise
+   the same assertions against that graph. This ensures default
+   ``bazel test //weld/tests/...`` runs never silently pass by skipping
+   in a standalone environment that lacks the dev YAML tooling.
+
+If a strategy is removed, a discover.yaml entry is deleted, or a glob
+pattern stops matching, the host suites will fail; if discovery itself
+breaks (no nodes, dangling edges, missing props) the synthetic suites
+will fail in any environment.
 """
 
 from __future__ import annotations
@@ -23,16 +33,21 @@ if _repo_root not in sys.path:
 
 from weld._yaml import parse_yaml  # noqa: E402
 from weld.discover import discover  # noqa: E402
+from weld.tests.regression_fixture_helpers import (  # noqa: E402
+    SYNTH_NODE_TYPES,
+    SyntheticGraphMixin,
+)
 
 _HAS_DISCOVER_YAML = (Path(_repo_root) / ".weld" / "discover.yaml").exists()
 _STANDALONE_SKIP = "No .weld/discover.yaml — standalone repo has no infrastructure to discover"
 
 _GRAPH: dict | None = None
 
+
 def _graph() -> dict:
     global _GRAPH
     if _GRAPH is None:
-        _GRAPH = discover(Path(_repo_root))
+        _GRAPH = discover(Path(_repo_root), incremental=False)
     return _GRAPH
 
 def _configured_node_types() -> set[str]:
@@ -196,6 +211,132 @@ class EdgePresenceTest(unittest.TestCase):
             len(edge_types), 0,
             "Expected at least one edge type in the graph.",
         )
+
+# ---------------------------------------------------------------------------
+# Synthetic-fixture suites — always run, regardless of host environment
+# ---------------------------------------------------------------------------
+
+
+class SyntheticArtifactClassPresenceTest(
+    SyntheticGraphMixin, unittest.TestCase
+):
+    """Synthetic counterpart of ``ArtifactClassPresenceTest`` (always runs)."""
+
+    SYNTH_PREFIX = "weld-artifact-presence-"
+
+    def test_each_configured_type_has_nodes(self) -> None:
+        type_counts = Counter(
+            n["type"] for n in self.graph["nodes"].values()
+        )
+        for ntype in sorted(SYNTH_NODE_TYPES):
+            with self.subTest(node_type=ntype):
+                self.assertGreater(
+                    type_counts.get(ntype, 0), 0,
+                    f"Synthetic fixture configures node type '{ntype}' "
+                    f"but discovery produced 0 such nodes.",
+                )
+
+    def test_total_node_count_matches_fixture(self) -> None:
+        # Fixture has 2 .py files + 1 .md file = at least 3 file-bearing
+        # nodes; python_callgraph is not configured so symbol nodes do
+        # not appear. We assert >= 3 to keep the lower bound robust to
+        # additional bookkeeping nodes the discovery pipeline may emit.
+        self.assertGreaterEqual(
+            len(self.graph["nodes"]), 3,
+            "Synthetic fixture should produce >= 3 nodes "
+            "(2 python modules + 1 doc); discovery may be broken.",
+        )
+
+
+class SyntheticStrategyNodeTypeConsistencyTest(
+    SyntheticGraphMixin, unittest.TestCase
+):
+    """Synthetic counterpart of ``StrategyNodeTypeConsistencyTest``."""
+
+    SYNTH_PREFIX = "weld-strategy-consistency-"
+
+    def test_strategy_produces_declared_type(self) -> None:
+        actual_types: dict[str, set[str]] = {}
+        for n in self.graph["nodes"].values():
+            strat = n.get("props", {}).get("source_strategy", "")
+            if strat:
+                actual_types.setdefault(strat, set()).add(n["type"])
+
+        expected = {"python_module": "file", "markdown": "doc"}
+        for strat, declared in expected.items():
+            with self.subTest(strategy=strat, declared_type=declared):
+                self.assertIn(
+                    strat, actual_types,
+                    f"Strategy '{strat}' produced no nodes in synthetic "
+                    f"fixture; glob may have stopped matching.",
+                )
+                self.assertIn(
+                    declared, actual_types[strat],
+                    f"Strategy '{strat}' produced "
+                    f"{sorted(actual_types[strat])} but should produce "
+                    f"'{declared}'.",
+                )
+
+
+class SyntheticNodePropsQualityTest(
+    SyntheticGraphMixin, unittest.TestCase
+):
+    """Synthetic counterpart of ``NodePropsQualityTest``."""
+
+    SYNTH_PREFIX = "weld-node-props-"
+
+    def test_all_nodes_have_source_strategy(self) -> None:
+        missing = [
+            nid for nid, n in self.graph["nodes"].items()
+            if not n.get("props", {}).get("source_strategy")
+        ]
+        self.assertEqual(
+            missing, [],
+            f"{len(missing)} synthetic-fixture nodes lack source_strategy: "
+            f"{missing[:5]}",
+        )
+
+    def test_file_bearing_nodes_have_file_prop(self) -> None:
+        # In the synthetic fixture, every node is file-bearing (python
+        # modules + markdown docs). Each must carry a ``file`` prop.
+        for nid, n in self.graph["nodes"].items():
+            with self.subTest(node_id=nid, node_type=n["type"]):
+                self.assertIn(
+                    "file", n.get("props", {}),
+                    f"Node {nid} (type={n['type']}) missing 'file' prop "
+                    f"in synthetic fixture.",
+                )
+
+
+class SyntheticEdgePresenceTest(SyntheticGraphMixin, unittest.TestCase):
+    """Synthetic counterpart of ``EdgePresenceTest`` (always runs).
+
+    The synthetic fixture does not configure ``python_callgraph``, so we
+    do not assert ``calls`` edges here; instead we cover the meta-graph
+    invariants (``edges`` field is a list, no dangling refs).
+    """
+
+    SYNTH_PREFIX = "weld-edge-presence-"
+
+    def test_edges_field_is_a_list(self) -> None:
+        self.assertIsInstance(
+            self.graph["edges"], list,
+            "graph['edges'] must always be a list; discovery contract.",
+        )
+
+    def test_no_dangling_edge_references_in_synthetic_fixture(self) -> None:
+        node_ids = set(self.graph["nodes"].keys())
+        dangling: list[str] = []
+        for edge in self.graph["edges"]:
+            if edge["from"] not in node_ids:
+                dangling.append(f"from={edge['from']}")
+            if edge["to"] not in node_ids:
+                dangling.append(f"to={edge['to']}")
+        self.assertEqual(
+            dangling, [],
+            f"Synthetic graph has {len(dangling)} dangling edge refs.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

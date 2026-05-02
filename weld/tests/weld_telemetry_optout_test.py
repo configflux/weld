@@ -15,12 +15,9 @@ subcommand parser must NEVER see ``--no-telemetry``.
 
 from __future__ import annotations
 
-import io
-import os
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -29,46 +26,17 @@ from unittest import mock
 _repo_root = str(Path(__file__).resolve().parent.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
+_tests_dir = str(Path(__file__).resolve().parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
 
 from weld import _telemetry as tel  # noqa: E402
 from weld import cli  # noqa: E402
 from weld.cli import main as cli_main  # noqa: E402
-
-
-def _make_repo(root: Path) -> Path:
-    """Create a minimal single-repo project so resolve_path() finds it."""
-    weld = root / ".weld"
-    weld.mkdir(parents=True, exist_ok=True)
-    (weld / "discover.yaml").write_text("# placeholder\n")
-    return root
-
-
-@contextmanager
-def _chdir(target: Path):
-    prev = Path.cwd()
-    os.chdir(target)
-    try:
-        yield
-    finally:
-        os.chdir(prev)
-
-
-@contextmanager
-def _captured(root: Path, env: dict[str, str] | None = None):
-    """Run with isolated cwd, env (XDG redirected), captured streams."""
-    out_buf = io.StringIO()
-    err_buf = io.StringIO()
-    base_env = {"XDG_STATE_HOME": str(root / "_xdg")}
-    if env:
-        base_env.update(env)
-    with _chdir(root), \
-         mock.patch.dict(os.environ, base_env, clear=False), \
-         mock.patch.object(sys, "stdout", out_buf), \
-         mock.patch.object(sys, "stderr", err_buf):
-        # Strip any inherited WELD_TELEMETRY unless the caller set it.
-        if env is None or "WELD_TELEMETRY" not in env:
-            os.environ.pop("WELD_TELEMETRY", None)
-        yield out_buf, err_buf
+from telemetry_test_helpers import (  # noqa: E402
+    captured as _captured,
+    make_repo as _make_repo,
+)
 
 
 def _events(root: Path) -> list[str]:

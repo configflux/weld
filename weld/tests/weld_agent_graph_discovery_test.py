@@ -56,6 +56,7 @@ class AgentGraphDiscoveryTest(unittest.TestCase):
                 ".gemini/agents/planner.md",
                 "tools/skills/generic/SKILL.md",
                 ".mcp.json",
+                ".codex/config.toml",
             ]:
                 _write(root, rel_path)
 
@@ -83,6 +84,7 @@ class AgentGraphDiscoveryTest(unittest.TestCase):
             ".gemini/agents/planner.md": ("agent", "gemini"),
             "tools/skills/generic/SKILL.md": ("skill", "generic"),
             ".mcp.json": ("config", "generic"),
+            ".codex/config.toml": ("config", "codex"),
         }
         self.assertEqual(set(by_path), set(expected))
         for path, (node_type, platform) in expected.items():
@@ -148,7 +150,13 @@ class AgentGraphDiscoveryTest(unittest.TestCase):
 
         paths = graph["meta"]["discovered_from"]
         self.assertEqual(paths, ["AGENTS.md"])
-        node_files = [node["props"]["file"] for node in graph["nodes"].values()]
+        # Asset nodes carry the source file path; ancillary nodes (scope, tool)
+        # do not. Filter to asset nodes via the presence of a ``file`` prop.
+        node_files = [
+            node["props"]["file"]
+            for node in graph["nodes"].values()
+            if "file" in node["props"]
+        ]
         self.assertEqual(node_files, ["AGENTS.md"])
 
     def test_static_discovery_does_not_execute_customization_content(self) -> None:

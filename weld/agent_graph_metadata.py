@@ -13,21 +13,23 @@ from weld.agent_graph_authority import (
     frontmatter_authority_props,
     generated_marker_props,
 )
+from weld.agent_graph_metadata_permissions import permission_references_with_lines
 from weld.agent_graph_metadata_utils import (
     AgentGraphReference,
     clean_heading,
     copy_first_scalar,
     copy_list,
     dedupe_references,
+    diagnostic as _diagnostic,
+    extract_inferred_references,
     first_paragraph,
     is_external_ref,
     iter_strings,
     jsonable,
     named_entries,
+    prose_inferred_references,
     ref,
-    string_list,
     strings_for_keys,
-    tool_name,
 )
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
@@ -51,6 +53,11 @@ _PATH_KEYS = ("applyTo", "applies_to", "paths", "path_globs", "globs")
 _SKILL_KEYS = ("skills", "uses_skills", "usesSkills")
 _COMMAND_KEYS = ("commands", "uses_commands", "usesCommands")
 _MCP_KEYS = ("mcp", "mcp_servers", "mcpServers")
+# Authoritative orchestrator-pipeline declarations live under the ``weld:``
+# namespace in frontmatter (see ADR 0021 Amendment 1). Edges from these keys
+# emit ``invokes_agent`` at confidence=definite, dedupe-winning over any
+# inferred-confidence edge produced by body regex on the same target.
+_INVOKES_AGENT_KEYS = ("invokes_agents", "subagents", "dispatches_to")
 
 
 @dataclass(frozen=True)
@@ -76,28 +83,36 @@ class ParsedAgentGraphAsset:
     diagnostics: tuple[dict[str, Any], ...] = ()
 
 
-def parse_agent_asset(root: Path, rel_path: str, node_type: str, platform: str) -> ParsedAgentGraphAsset:
-    """Parse static metadata and references from one discovered asset."""
+def parse_agent_asset(
+    root: Path, rel_path: str, node_type: str, platform: str,
+    *, known_commands: frozenset[str] | None = None,
+) -> ParsedAgentGraphAsset:
+    """Parse static metadata and references from one discovered asset.
+
+    *known_commands* gates body-text bare-slash command extraction so that
+    paths like ``/tmp/foo`` are not minted as command edges; pass ``None``
+    when no command set has been discovered yet (subagent_type and Skill()
+    extraction still works because they cannot be confused with file paths).
+    """
     path = root / rel_path
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         return ParsedAgentGraphAsset(diagnostics=(_diagnostic(
-            "agent_graph_unreadable_asset",
-            rel_path,
+            "agent_graph_unreadable_asset", rel_path,
             f"Could not read AI customization asset as UTF-8: {exc}",
         ),))
 
     if rel_path.endswith(".json"):
-        return _parse_json_asset(root, rel_path, platform, text)
-    return _parse_markdown_asset(root, rel_path, node_type, text)
+        return _parse_json_asset(root, rel_path, platform, text, known_commands)
+    if rel_path.endswith(".toml"):
+        from weld.agent_graph_metadata_toml import parse_toml_asset
+        return parse_toml_asset(root, rel_path, platform, text, known_commands)
+    return _parse_markdown_asset(root, rel_path, node_type, text, known_commands)
 
 
 def _parse_markdown_asset(
-    root: Path,
-    rel_path: str,
-    node_type: str,
-    text: str,
+    root: Path, rel_path: str, node_type: str, text: str, known_commands: frozenset[str] | None,
 ) -> ParsedAgentGraphAsset:
     frontmatter, body, body_line = _split_frontmatter(text)
     props = _frontmatter_props(frontmatter)
@@ -105,8 +120,11 @@ def _parse_markdown_asset(
     if node_type == "skill":
         props.update({k: v for k, v in _skill_props(body).items() if k not in props})
 
-    references = list(_metadata_references(frontmatter, line=1))
-    references.extend(_text_references(body, start_line=body_line))
+    references = list(_metadata_references(frontmatter, line=1, known_commands=known_commands))
+    references.extend(_text_references(body, start_line=body_line, known_commands=known_commands))
+    # ADR 0021 Amendment 2 (5i8b): instruction files default to repo-wide scope.
+    if node_type == "instruction" and not any(r.edge_type == "applies_to_path" for r in references):
+        references.append(ref("scope", "**", "applies_to_path", 1, "**", confidence="inferred"))
     references = dedupe_references(references)
     diagnostics = _broken_file_diagnostics(root, rel_path, references)
     return ParsedAgentGraphAsset(
@@ -117,37 +135,33 @@ def _parse_markdown_asset(
 
 
 def _parse_json_asset(
-    root: Path,
-    rel_path: str,
-    platform: str,
-    text: str,
+    root: Path, rel_path: str, platform: str, text: str, known_commands: frozenset[str] | None,
 ) -> ParsedAgentGraphAsset:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
         return ParsedAgentGraphAsset(diagnostics=(_diagnostic(
-            "agent_graph_invalid_json",
-            rel_path,
-            f"Could not parse JSON customization config: {exc.msg}",
-            line=exc.lineno,
+            "agent_graph_invalid_json", rel_path,
+            f"Could not parse JSON customization config: {exc.msg}", line=exc.lineno,
         ),))
     if not isinstance(payload, dict):
         return ParsedAgentGraphAsset()
 
     props = _config_props(payload)
-    derived = _derived_json_nodes(rel_path, platform, payload)
-    refs = list(_metadata_references(payload, line=1))
+    derived = _derived_json_nodes(rel_path, platform, payload, known_commands)
+    refs = list(_metadata_references(payload, line=1, known_commands=known_commands))
     for raw in iter_strings(payload):
-        refs.extend(_text_references(raw, start_line=1))
-    refs = dedupe_references(refs)
-    diagnostics = _broken_file_diagnostics(root, rel_path, refs)
+        refs.extend(_text_references(raw, start_line=1, known_commands=known_commands))
+    # Permission allow/deny entries are exploded per-entry and appended
+    # AFTER dedupe so multiple Bash(...) patterns survive; the
+    # materializer's per-edge dedupe is keyed on raw.
+    final_refs = dedupe_references(refs) + permission_references_with_lines(payload, text)
+    diagnostics = _broken_file_diagnostics(root, rel_path, final_refs)
     for node in derived:
         diagnostics.extend(_broken_file_diagnostics(root, rel_path, node.references))
     return ParsedAgentGraphAsset(
-        props=props,
-        references=tuple(dedupe_references(refs)),
-        derived_nodes=tuple(derived),
-        diagnostics=tuple(diagnostics),
+        props=props, references=tuple(final_refs),
+        derived_nodes=tuple(derived), diagnostics=tuple(diagnostics),
     )
 
 
@@ -197,43 +211,34 @@ def _config_props(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _derived_json_nodes(
-    rel_path: str,
-    platform: str,
-    payload: dict[str, Any],
+    rel_path: str, platform: str, payload: dict[str, Any], known_commands: frozenset[str] | None,
 ) -> list[DerivedAgentGraphNode]:
     nodes: list[DerivedAgentGraphNode] = []
     if platform == "opencode":
-        nodes.extend(_configured_nodes(rel_path, platform, payload, "agents", "agent"))
-        nodes.extend(_configured_nodes(rel_path, platform, payload, "commands", "command"))
+        nodes.extend(_configured_nodes(rel_path, platform, payload, "agents", "agent", known_commands))
+        nodes.extend(_configured_nodes(rel_path, platform, payload, "commands", "command", known_commands))
     nodes.extend(_mcp_nodes(rel_path, platform, payload))
-    nodes.extend(_hook_nodes(rel_path, platform, payload))
+    nodes.extend(_hook_nodes(rel_path, platform, payload, known_commands))
     return nodes
 
 
 def _configured_nodes(
-    rel_path: str,
-    platform: str,
-    payload: dict[str, Any],
-    key: str,
-    node_type: str,
+    rel_path: str, platform: str, payload: dict[str, Any], key: str, node_type: str,
+    known_commands: frozenset[str] | None,
 ) -> list[DerivedAgentGraphNode]:
     entries = payload.get(key) or payload.get(key[:-1])
     nodes: list[DerivedAgentGraphNode] = []
     for name, config in named_entries(entries):
         props = _config_props(config) if isinstance(config, dict) else {}
-        refs = list(_metadata_references(config, line=1)) if isinstance(config, dict) else []
+        refs = list(_metadata_references(config, line=1, known_commands=known_commands)) if isinstance(config, dict) else []
         if isinstance(config, dict):
             copy_first_scalar(props, config, "model", ("model",))
         for raw in iter_strings(config):
-            refs.extend(_text_references(raw, start_line=1))
+            refs.extend(_text_references(raw, start_line=1, known_commands=known_commands))
         nodes.append(DerivedAgentGraphNode(
-            node_type=node_type,
-            name=name,
-            platform=platform,
-            path=f"{rel_path}#/{key}/{name}",
-            source_kind=f"{platform}-{node_type}",
-            props=props,
-            references=tuple(dedupe_references(refs)),
+            node_type=node_type, name=name, platform=platform,
+            path=f"{rel_path}#/{key}/{name}", source_kind=f"{platform}-{node_type}",
+            props=props, references=tuple(dedupe_references(refs)),
         ))
     return nodes
 
@@ -244,17 +249,15 @@ def _mcp_nodes(rel_path: str, platform: str, payload: dict[str, Any]) -> list[De
     for name, config in named_entries(entries):
         props = _config_props(config) if isinstance(config, dict) else {}
         nodes.append(DerivedAgentGraphNode(
-            node_type="mcp-server",
-            name=name,
-            platform=platform,
-            path=f"{rel_path}#/mcpServers/{name}",
-            source_kind=f"{platform}-mcp-server",
-            props=props,
+            node_type="mcp-server", name=name, platform=platform,
+            path=f"{rel_path}#/mcpServers/{name}", source_kind=f"{platform}-mcp-server", props=props,
         ))
     return nodes
 
 
-def _hook_nodes(rel_path: str, platform: str, payload: dict[str, Any]) -> list[DerivedAgentGraphNode]:
+def _hook_nodes(
+    rel_path: str, platform: str, payload: dict[str, Any], known_commands: frozenset[str] | None,
+) -> list[DerivedAgentGraphNode]:
     hooks = payload.get("hooks")
     if not isinstance(hooks, dict):
         return []
@@ -263,7 +266,7 @@ def _hook_nodes(rel_path: str, platform: str, payload: dict[str, Any]) -> list[D
         entries = hooks[event] if isinstance(hooks[event], list) else [hooks[event]]
         for idx, entry in enumerate(entries):
             name = f"{event}-{idx + 1}"
-            props = {"event": event}
+            props: dict[str, Any] = {"event": event}
             if isinstance(entry, dict):
                 props.update(_config_props(entry))
                 matcher = entry.get("matcher")
@@ -271,20 +274,16 @@ def _hook_nodes(rel_path: str, platform: str, payload: dict[str, Any]) -> list[D
                     props["matcher"] = matcher
             refs = []
             for raw in iter_strings(entry):
-                refs.extend(_text_references(raw, start_line=1))
+                refs.extend(_text_references(raw, start_line=1, known_commands=known_commands))
             nodes.append(DerivedAgentGraphNode(
-                node_type="hook",
-                name=name,
-                platform=platform,
-                path=f"{rel_path}#/hooks/{event}/{idx}",
-                source_kind=f"{platform}-hook",
-                props=props,
-                references=tuple(dedupe_references(refs)),
+                node_type="hook", name=name, platform=platform,
+                path=f"{rel_path}#/hooks/{event}/{idx}", source_kind=f"{platform}-hook",
+                props=props, references=tuple(dedupe_references(refs)),
             ))
     return nodes
 
 
-def _metadata_references(value: Any, *, line: int) -> list[AgentGraphReference]:
+def _metadata_references(value: Any, *, line: int, known_commands: frozenset[str] | None = None) -> list[AgentGraphReference]:
     refs: list[AgentGraphReference] = []
     if not isinstance(value, dict):
         return refs
@@ -302,16 +301,27 @@ def _metadata_references(value: Any, *, line: int) -> list[AgentGraphReference]:
         refs.append(ref("command", item, "uses_command", line, item))
     for item in strings_for_keys(value, _MCP_KEYS):
         refs.append(ref("mcp-server", item, "provides_tool", line, item))
-    permissions = value.get("permissions")
-    if isinstance(permissions, dict):
-        for item in string_list(permissions.get("allow")):
-            refs.append(ref("tool", tool_name(item), "provides_tool", line, item))
-        for item in string_list(permissions.get("deny")):
-            refs.append(ref("tool", tool_name(item), "restricts_tool", line, item))
+    # Slice 2: orchestrator pipeline declarations live under ``weld:`` in
+    # frontmatter (canonical), but accept top-level for forward compat.
+    weld_ns = value.get("weld") if isinstance(value.get("weld"), dict) else {}
+    for item in strings_for_keys(value, _INVOKES_AGENT_KEYS):
+        refs.append(ref("agent", item, "invokes_agent", line, item))
+    for item in strings_for_keys(weld_ns, _INVOKES_AGENT_KEYS):
+        refs.append(ref("agent", item, "invokes_agent", line, item))
+    # Permission allow/deny entries are exploded per-entry by the JSON parser
+    # (permission_references_with_lines); not handled here.
+    # Slice-3 (a1) k58t: scan prose-bearing scalars (description/desc/purpose)
+    # via the same body-text inferred-edge regex. Same filter & contract.
+    refs.extend(prose_inferred_references(value, _DESCRIPTION_KEYS, line=line, known_commands=known_commands))
     return refs
 
 
-def _text_references(text: str, *, start_line: int) -> list[AgentGraphReference]:
+def _text_references(
+    text: str,
+    *,
+    start_line: int,
+    known_commands: frozenset[str] | None = None,
+) -> list[AgentGraphReference]:
     refs: list[AgentGraphReference] = []
     for offset, line in enumerate(text.splitlines()):
         line_no = start_line + offset
@@ -331,6 +341,9 @@ def _text_references(text: str, *, start_line: int) -> list[AgentGraphReference]
                 "skill": "uses_skill",
             }[target_type]
             refs.append(ref(target_type, name, edge_type, line_no, match.group(0)))
+    refs.extend(extract_inferred_references(
+        text, start_line=start_line, known_commands=known_commands,
+    ))
     return dedupe_references(refs)
 
 
@@ -375,22 +388,3 @@ def _resolve_file(root: Path, source_rel: str, target: str) -> str | None:
         if (root / rel).is_file():
             return rel
     return None
-
-
-def _diagnostic(
-    code: str,
-    path: str,
-    message: str,
-    *,
-    line: int | None = None,
-    reference: str | None = None,
-    raw: str | None = None,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {"severity": "warning", "code": code, "path": path, "message": message}
-    if line is not None:
-        result["line"] = line
-    if reference is not None:
-        result["reference"] = reference
-    if raw is not None:
-        result["raw"] = raw
-    return result

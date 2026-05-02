@@ -119,7 +119,10 @@ def top_authority_nodes(
         if dst in nodes:
             in_deg[dst] = in_deg.get(dst, 0) + 1
     ranked = sorted(
-        nodes.items(),
+        (
+            (node_id, node) for node_id, node in nodes.items()
+            if not _is_unresolved_symbol(node_id, node)
+        ),
         key=lambda item: (
             -(in_deg.get(item[0], 0) + out_deg.get(item[0], 0)),
             item[0],
@@ -136,3 +139,13 @@ def top_authority_nodes(
             "degree": in_deg.get(node_id, 0) + out_deg.get(node_id, 0),
         })
     return entries
+
+
+def _is_unresolved_symbol(node_id: str, node: dict) -> bool:
+    return (
+        node_id.startswith("symbol:unresolved:")
+        or (
+            node.get("type") == "symbol"
+            and (node.get("props") or {}).get("resolved") is False
+        )
+    )

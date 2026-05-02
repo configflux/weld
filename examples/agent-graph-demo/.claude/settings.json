@@ -1,9 +1,31 @@
 {
   "permissions": {
-    "allow": ["Read", "Grep"],
-    "deny": ["Bash(rm *)"]
+    "allow": [
+      "Read",
+      "Grep",
+      "Bash(wd agents *)",
+      "Bash(wd query *)",
+      "Bash(git status)",
+      "Bash(git log*)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(curl *)"
+    ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "description": "Refresh the demo agent graph at session start; rollback by deleting .weld/agent-graph.json.",
+        "matcher": "",
+        "hooks": [
+          {
+            "command": "wd agents discover",
+            "type": "command"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "description": "Record tool use without executing project code; rollback by deleting the log.",

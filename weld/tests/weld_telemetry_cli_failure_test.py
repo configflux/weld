@@ -12,12 +12,10 @@ monkey-patch :func:`weld._telemetry._write_locked` to raise and verify:
 
 from __future__ import annotations
 
-import io
 import os
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -26,40 +24,17 @@ from unittest import mock
 _repo_root = str(Path(__file__).resolve().parent.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
+_tests_dir = str(Path(__file__).resolve().parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
 
 from weld import _telemetry as tel  # noqa: E402
 from weld import cli  # noqa: E402
 from weld.cli import main as cli_main  # noqa: E402
-
-
-def _make_repo(root: Path) -> Path:
-    weld = root / ".weld"
-    weld.mkdir(parents=True, exist_ok=True)
-    (weld / "discover.yaml").write_text("# placeholder\n")
-    return root
-
-
-@contextmanager
-def _chdir(target: Path):
-    prev = Path.cwd()
-    os.chdir(target)
-    try:
-        yield
-    finally:
-        os.chdir(prev)
-
-
-@contextmanager
-def _captured(root: Path):
-    out_buf = io.StringIO()
-    err_buf = io.StringIO()
-    base_env = {"XDG_STATE_HOME": str(root / "_xdg")}
-    with _chdir(root), \
-         mock.patch.dict(os.environ, base_env, clear=False), \
-         mock.patch.object(sys, "stdout", out_buf), \
-         mock.patch.object(sys, "stderr", err_buf):
-        os.environ.pop("WELD_TELEMETRY", None)
-        yield out_buf, err_buf
+from telemetry_test_helpers import (  # noqa: E402
+    captured as _captured,
+    make_repo as _make_repo,
+)
 
 
 class WriterFailureIsolationTests(unittest.TestCase):

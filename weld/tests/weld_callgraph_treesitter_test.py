@@ -79,6 +79,9 @@ class TreeSitterCallgraphTest(unittest.TestCase):
                             "source_strategy": "tree_sitter",
                             "resolved": False,
                             "confidence": "speculative",
+                            "raw": "helper",
+                            "resolution": "unresolved",
+                            "provenance": {"file": rel_path, "line": 1},
                         },
                     },
                     {
@@ -89,6 +92,9 @@ class TreeSitterCallgraphTest(unittest.TestCase):
                             "source_strategy": "tree_sitter",
                             "resolved": False,
                             "confidence": "speculative",
+                            "raw": "other",
+                            "resolution": "unresolved",
+                            "provenance": {"file": rel_path, "line": 1},
                         },
                     },
                 ],
@@ -130,6 +136,10 @@ class TreeSitterCallgraphTest(unittest.TestCase):
         self.assertEqual(len(calls_edges), 2)
         froms = {e["from"] for e in calls_edges}
         self.assertEqual(froms, {"symbol:typescript:index:main"})
+        for edge in calls_edges:
+            self.assertIn("raw", edge["props"])
+            self.assertEqual(edge["props"]["resolution"], "unresolved")
+            self.assertEqual(edge["props"]["provenance"]["file"], "index.ts")
 
     def test_emit_calls_default_off(self) -> None:
         """Existing tree_sitter sources without ``emit_calls`` see no edges."""
@@ -156,7 +166,7 @@ class TreeSitterCallgraphTest(unittest.TestCase):
 
     def test_calls_query_present_in_language_files(self) -> None:
         """Every loaded language YAML must declare a ``calls`` query."""
-        for lang in ("python", "typescript", "go", "rust"):
+        for lang in ("python", "typescript", "go", "rust", "csharp", "cpp", "java"):
             queries = ts_strategy.load_language_queries(lang)
             self.assertIn(
                 "calls", queries, f"language {lang} missing 'calls' query"

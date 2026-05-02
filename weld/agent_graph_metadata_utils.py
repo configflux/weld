@@ -182,3 +182,135 @@ def is_external_ref(value: str) -> bool:
         lowered.startswith(("http://", "https://", "mailto:", "data:"))
         or lowered.startswith("#")
     )
+
+
+# --- Inferred-confidence body extraction (slice 1) --------------------------
+#
+# These regexes pick up orchestration references written in pseudocode style
+# (subagent_type kwarg/colon, Skill() call, bare slash command) that the
+# typed-prefix `_NAMED_REF_RE` cannot see. Edges emitted from these matches
+# are tagged confidence="inferred" so callers can distinguish them from
+# explicit `agent:`/`skill:`/`command:` references.
+#
+# The bare-slash pattern requires a known set of command names provided by
+# the caller; without it any path like `/tmp/foo` would pollute the graph.
+
+_SUBAGENT_TYPE_RE = re.compile(
+    r"subagent_type\s*[:=]\s*[\"']([a-z][a-z0-9_-]*)[\"']"
+)
+_SKILL_CALL_RE = re.compile(
+    r"Skill\s*\(\s*(?:skill_name|skill)\s*=\s*[\"']([a-z][a-z0-9_-]*)[\"']"
+)
+# Bare slash command: not preceded by a word character or a slash (so paths
+# like /tmp/foo or //a/b are excluded), one lowercase word, terminated by
+# whitespace, common punctuation, or end of line. The terminator class
+# includes !, ?, ], } so prose like "Try /push!", "Should I /execute?",
+# "[/plan](url)", and "`/cycle` for work}" all match (ukk8).
+_BARE_COMMAND_RE = re.compile(
+    r"(?<![A-Za-z0-9_/])/([a-z][a-z0-9-]*)(?=[\s.,;:)`*!?\]}]|$)"
+)
+
+
+def prose_inferred_references(
+    mapping: dict[str, Any],
+    keys: Iterable[str],
+    *,
+    line: int,
+    known_commands: frozenset[str] | None,
+) -> list[AgentGraphReference]:
+    """Scan prose-bearing scalar values in *mapping* for inferred references.
+
+    For each key in *keys*, if the value is a non-empty string, run the same
+    body-text regexes (``subagent_type`` / ``Skill()`` / bare-``/command``)
+    via :func:`extract_inferred_references`. Slice-3 (a1) k58t -- without
+    this, references inside frontmatter ``description:`` (and aliases like
+    ``desc`` / ``purpose``) are silently dropped.
+    """
+    refs: list[AgentGraphReference] = []
+    for key in keys:
+        raw = mapping.get(key)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        refs.extend(extract_inferred_references(
+            raw, start_line=line, known_commands=known_commands,
+        ))
+    return refs
+
+
+def extract_inferred_references(
+    text: str,
+    *,
+    start_line: int,
+    known_commands: frozenset[str] | None,
+) -> list[AgentGraphReference]:
+    """Return inferred-confidence references found in *text*.
+
+    Scans line-by-line and emits:
+
+    * `invokes_agent -> agent:<name>` for `subagent_type: "name"` /
+      `subagent_type="name"` (literal lowercase identifiers only --
+      template placeholders like `<implementer_type>` or `${var}` are
+      filtered by the regex's leading `[a-z]` requirement).
+    * `uses_skill -> skill:<name>` for `Skill(skill_name="name")` and
+      `Skill(skill="name")`.
+    * `uses_command -> command:<name>` for bare `/<name>` references --
+      ONLY when *known_commands* is non-empty and contains *<name>*.
+      Without that filter we would mint command nodes for every
+      `/tmp/foo` and `/path/to/x` in the body.
+
+    Every reference carries provenance: the file is the caller's
+    responsibility (set on the edge by the materializer), and the line
+    plus a copy of the matched text are attached here.
+    """
+    refs: list[AgentGraphReference] = []
+    has_commands = bool(known_commands)
+    for offset, line in enumerate(text.splitlines()):
+        line_no = start_line + offset
+        for match in _SUBAGENT_TYPE_RE.finditer(line):
+            refs.append(ref(
+                "agent",
+                match.group(1),
+                "invokes_agent",
+                line_no,
+                match.group(0),
+                confidence="inferred",
+            ))
+        for match in _SKILL_CALL_RE.finditer(line):
+            refs.append(ref(
+                "skill",
+                match.group(1),
+                "uses_skill",
+                line_no,
+                match.group(0),
+                confidence="inferred",
+            ))
+        if not has_commands:
+            continue
+        for match in _BARE_COMMAND_RE.finditer(line):
+            name = match.group(1)
+            if name not in known_commands:
+                continue
+            refs.append(ref(
+                "command",
+                name,
+                "uses_command",
+                line_no,
+                match.group(0),
+                confidence="inferred",
+            ))
+    return refs
+
+
+def diagnostic(
+    code: str, path: str, message: str, *,
+    line: int | None = None, reference: str | None = None, raw: str | None = None,
+) -> dict[str, Any]:
+    """Build a parser diagnostic dict with optional line/reference/raw fields."""
+    result: dict[str, Any] = {"severity": "warning", "code": code, "path": path, "message": message}
+    if line is not None:
+        result["line"] = line
+    if reference is not None:
+        result["reference"] = reference
+    if raw is not None:
+        result["raw"] = raw
+    return result

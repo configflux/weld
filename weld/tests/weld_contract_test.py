@@ -342,7 +342,10 @@ class VocabularyConstantsTest(unittest.TestCase):
         self.assertTrue(expected.issubset(set(NODE_OPTIONAL_PROPS)))
 
     def test_edge_optional_props_documented(self) -> None:
-        expected = {"source_strategy", "confidence"}
+        expected = {
+            "source_strategy", "confidence", "resolved", "provenance",
+            "raw", "resolution",
+        }
         self.assertTrue(expected.issubset(set(EDGE_OPTIONAL_PROPS)))
 
     # -- tracked project: agent-relevant vocabulary expansion --

@@ -10,6 +10,14 @@ The unit tests cover the generator's API contract:
   each child has its own modules.
 * Generated modules import siblings (so the call graph has shape) and
   are syntactically valid Python.
+
+Git availability: the polyrepo and ``--git-init`` paths require ``git``
+on PATH. Bazel sandboxes legitimately may not provide ``git``, so the
+git-dependent classes are gated with ``skipUnless(_has_git(), ...)``.
+To keep that gating from masking discovery breakage as a silent skip,
+``GitGatedSmokeTest`` always runs and proves the test module is loaded
+*and* records why the gate fired so the absence of polyrepo coverage is
+visible rather than silent.
 """
 
 from __future__ import annotations
@@ -130,6 +138,81 @@ class SingleLayoutGitInitFlagTest(unittest.TestCase):
             cwd=self.root, check=True, capture_output=True, text=True,
         )
         self.assertTrue(result.stdout.strip())
+
+
+class GitGatedSmokeTest(unittest.TestCase):
+    """Always-running smoke tests that document the git gate.
+
+    The polyrepo class above is gated with ``skipUnless(_has_git(), ...)``
+    because git may legitimately be absent from a Bazel sandbox. Without
+    a non-skipping companion, that gate makes the entire test file
+    appear "all green" even when no polyrepo assertion ran. These smoke
+    tests close the gap by:
+
+    * Asserting the test module is loaded (the asserts below run
+      unconditionally), so a regression that breaks the file during
+      import is caught.
+    * Recording the git-availability fact in the test output so an
+      operator can see *why* the polyrepo class skipped (or did not)
+      without having to read the source.
+    * Exercising parts of ``generate_polyrepo``'s contract that do
+      not require git (signature, layout shape when git is present) so
+      a regression like a renamed kwarg or removed function is caught
+      regardless of git availability.
+    """
+
+    def test_module_loaded_and_git_status_visible(self) -> None:
+        # Trivially true; its purpose is to prove we reached the
+        # assertion phase. If the file fails to import, this test
+        # fails — converting an import error from "0 assertions
+        # noticed" to "smoke test failed".
+        self.assertTrue(True)
+        # Print the git fact as a regular ``unittest`` message so the
+        # bazel test log records whether the gated class skipped.
+        # This is observable in test.log without re-running.
+        print(
+            "GitGatedSmokeTest: git available = "
+            f"{_has_git()} (polyrepo class will "
+            f"{'run' if _has_git() else 'skip'})"
+        )
+
+    def test_generate_polyrepo_signature_is_callable(self) -> None:
+        # Reaches into the imported function to confirm the symbol is
+        # bound and accepts the documented kwargs. This catches an
+        # accidental rename or signature drift even when git is absent
+        # (no actual generation happens).
+        import inspect
+
+        sig = inspect.signature(generate_polyrepo)
+        for required in ("root", "children", "files_per_child"):
+            self.assertIn(
+                required, sig.parameters,
+                f"generate_polyrepo signature missing '{required}'; "
+                f"the polyrepo class above relies on this kwarg.",
+            )
+
+    def test_generate_polyrepo_layout_when_git_present(self) -> None:
+        # When git is available, exercise the layout assertion that
+        # does not depend on commit creation. This is intentionally
+        # narrower than the polyrepo class above so it remains a
+        # smoke test (one slot, one file). When git is absent, this
+        # case skips with an explicit message so the skip is visible
+        # *and* attributed to the runtime fact (not a class-level
+        # decorator).
+        if not _has_git():
+            self.skipTest(
+                "git not on PATH at runtime; layout smoke skipped — "
+                "see GitGatedSmokeTest.test_module_loaded_and_git_status_visible"
+            )
+        root = Path(mkdtemp(prefix="weld-bench-poly-smoke-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        generate_polyrepo(
+            root, children=1, files_per_child=1, imports_per_file=0
+        )
+        self.assertTrue(
+            (root / "repo_00").is_dir(),
+            "generate_polyrepo should always produce repo_00",
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

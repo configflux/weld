@@ -1,0 +1,14 @@
+# Codex platform config for the agent-graph-demo.
+#
+# This file declares MCP servers under the Codex platform so discovery
+# can attribute them as ``platform=codex`` instead of silently merging
+# them onto the generic mcp-server nodes minted from ``.mcp.json``-style
+# sources elsewhere in the demo.
+
+[mcp_servers.weld]
+command = "python"
+args = ["-m", "weld.mcp_server"]
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]

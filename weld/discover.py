@@ -81,6 +81,32 @@ def _persist_query_state_sidecar(weld_dir: Path, graph: dict) -> None:
             file=sys.stderr,
         )
 
+
+def _persist_file_index(root: Path) -> None:
+    """Refresh the keyword-to-file index alongside the graph.
+
+    The file index backs ``wd find`` and is functionally a sibling of
+    ``graph.json``: callers expect both to be in sync after a discovery
+    run. Historically only the standalone ``wd build-index`` verb wrote
+    it, so a fresh checkout that ran ``wd discover`` could leave
+    ``wd find`` returning empty results for symbols that clearly
+    existed on disk and in the graph (the canonical dogfood gap).
+
+    Failures here are logged and swallowed -- a missing index simply
+    means the next ``wd build-index`` (or the next discover) rebuilds
+    one. We never let an indexing hiccup fail the whole discovery run.
+    """
+    try:
+        from weld.file_index import build_file_index, save_file_index
+
+        index = build_file_index(root)
+        save_file_index(root, index)
+    except Exception as exc:  # noqa: BLE001 -- index refresh is best-effort.
+        print(
+            f"[weld] notice: skipped file-index refresh: {exc}",
+            file=sys.stderr,
+        )
+
 def _discover_single_repo(
     root: Path,
     *,
@@ -162,6 +188,7 @@ def _discover_single_repo(
         graph = _post_process(nodes, edges, context, config, root, df)
         save_state(root, DiscoveryState(files=current_hashes))
         _persist_query_state_sidecar(root / ".weld", graph)
+        _persist_file_index(root)
         return graph
 
     # --- Incremental path ---
@@ -181,6 +208,7 @@ def _discover_single_repo(
             refreshed["meta"]["discovered_from"] = current_file_set
         save_state(root, DiscoveryState(files=current_hashes))
         _persist_query_state_sidecar(root / ".weld", refreshed)
+        _persist_file_index(root)
         return refreshed
 
     # Purge stale nodes from existing graph
@@ -208,6 +236,7 @@ def _discover_single_repo(
     graph = _post_process(ex_nodes, ex_edges, context, config, root, old_df + new_df)
     save_state(root, DiscoveryState(files=current_hashes))
     _persist_query_state_sidecar(root / ".weld", graph)
+    _persist_file_index(root)
     return graph
 
 

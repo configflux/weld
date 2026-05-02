@@ -3,6 +3,48 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.14.0 - 2026-05-02
+
+### Added
+
+- `wd discover` now closes the graph deterministically across supported
+  languages. Source-backed symbols link to their files, imports / includes /
+  use edges resolve into deterministic dependencies, call edges carry
+  provenance, and unresolved sentinels are reduced in `wd stats` and `wd viz`.
+  <!-- verify: file=weld/graph_closure.py grep=close_graph -->
+- New `test_peer` discovery strategy surfaces sibling `*_test.py` files for
+  every Python module so `wd query` and `wd find` can locate a module's
+  nearest unit test directly from the graph.
+  <!-- verify: file=weld/strategies/test_peer.py grep=test_peer -->
+- `wd find` and `wd query` now surface module-level Python constants
+  (top-level UPPER_CASE assignments), so configuration values and defaults
+  appear alongside functions and classes in search results.
+  <!-- verify: file=weld/strategies/python_module.py grep=_module_constant_names -->
+- `wd doctor` probes the standalone `copilot` CLI used by the `copilot-cli`
+  enrichment provider, introduces a `[note]` level for soft recommendations
+  (so missing optional providers and missing MCP config are no longer
+  presented as `[warn]`), and adds `--ack <id>` / `--unack <id>` /
+  `--list-acks` to persist per-project dismissals in `.weld/doctor.yaml`.
+  <!-- verify: file=weld/_doctor_optional.py grep=copilot -->
+- `wd agents discover` now infers references through `subagent_type=`,
+  `Skill()` calls, and bare `/command` mentions inside agent and command
+  bodies, surfaces `weld.invokes_agents` frontmatter for orchestrator
+  agents, scans frontmatter descriptions for inferred references, applies
+  an implicit-default `applies_to_path` to instruction files, parses
+  `.codex/config.toml` as a Codex MCP source, and explodes
+  `.claude/settings.json` permissions into per-entry edges. The bare
+  `/command` terminator class extends to `!`, `?`, `]`, and `}`, and the
+  `wd agents demo` fixture now mirrors a realistic seven-platform,
+  nine-asset deployment.
+  <!-- verify: file=weld/agent_graph_discovery.py -->
+
+### Fixed
+
+- `wd discover` keeps `.weld/file-index.json` in sync with `.weld/graph.json`.
+  Stale index files were drifting after partial runs and causing `wd find` to
+  miss recently-discovered files.
+  <!-- verify: file=weld/discover.py grep=_persist_file_index -->
+
 ## v0.13.2 - 2026-04-30
 
 ### Added

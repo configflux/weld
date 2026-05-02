@@ -115,11 +115,15 @@ Nodes are keyed by deterministic IDs of the form
 - `handoff_to` — an agent declares it hands off to another agent.
 - `invokes_agent` — text or config invokes another agent
   (`agent:planner` style references).
-- `uses_skill` — an agent or instruction references a skill
-  (`skill:architecture-decision`).
+- `uses_skill` — an agent, command, prompt, or instruction explicitly
+  references a skill (`skill:architecture-decision`, a `skills:` metadata
+  list, or `Skill(skill="architecture-decision")` call syntax).
 - `uses_command` — an asset references a slash-command-style entry.
 - `applies_to_path` — an instruction or rule scopes itself to a file
-  glob.
+  glob. Instruction files without an explicit `applyTo:` / `globs:` /
+  `path_globs:` declaration default to repo-wide scope and emit one
+  inferred edge to `**` (ADR 0021 Amendment 2). Explicit declarations
+  always win and suppress the implicit edge.
 - `references_file` — text contains a Markdown link, `@file` reference,
   or repository-relative path. Each such target also becomes a `file`
   node, with `props.exists` recording whether the target resolves.
@@ -133,6 +137,19 @@ Each edge carries a `confidence` (`definite` for parsed structural
 references, `inferred`/`speculative` reserved for future heuristics) and a
 `provenance` block recording the source file, line number, and the raw
 text that produced the edge.
+
+### Skill Reference Boundaries
+
+`uses_skill` is an explicit static relationship. Weld does not infer a
+skill edge just because a platform might route to a skill at runtime based
+on the skill description, file name, or surrounding task context. Runtime
+selection behavior is outside the static graph contract and varies by
+client.
+
+The audit may suppress `unused_skill` when an agent or instruction mentions
+the skill name in prose, because that often documents instruction-mediated
+usage. That suppression reduces noise; it is not an edge and is not proof
+that a runtime loaded the skill.
 
 ## Example graph
 
@@ -231,7 +248,8 @@ codes are:
   derived) pair has different descriptions.
 - `missing_render_target` — a canonical asset's `renders:` list points at
   a file that does not exist.
-- `unused_skill` — a skill has no incoming `uses_skill` references
+- `unused_skill` — a skill has no incoming explicit `uses_skill`
+  references and is not mentioned by name in an agent or instruction body
   (`info`-level).
 - `unreachable_subagent` — a subagent has no incoming
   `invokes_agent` / `handoff_to` references.

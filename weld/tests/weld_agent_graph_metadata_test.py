@@ -213,6 +213,120 @@ class AgentGraphMetadataTest(unittest.TestCase):
         hook_edges = _edge_types_from(graph, "hook:claude:pretooluse-1")
         self.assertIn("file:generic:docs-hook.md", hook_edges["references_file"])
 
+    def test_codex_config_toml_emits_mcp_servers_with_codex_platform(self) -> None:
+        # bd asuh: .codex/config.toml is a Codex platform config source. Its
+        # mcp_servers section must mint mcp-server nodes with
+        # platform=codex and a configures edge from the codex config node.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root,
+                ".codex/config.toml",
+                textwrap.dedent(
+                    """\
+                    [mcp_servers.weld]
+                    command = "python"
+                    args = ["-m", "weld.mcp_server"]
+
+                    [mcp_servers.context7]
+                    command = "npx"
+                    args = ["-y", "@upstash/context7-mcp"]
+                    """
+                ),
+            )
+
+            graph = discover_agent_graph(
+                root,
+                git_sha="abc123",
+                updated_at="2026-04-24T00:00:00+00:00",
+            )
+
+        # Codex config node exists.
+        self.assertIn("config:codex:codex-config", graph["nodes"])
+        config_node = graph["nodes"]["config:codex:codex-config"]
+        self.assertEqual(config_node["props"]["platform"], "codex")
+        self.assertEqual(config_node["props"]["file"], ".codex/config.toml")
+
+        # Both MCP servers exist as derived nodes with codex platform
+        # attribution -- distinct from any generic mcp-server:*:weld node
+        # that might exist in a real repo with a parallel .mcp.json.
+        self.assertIn("mcp-server:codex:weld", graph["nodes"])
+        self.assertIn("mcp-server:codex:context7", graph["nodes"])
+        weld_node = graph["nodes"]["mcp-server:codex:weld"]
+        self.assertEqual(weld_node["props"]["platform"], "codex")
+        self.assertEqual(weld_node["props"]["platform_name"], "Codex")
+        self.assertEqual(weld_node["props"]["source_kind"], "codex-mcp-server")
+
+        # The configures edge from the codex config to each mcp-server.
+        config_edges = _edge_types_from(graph, "config:codex:codex-config")
+        self.assertIn("mcp-server:codex:weld", config_edges["configures"])
+        self.assertIn("mcp-server:codex:context7", config_edges["configures"])
+
+    def test_codex_config_toml_does_not_collapse_with_mcp_json(self) -> None:
+        # Both .mcp.json and .codex/config.toml may declare a server with the
+        # same name. They must produce TWO distinct nodes (one per platform),
+        # NOT collapse onto a single generic node. This is the regression the
+        # audit (a5) called out.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root,
+                ".mcp.json",
+                json.dumps({
+                    "mcpServers": {
+                        "weld": {"command": "python", "args": ["-m", "weld.mcp_server"]},
+                    },
+                }),
+            )
+            _write(
+                root,
+                ".codex/config.toml",
+                textwrap.dedent(
+                    """\
+                    [mcp_servers.weld]
+                    command = "python"
+                    args = ["-m", "weld.mcp_server"]
+                    """
+                ),
+            )
+
+            graph = discover_agent_graph(
+                root,
+                git_sha="abc123",
+                updated_at="2026-04-24T00:00:00+00:00",
+            )
+
+        # Both nodes exist with distinct platform attribution.
+        self.assertIn("mcp-server:generic:weld", graph["nodes"])
+        self.assertIn("mcp-server:codex:weld", graph["nodes"])
+        self.assertEqual(
+            graph["nodes"]["mcp-server:generic:weld"]["props"]["platform"],
+            "generic",
+        )
+        self.assertEqual(
+            graph["nodes"]["mcp-server:codex:weld"]["props"]["platform"],
+            "codex",
+        )
+
+    def test_codex_config_toml_invalid_emits_diagnostic(self) -> None:
+        # Malformed TOML must be reported as a diagnostic, not crash discovery.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root,
+                ".codex/config.toml",
+                "this is = not valid [toml\n",
+            )
+
+            graph = discover_agent_graph(
+                root,
+                git_sha="abc123",
+                updated_at="2026-04-24T00:00:00+00:00",
+            )
+
+        codes = [d["code"] for d in graph["meta"]["diagnostics"]]
+        self.assertIn("agent_graph_invalid_toml", codes)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,23 +3,44 @@
     "planner": {
       "description": "Creates plans and may edit files.",
       "tools": ["editFiles"]
+    },
+    "release-notes-writer": {
+      "description": "Drafts release notes from commit ranges. Invoked via /ship.",
+      "tools": ["search"],
+      "skills": ["release-notes"]
     }
   },
   "commands": {
     "plan": {
-      "description": "Run agent:planner and agent:missing-agent for release planning."
+      "description": "Run agent:planner and agent:release-notes-writer for release planning."
+    },
+    "ship": {
+      "description": "Run agent:planner, agent:phantom-implementer, then agent:release-notes-writer."
     }
+  },
+  "permissions": {
+    "allow": ["Read", "Search", "editFiles"],
+    "deny": ["Bash(rm -rf *)"]
   },
   "hooks": {
     "PostToolUse": [
       {
+        "description": "Append tool-use events to opencode-tool.log; rollback by deleting that log.",
         "matcher": "*"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash"
       }
     ]
   },
   "mcpServers": {
     "filesystem": {
       "description": "Local repository file context."
+    },
+    "github": {
+      "description": "GitHub API access for reading repo metadata."
     }
   }
 }

@@ -44,6 +44,7 @@ _EXACT_RULES: dict[str, tuple[str, str, str]] = {
         "copilot-instructions",
     ),
     ".claude/settings.json": ("config", "claude", "settings"),
+    ".codex/config.toml": ("config", "codex", "codex-config"),
     ".mcp.json": ("config", "generic", "mcp"),
     "AGENTS.md": ("instruction", "generic", "agents"),
     "AGENTS.override.md": ("instruction", "codex", "agents-override"),
@@ -103,11 +104,37 @@ def discover_agent_graph(
     git_sha: str | None = None,
     updated_at: str | None = None,
 ) -> dict[str, Any]:
-    """Build the static Agent Graph for *root* without writing it."""
+    """Build the static Agent Graph for *root* without writing it.
+
+    Discovery runs in two passes so body-text bare-slash command extraction
+    can be filtered against the actual command set: pass 1 classifies all
+    assets and probes them (with no known-command set) to collect both
+    file-classified ``command`` assets and JSON-derived command nodes; pass
+    2 re-parses each asset with that frozenset wired through to the
+    inferred-edge regexes. Without this filter every ``/tmp/foo`` in body
+    text would mint a spurious command edge.
+    """
     assets = discover_agent_assets(root)
     authority_config = load_authority_config(root)
+    probe = {
+        asset.path: parse_agent_asset(
+            root, asset.path, asset.node_type, asset.platform, known_commands=None,
+        )
+        for asset in assets
+    }
+    discovered_commands: set[str] = {
+        asset.name for asset in assets if asset.node_type == "command"
+    }
+    for parsed_asset in probe.values():
+        for derived in parsed_asset.derived_nodes:
+            if derived.node_type == "command":
+                discovered_commands.add(derived.name)
+    known_commands = frozenset(discovered_commands)
     parsed = {
-        asset.path: parse_agent_asset(root, asset.path, asset.node_type, asset.platform)
+        asset.path: parse_agent_asset(
+            root, asset.path, asset.node_type, asset.platform,
+            known_commands=known_commands,
+        )
         for asset in assets
     }
     nodes, edges, source_ids = materialize_agent_graph(
@@ -168,6 +195,9 @@ def _classify_file(rel_path: str) -> AgentCustomizationAsset | None:
     if _under(parts, ".claude", "agents"):
         name = _strip_known_suffix(filename)
         return _asset(rel_path, "agent", "claude", name, "claude-agent")
+    if _under(parts, ".claude", "commands"):
+        name = _strip_known_suffix(filename)
+        return _asset(rel_path, "command", "claude", name, "claude-command")
     if _is_skill(parts, ".claude", "skills"):
         return _asset(rel_path, "skill", "claude", parts[-2], "claude-skill")
     if _under(parts, ".cursor", "rules"):

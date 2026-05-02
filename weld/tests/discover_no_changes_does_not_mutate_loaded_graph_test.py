@@ -30,6 +30,7 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from weld import discover as discover_mod  # noqa: E402
+from weld.discovery_state import resolve_source_files  # noqa: E402
 from weld.discover import _discover_single_repo  # noqa: E402
 
 
@@ -62,6 +63,17 @@ def _build_fixture(root: Path) -> None:
 
 class DiscoverNoChangesDoesNotMutateLoadedGraphTest(unittest.TestCase):
     """Regression for the no-changes branch mutation bug."""
+
+    def test_path_sources_are_tracked_in_discovery_state(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="path-source-") as td:
+            root = Path(td)
+            (root / "issues.jsonl").write_text("{}", encoding="utf-8")
+            files = resolve_source_files(
+                root,
+                {"path": "issues.jsonl"},
+                lambda _root, matched: matched,
+            )
+            self.assertEqual(files, ["issues.jsonl"])
 
     def test_incremental_no_changes_does_not_mutate_loaded_graph(self) -> None:
         with tempfile.TemporaryDirectory(prefix="nochg-mutate-") as td:

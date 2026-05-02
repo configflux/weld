@@ -91,6 +91,27 @@ class VizAdapterTest(unittest.TestCase):
         self.assertEqual({n["data"]["type"] for n in payload["elements"]["nodes"]}, {"service", "route"})
         self.assertEqual({e["data"]["type"] for e in payload["elements"]["edges"]}, {"exposes"})
 
+    def test_default_overview_hides_unresolved_sentinels(self) -> None:
+        nodes = {
+            "entity:Store": {"type": "entity", "label": "Store", "props": {}},
+            "symbol:unresolved:append": {
+                "type": "symbol",
+                "label": "append",
+                "props": {"resolved": False},
+            },
+        }
+        data = _graph_payload(nodes)
+        default_ids = {
+            node["data"]["id"]
+            for node in normalize_graph_data(data)["elements"]["nodes"]
+        }
+        explicit_ids = {
+            node["data"]["id"]
+            for node in normalize_graph_data(data, node_types={"symbol"})["elements"]["nodes"]
+        }
+        self.assertNotIn("symbol:unresolved:append", default_ids)
+        self.assertIn("symbol:unresolved:append", explicit_ids)
+
     def test_neighborhood_extracts_depth(self) -> None:
         with _simple_root() as tmp:
             data = json.loads((Path(tmp) / ".weld" / "graph.json").read_text())

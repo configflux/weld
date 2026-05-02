@@ -13,6 +13,7 @@ from pathlib import Path
 from weld._git import get_git_sha
 from weld.contract import SCHEMA_VERSION
 from weld.graph import _schema_version_for
+from weld.graph_closure import close_graph
 from weld.serializer import canonical_graph as _canonical_graph
 
 
@@ -28,6 +29,7 @@ def post_process(
     _resolve_fk_edges(edges, context)
     _detect_agent_invocations(nodes, edges, context)
     _apply_topology_overlay(nodes, edges, config, root)
+    close_graph(nodes, edges)
     _clean_and_dedup_edges(nodes, edges)
     unique_from = _dedup_discovered_from(discovered_from)
 

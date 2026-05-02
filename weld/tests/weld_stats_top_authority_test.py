@@ -91,6 +91,42 @@ class TestTopAuthorityRanking(unittest.TestCase):
         self.assertEqual(first["out_degree"], 1)
         self.assertEqual(first["degree"], 4)
 
+    def test_unresolved_sentinels_are_not_ranked_by_default(self) -> None:
+        nodes = {
+            "entity:Store": {"type": "entity", "label": "Store", "props": {}},
+            "symbol:unresolved:append": {
+                "type": "symbol",
+                "label": "append",
+                "props": {"resolved": False},
+            },
+            **{
+                f"symbol:caller:{idx}": {
+                    "type": "symbol",
+                    "label": f"caller{idx}",
+                    "props": {},
+                }
+                for idx in range(8)
+            },
+        }
+        edges = [
+            {
+                "from": f"symbol:caller:{idx}",
+                "to": "symbol:unresolved:append",
+                "type": "calls",
+                "props": {},
+            }
+            for idx in range(8)
+        ]
+        edges.append({
+            "from": "entity:Store",
+            "to": "symbol:caller:0",
+            "type": "depends_on",
+            "props": {},
+        })
+        g = _make_graph(nodes, edges)
+        ids = [entry["id"] for entry in g.stats(top=3)["top_authority_nodes"]]
+        self.assertNotIn("symbol:unresolved:append", ids)
+
 
 class TestTopAuthorityDeterministicTieBreak(unittest.TestCase):
     def test_ties_broken_by_id_ascending(self) -> None:

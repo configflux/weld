@@ -22,6 +22,8 @@ The strategy uses stdlib ``ast`` only -- no new mandatory dependencies.
 from __future__ import annotations
 
 import ast
+import builtins
+import sys
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
@@ -34,6 +36,8 @@ from weld.strategies._helpers import StrategyResult, filter_glob_results, should
 #: resolved against the module's imports or local definitions. Kept stable
 #: so consumers can filter / rank these distinctly from resolved targets.
 UNRESOLVED_PREFIX = "symbol:unresolved:"
+_BUILTIN_NAMES = frozenset(dir(builtins))
+_STDLIB_MODULES = frozenset(getattr(sys, "stdlib_module_names", frozenset()))
 
 def _module_dotted_path(rel_path: str) -> str:
     """Return a python-style dotted module path for *rel_path*.
@@ -134,8 +138,8 @@ class _CallGraphVisitor(ast.NodeVisitor):
         self.import_table = import_table
         # qualname -> {"line": int, "name": str}
         self.symbols: dict[str, dict] = {}
-        # caller-qualname -> list of (target_id, resolved: bool)
-        self.calls: dict[str, list[tuple[str, bool]]] = {}
+        # caller-qualname -> list of (target_id, resolved, raw, line, resolution)
+        self.calls: dict[str, list[tuple[str, bool, str, int, str]]] = {}
         self._qual_stack: list[str] = []
 
     # -- helpers ---------------------------------------------------------
@@ -150,12 +154,12 @@ class _CallGraphVisitor(ast.NodeVisitor):
             self.symbols[qual] = {"name": name, "line": lineno}
         return qual
 
-    def _resolve_call(self, node: ast.Call) -> tuple[str, bool]:
+    def _resolve_call(self, node: ast.Call) -> tuple[str, bool, str, str]:
         """Best-effort resolution of a call target to a symbol id.
 
-        Returns ``(target_id, resolved)``. ``resolved`` is True for
-        same-module / import-table hits and False for the unresolved
-        sentinel form.
+        Returns ``(target_id, resolved, raw, resolution)``. ``resolved``
+        is True for same-module / import-table hits and False for the
+        unresolved sentinel form.
         """
         func = node.func
         # Bare name: foo()
@@ -163,17 +167,18 @@ class _CallGraphVisitor(ast.NodeVisitor):
             name = func.id
             # 1. same-module top-level def
             if name in self.symbols:
-                return _symbol_id(self.module_path, name), True
+                return _symbol_id(self.module_path, name), True, name, "local"
             # 2. imported name (from foo.bar import name [as alias])
             if name in self.import_table:
                 module, attr = self.import_table[name]
                 if attr:
-                    return _symbol_id(module, attr), True
+                    resolution = "stdlib" if _is_stdlib_module(module) else "import"
+                    return _symbol_id(module, attr), True, name, resolution
                 # bare module alias used as a callable -- treat as
                 # unresolved (we have no idea what the module's __call__
                 # surface is)
-                return _unresolved_id(name), False
-            return _unresolved_id(name), False
+                return _unresolved_id(name), False, name, _unresolved_resolution(name)
+            return _unresolved_id(name), False, name, _unresolved_resolution(name)
 
         # Attribute call: a.b() or a.b.c()
         if isinstance(func, ast.Attribute):
@@ -182,12 +187,13 @@ class _CallGraphVisitor(ast.NodeVisitor):
             value = func.value
             if isinstance(value, ast.Name) and value.id in self.import_table:
                 module, _ = self.import_table[value.id]
-                return _symbol_id(module, attr), True
+                resolution = "stdlib" if _is_stdlib_module(module) else "import"
+                return _symbol_id(module, attr), True, attr, resolution
             # self.foo() / cls.foo() / arbitrary chains: not resolved.
-            return _unresolved_id(attr), False
+            return _unresolved_id(attr), False, attr, _unresolved_resolution(attr)
 
         # Subscript / lambda / etc -- nothing useful to record.
-        return _unresolved_id("<dynamic>"), False
+        return _unresolved_id("<dynamic>"), False, "<dynamic>", "dynamic"
 
     # -- visit hooks -----------------------------------------------------
 
@@ -210,8 +216,10 @@ class _CallGraphVisitor(ast.NodeVisitor):
         for child in node.body:
             for sub in ast.walk(child):
                 if isinstance(sub, ast.Call):
-                    target_id, resolved = self._resolve_call(sub)
-                    self.calls.setdefault(qual, []).append((target_id, resolved))
+                    target_id, resolved, raw, resolution = self._resolve_call(sub)
+                    self.calls.setdefault(qual, []).append(
+                        (target_id, resolved, raw, sub.lineno, resolution)
+                    )
         # Now descend into nested defs/classes (visit them as ordinary
         # children so their qualnames stack on top of this one).
         for child in node.body:
@@ -298,7 +306,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         for caller_qual, targets in visitor.calls.items():
             from_id = _symbol_id(module_path, caller_qual)
             seen: set[tuple[str, bool]] = set()
-            for target_id, resolved in targets:
+            for target_id, resolved, raw, line, resolution in targets:
                 if (target_id, resolved) in seen:
                     continue
                 seen.add((target_id, resolved))
@@ -316,6 +324,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                                 "qualname": target_id.split(":", 2)[-1],
                                 "language": "python",
                                 "resolved": False,
+                                "resolution": resolution,
                                 "source_strategy": "python_callgraph",
                                 "authority": "derived",
                                 "confidence": "speculative",
@@ -332,8 +341,23 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                             "source_strategy": "python_callgraph",
                             "confidence": "definite" if resolved else "speculative",
                             "resolved": resolved,
+                            "raw": raw,
+                            "resolution": resolution,
+                            "provenance": {
+                                "file": rel_path,
+                                "line": line,
+                            },
                         },
                     }
                 )
 
     return StrategyResult(nodes, edges, discovered_from)
+
+
+def _is_stdlib_module(module: str) -> bool:
+    root = module.split(".", 1)[0]
+    return root in _STDLIB_MODULES
+
+
+def _unresolved_resolution(name: str) -> str:
+    return "builtin" if name in _BUILTIN_NAMES else "unresolved"

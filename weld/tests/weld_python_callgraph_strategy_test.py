@@ -40,6 +40,7 @@ class PythonCallgraphStrategyTest(unittest.TestCase):
                     helper()
                     other_helper()
                     unknown_func()
+                    int("3")
                 """
             ).lstrip(),
             encoding="utf-8",
@@ -99,6 +100,9 @@ class PythonCallgraphStrategyTest(unittest.TestCase):
         )
         self.assertIsNotNone(match, f"missing same-module calls edge: {edges}")
         self.assertTrue(match["props"]["resolved"])
+        self.assertEqual(match["props"]["raw"], "helper")
+        self.assertEqual(match["props"]["resolution"], "local")
+        self.assertEqual(match["props"]["provenance"], {"file": "pkg/a.py", "line": 7})
 
     def test_resolves_imported_call(self) -> None:
         _, edges = self._run()
@@ -114,6 +118,8 @@ class PythonCallgraphStrategyTest(unittest.TestCase):
         )
         self.assertIsNotNone(match, f"missing import-resolved calls edge: {edges}")
         self.assertTrue(match["props"]["resolved"])
+        self.assertEqual(match["props"]["raw"], "other_helper")
+        self.assertEqual(match["props"]["resolution"], "import")
 
     def test_unresolved_call_uses_sentinel(self) -> None:
         nodes, edges = self._run()
@@ -134,6 +140,29 @@ class PythonCallgraphStrategyTest(unittest.TestCase):
         )
         self.assertIsNotNone(match, f"missing unresolved calls edge: {edges}")
         self.assertFalse(match["props"]["resolved"])
+        self.assertEqual(match["props"]["raw"], "unknown_func")
+        self.assertEqual(match["props"]["resolution"], "unresolved")
+        self.assertEqual(match["props"]["provenance"], {"file": "pkg/a.py", "line": 9})
+
+    def test_builtin_call_is_classified(self) -> None:
+        nodes, edges = self._run()
+        sentinel = "symbol:unresolved:int"
+        self.assertIn(sentinel, nodes)
+        self.assertEqual(nodes[sentinel]["props"]["resolution"], "builtin")
+        match = next(
+            (
+                e
+                for e in edges
+                if e["from"] == "symbol:py:pkg.a:main"
+                and e["to"] == sentinel
+                and e["type"] == "calls"
+            ),
+            None,
+        )
+        self.assertIsNotNone(match, f"missing builtin calls edge: {edges}")
+        self.assertFalse(match["props"]["resolved"])
+        self.assertEqual(match["props"]["raw"], "int")
+        self.assertEqual(match["props"]["resolution"], "builtin")
 
     def test_strategy_handles_syntax_error_files(self) -> None:
         bad = self.tmp / "pkg" / "broken.py"

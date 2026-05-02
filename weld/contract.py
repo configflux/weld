@@ -122,7 +122,10 @@ NODE_OPTIONAL_PROPS: tuple[str, ...] = (
     # Interaction-surface metadata (ADR 0018).
     "protocol", "surface_kind", "transport", "boundary_kind", "declared_in",
 )
-EDGE_OPTIONAL_PROPS: tuple[str, ...] = ("source_strategy", "confidence")
+EDGE_OPTIONAL_PROPS: tuple[str, ...] = (
+    "source_strategy", "confidence", "resolved", "provenance", "raw",
+    "resolution",
+)
 
 #: Allowed ``transport`` values per ``protocol``. Drives the coherence
 #: check in :func:`validate_node` (tracked project): when a strategy or

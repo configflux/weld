@@ -1,19 +1,23 @@
 """Diagnostic command that checks Weld setup and reports issues.
 
 Each check returns a list of :class:`CheckResult` objects with a level
-(``ok``, ``warn``, or ``fail``), a human-readable message, and a section
-name (``Project``, ``Config``, ``Graph``, ``Schema``, ``Nodes``, ``Edges``,
-``Strategies``, ``Optional``, ``MCP``).
+(``ok``, ``note``, ``warn``, or ``fail``), a human-readable message, and
+a section name (``Project``, ``Config``, ``Graph``, ``Schema``,
+``Nodes``, ``Edges``, ``Strategies``, ``Optional``, ``MCP``).
 
-The formatted output is grouped by section with a ``Status`` summary line
-at the bottom counting OK, warning, and error results.
+The formatted output is grouped by section with a ``Status`` summary
+line at the bottom counting OK, note, warning, and error results. Notes
+carry a stable id (printed as ``(id: <note-id>)``) so users can dismiss
+them per project via ``wd doctor --ack <id>`` -- the dismissals are
+persisted in ``.weld/doctor.yaml``.
 
-Exit code: 0 if no ``[fail]`` results, including when no Weld project has
-been initialized yet; 1 if any ``[fail]``.
+Exit code: 0 if no ``[fail]`` results, including when no Weld project
+has been initialized yet; 1 if any ``[fail]``. Notes never raise the
+exit code.
 
 Security posture: doctor output never prints the absolute root path or
-environment variables. Paths are reported as ``.weld/<name>`` and strategy
-names are taken only from ``discover.yaml``.
+environment variables. Paths are reported as ``.weld/<name>`` and
+strategy names are taken only from ``discover.yaml``.
 """
 
 from __future__ import annotations
@@ -26,24 +30,14 @@ from pathlib import Path
 
 
 from weld._git import commits_behind, get_git_sha, is_git_repo
+from weld._doctor_format import (
+    apply_suppressions as _apply_suppressions,
+    format_results,
+)
 from weld._doctor_optional import check_optional_deps, check_tree_sitter
 from weld._doctor_strategies import check_strategies, check_trust_boundaries
+from weld._doctor_suppressions import handle_ack_flags, load_suppressions
 from weld._yaml import parse_yaml
-
-
-# Section names render in this order. Any result with an unknown section
-# falls back to the end.
-_SECTION_ORDER = (
-    "Project",
-    "Config",
-    "Graph",
-    "Schema",
-    "Nodes",
-    "Edges",
-    "Strategies",
-    "Optional",
-    "MCP",
-)
 
 
 @dataclass(frozen=True)
@@ -52,11 +46,17 @@ class CheckResult:
 
     ``section`` groups results under a PM-required section header.
     Defaults to ``"Project"`` so legacy callers keep working.
+
+    ``note_id`` is a stable identifier for ``note``-level findings the
+    user may dismiss via ``wd doctor --ack <id>``. Non-note levels and
+    notes that should not be individually suppressible (e.g. summary
+    lines) leave it as ``None``.
     """
 
-    level: str  # "ok" | "warn" | "fail"
+    level: str  # "ok" | "note" | "warn" | "fail"
     message: str
     section: str = "Project"
+    note_id: str | None = None
 
 
 # ── individual checks ────────────────────────────────────────────────
@@ -183,9 +183,10 @@ def _check_mcp_config(root: Path) -> list[CheckResult]:
         return [CheckResult("ok", f"MCP server config found in {locations}", "MCP")]
     return [
         CheckResult(
-            "warn",
+            "note",
             "MCP server config not found (.mcp.json or .codex/config.toml)",
             "MCP",
+            note_id="mcp-config-missing",
         )
     ]
 
@@ -244,77 +245,22 @@ def doctor(root: Path) -> list[CheckResult]:
     return results
 
 
-def _section_key(section: str) -> tuple[int, str]:
-    try:
-        return (_SECTION_ORDER.index(section), "")
-    except ValueError:
-        return (len(_SECTION_ORDER), section)
-
-
-def _status_line(results: list[CheckResult]) -> str:
-    n_ok = sum(1 for r in results if r.level == "ok")
-    n_warn = sum(1 for r in results if r.level == "warn")
-    n_fail = sum(1 for r in results if r.level == "fail")
-    if n_fail:
-        verdict = "errors"
-    elif n_warn:
-        verdict = "warnings"
-    else:
-        verdict = "OK"
-    warn_suffix = "" if n_warn == 1 else "s"
-    fail_suffix = "" if n_fail == 1 else "s"
-    return (
-        f"Status: {verdict} -- {n_ok} ok, "
-        f"{n_warn} warning{warn_suffix}, {n_fail} error{fail_suffix}"
-    )
-
-
-def format_results(results: list[CheckResult]) -> str:
-    """Format results grouped by section with a Status summary footer.
-
-    Each result keeps its ``[ok]/[warn]/[fail]`` tag for quick scanning.
-    Sections render in the PM-required order:
-    Project / Config / Graph / Schema / Nodes / Edges / Strategies /
-    Optional / MCP, with a trailing ``Status:`` line summarising counts.
-    """
-    by_section: dict[str, list[CheckResult]] = {}
-    for r in results:
-        by_section.setdefault(r.section, []).append(r)
-
-    lines: list[str] = []
-    sections = sorted(by_section.keys(), key=_section_key)
-    for section in sections:
-        lines.append(f"[{section}]")
-        for r in by_section[section]:
-            lines.append(f"  [{r.level:4s}] {r.message}")
-    if lines:
-        lines.append("")
-    lines.append(_status_line(results))
-    return "\n".join(lines)
-
-
 _EXIT_CODE_EPILOG = """\
 Exit codes:
-  0  healthy -- all checks pass, or only warnings (visible but not fatal)
-         including when no Weld project has been initialized yet
+  0  healthy -- all checks pass, or only notes/warnings (visible but not
+         fatal), including when no Weld project has been initialized yet
   1  invalid setup -- one or more errors detected
          (e.g. missing .weld/discover.yaml, corrupt .weld/graph.json,
           unresolved strategy reference)
 
-Optional dependencies that are missing report as warnings and do not
-affect the exit code.
+Notes ([note]) flag soft recommendations such as missing optional
+providers or missing MCP config; dismiss them per project with
+``--ack <id>``. Warnings ([warn]) flag a currently-degraded state.
+Neither raises the exit code.
 """
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for ``wd doctor``.
-
-    With ``--security``, restricts output to the trust-posture engine
-    (ADR 0025) and supports ``--json``. Without ``--security``, the
-    summary points to ``wd security`` whenever the trust-posture engine
-    finds any ``high`` signal, satisfying the "doctor integrates or
-    points to the security view" criterion.
-    """
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wd doctor",
         description="Check Weld setup and report issues",
@@ -327,18 +273,59 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("."),
         help="Project root directory (default: current directory)",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--security",
         action="store_true",
         help="Show the trust-posture report only (ADR 0025)",
+    )
+    mode.add_argument(
+        "--ack",
+        action="append",
+        metavar="NOTE_ID",
+        help="Dismiss a doctor note by id (repeatable)",
+    )
+    mode.add_argument(
+        "--unack",
+        action="append",
+        metavar="NOTE_ID",
+        help="Re-enable a previously dismissed note (repeatable)",
+    )
+    mode.add_argument(
+        "--list-acks",
+        action="store_true",
+        help="Print currently-dismissed note ids, one per line",
     )
     parser.add_argument(
         "--json",
         action="store_true",
         help="With --security, emit the trust-posture report as JSON",
     )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for ``wd doctor``.
+
+    With ``--security``, restricts output to the trust-posture engine
+    (ADR 0025) and supports ``--json``. With ``--ack`` / ``--unack`` /
+    ``--list-acks``, manages the per-project note suppression sidecar at
+    ``.weld/doctor.yaml`` and exits without running the full check
+    suite. Without any of those flags, runs all checks and points to
+    ``wd security`` whenever the trust-posture engine finds any ``high``
+    signal.
+    """
+    parser = _build_parser()
     args = parser.parse_args(argv)
     root = args.root.resolve()
+
+    if args.ack or args.unack or args.list_acks:
+        return handle_ack_flags(
+            root,
+            ack=args.ack,
+            unack=args.unack,
+            list_acks=bool(args.list_acks),
+        )
 
     if args.security:
         from weld.security import run_security
@@ -346,7 +333,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_security(root, as_json=args.json)
 
     results = doctor(root)
-    output = format_results(results)
+    weld_dir = root / ".weld"
+    suppressed = load_suppressions(weld_dir) if weld_dir.is_dir() else set()
+    visible = _apply_suppressions(results, suppressed)
+    output = format_results(visible)
     sys.stdout.write(output + "\n")
 
     # Pointer line: surface the dedicated trust-posture view when we detect

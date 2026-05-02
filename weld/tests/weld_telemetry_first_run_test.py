@@ -14,57 +14,26 @@ patterns in ``weld_telemetry_cli_test.py`` and ``weld_brief_cli_test.py``.
 
 from __future__ import annotations
 
-import io
-import os
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
-from unittest import mock
 
 # Make ``weld`` importable from a Bazel runfiles tree as well as from the
 # repo root in local runs.
 _repo_root = str(Path(__file__).resolve().parent.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
+_tests_dir = str(Path(__file__).resolve().parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
 
 from weld import _telemetry as tel  # noqa: E402
 from weld.cli import main as cli_main  # noqa: E402
-
-
-def _make_repo(root: Path) -> Path:
-    """Create a minimal single-repo project so resolve_path() finds it."""
-    weld = root / ".weld"
-    weld.mkdir(parents=True, exist_ok=True)
-    (weld / "discover.yaml").write_text("# placeholder\n")
-    return root
-
-
-@contextmanager
-def _chdir(target: Path):
-    prev = Path.cwd()
-    os.chdir(target)
-    try:
-        yield
-    finally:
-        os.chdir(prev)
-
-
-@contextmanager
-def _isolated_env(root: Path):
-    """Capture stdout/stderr; clear WELD_TELEMETRY; chdir into ``root``."""
-    out_buf = io.StringIO()
-    err_buf = io.StringIO()
-    env_patch = mock.patch.dict(
-        os.environ, {"XDG_STATE_HOME": str(root / "_xdg")}, clear=False
-    )
-    with _chdir(root), env_patch, \
-         mock.patch.object(sys, "stdout", out_buf), \
-         mock.patch.object(sys, "stderr", err_buf):
-        # Drop any inherited WELD_TELEMETRY value so we test default-on.
-        os.environ.pop("WELD_TELEMETRY", None)
-        yield out_buf, err_buf
+from telemetry_test_helpers import (  # noqa: E402
+    captured as _isolated_env,
+    make_repo as _make_repo,
+)
 
 
 class FirstRunNoticeTests(unittest.TestCase):

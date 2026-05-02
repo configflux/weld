@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from weld.file_index import _module_constant_names
 from weld.strategies._helpers import StrategyResult, should_skip
 
 def _extract_imports(tree: ast.Module) -> list[str]:
@@ -131,6 +132,14 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         newlines = source_text.count("\n")
         line_count = newlines + (1 if source_text and not source_text.endswith("\n") else 0)
         imports_from = _extract_imports(tree)
+        # Module-level constants (UPPER_CASE / _UPPER_CASE). These are
+        # the residual "what does this module own" surface that
+        # ``exports`` (classes + public functions) does not cover. They
+        # feed ``wd query`` via ``query_index.node_tokens`` -- bounded
+        # and ReDoS-safe; see ``weld.file_index`` for the cap rationale.
+        # Sorted + deduplicated so the graph artifact is canonical
+        # (ADR 0012 §3).
+        constants = sorted(set(_module_constant_names(tree)))
 
         nodes[nid] = {
             "type": "file",
@@ -138,6 +147,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             "props": {
                 "file": rel_path,
                 "exports": exports,
+                "constants": constants,
                 "imports_from": imports_from,
                 "line_count": line_count,
                 "source_strategy": "python_module",

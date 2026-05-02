@@ -231,5 +231,9 @@ class AgentGraphMaintainerAssetTest(unittest.TestCase):
         } <= paths)
 
 
+# Slice 2/3 cross-platform demo coverage assertions live in the sibling
+# weld_agent_graph_demo_coverage_test.py module.
+
+
 if __name__ == "__main__":
     unittest.main()

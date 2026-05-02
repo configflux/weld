@@ -12,11 +12,9 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -25,11 +23,19 @@ from unittest import mock
 _repo_root = str(Path(__file__).resolve().parent.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
+_tests_dir = str(Path(__file__).resolve().parent)
+if _tests_dir not in sys.path:
+    sys.path.insert(0, _tests_dir)
 
 from weld import _telemetry as tel  # noqa: E402
 from weld import _telemetry_allowlist as allowlist  # noqa: E402
 from weld import telemetry_cli  # noqa: E402
 from weld.cli import main as cli_main  # noqa: E402
+from telemetry_test_helpers import (  # noqa: E402
+    chdir as _chdir,
+    make_repo as _make_repo,
+    noop_ctx as _noop_ctx,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -53,14 +59,6 @@ _VALID_EVENT_TEMPLATE: dict = {
 }
 
 
-def _make_repo(root: Path) -> Path:
-    """Create a minimal single-repo project so resolve_path() finds it."""
-    weld = root / ".weld"
-    weld.mkdir(parents=True, exist_ok=True)
-    (weld / "discover.yaml").write_text("# placeholder\n")
-    return root
-
-
 def _seed_events(path: Path, count: int) -> list[dict]:
     """Append ``count`` distinct, schema-valid events to ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,16 +70,6 @@ def _seed_events(path: Path, count: int) -> list[dict]:
             f.write(json.dumps(ev, sort_keys=True) + "\n")
             events.append(ev)
     return events
-
-
-@contextmanager
-def _chdir(target: Path):
-    prev = Path.cwd()
-    os.chdir(target)
-    try:
-        yield
-    finally:
-        os.chdir(prev)
 
 
 def _run(argv: list[str], *, cwd: Path | None = None,
@@ -100,11 +88,6 @@ def _run(argv: list[str], *, cwd: Path | None = None,
          mock.patch.object(sys, "stdin", in_buf):
         rc = telemetry_cli.main(argv)
     return rc, out_buf.getvalue(), err_buf.getvalue()
-
-
-@contextmanager
-def _noop_ctx():
-    yield
 
 
 # ---------------------------------------------------------------------------

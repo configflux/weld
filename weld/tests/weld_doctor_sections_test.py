@@ -144,6 +144,9 @@ class DoctorOptionalDepsTest(unittest.TestCase):
             with patch(
                 "weld._doctor_optional._module_available",
                 side_effect=fake_available,
+            ), patch(
+                "weld._doctor_optional.shutil.which",
+                return_value=None,
             ):
                 results = doctor(root)
 
@@ -152,9 +155,10 @@ class DoctorOptionalDepsTest(unittest.TestCase):
                 r for r in optional
                 if "optional deps present" in r.message and r.level == "ok"
             ]
+            # Missing-deps summary is now a note, not a warn.
             missing_lines = [
                 r for r in optional
-                if "optional deps missing" in r.message and r.level == "warn"
+                if "optional deps missing" in r.message and r.level == "note"
             ]
             self.assertTrue(present_lines)
             self.assertIn("mcp SDK", present_lines[0].message)
@@ -170,13 +174,18 @@ class DoctorOptionalDepsTest(unittest.TestCase):
             with patch(
                 "weld._doctor_optional._module_available",
                 return_value=False,
+            ), patch(
+                "weld._doctor_optional.shutil.which",
+                return_value=None,
             ):
                 results = doctor(root)
+            # Per-dep hints are now notes; copilot-cli has its own non-pip
+            # hint so we filter it out before counting pip-install lines.
             hints = [
                 r for r in results
                 if r.section == "Optional"
                 and "pip install" in r.message
-                and r.level == "warn"
+                and r.level == "note"
             ]
             self.assertGreaterEqual(len(hints), 4)
             self.assertTrue(any("configflux-weld[mcp]" in r.message for r in hints))
@@ -191,13 +200,21 @@ class DoctorOptionalDepsTest(unittest.TestCase):
             with patch(
                 "weld._doctor_optional._module_available",
                 return_value=True,
+            ), patch(
+                "weld._doctor_optional.shutil.which",
+                return_value="/usr/bin/copilot",
             ):
                 results = doctor(root)
             optional = [r for r in results if r.section == "Optional"]
             warns = [r for r in optional if r.level == "warn"]
+            notes = [r for r in optional if r.level == "note"]
             self.assertFalse(
                 warns,
                 f"unexpected optional warnings when all deps present: {warns}",
+            )
+            self.assertFalse(
+                notes,
+                f"unexpected optional notes when all deps present: {notes}",
             )
 
 
@@ -269,12 +286,16 @@ class DoctorStatusLineTest(unittest.TestCase):
                  patch(
                      "weld._doctor_optional._module_available",
                      return_value=True,
+                 ), patch(
+                     "weld._doctor_optional.shutil.which",
+                     return_value="/usr/bin/copilot",
                  ):
                 results = doctor(root)
             formatted = format_results(results)
             last_line = formatted.strip().splitlines()[-1]
             self.assertTrue(last_line.startswith("Status: "))
             self.assertIn("OK", last_line)
+            self.assertIn("0 notes", last_line)
             self.assertIn("0 warnings", last_line)
             self.assertIn("0 errors", last_line)
 
@@ -289,17 +310,20 @@ class DoctorStatusLineTest(unittest.TestCase):
             self.assertIn("errors", last_line)
             self.assertNotIn("0 errors", last_line)
 
-    def test_status_warnings_when_no_fail(self):
+    def test_status_notes_when_only_recommendations(self):
+        """Recommendations (missing optional deps, missing MCP config) are
+        notes, not warnings. The verdict reflects that distinction so
+        the headline does not over-state severity."""
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            _setup_dir(root)
+            _setup_dir(root)  # no .mcp.json -> mcp-config-missing note
             results = doctor(root)
-            self.assertTrue(any(r.level == "warn" for r in results))
             self.assertFalse(any(r.level == "fail" for r in results))
+            self.assertTrue(any(r.level == "note" for r in results))
             formatted = format_results(results)
             last_line = formatted.strip().splitlines()[-1]
             self.assertTrue(last_line.startswith("Status: "))
-            self.assertIn("warnings", last_line)
+            # No warnings expected: MCP-missing is now a note.
             self.assertIn("0 errors", last_line)
 
 
