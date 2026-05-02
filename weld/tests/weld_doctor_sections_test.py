@@ -280,6 +280,13 @@ class DoctorStatusLineTest(unittest.TestCase):
                 meta={"schema_version": 4, "git_sha": "abc"},
                 mcp=True,
             )
+            # Provide a clean agent-graph so the new [Agent Graph] section
+            # contributes an [ok] line rather than a missing-graph note.
+            (root / ".weld" / "agent-graph.json").write_text(json.dumps({
+                "meta": {"version": 1, "diagnostics": []},
+                "nodes": {},
+                "edges": [],
+            }))
             with patch("weld.doctor.is_git_repo", return_value=True), \
                  patch("weld.doctor.get_git_sha", return_value="abc"), \
                  patch("weld.doctor.commits_behind", return_value=0), \

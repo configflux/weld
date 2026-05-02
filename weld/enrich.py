@@ -325,7 +325,7 @@ def enrich(
     instantiation (see :mod:`weld._enrich_safe`).
     """
 
-    resolved_name = resolve_provider_name(provider_name)
+    resolved_name = resolve_provider_name(provider_name, safe=safe)
     refuse_if_network_provider(resolved_name, safe=safe)
     provider = resolve_provider(resolved_name)
     return run_enrichment(

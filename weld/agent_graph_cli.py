@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -87,26 +88,14 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _add_discover_parser(
-    subparsers: Any,
-    name: str,
-    help_text: str,
-) -> None:
+def _add_discover_parser(subparsers: Any, name: str, help_text: str) -> None:
     parser = subparsers.add_parser(name, help=help_text, description=help_text)
+    parser.add_argument("--root", default=".", help="Repository root to scan (default: current directory).")
+    parser.add_argument("--json", action="store_true", help="Emit the full Agent Graph JSON to stdout.")
+    parser.add_argument("--no-write", action="store_true", help="Scan without writing .weld/agent-graph.json.")
     parser.add_argument(
-        "--root",
-        default=".",
-        help="Repository root to scan (default: current directory).",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit the full Agent Graph JSON to stdout.",
-    )
-    parser.add_argument(
-        "--no-write",
-        action="store_true",
-        help="Scan without writing .weld/agent-graph.json.",
+        "--show-diagnostics", action="store_true",
+        help="Print every diagnostic inline (severity, code, path:line, message).",
     )
 
 
@@ -116,41 +105,26 @@ def _run_discover(args: argparse.Namespace) -> int:
     output_path: Path | None = None
     if not args.no_write:
         output_path = write_agent_graph(root, graph)
+    diagnostics = (graph.get("meta") or {}).get("diagnostics") or []
+    exit_code = 1 if any(d.get("severity") == "error" for d in diagnostics) else 0
     if args.json:
         sys.stdout.write(dumps_graph(graph))
-        return 0
+        return exit_code
     _print_discover_summary(graph, output_path, root=root, no_write=args.no_write)
-    return 0
+    if args.show_diagnostics and diagnostics:
+        _print_diagnostic_list(diagnostics)
+    return exit_code
 
 
 def _add_list_parser(subparsers: Any) -> None:
     parser = subparsers.add_parser(
-        "list",
-        help="List persisted Agent Graph assets.",
+        "list", help="List persisted Agent Graph assets.",
         description="List discovered AI customization assets from .weld/agent-graph.json.",
     )
-    parser.add_argument(
-        "--root",
-        default=".",
-        help="Repository root containing .weld/agent-graph.json (default: current directory).",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit a stable JSON inventory.",
-    )
-    parser.add_argument(
-        "--type",
-        dest="type_filter",
-        default=None,
-        help="Only show assets with this canonical type.",
-    )
-    parser.add_argument(
-        "--platform",
-        dest="platform_filter",
-        default=None,
-        help="Only show assets from this source platform.",
-    )
+    parser.add_argument("--root", default=".", help="Repository root containing .weld/agent-graph.json (default: current directory).")
+    parser.add_argument("--json", action="store_true", help="Emit a stable JSON inventory.")
+    parser.add_argument("--type", dest="type_filter", default=None, help="Only show assets with this canonical type.")
+    parser.add_argument("--platform", dest="platform_filter", default=None, help="Only show assets from this source platform.")
 
 
 def _run_list(args: argparse.Namespace) -> int:
@@ -377,12 +351,34 @@ def _print_discover_summary(
     print(f"Assets: {len(discovered_from)}")
     print(f"Nodes: {len(graph.get('nodes', {}))}")
     print(f"Edges: {len(graph.get('edges', []))}")
-    print(f"Diagnostics: {len(diagnostics)}")
+    print(_format_diagnostics_summary(diagnostics))
     if no_write:
         print("Write: skipped (--no-write)")
     else:
         path = output_path or agent_graph_path(root)
         print(f"Write: {_display_path(path, root)}")
+
+
+def _format_diagnostics_summary(diagnostics: list[dict[str, Any]]) -> str:
+    total = len(diagnostics)
+    if total == 0:
+        return "Diagnostics: 0"
+    counts = Counter(d.get("code") or "<unknown>" for d in diagnostics)
+    breakdown = ", ".join(
+        f"{count} {code}" for code, count in counts.most_common()
+    )
+    return f"Diagnostics: {total} ({breakdown})"
+
+
+def _print_diagnostic_list(diagnostics: list[dict[str, Any]]) -> None:
+    for diag in diagnostics:
+        severity = diag.get("severity") or "warning"
+        code = diag.get("code") or "<unknown>"
+        path = diag.get("path") or "<unknown>"
+        line = diag.get("line")
+        loc = f"{path}:{line}" if line is not None else path
+        message = diag.get("message") or ""
+        print(f"  {severity} {code} {loc} - {message}".rstrip())
 
 
 def _display_path(path: Path, root: Path) -> str:

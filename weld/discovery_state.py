@@ -223,6 +223,56 @@ def purge_stale_nodes(
     return surviving_nodes, surviving_edges
 
 
+def files_missing_strategy_outputs(
+    existing_graph: dict,
+    source_file_map: list[list[str]],
+) -> set[str]:
+    """Audit *existing_graph* for sources whose files have zero nodes.
+
+    Returns the set of repo-relative file paths for which the strategy
+    must re-run to repair a graph that was written without the nodes the
+    source was supposed to produce. Each source entry in
+    ``source_file_map`` contributes either *all* of its files (when no
+    node in the graph has ``props.file`` inside that set) or none.
+
+    Background: the incremental discovery path (ADR 0008) keys re-runs
+    on file content hashes. If the previous run committed
+    ``discovery-state.json`` with the current files but committed a
+    ``graph.json`` that lacks those files' nodes -- e.g. because of a
+    crash, partial write, or a sequence where the state-write path ran
+    but the symbol-emitting strategy did not -- the dirty set is empty
+    and the bug perpetuates: every subsequent incremental run skips the
+    strategy and the symbols never reappear short of deleting state.
+
+    The audit closes that gap. Treating "no nodes for any of a source's
+    files" as a re-run trigger is conservative: it never produces a
+    false positive when the strategy genuinely emits at least one node
+    for at least one file in the set, and it costs at most one pass
+    over the graph's nodes.
+    """
+    nodes = existing_graph.get("nodes", {})
+    # Different strategies record the source file under different prop
+    # keys (``file`` for most, ``declared_in`` for the events family).
+    # Treat a file as "has nodes" if any node references it under
+    # either key so the audit does not force a perpetual re-run for
+    # those strategies.
+    files_with_nodes: set[str] = set()
+    for node in nodes.values():
+        props = node.get("props", {})
+        f = props.get("file") or props.get("declared_in")
+        if f:
+            files_with_nodes.add(f)
+
+    missing: set[str] = set()
+    for files in source_file_map:
+        if not files:
+            continue
+        file_set = set(files)
+        if not file_set & files_with_nodes:
+            missing |= file_set
+    return missing
+
+
 def resolve_source_files(
     root: Path,
     source: dict,

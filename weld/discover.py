@@ -16,6 +16,7 @@ import argparse
 import copy
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from weld._discover_strategies import (
     run_external_json as _run_external_json,  # noqa: F401 -- re-export for test consumers
     run_source as _run_source,
 )
+from weld._discover_summary import emit_summary as _emit_summary
 from weld._query_sidecar import write_sidecar_for_bytes as _write_query_sidecar_bytes
 from weld._git import get_git_sha
 from weld._yaml import parse_yaml
@@ -40,21 +42,11 @@ from weld.workspace import WorkspaceConfigError
 from weld.workspace_state import (WorkspaceLock, WorkspaceLockedError,
                                   build_workspace_state, load_workspace_config,
                                   save_workspace_state)
-from weld.discovery_state import (
-    DiscoveryState,
-    StateDiff,
-    build_file_hashes,
-    diff_state,
-    load_state,
-    purge_stale_nodes,
-    resolve_source_files,
-    save_state,
-)
+from weld.discovery_state import (DiscoveryState, StateDiff, build_file_hashes,
+                                   diff_state, files_missing_strategy_outputs,
+                                   load_state, purge_stale_nodes,
+                                   resolve_source_files, save_state)
 from weld.strategies._helpers import filter_glob_results
-
-# ---------------------------------------------------------------------------
-# Discovery orchestrator
-# ---------------------------------------------------------------------------
 
 
 def _persist_query_state_sidecar(weld_dir: Path, graph: dict) -> None:
@@ -193,10 +185,11 @@ def _discover_single_repo(
 
     # --- Incremental path ---
     assert existing_graph is not None and old_state is not None
-    dirty = state_diff.dirty
+    missing_outputs = files_missing_strategy_outputs(existing_graph, source_file_map)
+    dirty = state_diff.dirty | missing_outputs
     stale = dirty | state_diff.deleted
 
-    if not state_diff.has_changes:
+    if not state_diff.has_changes and not missing_outputs:
         print("[weld] notice: no files changed, graph is up to date", file=sys.stderr)
         refreshed = copy.deepcopy(existing_graph)
         refreshed["meta"]["version"] = SCHEMA_VERSION
@@ -356,12 +349,18 @@ def main(argv: list[str] | None = None) -> int:
              "with a 0-node meta-graph is refused; pass this flag to "
              "intentionally tear the workspace graph down. (ADR 0028)",
     )
+    parser.add_argument(
+        "--quiet", action="store_true", default=False,
+        help="Suppress the one-line stderr success summary "
+             "(node/edge counts, elapsed time). Use for scripted callers.",
+    )
     args = parser.parse_args(argv)
 
     inc = False if args.full else (True if args.incremental else None)
     output_path = Path(args.output) if args.output else None
     root_path = Path(args.root)
     is_federated = load_workspace_config(root_path) is not None
+    started = time.monotonic()
     try:
         result = discover(
             root_path,
@@ -380,13 +379,14 @@ def main(argv: list[str] | None = None) -> int:
     except EmptyFederatedGraphRefusedError:
         # The guard already wrote the explanatory stderr message.
         return 3
-    if output_path is not None:
-        if not is_federated:
-            from weld.workspace_state import atomic_write_text
-
-            atomic_write_text(output_path, _dumps_graph(result))
-        return 0
-    sys.stdout.write(_dumps_graph(result))
+    if output_path is not None and not is_federated:
+        from weld.workspace_state import atomic_write_text
+        atomic_write_text(output_path, _dumps_graph(result))
+    elif output_path is None:
+        sys.stdout.write(_dumps_graph(result))
+    sp = output_path or ((root_path / ".weld" / "graph.json")
+                         if args.write_root_graph and is_federated else None)
+    _emit_summary(result, sp, time.monotonic() - started, quiet=args.quiet)
     return 0
 
 

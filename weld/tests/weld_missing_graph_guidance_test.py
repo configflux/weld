@@ -194,7 +194,13 @@ class MissingGraphGuidanceTest(unittest.TestCase):
     # ----- does NOT fire when graph is present --------------------------
 
     def test_query_with_graph_present_does_not_trigger(self):
-        """Sanity check: existing empty graph keeps old success behavior."""
+        """Sanity check: existing empty graph keeps old success behavior.
+
+        The CLI defaults to a human-readable rendering per ADR 0040, so the
+        empty-matches signal is the literal "no matches" line. The legacy
+        JSON envelope is still reachable via --json and is checked
+        separately below.
+        """
         import json
 
         weld_dir = os.path.join(self._tmp, ".weld")
@@ -205,9 +211,16 @@ class MissingGraphGuidanceTest(unittest.TestCase):
         exit_code, stdout, stderr = _run_and_capture(
             graph_cli_main, ["--root", self._tmp, "query", "foo"],
         )
-        # Old behavior preserved: exit 0, empty matches, no guidance text.
+        # Old behavior preserved: exit 0, no guidance text. Default is now
+        # human-readable; "no matches" is the rendered empty signal.
         self.assertEqual(exit_code, 0)
         self.assertNotIn(_EXPECTED_PREFIX, stderr)
+        self.assertIn("no matches", stdout)
+        # And --json still emits the JSON envelope unchanged.
+        exit_code, stdout, _ = _run_and_capture(
+            graph_cli_main, ["--root", self._tmp, "query", "foo", "--json"],
+        )
+        self.assertEqual(exit_code, 0)
         self.assertIn('"matches": []', stdout)
 
     def test_diff_with_graph_present_does_not_trigger(self):

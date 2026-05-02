@@ -205,7 +205,7 @@ output.
 
 | Command | What it does |
 |---|---|
-| `wd agents discover` | Scan known AI customization files and write `.weld/agent-graph.json`. Use `--no-write` to scan without persisting. |
+| `wd agents discover` | Scan known AI customization files and write `.weld/agent-graph.json`. Use `--no-write` to scan without persisting. Text mode prints a per-code diagnostic count breakdown after the summary; pass `--show-diagnostics` to dump every diagnostic inline (severity, code, path:line, message). Exits non-zero if any diagnostic has `severity=error`; warnings keep exit code 0. |
 | `wd agents rediscover` | Refresh `.weld/agent-graph.json` from a new static scan. Same flags as `discover`. |
 | `wd agents list` | List persisted assets. Filter with `--type <node-type>` or `--platform <platform>`. |
 | `wd agents explain <asset>` | Show one asset's purpose, platforms, source file, and incoming and outgoing graph relationships. The query may be an asset name, a node ID, or a source path. |

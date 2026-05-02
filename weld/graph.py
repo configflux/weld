@@ -224,31 +224,56 @@ class Graph:
                 return 0
         return hits
 
+    def _resolve_symbol_name(self, symbol_name: str) -> list[dict]:
+        """Resolve a bare symbol *name* to matching graph nodes.
+
+        Matches symbol nodes on ``props.qualname`` (with a trailing
+        ``.<name>`` suffix check) and additionally includes the
+        ``symbol:unresolved:<name>`` sentinel. Shared by :meth:`callers`
+        and :meth:`references` so both use one bare-name rule.
+        """
+        matches: list[dict] = []
+        for nid, n in self._data["nodes"].items():
+            if n.get("type") != "symbol":
+                continue
+            qual = (n.get("props") or {}).get("qualname") or n.get("label", "")
+            if qual == symbol_name or qual.endswith("." + symbol_name):
+                matches.append({"id": nid, **n})
+            elif nid == f"symbol:unresolved:{symbol_name}":
+                matches.append({"id": nid, **n})
+        return matches
+
     def callers(self, symbol_id: str, depth: int = 1) -> dict:
         """Return the set of symbols that call *symbol_id*, up to *depth*.
 
-        Walks ``calls`` edges in reverse from *symbol_id*. ``depth=1``
-        returns direct callers; higher values return transitive callers
-        as a flattened, deduplicated set with the depth at which each
-        was first reached. Self-loops and revisits are skipped.
+        Walks ``calls`` edges in reverse. ``symbol_id`` accepts either a
+        fully-qualified node id (e.g.
+        ``symbol:py:weld.discover:_load_strategy``) or a bare name
+        (e.g. ``_load_strategy``); bare names use the same resolution
+        rule as :meth:`references`, with callers aggregated and
+        deduplicated across matches. An unknown name still surfaces an
+        ``error`` so callers can distinguish "no match" from "no callers".
         """
         if depth < 1:
             depth = 1
-        if symbol_id not in self._data["nodes"]:
-            return {
-                "symbol": symbol_id,
-                "depth": depth,
-                "callers": [],
-                "edges": [],
-                "error": f"node not found: {symbol_id}",
-            }
+        if symbol_id in self._data["nodes"]:
+            seeds = [symbol_id]
+        else:
+            matches = self._resolve_symbol_name(symbol_id)
+            if not matches:
+                return {
+                    "symbol": symbol_id, "depth": depth,
+                    "callers": [], "edges": [],
+                    "error": f"node not found: {symbol_id}",
+                }
+            seeds = [m["id"] for m in matches]
         # Build reverse adjacency for calls edges only.
         rev: dict[str, list[dict]] = {}
         for e in self._data["edges"]:
             if e.get("type") == "calls":
                 rev.setdefault(e["to"], []).append(e)
-        seen: set[str] = {symbol_id}
-        frontier: list[str] = [symbol_id]
+        seen: set[str] = set(seeds)
+        frontier: list[str] = list(seeds)
         out_callers: list[dict] = []
         out_edges: list[dict] = []
         for _ in range(depth):
@@ -281,17 +306,7 @@ class Graph:
         rather than a full id. The result combines resolved callers and
         file-index textual occurrences.
         """
-        # Find all symbol nodes whose qualname matches.
-        matches: list[dict] = []
-        for nid, n in self._data["nodes"].items():
-            if n.get("type") != "symbol":
-                continue
-            qual = (n.get("props") or {}).get("qualname") or n.get("label", "")
-            if qual == symbol_name or qual.endswith("." + symbol_name):
-                matches.append({"id": nid, **n})
-            elif nid == f"symbol:unresolved:{symbol_name}":
-                matches.append({"id": nid, **n})
-        # Aggregate callers across every match.
+        matches = self._resolve_symbol_name(symbol_name)
         all_callers: dict[str, dict] = {}
         all_edges: list[dict] = []
         for m in matches:

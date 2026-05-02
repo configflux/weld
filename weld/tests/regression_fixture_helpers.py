@@ -24,11 +24,13 @@ which surfaces as a hard test failure rather than a silent skip.
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 from pathlib import Path
 
 from weld.discover import discover
+from weld.strategies.concept_from_bd import DOGFOOD_GAP_LABEL
 
 # Two configured strategies, each producing one declared node type.
 # The markdown strategy globs against ``Path(pattern).parent`` so the
@@ -59,6 +61,7 @@ SYNTH_FILES = {
 
 SYNTH_NODE_TYPES = frozenset({"file", "doc"})
 SYNTH_STRATEGIES = frozenset({"python_module", "markdown"})
+_ACTIVE_ISSUE_STATUSES = frozenset({"open", "in_progress", "ready", "blocked"})
 
 
 def build_synthetic_fixture(root: Path) -> None:
@@ -76,6 +79,33 @@ def build_synthetic_fixture(root: Path) -> None:
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+
+
+def source_should_require_output(root: Path, source: dict) -> bool:
+    """Return whether a host configured source must produce nodes."""
+    if source.get("strategy") != "concept_from_bd":
+        return True
+    rel = source.get("path")
+    if not isinstance(rel, str) or not rel:
+        return False
+    return _has_active_dogfood_gap(root / rel)
+
+
+def _has_active_dogfood_gap(path: Path) -> bool:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        try:
+            issue = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        labels = issue.get("labels") or []
+        status = (issue.get("status") or "").lower()
+        if DOGFOOD_GAP_LABEL in labels and status in _ACTIVE_ISSUE_STATUSES:
+            return True
+    return False
 
 
 class SyntheticGraphMixin:
@@ -105,5 +135,4 @@ class SyntheticGraphMixin:
     def tearDownClass(cls) -> None:
         shutil.rmtree(cls._SYNTH_ROOT, ignore_errors=True)
         super().tearDownClass()  # type: ignore[misc]
-
 

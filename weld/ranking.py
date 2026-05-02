@@ -6,6 +6,13 @@ with confidence and optional role relevance as deterministic tie-breakers.
 Authority ordering:  canonical > derived > manual > inferred
 Confidence ordering: definite > inferred > speculative
 
+The ``rank_query_matches`` path additionally applies a coarse
+``resolution_penalty`` ahead of the hybrid score so that unresolved-
+symbol sentinels (e.g. ``symbol:unresolved:<name>`` emitted by call-
+graph closure when a callee cannot be linked to a definition) sort
+below definite resolved peers even when their BM25 score on a short
+label happens to be higher.
+
 """
 
 from __future__ import annotations
@@ -30,6 +37,13 @@ CONFIDENCE_RANK: dict[str, int] = {
 
 # Sentinel value for missing/unknown metadata -- sorts after all known values
 _UNKNOWN_RANK: int = 99
+
+# ID prefix that marks a call-graph "unresolved symbol" sentinel node.
+# These nodes are emitted by graph closure when a callee cannot be linked
+# to a real definition; surfacing them ahead of definite resolved symbols
+# in retrieval results is a known quality regression.
+_UNRESOLVED_SYMBOL_PREFIX: str = "symbol:unresolved:"
+
 DEFAULT_HYBRID_WEIGHTS: dict[str, float] = {
     "bm25": 0.4,
     "semantic": 0.3,
@@ -52,6 +66,36 @@ def confidence_score(node: dict) -> int:
     """
     props = node.get("props") or {}
     return CONFIDENCE_RANK.get(props.get("confidence", ""), _UNKNOWN_RANK)
+
+
+def resolution_penalty(node: dict) -> int:
+    """Return 1 when *node* is an unresolved sentinel, else 0.
+
+    Used as a coarse pre-score gate in ``rank_query_matches`` so that
+    definite resolved symbols outrank ``symbol:unresolved:<name>``
+    sentinels regardless of BM25 differences. The penalty fires when
+    either of the two unresolved-sentinel signals is set:
+
+    * ID begins with ``symbol:unresolved:`` (call-graph closure emits
+      these for callees that could not be linked to a definition);
+    * ``props.resolution == "unresolved"`` (explicit tag, used for
+      reference-style unresolved entries).
+
+    ``confidence: speculative`` alone is NOT enough to trigger the
+    penalty: speculative-but-resolved nodes (e.g. an inferred-confidence
+    callsite that did link to its target) still rank by the existing
+    authority > confidence > id tiebreakers.  This keeps the bug-fix
+    targeted -- it demotes only the noise class the inspector flagged
+    (``symbol:unresolved:_has_enrichment`` beating
+    ``symbol:py:weld.embeddings:enrichment_description``).
+    """
+    node_id = node.get("id", "")
+    if isinstance(node_id, str) and node_id.startswith(_UNRESOLVED_SYMBOL_PREFIX):
+        return 1
+    props = node.get("props") or {}
+    if props.get("resolution") == "unresolved":
+        return 1
+    return 0
 
 def role_boost(node: dict, query_roles: frozenset[str] | None = None) -> int:
     """Return 0 if any of the node's roles match *query_roles*, else 1.
@@ -171,16 +215,23 @@ def rank_query_matches(
     }
     weights = active_hybrid_weights(normalized_bm25, semantic_scores, structural)
 
-    def sort_key(item: tuple[str, dict]) -> tuple[float, int, int, str]:
+    def sort_key(item: tuple[str, dict]) -> tuple[int, float, int, int, str]:
         node_id, node = item
+        node_with_id = {"id": node_id, **node}
         score = hybrid_score(
-            {"id": node_id, **node},
+            node_with_id,
             bm25=normalized_bm25.get(node_id, 0.0),
             semantic=semantic_scores.get(node_id),
             structural=structural.get(node_id, 0.0),
             weights=weights,
         )
-        return (-score, role_boost(node, query_roles), confidence_score(node), node_id)
+        return (
+            resolution_penalty(node_with_id),
+            -score,
+            role_boost(node, query_roles),
+            confidence_score(node),
+            node_id,
+        )
 
     return sorted(matches, key=sort_key)
 

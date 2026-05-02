@@ -207,5 +207,127 @@ class TestDescriptionCoverageEdgeCases(unittest.TestCase):
         self.assertEqual(s["nodes_with_description"], 0)
         self.assertEqual(s["total_nodes"], 1)
 
+
+class TestDescriptionCoverageMeaningfulHeadline(unittest.TestCase):
+    """Reframed headline metric: ``description_coverage_meaningful``.
+
+    The raw ``description_coverage_pct`` includes ``symbol`` nodes
+    (call-graph functions) in its denominator. Almost none of those are
+    candidates for a human-written description, so the raw figure is
+    misleadingly low on real repos. The reframed metric divides only
+    over types where a description is a meaningful product artifact.
+    """
+
+    def test_field_present_alongside_raw(self):
+        """Both raw and meaningful coverage fields ship in the payload."""
+        nodes = {
+            "agent:reviewer": {
+                "type": "agent", "label": "reviewer",
+                "props": {"description": "Reviews diffs."},
+            },
+            "command:plan": {
+                "type": "command", "label": "plan",
+                "props": {"description": "Plans work."},
+            },
+        }
+        g = _make_graph(nodes)
+        s = g.stats()
+        self.assertIn("description_coverage_pct", s)  # raw key preserved
+        self.assertIn("description_coverage_meaningful", s)
+        block = s["description_coverage_meaningful"]
+        self.assertIn("coverage_pct", block)
+        self.assertIn("total", block)
+        self.assertIn("with_description", block)
+        self.assertIn("candidates_missing", block)
+        self.assertIn("meaningful_types", block)
+        self.assertIn("cost_estimate", block)
+
+    def test_symbol_nodes_excluded_from_denominator(self):
+        """Regression guard: ``symbol`` is NOT a meaningful type.
+
+        With 1 described agent + 9 undescribed symbols, the raw figure
+        is 10% but meaningful coverage stays at 100% because all 9
+        symbols are excluded from both numerator and denominator.
+        """
+        nodes = {
+            "agent:reviewer": {
+                "type": "agent", "label": "reviewer",
+                "props": {"description": "Reviews diffs."},
+            },
+        }
+        for i in range(9):
+            nodes[f"symbol:{i}"] = {
+                "type": "symbol", "label": f"sym{i}", "props": {},
+            }
+        g = _make_graph(nodes)
+        s = g.stats()
+        # Raw figure is dragged down by the symbols.
+        self.assertAlmostEqual(s["description_coverage_pct"], 10.0)
+        # Meaningful figure ignores the symbols entirely.
+        block = s["description_coverage_meaningful"]
+        self.assertEqual(block["total"], 1)
+        self.assertEqual(block["with_description"], 1)
+        self.assertEqual(block["candidates_missing"], 0)
+        self.assertAlmostEqual(block["coverage_pct"], 100.0)
+        self.assertNotIn("symbol", block["meaningful_types"])
+
+    def test_candidates_missing_counts_real_gap(self):
+        """``candidates_missing`` counts undescribed meaningful nodes."""
+        nodes = {
+            "agent:reviewer": {
+                "type": "agent", "label": "reviewer",
+                "props": {"description": "Reviews diffs."},
+            },
+            "config:beta": {
+                "type": "config", "label": "beta", "props": {},
+            },
+            "config:gamma": {
+                "type": "config", "label": "gamma", "props": {},
+            },
+            "symbol:noise": {
+                "type": "symbol", "label": "noise", "props": {},
+            },
+        }
+        g = _make_graph(nodes)
+        block = g.stats()["description_coverage_meaningful"]
+        self.assertEqual(block["total"], 3)  # agent + 2 configs
+        self.assertEqual(block["with_description"], 1)
+        self.assertEqual(block["candidates_missing"], 2)
+        # 1 / 3 = 33.33%, well below the prime threshold.
+        self.assertLess(block["coverage_pct"], 80.0)
+
+    def test_cost_estimate_nonneg_when_candidates_missing(self):
+        """Cost estimate is present and positive when there are candidates."""
+        nodes = {
+            "config:a": {"type": "config", "label": "a", "props": {}},
+            "config:b": {"type": "config", "label": "b", "props": {}},
+        }
+        g = _make_graph(nodes)
+        cost = g.stats()["description_coverage_meaningful"]["cost_estimate"]
+        self.assertEqual(cost["candidates"], 2)
+        self.assertGreater(cost["tokens"], 0)
+        self.assertGreaterEqual(cost["usd"], 0.0)
+        self.assertGreater(cost["minutes"], 0.0)
+
+    def test_cost_estimate_zero_when_no_candidates(self):
+        """Cost estimate is fully populated and zero when nothing to do."""
+        nodes = {
+            "agent:done": {
+                "type": "agent", "label": "done",
+                "props": {"description": "Already covered."},
+            },
+        }
+        g = _make_graph(nodes)
+        cost = g.stats()["description_coverage_meaningful"]["cost_estimate"]
+        self.assertEqual(cost["candidates"], 0)
+        self.assertEqual(cost["tokens"], 0)
+        self.assertEqual(cost["usd"], 0.0)
+        self.assertEqual(cost["minutes"], 0.0)
+        # Rate fields are still present so consumers can label the math.
+        self.assertIn("tokens_per_node", cost)
+        self.assertIn("usd_per_1k_tokens", cost)
+        self.assertIn("nodes_per_minute", cost)
+
+
 if __name__ == "__main__":
     unittest.main()

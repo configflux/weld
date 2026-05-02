@@ -34,7 +34,7 @@ echo "${out}" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['t
 wd_cmd add-edge entity:Flyer entity:Source --type depends_on --props '{}' > /dev/null
 
 # --- stats ---
-out="$(wd_cmd stats)"
+out="$(wd_cmd stats --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -43,7 +43,7 @@ assert d['total_edges']==2, f'expected 2 edges, got {d[\"total_edges\"]}'
 "
 
 # --- query ---
-out="$(wd_cmd query Store)"
+out="$(wd_cmd query Store --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -52,7 +52,7 @@ assert d['matches'][0]['id']=='entity:Store'
 "
 
 # --- context ---
-out="$(wd_cmd context entity:Store)"
+out="$(wd_cmd context entity:Store --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -62,7 +62,7 @@ assert len(d['edges'])>=1, 'Store should have edges'
 "
 
 # --- path ---
-out="$(wd_cmd path entity:Flyer entity:Store)"
+out="$(wd_cmd path entity:Flyer entity:Store --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -95,7 +95,7 @@ out="$(wd_cmd rm-node entity:Flyer)"
 echo "${out}" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['removed']==True"
 
 # Verify cleanup
-out="$(wd_cmd stats)"
+out="$(wd_cmd stats --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -131,7 +131,7 @@ wd_cmd add-node "file:web/components/shell" --type file --label "shell" \
   --props '{"file":"apps/web/components/shell.tsx","exports":["SiteHeader","SiteFooter","PageIntro","SectionCard"],"imports_from":["react","link"],"line_count":120}' > /dev/null
 
 # Single token "stores" should match the stores page via node ID segment
-out="$(wd_cmd query stores)"
+out="$(wd_cmd query stores --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -142,7 +142,7 @@ print('PASS: single token stores matches via node ID segment')
 
 # --- Tokenized query: single token matches props.file ---
 echo "--- Tokenized query: single token matches props.file ---"
-out="$(wd_cmd query flyers)"
+out="$(wd_cmd query flyers --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -153,7 +153,7 @@ print('PASS: single token flyers matches via props.file')
 
 # --- Tokenized query: matches via props.exports ---
 echo "--- Tokenized query: matches via props.exports ---"
-out="$(wd_cmd query footer)"
+out="$(wd_cmd query footer --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -164,7 +164,7 @@ print('PASS: footer matches shell node via exports')
 
 # --- Tokenized query: multi-word input ---
 echo "--- Tokenized query: multi-word input ---"
-out="$(wd_cmd query "stores page")"
+out="$(wd_cmd query "stores page" --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -181,8 +181,8 @@ print('PASS: multi-word query tokenized and ranked correctly')
 # --- Tokenized query: deterministic ranking ---
 echo "--- Tokenized query: deterministic ranking ---"
 # Run the same query twice; results must be identical
-out1="$(wd_cmd query "page")"
-out2="$(wd_cmd query "page")"
+out1="$(wd_cmd query "page" --json)"
+out2="$(wd_cmd query "page" --json)"
 python3 -c "
 import json,sys
 d1=json.loads(sys.argv[1])
@@ -195,7 +195,7 @@ print('PASS: query ranking is deterministic')
 
 # --- Tokenized query: shell matches by label and ID ---
 echo "--- Tokenized query: shell matches by label and ID ---"
-out="$(wd_cmd query shell)"
+out="$(wd_cmd query shell --json)"
 echo "${out}" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)

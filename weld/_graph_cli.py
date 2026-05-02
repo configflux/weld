@@ -6,32 +6,12 @@ to keep the core ``Graph`` class under the 400-line default.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
 
-from weld.contract import VALID_EDGE_TYPES, VALID_NODE_TYPES
+from weld._graph_cli_parser import build_parser
 from weld.graph import Graph
-
-
-def _positive_int(value: str) -> int:
-    """argparse validator: accept only strictly-positive integers.
-
-    ``wd stats --top 0`` or a negative value would silently return an
-    empty top-authority list, which is worse than a clear error message.
-    """
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise argparse.ArgumentTypeError(
-            f"expected a positive integer, got {value!r}",
-        ) from exc
-    if parsed < 1:
-        raise argparse.ArgumentTypeError(
-            f"expected a positive integer, got {parsed}",
-        )
-    return parsed
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -50,6 +30,14 @@ def _out(data: object) -> None:
     sys.stdout.write("\n")
 
 
+def _emit(args, data: object, renderer) -> None:
+    """Write *data* as JSON when ``--json`` is set, else rendered text (ADR 0040)."""
+    if getattr(args, "as_json", False):
+        _out(data)
+        return
+    sys.stdout.write(renderer(data))
+
+
 # Graph-backed read commands. A missing `.weld/graph.json` here yields an
 # actionable first-run message instead of a silently empty payload. Mutating
 # commands (add-*/rm-*/import/touch) and diagnostic commands
@@ -57,7 +45,7 @@ def _out(data: object) -> None:
 # also excluded because it reads the file-index, not the graph -- users can
 # run ``wd build-index`` + ``wd find`` without ever producing a graph.
 _READ_COMMANDS = frozenset(
-    {"query", "context", "path", "callers", "references"}
+    {"query", "context", "path", "callers", "references", "communities"}
 )
 
 
@@ -131,97 +119,7 @@ def ensure_graph_exists(root: Path, retry_cmd: str) -> None:
 
 
 def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C901
-    parser = argparse.ArgumentParser(prog=prog, description="Connected structure CLI")
-    parser.add_argument("--root", type=Path, default=Path("."), help="Project root directory")
-    sub = parser.add_subparsers(dest="command")
-    p_query = sub.add_parser("query", help="Tokenized search (fields: id, label, props.file, props.exports, props.description)")
-    p_query.add_argument("term", help="Search term (multi-word is tokenized)")
-    p_query.add_argument("--limit", type=int, default=20)
-    p_ctx = sub.add_parser("context", help="Node + neighborhood")
-    p_ctx.add_argument("node_id", help="Node ID")
-    p_path = sub.add_parser("path", help="Shortest path between nodes")
-    p_path.add_argument("from_id", help="Start node ID")
-    p_path.add_argument("to_id", help="End node ID")
-    p_an = sub.add_parser("add-node", help="Add or update a node")
-    p_an.add_argument("id", help="Node ID (e.g. entity:Store)")
-    p_an.add_argument("--type", required=True, dest="node_type",
-                       choices=sorted(VALID_NODE_TYPES), help="Node type")
-    p_an.add_argument("--label", default="", help="Human-readable label")
-    p_an.add_argument("--props", default="{}", help="JSON properties")
-    p_an.add_argument("--merge", action="store_true", help="Deep-merge props into existing node")
-    p_ae = sub.add_parser(
-        "add-edge",
-        help=(
-            "Add an edge. Use --props for provenance, e.g. --props "
-            "'{\"source\":\"llm\"}'. (Replaces 0.3.0 --source/--relation "
-            "flags.)"
-        ),
-    )
-    p_ae.add_argument("from_id", help="Source node ID")
-    p_ae.add_argument("to_id", help="Target node ID")
-    p_ae.add_argument("--type", required=True, dest="edge_type",
-                       choices=sorted(VALID_EDGE_TYPES), help="Edge type")
-    p_ae.add_argument(
-        "--props",
-        default="{}",
-        help=(
-            "JSON properties, e.g. '{\"source\":\"llm\","
-            "\"confidence\":\"inferred\"}'. Use props.source to record "
-            "provenance for tool-generated edges."
-        ),
-    )
-    p_rn = sub.add_parser("rm-node", help="Remove a node and its edges")
-    p_rn.add_argument("id", help="Node ID")
-    p_re = sub.add_parser("rm-edge", help="Remove edge(s)")
-    p_re.add_argument("from_id", help="Source node ID")
-    p_re.add_argument("to_id", help="Target node ID")
-    p_re.add_argument("--type", dest="edge_type", choices=sorted(VALID_EDGE_TYPES),
-                       default=None, help="Edge type filter")
-    p_list = sub.add_parser("list", help="List nodes")
-    p_list.add_argument("--type", dest="type_filter", choices=sorted(VALID_NODE_TYPES),
-                         default=None, help="Filter by type")
-    p_find = sub.add_parser("find", help="Search file index by keyword")
-    p_find.add_argument("term", help="Search term (substring match)")
-    p_find.add_argument(
-        "--limit",
-        type=int,
-        default=20,
-        help="Maximum number of file entries to return (default 20, mirrors wd query)",
-    )
-    p_callers = sub.add_parser(
-        "callers", help="Direct (and optionally transitive) callers of a symbol"
-    )
-    p_callers.add_argument("symbol", help="Full symbol id, e.g. symbol:py:weld.discover:_load_strategy")
-    p_callers.add_argument("--depth", type=int, default=1, help="Caller traversal depth (default 1)")
-    p_refs = sub.add_parser(
-        "references",
-        help="Callers + textual file-index references for a symbol name",
-    )
-    p_refs.add_argument("name", help="Bare symbol name, e.g. _load_strategy")
-    sub.add_parser("stale", help="Check if graph is stale vs current HEAD")
-    sub.add_parser(
-        "touch",
-        help=(
-            "Stamp meta.git_sha=HEAD + meta.updated_at=now without "
-            "mutating nodes/edges (use after enrichment-only commits)."
-        ),
-    )
-    sub.add_parser("dump", help="Full graph JSON")
-    p_stats = sub.add_parser("stats", help="Summary counts")
-    p_stats.add_argument(
-        "--top",
-        type=_positive_int,
-        default=None,
-        metavar="N",
-        help="Cap on top_authority_nodes list (default: 5).",
-    )
-    p_imp = sub.add_parser("import", help="Import/merge from file")
-    p_imp.add_argument("file", type=Path, help="JSON file to import")
-    sub.add_parser("validate", help="Validate graph against the metadata contract")
-    p_vf = sub.add_parser("validate-fragment", help="Validate a JSON fragment")
-    p_vf.add_argument("file", type=Path, help="JSON fragment file")
-    p_vf.add_argument("--source-label", default="fragment", help="Diagnostic label")
-    p_vf.add_argument("--allow-dangling", action="store_true", help="Skip ref checks")
+    parser = build_parser(prog=prog)
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()
@@ -232,14 +130,17 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
 
         if load_workspace_config(args.root) is not None:
             from weld.federation import FederatedGraph
+            from weld._cli_render import (
+                render_context, render_path, render_query,
+            )
 
             fg = FederatedGraph(args.root)
             if cmd == "query":
-                _out(fg.query(args.term, args.limit))
+                _emit(args, fg.query(args.term, args.limit), render_query)
             elif cmd == "context":
-                _out(fg.context(args.node_id))
+                _emit(args, fg.context(args.node_id), render_context)
             else:
-                _out(fg.path(args.from_id, args.to_id))
+                _emit(args, fg.path(args.from_id, args.to_id), render_path)
             return
     if cmd in _READ_COMMANDS:
         # Single-repo read path: surface a friendly first-run message when
@@ -249,23 +150,29 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
     g.load()
     mutates = False
     if cmd == "find":
+        from weld._cli_render import render_find
         from weld.file_index import find_files, load_file_index
         index = load_file_index(args.root)
-        _out(find_files(index, args.term, limit=args.limit))
+        _emit(args, find_files(index, args.term, limit=args.limit), render_find)
     elif cmd == "query":
-        _out(g.query(args.term, args.limit))
+        from weld._cli_render import render_query
+        _emit(args, g.query(args.term, args.limit), render_query)
     elif cmd == "context":
-        _out(g.context(args.node_id))
+        from weld._cli_render import render_context
+        _emit(args, g.context(args.node_id), render_context)
     elif cmd == "callers":
-        _out(g.callers(args.symbol, depth=args.depth))
+        from weld._cli_render import render_callers
+        _emit(args, g.callers(args.symbol, depth=args.depth), render_callers)
     elif cmd == "references":
+        from weld._cli_render import render_references
         from weld.file_index import find_files, load_file_index
         index = load_file_index(args.root)
         refs = g.references(args.name)
         refs["files"] = find_files(index, args.name).get("files", [])
-        _out(refs)
+        _emit(args, refs, render_references)
     elif cmd == "path":
-        _out(g.path(args.from_id, args.to_id))
+        from weld._cli_render import render_path
+        _emit(args, g.path(args.from_id, args.to_id), render_path)
     elif cmd == "add-node":
         props = json.loads(args.props)
         if args.merge:
@@ -294,7 +201,8 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
     elif cmd == "list":
         _out(g.list_nodes(args.type_filter))
     elif cmd == "stale":
-        _out(g.stale())
+        from weld._cli_render import render_stale
+        _emit(args, g.stale(), render_stale)
     elif cmd == "touch":
         g.save(touch_git_sha=True)
         _out({
@@ -304,8 +212,12 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
     elif cmd == "dump":
         _out(g.dump())
     elif cmd == "stats":
+        from weld._cli_render import render_stats
         from weld._graph_stats_cli import build_stats_payload
-        _out(build_stats_payload(args.root, g, top=args.top))
+        _emit(args, build_stats_payload(args.root, g, top=args.top), render_stats)
+    elif cmd == "communities":
+        from weld.graph_communities_cli import run_graph_communities
+        run_graph_communities(args, g)
     elif cmd == "import":
         raw = sys.stdin.read() if str(args.file) == "-" else args.file.read_text(encoding="utf-8")
         data = json.loads(raw)

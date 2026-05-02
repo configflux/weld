@@ -55,7 +55,12 @@ def build_tools(
                 "properties": {
                     "term": {
                         "type": "string",
-                        "description": "Search term (multi-word is tokenized).",
+                        "description": (
+                            "Search term (multi-word is tokenized; strict-AND "
+                            "first, OR fallback when AND yields nothing -- "
+                            "envelope is tagged with degraded_match=or_fallback "
+                            "in that case)."
+                        ),
                     },
                     "limit": {
                         "type": "integer",

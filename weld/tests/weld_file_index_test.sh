@@ -311,7 +311,7 @@ print('PASS: Generic tokens extracted correctly')
 
 # --- Test 7: find subcommand - rate returns rate_limits.py ---
 echo "--- Test 7: find 'rate' returns rate_limits.py ---"
-out="$(wd_cmd find rate)"
+out="$(wd_cmd find rate --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -324,7 +324,7 @@ print('PASS: find rate returns rate_limits.py')
 
 # --- Test 8: find subcommand - auth returns files across Python and TypeScript ---
 echo "--- Test 8: find 'auth' returns cross-language results ---"
-out="$(wd_cmd find auth)"
+out="$(wd_cmd find auth --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -339,7 +339,7 @@ print('PASS: find auth returns Python and TypeScript files')
 
 # --- Test 9: find subcommand - nonexistent term returns empty ---
 echo "--- Test 9: find nonexistent term returns empty ---"
-out="$(wd_cmd find zzzznonexistent42)"
+out="$(wd_cmd find zzzznonexistent42 --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -351,7 +351,7 @@ print('PASS: find nonexistent returns empty')
 
 # --- Test 10: output format ---
 echo "--- Test 10: Output format matches spec ---"
-out="$(wd_cmd find rate)"
+out="$(wd_cmd find rate --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)

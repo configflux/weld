@@ -79,9 +79,15 @@ def _write_root_graph(root: Path, children: list[str], edges: list[dict] | None 
 
 
 def _run_graph_cli(root: Path, *args: str) -> dict:
+    """Drive the CLI with ``--json`` and parse the envelope.
+
+    Per ADR 0040 the default output is human text; tests inspect the
+    structured envelope by passing ``--json``. The flag is appended so
+    callers can keep their existing positional + flag layout intact.
+    """
     stdout = io.StringIO()
     with patch("sys.stdout", stdout):
-        graph_main(["--root", str(root), *args])
+        graph_main(["--root", str(root), *args, "--json"])
     return json.loads(stdout.getvalue())
 
 

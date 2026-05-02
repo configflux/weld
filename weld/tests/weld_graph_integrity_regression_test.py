@@ -30,6 +30,7 @@ from weld.discover import discover  # noqa: E402
 from weld.tests.regression_fixture_helpers import (  # noqa: E402
     SYNTH_STRATEGIES,
     SyntheticGraphMixin,
+    source_should_require_output,
 )
 
 _HAS_DISCOVER_YAML = (Path(_repo_root) / ".weld" / "discover.yaml").exists()
@@ -52,7 +53,7 @@ def _configured_strategies() -> set[str]:
     return {
         src["strategy"]
         for src in config.get("sources", [])
-        if src.get("strategy")
+        if src.get("strategy") and source_should_require_output(Path(_repo_root), src)
     }
 
 @unittest.skipUnless(_HAS_DISCOVER_YAML, _STANDALONE_SKIP)

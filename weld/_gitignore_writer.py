@@ -55,6 +55,9 @@ workspace.lock
 query_state.bin
 graph.json
 agent-graph.json
+graph-communities.json
+graph-community-report.md
+graph-community-index.md
 telemetry.jsonl
 """
 
@@ -69,6 +72,9 @@ graph-previous.json
 workspace-state.json
 workspace.lock
 query_state.bin
+graph-communities.json
+graph-community-report.md
+graph-community-index.md
 telemetry.jsonl
 """
 

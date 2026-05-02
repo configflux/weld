@@ -179,10 +179,27 @@ class InvertedIndexQueryTest(unittest.TestCase):
         result = self.graph.query("zzzznonexistent42")
         self.assertEqual(len(result["matches"]), 0)
 
-    def test_all_tokens_must_match(self) -> None:
-        """If any token misses, no result returned."""
+    def test_one_token_misses_falls_back_to_or(self) -> None:
+        """If any token misses, OR fallback returns the matching token's hits.
+
+        The strict-AND path zeroes (because 'xyznonexistent' has no
+        candidates) and ``Graph.query`` retries via the OR fallback,
+        tagging the envelope with ``degraded_match=or_fallback``.
+        """
         result = self.graph.query("stores xyznonexistent")
+        ids = [m["id"] for m in result["matches"]]
+        self.assertIn(
+            "file:web/app/stores/page", ids,
+            "OR fallback should return 'stores' match when "
+            "'xyznonexistent' has no candidates",
+        )
+        self.assertEqual(result.get("degraded_match"), "or_fallback")
+
+    def test_no_token_matches_returns_empty(self) -> None:
+        """If neither token matches, the result is honestly empty."""
+        result = self.graph.query("zzznonexistent xyznonexistent")
         self.assertEqual(len(result["matches"]), 0)
+        self.assertNotIn("degraded_match", result)
 
     def test_results_match_linear_scan(self) -> None:
         """Index-based query should return identical results to a linear scan."""

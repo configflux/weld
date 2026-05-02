@@ -36,6 +36,7 @@ from weld.discover import discover  # noqa: E402
 from weld.tests.regression_fixture_helpers import (  # noqa: E402
     SYNTH_NODE_TYPES,
     SyntheticGraphMixin,
+    source_should_require_output,
 )
 
 _HAS_DISCOVER_YAML = (Path(_repo_root) / ".weld" / "discover.yaml").exists()
@@ -59,7 +60,7 @@ def _configured_node_types() -> set[str]:
     return {
         src["type"]
         for src in config.get("sources", [])
-        if src.get("type")
+        if src.get("type") and source_should_require_output(Path(_repo_root), src)
     }
 
 def _configured_strategies() -> set[str]:
@@ -71,7 +72,7 @@ def _configured_strategies() -> set[str]:
     return {
         src["strategy"]
         for src in config.get("sources", [])
-        if src.get("strategy")
+        if src.get("strategy") and source_should_require_output(Path(_repo_root), src)
     }
 
 def _nodes_by_type(ntype: str) -> dict[str, dict]:
@@ -139,6 +140,8 @@ class StrategyNodeTypeConsistencyTest(unittest.TestCase):
 
         # For each configured source, check the declared type is produced
         for src in config.get("sources", []):
+            if not source_should_require_output(Path(_repo_root), src):
+                continue
             strat = src.get("strategy", "")
             declared_type = src.get("type", "")
             if not strat or not declared_type:

@@ -62,13 +62,13 @@ _MAX_PYTHON_CONSTANTS = 64
 _MAX_PYTHON_CONSTANT_NAME_LEN = 80
 
 def _tokenize_path(rel_path: str) -> list[str]:
-    """Extract tokens from path segments and filename (without extension)."""
+    """Tokenize *rel_path* into path segments, filename stem, and (when
+    the filename has an extension) the raw basename so a literal-with-dot
+    ``wd find`` query like ``install.sh`` matches the file by name."""
     parts = Path(rel_path).parts
-    tokens: list[str] = []
-    for part in parts:
-        # Strip extension from the last part (filename)
-        stem = Path(part).stem if part == parts[-1] else part
-        tokens.append(stem)
+    tokens = [Path(part).stem if part == parts[-1] else part for part in parts]
+    if parts and parts[-1] != tokens[-1]:
+        tokens.append(parts[-1])
     return tokens
 
 def _is_python_constant_name(name: str) -> bool:

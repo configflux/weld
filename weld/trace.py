@@ -43,7 +43,6 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from weld.graph_query import query_or_fallback
 from weld.ranking import rank_key as _rank_key
 from weld.trace_contract import (
     TRACE_EDGE_TYPES,
@@ -89,14 +88,16 @@ def _seed_rank(node: dict, *, startup_query: bool) -> tuple[int, int, int, int, 
 
 def _seed_from_term(graph: Any, term: str, limit: int) -> tuple[list[str], bool]:
     """Return seed node ids from a tokenized query, biased toward
-    services and interaction surfaces."""
+    services and interaction surfaces.
+
+    ``Graph.query`` itself performs an OR fallback for multi-token
+    queries when strict-AND yields nothing and tags the envelope with
+    ``degraded_match: 'or_fallback'``. Trace surfaces that flag so the
+    caller can emit an appropriate warning.
+    """
     query_result = graph.query(term, limit=limit * 4)
     matches = query_result.get("matches", [])
-    degraded = False
-    if not matches and len(term.split()) > 1:
-        fallback = query_or_fallback(graph, term, limit=limit * 4)
-        matches = fallback.get("matches", [])
-        degraded = bool(matches)
+    degraded = query_result.get("degraded_match") == "or_fallback"
     if not matches:
         return [], degraded
     # Prefer matches that are themselves a service / interface /

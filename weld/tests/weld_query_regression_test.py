@@ -3,10 +3,12 @@
 Ensures that ``Graph.query()`` and ``Graph._match_tokens()`` correctly:
 - match single tokens against node ID segments, labels, props.file paths,
   and props.exports symbol lists
-- require *every* token in a multi-word query to hit at least one field
+- prefer strict-AND matches when they exist (every token hits some field)
 - rank results by matched-token count (desc), then node ID (asc)
 - produce deterministic ordering across identical queries
-- return empty results for terms that partially match but miss a required token
+- when strict-AND yields nothing on a multi-token query, fall back to a
+  per-group OR union and tag the envelope with ``degraded_match``
+  (covered in detail by ``weld_query_or_fallback_test.py``)
 
 These are regression guards: if the tokenized matching logic is refactored, any
 silent narrowing of the match surface will cause a failure here.
@@ -236,13 +238,34 @@ class QueryEndToEndTest(unittest.TestCase):
                 "stores/page should rank above flyers/page for 'stores page'",
             )
 
-    def test_multi_word_all_must_match(self) -> None:
-        """'stores xyznonexistent' should return no matches."""
+    def test_multi_word_or_fallback_when_one_token_misses(self) -> None:
+        """When one token misses, OR fallback returns matches for the hit token.
+
+        Pre-fallback behavior was an empty envelope; the fallback now keeps
+        ``wd query`` from returning nothing useful when humans type
+        multi-word phrases where one token is nonsense or out-of-scope.
+        """
         result = self.graph.query("stores xyznonexistent")
+        ids = [m["id"] for m in result["matches"]]
+        # Strict-AND would have been empty; OR fallback returns the
+        # 'stores' match.
+        self.assertIn(
+            "file:web/app/stores/page", ids,
+            "OR fallback should return the 'stores' match when "
+            "'xyznonexistent' has no candidates",
+        )
+        # The fallback path tags the envelope so consumers know the result
+        # was not strict-AND.
+        self.assertEqual(result.get("degraded_match"), "or_fallback")
+
+    def test_multi_word_both_missing_returns_empty(self) -> None:
+        """If neither token matches, the result is honestly empty."""
+        result = self.graph.query("zzznonexistent xyznonexistent")
         self.assertEqual(
             len(result["matches"]), 0,
-            "all tokens must match; a miss should return empty",
+            "no candidates for either token -> empty envelope",
         )
+        self.assertNotIn("degraded_match", result)
 
     def test_deterministic_ordering(self) -> None:
         """Same query run twice must return identical ordering."""

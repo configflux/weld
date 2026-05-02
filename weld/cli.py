@@ -85,57 +85,34 @@ MCP commands:
 Global flags:
   --no-telemetry Disable local telemetry for this invocation (ADR 0035)
 
-Graph commands:
-  graph stats    Graph summary counts (canonical)
-  graph validate Validate graph against the contract (canonical)
-  graph validate-fragment
-  diff           Show what changed between discovery runs
-  list           List nodes
-  stats          Alias for `wd graph stats`
-  stale          Compare graph freshness to git HEAD
-  dump           Emit full graph JSON
-  validate       Alias for `wd graph validate`
-  validate-fragment
-                 Alias for `wd graph validate-fragment`
-  add-node       Add or update a node
-  add-edge       Add an edge
-  rm-node        Remove a node and its edges
-  rm-edge        Remove edges
-  import         Merge graph JSON from a file
-  lint           Lint the graph for architectural violations
+Graph commands (`wd graph X` is an alias for `wd X` for graph operations):
+  graph stats              Graph summary counts
+  graph communities        Detect graph communities and report hubs
+  graph validate           Validate graph against the contract
+  graph validate-fragment  Validate a JSON fragment against the contract
+  graph list               List nodes
+  graph stale              Compare graph freshness to git HEAD
+  graph dump               Emit full graph JSON
+  graph diff               Show what changed between discovery runs
+  graph lint               Lint the graph for architectural violations
+  graph add-node           Add or update a node
+  graph add-edge           Add an edge
+  graph rm-node            Remove a node and its edges
+  graph rm-edge            Remove edges
+  graph import             Merge graph JSON from a file
 
 Run `wd <command> --help` for command-specific help.
 """
 
 def _run_export(argv: list[str]) -> int:
-    """Parse export subcommand args and run the export."""
-    import argparse
+    """Parse export subcommand args and run the export.
 
-    from weld.export import export
+    Implementation lives in :mod:`weld._export_cli` to keep this dispatcher
+    under the 400-line cap.
+    """
+    from weld._export_cli import run_export
 
-    parser = argparse.ArgumentParser(prog="wd export")
-    parser.add_argument(
-        "--format",
-        "-f",
-        default="mermaid",
-        choices=("mermaid", "dot", "d2"),
-        help="Output format (default: mermaid)",
-    )
-    parser.add_argument(
-        "--node",
-        default=None,
-        help="Center node ID for subgraph extraction",
-    )
-    parser.add_argument(
-        "--depth",
-        type=int,
-        default=1,
-        help="BFS depth for subgraph extraction (default: 1)",
-    )
-    args = parser.parse_args(argv)
-    output = export(args.format, node_id=args.node, depth=args.depth)
-    sys.stdout.write(output)
-    return 0
+    return run_export(argv)
 
 
 def _strip_no_telemetry(args: list[str]) -> tuple[list[str], bool]:
@@ -373,6 +350,20 @@ def _dispatch(argv: list[str] | None) -> int:
     from weld import graph as graph_mod
 
     if subcmd == "graph":
+        # ``wd graph diff`` / ``wd graph lint`` are listed under "Graph
+        # commands" in --help and must resolve as aliases for the
+        # top-level ``wd diff`` / ``wd lint`` dispatchers (option A in
+        # the namespace-aliasing rule). Without this, ``wd graph`` would
+        # only know the subcommands defined by the graph subparser and
+        # raise "invalid choice" for diff/lint.
+        if rest and rest[0] == "diff":
+            from weld import diff as diff_mod
+
+            return diff_mod.main(rest[1:])
+        if rest and rest[0] == "lint":
+            from weld import arch_lint as arch_lint_mod
+
+            return arch_lint_mod.main(rest[1:])
         graph_mod.main(rest, prog="wd graph")
         return 0
 

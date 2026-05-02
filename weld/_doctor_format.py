@@ -25,6 +25,7 @@ _SECTION_ORDER: tuple[str, ...] = (
     "Nodes",
     "Edges",
     "Strategies",
+    "Agent Graph",
     "Optional",
     "MCP",
 )

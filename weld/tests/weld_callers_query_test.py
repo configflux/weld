@@ -153,6 +153,48 @@ class CallersQueryTest(unittest.TestCase):
         self.assertEqual(result["callers"], [])
         self.assertIn("error", result)
 
+    def test_callers_resolves_bare_name(self) -> None:
+        """A bare name like ``helper`` must resolve the same way
+        :meth:`Graph.references` resolves it: walk symbol nodes, match on
+        ``qualname``, and aggregate callers across every match.
+        """
+        # Bare name resolves to symbol:py:m:helper plus the unresolved
+        # sentinel symbol:unresolved:helper. Aggregated callers must
+        # include both direct callers (caller_one, caller_two) AND
+        # ``top`` (which calls the unresolved sentinel).
+        result = self.g.callers("helper", depth=1)
+        ids = {c["id"] for c in result["callers"]}
+        self.assertIn("symbol:py:m:caller_one", ids)
+        self.assertIn("symbol:py:m:caller_two", ids)
+        self.assertIn("symbol:py:m:top", ids)
+        self.assertNotIn("error", result)
+
+    def test_callers_bare_name_unique(self) -> None:
+        """Bare name that uniquely resolves to one definite symbol returns
+        that symbol's callers (no aggregation surprise)."""
+        # ``caller_one`` resolves to symbol:py:m:caller_one only; its
+        # caller is ``top``.
+        result = self.g.callers("caller_one", depth=1)
+        ids = {c["id"] for c in result["callers"]}
+        self.assertEqual(ids, {"symbol:py:m:top"})
+        self.assertNotIn("error", result)
+
+    def test_callers_bare_name_missing(self) -> None:
+        """A bare name that matches no symbol still surfaces an error."""
+        result = self.g.callers("does_not_exist", depth=1)
+        self.assertEqual(result["callers"], [])
+        self.assertIn("error", result)
+
+    def test_callers_full_id_still_works(self) -> None:
+        """Regression: fully-qualified ids must continue to resolve directly."""
+        result = self.g.callers("symbol:py:m:helper", depth=1)
+        ids = {c["id"] for c in result["callers"]}
+        self.assertEqual(
+            ids,
+            {"symbol:py:m:caller_one", "symbol:py:m:caller_two"},
+        )
+        self.assertNotIn("error", result)
+
     def test_references_combines_resolved_and_sentinel(self) -> None:
         refs = self.g.references("helper")
         # Both the resolved symbol and the unresolved sentinel match

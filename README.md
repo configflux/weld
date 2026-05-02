@@ -13,7 +13,7 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.14.0 -->
+<!-- evaluator-note: latest=v0.15.0 -->
 > **Evaluators: start with v0.14.0.** v0.14.0 lands deterministic
 > multi-language graph closure, two new discovery strategies
 > (`concept_from_bd`, `test_peer`), module-level Python constants in
@@ -137,7 +137,22 @@ Try it on a real example:
 [examples/04-monorepo-typescript](examples/04-monorepo-typescript/) (monorepo) ·
 [examples/05-polyrepo](examples/05-polyrepo/) (polyrepo federation).
 
-Sample output (`wd query "auth"` — trimmed):
+Sample output (`wd query "auth"` — default human form, trimmed):
+
+```text
+# query: auth
+  matches (1):
+    1. symbol:src/auth/handler.py:authenticate  [type: function]
+       label: authenticate
+       description: Validate a bearer token and return the caller identity.
+  neighbors (1):
+    - route:/login  [type: route]
+```
+
+All `wd` retrieval commands default to human-readable text and accept
+`--json` for the stable JSON envelope (ADR 0040). Pass `--json` when
+piping to `jq` or other scripted consumers — the schema is unchanged
+from the previous release. Sample `wd query "auth" --json`:
 
 ```json
 {
@@ -329,12 +344,16 @@ wd context "<node-id>"
 wd add-node "<node-id>" --type "<node-type>" --label "<label>" --merge --props '{"description":"...","purpose":"...","enrichment":{"provider":"manual","model":"agent-reviewed","timestamp":"<ISO-8601 UTC timestamp>","description":"...","purpose":"...","suggested_tags":["lowercase","tags"]}}'
 wd graph validate
 wd graph stats
+wd graph communities --format markdown
 ```
 
 Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
 a later `wd discover --output .weld/graph.json`; refresh discovery before manual
 edits. Manual inferred edges should use explicit provenance such as
 `{"source": "manual"}` after the relationship is verified from source content.
+`wd graph communities --write` derives `.weld/graph-communities.json`,
+`.weld/graph-community-report.md`, and `.weld/graph-community-index.md`
+from the existing graph without modifying `.weld/graph.json`.
 
 Without tree-sitter, the built-in Python module strategy and non-language
 strategies (markdown, YAML, config, frontmatter) still work.
@@ -401,7 +420,9 @@ overwrites an existing file). Three policies are available:
 - **Default — config-only.** Tracks the source-of-truth config
   (`discover.yaml`, `workspaces.yaml`, `agents.yaml`, `strategies/`,
   `adapters/`, `README.md`) and ignores everything else weld writes,
-  including the generated graphs (`graph.json`, `agent-graph.json`)
+  including the generated graphs (`graph.json`, `agent-graph.json`),
+  graph-community reports (`graph-communities.json`,
+  `graph-community-report.md`, `graph-community-index.md`),
   and per-machine state (`discovery-state.json`, `graph-previous.json`,
   `workspace-state.json`, `workspace.lock`, `query_state.bin`). A
   fresh contributor gets a clean `git status` after the first run.
@@ -626,8 +647,8 @@ rm .weld/workspace-state.json
 | `wd init --respect-gitignore` | Skip scan-only nested repos ignored by Git when writing `workspaces.yaml`; explicit children can still be added later |
 | `wd init --track-graphs` | Seed `.weld/.gitignore` so canonical graphs (`graph.json` + `agent-graph.json`) stay tracked alongside config (warm-CI / warm-MCP workflow) |
 | `wd init --ignore-all` | Write a fully-ignoring `.weld/.gitignore` instead of the config-only default; mutually exclusive with `--track-graphs` |
-| `wd discover` | Run discovery, emit graph JSON (federation mode when `workspaces.yaml` is present) |
-| `wd agents discover` | Scan AI customization assets and write `.weld/agent-graph.json` |
+| `wd discover` | Run discovery, emit graph JSON (federation mode when `workspaces.yaml` is present); on success prints a one-line stderr summary `wrote N nodes / M edges -> path (T.Ts)`, suppressed by `--quiet` |
+| `wd agents discover` | Scan AI customization assets and write `.weld/agent-graph.json`; text mode summarizes diagnostics per code and `--show-diagnostics` dumps the full list inline |
 | `wd agents rediscover` | Refresh `.weld/agent-graph.json` from a new static scan |
 | `wd agents list` | List discovered AI customization assets from `.weld/agent-graph.json` |
 | `wd agents explain <asset>` | Explain one AI customization asset and its graph relationships |
@@ -642,7 +663,7 @@ rm .weld/workspace-state.json
 | `wd workspace bootstrap --track-graphs` | Bootstrap and seed `.weld/.gitignore` in root and every child to track canonical graphs alongside config |
 | `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child; mutually exclusive with `--track-graphs` |
 | `wd build-index` | Regenerate file index |
-| `wd query <term>` | Hybrid-ranked tokenized graph search |
+| `wd query <term>` | Hybrid-ranked tokenized graph search (strict-AND first; OR fallback when AND yields nothing on multi-word phrases — envelope is tagged with `degraded_match=or_fallback`) |
 | `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`) |
 | `wd context <id>` | Node + neighborhood |
 | `wd path <from> <to>` | Shortest path |
@@ -652,6 +673,7 @@ rm .weld/workspace-state.json
 | `wd viz` | Local read-only browser graph explorer |
 | `wd stale` | Check graph freshness |
 | `wd graph stats` | Graph statistics |
+| `wd graph communities [--format json\|markdown] [--top N] [--write]` | Detect deterministic graph communities, report top-level hubs, and optionally write derived JSON/report/index artifacts (per ADR 0039: unresolved-symbol nodes are excluded from the projected subgraph) |
 | `wd stats` | Backward-compatible alias for `wd graph stats` |
 | `wd graph validate` | Validate graph against the contract |
 | `wd graph validate-fragment <file>` | Validate imported graph fragments and warn on trace-inert semantics |
@@ -700,6 +722,14 @@ rules:
 Rules can add an `allow` block with the same `from` / `to` selectors to
 exempt specific edges from a broader deny match.
 
+Output is signal-first: the summary line counts violations per rule,
+high-signal rules (`no-circular-deps`, `boundary-enforcement`) print
+before noisier ones, and `orphan-detection` runs last. By default the
+orphan rule suppresses `doc`, `config`, and test-file node types
+(intentional leaves in nearly every codebase) and the suppressed count
+is reported in the summary. Pass `--include-noisy` to surface every
+orphan. Suppressed orphans on their own do not raise the exit code.
+
 Run `wd --help` for the full list.
 
 The repository includes a canonical Agent System Maintainer skill at
@@ -736,7 +766,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.14.0`.
+terminal snippets captured against `wd 0.15.0`.
 
 ## Install
 

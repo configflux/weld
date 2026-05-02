@@ -3,22 +3,20 @@
 This module runs a small set of pluggable rules against ``.weld/graph.json``
 and reports violations as a stable JSON envelope or human-readable text.
 Each rule iterates the graph once and yields zero or more violations. The
-CLI exits ``0`` when no violations were found and ``1`` when any rule
-produced a violation -- suitable for use as a CI quality gate.
+CLI exits ``0`` when no *visible* violations were found and ``1`` when any
+non-suppressed violation was reported -- suitable for use as a CI gate.
 
 Built-in rules:
 
 * ``orphan-detection`` -- flags nodes with neither incoming nor outgoing
-  edges.
+  edges.  By default suppresses doc/config/test node types because those
+  are almost always intentional leaves; ``--include-noisy`` restores the
+  broad sweep.
 * ``strategy-coverage`` -- reads ``.weld/discover.yaml`` and flags source
   entries whose glob patterns match zero files (stale or misconfigured
   discovery config).
 * ``no-circular-deps`` -- detects strongly connected components (cycles)
   via Tarjan's algorithm.
-
-Additional rules (layer boundaries, cross-component edges, required
-metadata) slot into the same ``_RULES`` registry without touching the
-runner.
 * ``boundary-enforcement`` -- flags edges crossing layer boundaries
   without a ``topology.allowed_cross_layer`` entry in ``discover.yaml``.
 """
@@ -39,9 +37,13 @@ from weld.arch_lint_custom import (
     load_custom_rules,
 )
 from weld.arch_lint_cycles import rule_no_circular_deps
+from weld.arch_lint_format import format_text
+from weld.arch_lint_orphan import detect_orphans, rule_orphan_detection
 from weld.graph import Graph
 
 ARCH_LINT_VERSION = 1
+
+ORPHAN_RULE_ID = "orphan-detection"
 
 @dataclass(frozen=True)
 class Violation:
@@ -83,33 +85,6 @@ class Rule:
 # ---------------------------------------------------------------------------
 # Built-in rules
 # ---------------------------------------------------------------------------
-
-def _rule_orphan_detection(data: dict) -> Iterable[Violation]:
-    """Flag nodes with zero incoming or outgoing edges (dead code candidates)."""
-    nodes: dict = data.get("nodes", {}) or {}
-    edges: list = data.get("edges", []) or []
-
-    touched: set[str] = set()
-    for edge in edges:
-        frm = edge.get("from")
-        to = edge.get("to")
-        if isinstance(frm, str):
-            touched.add(frm)
-        if isinstance(to, str):
-            touched.add(to)
-
-    orphans = sorted(node_id for node_id in nodes if node_id not in touched)
-    for node_id in orphans:
-        node = nodes.get(node_id) or {}
-        label = node.get("label") or node_id
-        yield Violation(
-            rule="orphan-detection",
-            node_id=node_id,
-            message=(
-                f"node {node_id!r} ({label}) has no incoming or outgoing "
-                f"edges; likely dead code or a discovery gap"
-            ),
-        )
 
 def _rule_strategy_coverage(data: dict, root: Path) -> Iterable[Violation]:
     """Flag source entries in discover.yaml whose globs match zero files."""
@@ -172,12 +147,12 @@ def _rule_strategy_coverage(data: dict, root: Path) -> Iterable[Violation]:
 
 _RULES: tuple[Rule, ...] = (
     Rule(
-        rule_id="orphan-detection",
+        rule_id=ORPHAN_RULE_ID,
         description=(
             "Flag nodes that have neither incoming nor outgoing edges "
-            "(dead code candidates)."
+            "(dead code candidates). Default suppresses doc/config/test."
         ),
-        check=_rule_orphan_detection,
+        check=rule_orphan_detection,
     ),
     Rule(
         rule_id="strategy-coverage",
@@ -225,15 +200,29 @@ def _adapt_custom_rule(custom_rule: CustomRule) -> Rule:
         check=check,
     )
 
+def _run_rule(
+    rule: Rule, data: dict, root: Path, *, include_noisy: bool
+) -> tuple[list[dict], int]:
+    """Run a single rule and return (violation dicts, suppressed_count)."""
+    if rule.rule_id == ORPHAN_RULE_ID:
+        violations, suppressed = detect_orphans(
+            data, include_noisy=include_noisy
+        )
+        return [v.to_dict() for v in violations], suppressed
+    if rule.needs_root:
+        results = rule.check(data, root)
+    else:
+        results = rule.check(data)
+    return [v.to_dict() for v in results], 0
+
 def lint(
     graph: Graph,
     *,
     rule_ids: Iterable[str] | None = None,
     root: Path | None = None,
+    include_noisy: bool = False,
 ) -> dict:
     """Run architectural rules against *graph* and return a result envelope.
-
-    The result shape is stable for CI consumers:
 
     Custom edge-deny rules are loaded from ``.weld/lint-rules.yaml`` when
     present and are selected by ``rule_ids`` just like built-in rules.
@@ -243,17 +232,20 @@ def lint(
         "rules_run": [...rule ids actually executed...],
         "violations": [...Violation.to_dict()...],
         "violation_count": <int>,
-        "warnings": [...runner-level warnings, never per-rule findings...],
+        "suppressed_count": <int -- orphans hidden by default suppression>,
+        "warnings": [...runner-level warnings...],
     }``
 
     *rule_ids* selects a subset of the registered rules. Unknown ids are
     reported as warnings rather than errors so callers can discover
-    available rules incrementally. An empty (but non-``None``) iterable
-    filters out every rule.
+    available rules incrementally.
 
-    *root* is the project root directory. When ``None`` it is derived
-    from the graph's backing path (``<root>/.weld/graph.json``). Rules
-    that set ``needs_root=True`` receive *root* as a second argument.
+    *root* is the project root directory.  When ``None`` it is derived
+    from the graph's backing path.
+
+    *include_noisy* disables the orphan-detection default suppression of
+    ``doc``, ``config``, and ``test`` node types so callers get the broad
+    sweep.  Has no effect on other rules.
     """
     data = graph.dump()
     custom_path = _custom_rules_path(graph)
@@ -271,19 +263,20 @@ def lint(
 
     selected, warnings = _select_rules(rule_ids, rules)
     violations: list[dict] = []
+    suppressed_count = 0
     for rule in selected:
-        if rule.needs_root:
-            results = rule.check(data, root)
-        else:
-            results = rule.check(data)
-        for violation in results:
-            violations.append(violation.to_dict())
+        rule_violations, rule_suppressed = _run_rule(
+            rule, data, root, include_noisy=include_noisy
+        )
+        violations.extend(rule_violations)
+        suppressed_count += rule_suppressed
 
     return {
         "arch_lint_version": ARCH_LINT_VERSION,
         "rules_run": [rule.rule_id for rule in selected],
         "violations": violations,
         "violation_count": len(violations),
+        "suppressed_count": suppressed_count,
         "warnings": [*custom_warnings, *warnings],
     }
 
@@ -315,34 +308,17 @@ def _select_rules(
         selected.append(rule)
     return selected, warnings
 
-# ---------------------------------------------------------------------------
-# Text formatter
-# ---------------------------------------------------------------------------
-
-def format_text(result: dict) -> str:
-    """Render a ``lint()`` result as a human-readable report."""
-    lines: list[str] = []
-    count = result.get("violation_count", 0)
-    rules_run = result.get("rules_run", [])
-    if not rules_run:
-        lines.append("No rules executed.")
-    else:
-        lines.append(f"Ran rules: {', '.join(rules_run)}")
-
-    if count == 0:
-        lines.append("No architectural violations found.")
-    else:
-        lines.append(f"Found {count} violation(s):")
-        for violation in result.get("violations", []):
-            lines.append(
-                f"- [{violation['rule']}] {violation['node_id']}: "
-                f"{violation['message']}"
-            )
-
-    for warning in result.get("warnings", []):
-        lines.append(f"Warning: {warning}")
-
-    return "\n".join(lines) + "\n"
+# Re-export ``format_text`` so that existing callers and tests continue
+# to import it from ``weld.arch_lint``.
+__all__ = [
+    "ARCH_LINT_VERSION",
+    "Rule",
+    "Violation",
+    "available_rule_ids",
+    "format_text",
+    "lint",
+    "main",
+]
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -351,15 +327,17 @@ def format_text(result: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point for ``wd lint``.
 
-    Exit code is ``0`` on a clean graph and ``1`` when any violation was
-    reported, regardless of output format.
+    Exit code is ``0`` when no *visible* violations were reported and
+    ``1`` when any non-suppressed violation fired.  Suppressed orphans
+    alone never raise the exit code -- they are reported only in the
+    summary line.
     """
     parser = argparse.ArgumentParser(
         prog="wd lint",
         description=(
             "Lint the graph for architectural violations (dead code, layer "
             "inversion, missing metadata). Loads .weld/lint-rules.yaml when "
-            "present. Exits non-zero on violations."
+            "present. Exits non-zero on visible violations."
         ),
     )
     parser.add_argument(
@@ -383,13 +361,26 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("."),
         help="Project root containing .weld/graph.json (default: cwd).",
     )
+    parser.add_argument(
+        "--include-noisy",
+        action="store_true",
+        help=(
+            "Disable the orphan-detection default suppression of "
+            "doc/config/test nodes; surface every orphan."
+        ),
+    )
     args = parser.parse_args(argv)
 
     graph = Graph(args.root)
     graph.load()
 
     rule_filter = list(args.rule) if args.rule is not None else None
-    result = lint(graph, rule_ids=rule_filter, root=args.root)
+    result = lint(
+        graph,
+        rule_ids=rule_filter,
+        root=args.root,
+        include_noisy=args.include_noisy,
+    )
 
     if args.json:
         json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
@@ -397,4 +388,5 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stdout.write(format_text(result))
 
+    # Exit non-zero only when a non-suppressed violation fired.
     return 1 if result["violation_count"] > 0 else 0

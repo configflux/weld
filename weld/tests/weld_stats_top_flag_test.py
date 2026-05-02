@@ -77,9 +77,15 @@ def _write_graph(root: Path, payload: dict) -> None:
 
 
 def _run_stats(root: Path, *extra: str) -> dict:
+    """Run ``wd stats`` with the JSON opt-in flag and parse the envelope.
+
+    Per ADR 0040 the CLI defaults to human-readable text; tests that
+    inspect structured fields pass ``--json`` to opt into the stable
+    envelope.
+    """
     buf = io.StringIO()
     with redirect_stdout(buf):
-        cli_main(["--root", str(root), "stats", *extra])
+        cli_main(["--root", str(root), "stats", *extra, "--json"])
     return json.loads(buf.getvalue())
 
 

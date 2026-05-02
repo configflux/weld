@@ -30,6 +30,7 @@ from pathlib import Path
 
 
 from weld._git import commits_behind, get_git_sha, is_git_repo
+from weld._doctor_agent_graph import check_agent_graph
 from weld._doctor_format import (
     apply_suppressions as _apply_suppressions,
     format_results,
@@ -239,10 +240,30 @@ def doctor(root: Path) -> list[CheckResult]:
     results.extend(_check_staleness(weld_dir, root))
     results.extend(_check_strategies(weld_dir, root))
     results.extend(_check_trust_boundaries(weld_dir))
+    results.extend(check_agent_graph(weld_dir, CheckResult))
     results.extend(_check_tree_sitter(weld_dir))
     results.extend(_check_optional_deps())
     results.extend(_check_mcp_config(root))
     return results
+
+
+def doctor_agent_graph(root: Path) -> list[CheckResult]:
+    """Run only the [Agent Graph] section checks.
+
+    Returns a single-section result list suitable for ``wd doctor
+    --agent-graph``. When ``.weld/`` is missing, returns a project-level
+    note pointing at ``wd init`` rather than fabricating an empty section.
+    """
+    weld_dir = root / ".weld"
+    if not weld_dir.is_dir():
+        return [
+            CheckResult(
+                "note",
+                "No Weld project found (.weld/ directory not found) -- run wd init",
+                "Project",
+            )
+        ]
+    return check_agent_graph(weld_dir, CheckResult)
 
 
 _EXIT_CODE_EPILOG = """\
@@ -278,6 +299,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--security",
         action="store_true",
         help="Show the trust-posture report only (ADR 0025)",
+    )
+    mode.add_argument(
+        "--agent-graph",
+        action="store_true",
+        help="Show the Agent Graph health summary only",
     )
     mode.add_argument(
         "--ack",
@@ -331,6 +357,11 @@ def main(argv: list[str] | None = None) -> int:
         from weld.security import run_security
 
         return run_security(root, as_json=args.json)
+
+    if args.agent_graph:
+        ag_results = doctor_agent_graph(root)
+        sys.stdout.write(format_results(ag_results) + "\n")
+        return 1 if any(r.level == "fail" for r in ag_results) else 0
 
     results = doctor(root)
     weld_dir = root / ".weld"

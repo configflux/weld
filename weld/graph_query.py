@@ -8,7 +8,21 @@ from weld.synonyms import candidate_nodes_grouped, expand_token_groups
 
 
 def query_graph(graph: object, term: str, limit: int = 20) -> dict:
-    """Run tokenized graph query while preserving Graph.query's envelope."""
+    """Run tokenized graph query while preserving Graph.query's envelope.
+
+    Behavior:
+    - Strict-AND: every token group must hit at least one field on a node.
+    - OR-fallback: when strict-AND yields zero matches on a *multi-token*
+      query, retry via :func:`query_or_fallback` (per-group union ranked
+      by group-hit count, then BM25, then node id) and tag the envelope
+      with ``degraded_match: 'or_fallback'`` so consumers know the result
+      was not strict-AND. Single-token queries skip the fallback because
+      OR == AND for one group.
+
+    The fallback is silent (no warning emitted in the envelope itself --
+    the ``degraded_match`` flag is the contract). ``brief()`` and
+    ``trace()`` retain their own fallback paths and warning copy.
+    """
     tokens = term.lower().split()
     if not tokens:
         return {"query": term, "matches": [], "neighbors": [], "edges": []}
@@ -16,7 +30,7 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
     token_groups = expand_token_groups(tokens)
     candidates = candidate_nodes_grouped(graph._inverted_index, token_groups)
     if candidates is not None and not candidates:
-        return {"query": term, "matches": [], "neighbors": [], "edges": []}
+        return _maybe_or_fallback(graph, term, tokens, limit)
     if candidates is None:
         candidate_iter = graph._data["nodes"].items()
     else:
@@ -29,6 +43,8 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
     for node_id, node in candidate_iter:
         if graph._match_token_groups(token_groups, node_id, node):
             matched.append((node_id, node))
+    if not matched:
+        return _maybe_or_fallback(graph, term, tokens, limit)
     ranked = rank_query_matches(
         matched,
         token_groups,
@@ -40,6 +56,26 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
     match_ids = {match["id"] for match in matches}
     neighbors, edges = graph._neighborhood(match_ids)
     return {"query": term, "matches": matches, "neighbors": neighbors, "edges": edges}
+
+
+def _maybe_or_fallback(
+    graph: object, term: str, tokens: list[str], limit: int
+) -> dict:
+    """Return OR-fallback result for multi-token queries; else empty envelope.
+
+    Single-token queries skip the fallback because the OR path would
+    return identical results to the (already-empty) strict-AND path.
+    Multi-token queries that also find nothing via OR return an honestly
+    empty envelope with no ``degraded_match`` flag.
+    """
+    empty = {"query": term, "matches": [], "neighbors": [], "edges": []}
+    if len(tokens) <= 1:
+        return empty
+    fallback = query_or_fallback(graph, term, limit=limit)
+    if not fallback.get("matches"):
+        return empty
+    fallback["degraded_match"] = "or_fallback"
+    return fallback
 
 
 def _candidate_nodes_or(
@@ -92,7 +128,7 @@ def _count_groups_hit(token_groups: list[list[str]], nid: str, node: dict) -> in
 
 
 def query_or_fallback(graph: object, term: str, limit: int = 20) -> dict:
-    """Soft retrieval path used by ``brief()`` when strict-AND zeroes out.
+    """Soft retrieval path used by :func:`query_graph` when strict-AND zeroes.
 
     Unions per-group candidates (instead of intersecting them) and ranks the
     survivors by ``(num_groups_hit_desc, BM25_desc, node_id_asc)`` so nodes
@@ -101,11 +137,13 @@ def query_or_fallback(graph: object, term: str, limit: int = 20) -> dict:
 
     Notes
     -----
-    - This does NOT change ``graph.query()``'s strict-AND semantics; that
-      path is documented and tested by
-      ``weld/tests/weld_query_regression_test.py``.
-    - Callers should mark results from this path as degraded so consumers
-      know they did not get strict AND.
+    - :func:`query_graph` invokes this path automatically on multi-token
+      queries when strict-AND yields zero matches and tags the result with
+      ``degraded_match: 'or_fallback'`` so consumers can detect the
+      relaxation. Direct callers (e.g., custom tools) may invoke
+      :func:`query_or_fallback` themselves if they want OR semantics
+      unconditionally; in that case they are responsible for adding their
+      own ``degraded_match`` marker.
     """
     tokens = term.lower().split()
     if not tokens:

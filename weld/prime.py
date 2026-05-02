@@ -86,17 +86,16 @@ def _check_graph_json(weld_dir: Path, root: Path) -> tuple[list[str], list[str]]
     if total < 5:
         lines.append(_status("INFO", f"Graph has only {total} node{'s' if total != 1 else ''} — consider adding more sources to discover.yaml"))
 
-    # Description coverage
+    # Description coverage. Logic lives in _prime_coverage so this file
+    # stays under the 400-line cap (CLAUDE.md / AGENTS.md policy).
     if total > 0:
-        with_desc = sum(
-            1 for n in nodes.values()
-            if isinstance(n, dict)
-            and isinstance((n.get("props") or {}).get("description"), str)
-            and (n.get("props") or {}).get("description", "").strip()
+        from weld._prime_coverage import describe_meaningful_coverage
+
+        coverage_lines, coverage_steps = describe_meaningful_coverage(
+            nodes, status=_status, action=_action,
         )
-        pct = round(with_desc / total * 100)
-        if pct < 30:
-            lines.append(_status("INFO", f"{pct}% of nodes have descriptions"))
+        lines.extend(coverage_lines)
+        steps.extend(coverage_steps)
 
     return lines, steps
 

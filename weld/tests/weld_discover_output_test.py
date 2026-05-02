@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -219,6 +220,80 @@ class FederatedRootOutputFlagTests(unittest.TestCase):
             # File is written to .weld/graph.json (default target).
             default_target = root / ".weld" / "graph.json"
             self.assertTrue(default_target.is_file())
+
+
+class DiscoverSuccessSummaryTests(unittest.TestCase):
+    """``wd discover`` emits a one-line stderr summary on success.
+
+    Mirrors the UX of ``wd build-index`` (``Indexed N files -> path``).
+    The summary goes to stderr so JSON consumers piping stdout are
+    unaffected. ``--quiet`` suppresses the summary for scripted callers.
+    """
+
+    # Match strings like:
+    #   wrote 0 nodes / 0 edges -> /tmp/.../graph.json (0.00s)
+    #   wrote 12 nodes / 34 edges (0.12s)
+    _SUMMARY_RE = re.compile(
+        r"^wrote \d+ nodes / \d+ edges( -> .+)? \(\d+\.\d{2}s\)$",
+        re.MULTILINE,
+    )
+
+    def test_default_stdout_mode_prints_summary_to_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _init_repo(Path(tmp) / "repo")
+            _write_minimal_discover_yaml(root)
+
+            rc, stdout, stderr = _run_main([str(root)])
+
+            self.assertEqual(rc, 0)
+            self.assertRegex(stderr, self._SUMMARY_RE)
+            # Stdout still carries the graph JSON unchanged.
+            parsed = json.loads(stdout)
+            self.assertIn("nodes", parsed)
+
+    def test_output_mode_summary_includes_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _init_repo(Path(tmp) / "repo")
+            _write_minimal_discover_yaml(root)
+            target = root / ".weld" / "graph.json"
+
+            rc, stdout, stderr = _run_main(
+                [str(root), "--output", str(target)]
+            )
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(stdout, "")
+            self.assertRegex(stderr, self._SUMMARY_RE)
+            self.assertIn(str(target), stderr,
+                          "summary must include the --output path")
+
+    def test_quiet_flag_suppresses_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _init_repo(Path(tmp) / "repo")
+            _write_minimal_discover_yaml(root)
+            target = root / ".weld" / "graph.json"
+
+            rc, _stdout, stderr = _run_main(
+                [str(root), "--output", str(target), "--quiet"]
+            )
+
+            self.assertEqual(rc, 0)
+            self.assertNotRegex(stderr, self._SUMMARY_RE,
+                                "--quiet must suppress the success summary")
+
+    def test_quiet_flag_also_suppresses_stdout_mode_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _init_repo(Path(tmp) / "repo")
+            _write_minimal_discover_yaml(root)
+
+            rc, stdout, stderr = _run_main([str(root), "--quiet"])
+
+            self.assertEqual(rc, 0)
+            # Stdout still has graph JSON.
+            parsed = json.loads(stdout)
+            self.assertIn("nodes", parsed)
+            # No summary on stderr.
+            self.assertNotRegex(stderr, self._SUMMARY_RE)
 
 
 if __name__ == "__main__":

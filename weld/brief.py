@@ -19,7 +19,6 @@ from weld.contract import (
     PROTOCOL_VALUES,
     SURFACE_KIND_VALUES,
 )
-from weld.graph_query import query_or_fallback
 from weld.ranking import rank_key as _rank_key
 from weld.warnings import check_confidence_gaps, check_freshness, check_partial_coverage
 
@@ -217,27 +216,22 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
     degraded_match: str | None = None
 
     # Run the same tokenized query as ``wd query``.
+    # ``Graph.query`` itself performs an OR-fallback when strict-AND
+    # zeroes on a multi-token query, tagging the envelope with
+    # ``degraded_match: 'or_fallback'``. Brief surfaces that flag and
+    # adds the user-facing warning copy; if the query layer added no
+    # flag (single-token or AND-success), no fallback is needed here.
     query_result = graph.query(term, limit=limit * 3)  # over-fetch
     matches = query_result.get("matches", [])
     neighbors = query_result.get("neighbors", [])
     edges = query_result.get("edges", [])
 
-    # OR-fallback (Bug-3): when strict-AND zeroes on a multi-token query,
-    # retry via a softer per-group union. Tag the result so consumers see
-    # they did not get strict-AND. Single-token queries skip this path
-    # because OR == AND for one group -- the retry would be identical.
-    if not matches and len(term.split()) > 1:
-        fallback = query_or_fallback(graph, term, limit=limit * 3)
-        fallback_matches = fallback.get("matches", [])
-        if fallback_matches:
-            matches = fallback_matches
-            neighbors = fallback.get("neighbors", [])
-            edges = fallback.get("edges", [])
-            degraded_match = "or_fallback"
-            warnings.append(
-                f"Strict AND returned no matches for {term!r}; "
-                f"retried with OR fallback (degraded_match=or_fallback)."
-            )
+    if query_result.get("degraded_match") == "or_fallback":
+        degraded_match = "or_fallback"
+        warnings.append(
+            f"Strict AND returned no matches for {term!r}; "
+            f"retried with OR fallback (degraded_match=or_fallback)."
+        )
 
     if not matches:
         warnings.append(f"No matches found for query: {term!r}")

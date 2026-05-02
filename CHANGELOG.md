@@ -3,6 +3,82 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.15.0 - 2026-05-02
+
+### Added
+
+- `wd communities` reports projected graph community structure: the discovered
+  graph is split into communities, unresolved-symbol sentinels are projected
+  out, and each community surfaces its top hub nodes so users can navigate
+  large graphs by topic instead of scanning a flat node list.
+  <!-- verify: file=weld/graph_communities.py grep=build_graph_communities -->
+- The retrieval surface (`wd query`, `wd find`, `wd context`, `wd path`,
+  `wd callers`, `wd references`, `wd stale`, `wd stats`) now defaults to a
+  human-readable text format. Pass `--json` for the machine-readable envelope
+  used by tools and the MCP server.
+  <!-- verify: file=weld/_cli_render.py grep=render_query -->
+- `wd export` accepts the centre node id as a positional argument
+  (`wd export <node>`); the legacy `--node <id>` flag is deprecated and prints
+  a deprecation warning, but still works for one release.
+  <!-- verify: file=weld/_export_cli.py grep=run_export -->
+- `wd doctor` surfaces Agent Graph health as a first-class section, reporting
+  agent count, broken references, and discovery diagnostics so missing or
+  malformed agent definitions are caught alongside graph and provider checks.
+  <!-- verify: file=weld/_doctor_agent_graph.py grep=check_agent_graph -->
+- `wd lint` is signal-first: violations are grouped by rule with stable
+  ordering, and orphan-detection now suppresses test files and obviously
+  intentional standalone modules by default. Use the existing rule-disable
+  flags to opt back in to noisier output.
+  <!-- verify: file=weld/arch_lint_orphan.py grep=detect_orphans -->
+- `wd discover` prints a one-line success summary to stderr (graph path,
+  node and edge counts, elapsed time); pass `--quiet` to suppress it. Stdout
+  still carries the canonical graph payload.
+  <!-- verify: file=weld/_discover_summary.py grep=emit_summary -->
+- `wd agents discover` text mode surfaces diagnostics (broken references,
+  unresolved invocations, missing files) inline with the agent listing, so
+  agent-graph problems are visible without dropping to `--json`.
+  <!-- verify: file=weld/agent_graph_cli.py grep=_run_discover -->
+- `wd stats` and `wd prime` reframe description coverage around *meaningful*
+  nodes only (functions, classes, modules with non-trivial bodies), so the
+  headline coverage metric reflects nodes a human would actually want to
+  describe instead of being diluted by trivial graph artefacts.
+  <!-- verify: file=weld/_prime_coverage.py grep=describe_meaningful_coverage -->
+
+### Fixed
+
+- `wd discover` re-runs strategies whose declared outputs are missing from
+  the on-disk graph. Previously a partial discovery state could leave a
+  strategy permanently skipped on subsequent runs; the discovery state now
+  diffs declared-vs-present outputs and forces re-run when they disagree.
+  <!-- verify: file=weld/discovery_state.py grep=DiscoveryState -->
+- `wd communities` projects unresolved-symbol sentinels out of the community
+  graph and reports top-level hubs per community. Earlier output put noisy
+  unresolved nodes at the top of every community summary; the projection step
+  removes them while preserving the underlying edges for hub ranking.
+  <!-- verify: file=weld/graph_communities.py grep=_hub_nodes -->
+- `wd find <basename>` now hits exact basenames such as `install.sh`,
+  `BUILD.bazel`, or `pyproject.toml`. The file index previously only emitted
+  tokenised path fragments, so bare basenames missed.
+  <!-- verify: file=weld/file_index.py grep=_tokenize_path -->
+- `wd enrich` lists the available providers and explains the agent-direct
+  enrichment path when no provider is configured, instead of failing with a
+  bare "missing provider" error.
+  <!-- verify: file=weld/_enrich_safe.py grep=_format_no_provider_error -->
+- `wd query` demotes unresolved-symbol sentinels (`symbol:unresolved:<name>`)
+  in the ranker so resolved symbols outrank sentinels regardless of BM25
+  delta; sentinels now only surface when nothing else matches.
+  <!-- verify: file=weld/ranking.py grep=resolution_penalty -->
+- `wd callers <bare-name>` resolves bare names the same way `wd references`
+  does. Previously `wd callers DiscoveryState` errored "node not found"
+  while `wd references DiscoveryState` worked; the resolver is now shared
+  between both commands.
+  <!-- verify: file=weld/graph.py grep=_resolve_symbol_name -->
+- `wd query` falls back to a per-group OR union when a multi-token
+  strict-AND query yields zero matches. Results are tagged with
+  `degraded_match=or_fallback` so consumers know the result was relaxed;
+  single-token queries skip the fallback.
+  <!-- verify: file=weld/graph_query.py grep=query_or_fallback -->
+
 ## v0.14.0 - 2026-05-02
 
 ### Added

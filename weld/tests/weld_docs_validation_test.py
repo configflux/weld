@@ -17,20 +17,29 @@ def _weld_root() -> Path:
     return _repo_root() / "weld"
 
 def _real_cli_commands() -> set[str]:
-    """Parse the canonical CLI help string for command names."""
+    """Parse the canonical CLI help string for command names.
+
+    Lines under "Graph commands" are listed as ``graph <name>``; both
+    namespaced (``wd graph X``) and unnamespaced (``wd X``) forms are
+    valid, so we record both ``graph`` and ``<name>`` for those lines.
+    """
     from weld.cli import _HELP  # noqa: WPS433 — intentional runtime import
 
     cmds: set[str] = set()
     for line in _HELP.strip().splitlines():
         stripped = line.strip()
-        if not stripped:
+        if not stripped or stripped.startswith(
+            ("Usage", "Core", "Retrieval", "Graph", "Run"),
+        ):
             continue
-        # Skip header/category lines
-        if stripped.startswith(("Usage", "Core", "Retrieval", "Graph", "Run")):
+        parts = stripped.split(None, 2)
+        if not parts or not re.match(r"^[a-z]", parts[0]):
             continue
-        parts = stripped.split(None, 1)
-        if parts and re.match(r"^[a-z]", parts[0]):
-            cmds.add(parts[0])
+        cmds.add(parts[0])
+        if parts[0] == "graph" and len(parts) >= 2 and re.match(
+            r"^[a-z][\w-]*$", parts[1],
+        ):
+            cmds.add(parts[1])
     return cmds
 
 def _real_strategy_files() -> set[str]:

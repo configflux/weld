@@ -58,7 +58,7 @@ print('PASS: discover output includes meta.git_sha')
 
 # --- Test 2: wd stale shows stale=false after fresh discover ---
 echo "--- Test 2: wd stale shows stale=false after fresh discover ---"
-out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" stale)"
+out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" stale --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -76,7 +76,7 @@ git add -A
 git commit -m "dummy commit" --quiet
 NEW_SHA="$(git rev-parse HEAD)"
 
-out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" stale)"
+out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" stale --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -92,7 +92,7 @@ echo "--- Test 4: wd stale shows stale=false after re-discover ---"
 cd "${ROOT}"
 weld_in_root "${REPO_ROOT}" "${ROOT}" discover > "${ROOT}/.weld/graph.json"
 
-out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" stale)"
+out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" stale --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -115,7 +115,7 @@ cat > "${NON_GIT}/.weld/graph.json" <<'JSON'
 }
 JSON
 
-out="$(weld_in_root "${REPO_ROOT}" "${NON_GIT}" stale)"
+out="$(weld_in_root "${REPO_ROOT}" "${NON_GIT}" stale --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -145,7 +145,7 @@ print('PASS: file-index.json includes meta.git_sha')
 
 # --- Test 7: find_files works with new file-index format ---
 echo "--- Test 7: find_files works with new file-index format ---"
-out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" find README)"
+out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" find README --json)"
 echo "${out}" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
