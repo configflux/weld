@@ -66,7 +66,7 @@ All notable user-facing changes to this project are recorded here.
 
 ### Breaking changes
 
-- **Graph node IDs renamed (per ADR 0041) — Python file anchors.** Python file
+- **Graph node IDs renamed — Python file anchors.** Python file
   IDs change shape from `file:{stem}` to `file:{rel_posix_path_without_ext}`
   in 0.16.0 to eliminate stem-only collisions across directories
   (`weld/strategies/python_module.py` and `tools/python_module.py` previously
@@ -94,10 +94,7 @@ All notable user-facing changes to this project are recorded here.
   **Deprecation:** aliases retire in 0.17.0. Pin to 0.16.x if external
   scripts assume the old prefix and cannot be updated before the next minor.
 
-  Full migration table and rationale:
-  [`docs/adrs/0041-graph-closure-determinism.md`](docs/adrs/0041-graph-closure-determinism.md).
-
-- **Skill node IDs (ADR 0041 PR 2).** Skill IDs no longer carry a SHA1 hash
+- **Skill node IDs.** Skill IDs no longer carry a SHA1 hash
   suffix when the same logical skill is reached via multiple discovery paths.
   Two-path collisions now merge into one node with both source paths recorded
   under `sources` and the prior suffixed IDs preserved under `aliases` for one
@@ -105,7 +102,7 @@ All notable user-facing changes to this project are recorded here.
   still resolve.
   <!-- verify: file=weld/agent_graph_materialize.py grep=legacy_skill_id_with_suffix -->
 
-- **ROS2 cluster IDs renamed (ADR 0041 PR 4).** ROS2 package IDs change shape
+- **ROS2 cluster IDs renamed.** ROS2 package IDs change shape
   from `ros_package:<name>` to `package:ros2:<slug>` across the
   `ros2_package`, `ros2_interfaces`, `ros2_topology`, `ros2_launch`, and
   `ros2_cmake` strategies. ROS2 file-anchor IDs follow the same
@@ -118,11 +115,10 @@ All notable user-facing changes to this project are recorded here.
   provenance instead of dropping the second claim.
 
   `.weld/discover.yaml` registers `strategy_pairs` entries for the ROS2,
-  gRPC, and tree-sitter clusters. The strategy-pair-consistency rule
-  (ADR 0041 § Layer 3) is a structural no-op until a downstream workspace
-  configures these strategies in `sources`; it then catches file-set drift
-  with `pair_asymmetry_allowlist` entries documenting any genuine
-  asymmetry.
+  gRPC, and tree-sitter clusters. The strategy-pair-consistency rule is a
+  structural no-op until a downstream workspace configures these strategies
+  in `sources`; it then catches file-set drift with
+  `pair_asymmetry_allowlist` entries documenting any genuine asymmetry.
 
   **User-visible impact:**
   - MCP transcripts and prior `wd query` JSON referencing `ros_package:<name>`
@@ -133,10 +129,7 @@ All notable user-facing changes to this project are recorded here.
   **Deprecation:** aliases retire in 0.17.0. Pin to 0.16.x if external
   scripts assume the old prefix and cannot be updated before the next minor.
 
-  Full migration table and rationale:
-  [`docs/adrs/0041-graph-closure-determinism.md`](docs/adrs/0041-graph-closure-determinism.md).
-
-- **gRPC and tree-sitter cluster IDs renamed (ADR 0041 PR 4b/4c).** gRPC
+- **gRPC and tree-sitter cluster IDs renamed.** gRPC
   rpc, contract, and enum IDs (`rpc:grpc:<package>.<service>.<method>`
   and friends) and the tree-sitter language family
   (`tree_sitter`, `typescript_exports`, `_csharp_tree_sitter`,
@@ -164,9 +157,6 @@ All notable user-facing changes to this project are recorded here.
   **Deprecation:** aliases retire in 0.17.0. Pin to 0.16.x if external
   scripts assume the old prefix and cannot be updated before the next
   minor.
-
-  Full migration table and rationale:
-  [`docs/adrs/0041-graph-closure-determinism.md`](docs/adrs/0041-graph-closure-determinism.md).
 
 ## v0.15.0 - 2026-05-02
 
@@ -350,7 +340,7 @@ All notable user-facing changes to this project are recorded here.
 
 ### Fixed
 
-- `wd init` inside a linked git worktree of a bootstrapped polyrepo now mirrors the main checkout's `.weld/workspaces.yaml` instead of silently degrading to a single-service graph. Linked worktrees do not contain copies of nested-git child repos (git does not clone them), so the FS scan returns empty and the worktree had no way to participate in federation -- `wd discover` produced a tiny local graph (~73 nodes for the reporter) instead of the federated one. The federation **discover** path already handles linked worktrees via `resolve_child_root` (ADR 0028); `wd init` now uses the same `git_main_checkout_path` helper to inherit the registry. After this fix, `wd init` in a worktree produces `workspaces.yaml`, `workspace-state.json`, and a federated `wd discover` graph with no manual yaml restore needed. Operator-authored worktree-local yaml is preserved (`force=False` is honoured).
+- `wd init` inside a linked git worktree of a bootstrapped polyrepo now mirrors the main checkout's `.weld/workspaces.yaml` instead of silently degrading to a single-service graph. Linked worktrees do not contain copies of nested-git child repos (git does not clone them), so the FS scan returns empty and the worktree had no way to participate in federation -- `wd discover` produced a tiny local graph (~73 nodes for the reporter) instead of the federated one. The federation **discover** path already handles linked worktrees via `resolve_child_root`; `wd init` now uses the same `git_main_checkout_path` helper to inherit the registry. After this fix, `wd init` in a worktree produces `workspaces.yaml`, `workspace-state.json`, and a federated `wd discover` graph with no manual yaml restore needed. Operator-authored worktree-local yaml is preserved (`force=False` is honoured).
 
 ## v0.11.4 - 2026-04-27
 
@@ -369,7 +359,7 @@ All notable user-facing changes to this project are recorded here.
 
 ### Added
 
-- `wd bootstrap` adopts a managed-region marker model (ADR 0033). Each bundled template under `weld/templates/` declares one or more `<!-- weld-managed:start name=... -->` regions; `wd bootstrap <fw> --diff` and the writer's no-op / refuse / clobber / append paths operate **inside** those markers only. Operator-curated content outside the markers is left untouched after the first write, so a single edited line outside a managed region no longer reads as a full-file replacement in `--diff`.
+- `wd bootstrap` adopts a managed-region marker model. Each bundled template under `weld/templates/` declares one or more `<!-- weld-managed:start name=... -->` regions; `wd bootstrap <fw> --diff` and the writer's no-op / refuse / clobber / append paths operate **inside** those markers only. Operator-curated content outside the markers is left untouched after the first write, so a single edited line outside a managed region no longer reads as a full-file replacement in `--diff`.
 - `wd bootstrap` ships `--include-unmanaged`: paired with `--diff`, it falls back to the whole-file unified diff for operators who want to fully resync past the managed-region scope. The flag is rejected with a clear error when used outside `--diff`.
 - `wd brief` falls back to an OR-of-tokens retrieval when its strict AND query returns zero matches on a multi-token query. The fallback result carries `degraded_match: "or_fallback"` so callers know they did not get the strict-AND ranking. `graph.query()`'s AND semantics are unchanged.
 - Live-client runtime validation now has a real Codex AGENTS.md + skill record and clearly-marked `result: pending` stubs for Claude Code MCP, Claude Code skill/subagent, and VS Code Copilot custom instructions. A new launch-copy guard rejects platform claims in launch material that are not backed by a recorded row.
@@ -380,7 +370,7 @@ All notable user-facing changes to this project are recorded here.
 - The `_FEDERATION_PARAGRAPH` block appended in federation mode is itself a managed region named `federation`, so federated workspaces get the same drift-detection treatment as the rest of the bootstrap surface.
 - README's comparison-table row for Sourcegraph drops the misleading "you commit with your code" line; the row now describes the actual config-only default and the `wd init --track-graphs` opt-in.
 - The Copilot bundled skill template (`wd bootstrap copilot`) installs `weld` via `uv tool install configflux-weld` instead of the contributor `pip install -e ./weld` path.
-- Bootstrap design and migration semantics captured in [ADR 0033](docs/adrs/0033-bootstrap-managed-content.md).
+- Bootstrap design and migration semantics finalized for the managed-region template model.
 
 ### Fixed
 
@@ -401,18 +391,18 @@ All notable user-facing changes to this project are recorded here.
 
 ### Added
 
-- `wd agents audit --strict` surfaces ADR-0029-suppressed groups (canonical/rendered pairs no longer hide audit findings when strict mode is set).
+- `wd agents audit --strict` surfaces previously-suppressed canonical/rendered group pairs (they no longer hide audit findings when strict mode is set).
 - `WELD_INIT_FRAMEWORK_CAP` env override lets forensic re-runs of `wd init` raise or remove the per-language framework sample cap; `0` disables the cap, custom positive integers set a custom cap, unset/empty/negative/non-numeric values fall back to the built-in default silently.
-- Query state sidecar (ADR 0031): `wd query` now persists the inverted index and BM25 corpus to `.weld/query_state.bin` after `wd discover`, so cold-path query startup drops from ~1.28 s to ~0.54 s on a representative 100k-node graph (about 58% faster). The sidecar is content-addressed via blake2b digest + node count + weld schema version + format-version envelope; on freshness mismatch or corruption the sidecar is silently rebuilt.
+- Query state sidecar: `wd query` now persists the inverted index and BM25 corpus to `.weld/query_state.bin` after `wd discover`, so cold-path query startup drops from ~1.28 s to ~0.54 s on a representative 100k-node graph (about 58% faster). The sidecar is content-addressed via blake2b digest + node count + weld schema version + format-version envelope; on freshness mismatch or corruption the sidecar is silently rebuilt.
 - `wd demo polyrepo --init` auto-bootstraps the workspace before discovery so the first run produces a populated graph instead of an empty one.
 - Bootstrap traceback surfaced under `WELD_DEBUG=1` in `wd demo polyrepo` so the demo's bootstrap exception handler shows the underlying cause when set.
 
 ### Changed
 
-- Edge-type weighted impact and plan-change ranking (ADR 0030): `_score_asset()` and `_secondary_assets` consult an edge-weight table (semantic=5.0, related=2.0, incidental=0.5) and a `SECONDARY_THRESHOLD=1.0`. Canonical-authority assets bypass the secondary threshold so authoritative nodes always render even when only attached via low-weight edges (ADR 0030 amendment).
+- Edge-type weighted impact and plan-change ranking: `_score_asset()` and `_secondary_assets` consult an edge-weight table (semantic=5.0, related=2.0, incidental=0.5) and a `SECONDARY_THRESHOLD=1.0`. Canonical-authority assets bypass the secondary threshold so authoritative nodes always render even when only attached via low-weight edges.
 - `wd init` framework detection merged into a single classifier pass (`_init_classify.py`); per-file `detect_*` walks coalesce, dropping a representative `wd init` cold run from 41.2 s to 8.6 s on a 100k synthetic tree (about 79% faster). No behavior change vs. multi-pass detection — same constants, same heuristics.
 - `wd discover` now warns on stderr when the prior `graph.json` is unreadable instead of silently rewriting it. The previous graph is preserved untouched if the load fails; operators see the failure and can decide whether to rerun.
-- `agent_graph_render_pairs` only honors `render_paths` from `authority="canonical"` nodes (ADR 0029 §5 trust-boundary amendment). Non-canonical nodes can no longer suppress duplicate-name audit findings via render-paths.
+- `agent_graph_render_pairs` only honors `render_paths` from `authority="canonical"` nodes. Non-canonical nodes can no longer suppress duplicate-name audit findings via render-paths.
 
 ### Fixed
 
@@ -439,11 +429,11 @@ All notable user-facing changes to this project are recorded here.
   `external_json` adapters in `.weld/discover.yaml`, enrichment provider
   network use, MCP importability, and safe-mode availability. Risk level
   rolls up to `low`/`medium`/`high` with recommendations; `--json` output
-  is available for tooling. ADR 0025.
+  is available for tooling.
 - `wd agents render` (preview) writes Agent Graph artifacts with a safe
   contract: dry-run/diff by default, `--write` required to write,
   `--force` required to clobber, provenance headers on rendered files,
-  and a drift audit. ADR 0026.
+  and a drift audit.
 - `wd demo` command family wraps the new bootstrap scripts: `wd demo
   list`, `wd demo monorepo --init <dir>`, and `wd demo polyrepo --init
   <dir>` for a frictionless first-run experience.
@@ -503,7 +493,7 @@ All notable user-facing changes to this project are recorded here.
   code when set, so an untrusted repository can be scanned without
   executing unreviewed Python from `.weld/strategies/`. `wd discover`
   without `--safe` now prints a one-time warning before running
-  project-local code (ADR 0023/0024).
+  project-local code.
 - `wd enrich --safe` refuses providers that would touch the network or an
   LLM, so enrichment can run in offline / sandboxed contexts without
   surprises.
@@ -566,7 +556,7 @@ All notable user-facing changes to this project are recorded here.
   bare filename patterns (`README.md`, `*.pyc`) continue to match via
   a basename fallback. Source-level `exclude` is applied uniformly in
   `resolve_source_files`, so strategies no longer need to opt in for
-  excludes to take effect. See ADR 0020.
+  excludes to take effect.
 
 ## v0.6.0 - 2026-04-22
 

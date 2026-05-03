@@ -150,7 +150,7 @@ Sample output (`wd query "auth"` — default human form, trimmed):
 ```
 
 All `wd` retrieval commands default to human-readable text and accept
-`--json` for the stable JSON envelope (ADR 0040). Pass `--json` when
+`--json` for the stable JSON envelope. Pass `--json` when
 piping to `jq` or other scripted consumers — the schema is unchanged
 from the previous release. Sample `wd query "auth" --json`:
 
@@ -559,7 +559,7 @@ but do not block discovery.
 
 Discovery is safe to run from a linked git worktree of the workspace root:
 the federation pass falls back to the main worktree's checkout when sibling
-child repos are not present at the worktree itself (ADR 0028). As a
+child repos are not present at the worktree itself. As a
 defense-in-depth guard, federated discover refuses to overwrite an existing
 non-empty `graph.json` with a 0-node meta-graph; pass `--allow-empty` to
 intentionally tear the workspace graph down.
@@ -673,7 +673,7 @@ rm .weld/workspace-state.json
 | `wd viz` | Local read-only browser graph explorer |
 | `wd stale` | Check graph freshness |
 | `wd graph stats` | Graph statistics |
-| `wd graph communities [--format json\|markdown] [--top N] [--write]` | Detect deterministic graph communities, report top-level hubs, and optionally write derived JSON/report/index artifacts (per ADR 0039: unresolved-symbol nodes are excluded from the projected subgraph) |
+| `wd graph communities [--format json\|markdown] [--top N] [--write]` | Detect deterministic graph communities, report top-level hubs, and optionally write derived JSON/report/index artifacts (unresolved-symbol nodes are excluded from the projected subgraph) |
 | `wd stats` | Backward-compatible alias for `wd graph stats` |
 | `wd graph validate` | Validate graph against the contract |
 | `wd graph validate-fragment <file>` | Validate imported graph fragments and warn on trace-inert semantics |
@@ -867,8 +867,8 @@ where `main` is bumped ahead of the latest tag.
 
 The drift shape that produced the v0.9.0 and v0.10.1 incidents -- `main`
 silently regressing below the latest published wheel -- is now caught
-post-release by `tools/check_main_release_consistency.py` (ADR 0015
-check 11; runs as part of `/release-audit`). To document a deliberate
+post-release by `tools/check_main_release_consistency.py` (runs as part
+of the `/release-audit` flow). To document a deliberate
 "`main` is ahead of the latest tag" window, add a comment marker to
 this README:
 
