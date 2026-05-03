@@ -63,16 +63,19 @@ class GrpcServiceBindingMatchTests(unittest.TestCase):
         self.assertEqual(len(edges), 1)
         edge = edges[0]
         self.assertEqual(edge.type, "cross_repo:grpc_calls")
+        # ADR 0041 § Layer 1: file ids drop ext; rpc ids lowercase.
         self.assertEqual(
             edge.from_id,
-            f"repo-a{UNIT_SEP}file:client.py",
+            f"repo-a{UNIT_SEP}file:client",
         )
         self.assertEqual(
             edge.to_id,
-            f"repo-b{UNIT_SEP}rpc:grpc:users.v1.UserService.GetUser",
+            f"repo-b{UNIT_SEP}rpc:grpc:users.v1.userservice.getuser",
         )
-        self.assertEqual(edge.props["service"], "users.v1.UserService")
-        self.assertEqual(edge.props["method"], "GetUser")
+        # Service label preserves the lowercased slug parsed from the
+        # rpc id (ADR 0041 § Layer 1); method follows the same rule.
+        self.assertEqual(edge.props["service"], "users.v1.userservice")
+        self.assertEqual(edge.props["method"], "getuser")
 
     def test_edge_props_contain_service_name(self) -> None:
         """AC: edge props include the matched service name."""
@@ -83,7 +86,8 @@ class GrpcServiceBindingMatchTests(unittest.TestCase):
 
         self.assertEqual(len(edges), 1)
         self.assertIn("service", edges[0].props)
-        self.assertEqual(edges[0].props["service"], "catalog.v1.Catalog")
+        # ADR 0041 § Layer 1: service label lowercases through canonical slug.
+        self.assertEqual(edges[0].props["service"], "catalog.v1.catalog")
 
     def test_multiple_methods_emit_multiple_edges(self) -> None:
         """Each matched method gets its own edge."""
@@ -100,7 +104,8 @@ class GrpcServiceBindingMatchTests(unittest.TestCase):
         # Client calls CreateOrder and GetOrder (not DeleteOrder).
         self.assertEqual(len(edges), 2)
         methods = {e.props["method"] for e in edges}
-        self.assertEqual(methods, {"CreateOrder", "GetOrder"})
+        # Method label lowercases through canonical slug (ADR 0041).
+        self.assertEqual(methods, {"createorder", "getorder"})
 
 
 class DeterminismTests(unittest.TestCase):
@@ -156,8 +161,8 @@ class UnmatchedStubTests(unittest.TestCase):
         # repo-a has both the proto definition and the client stub.
         nodes: dict[str, dict] = {}
         all_edges: list[dict] = []
-        # Proto nodes
-        rpc_id = "rpc:grpc:users.v1.UserService.GetUser"
+        # Proto nodes (canonical id per ADR 0041 § Layer 1).
+        rpc_id = "rpc:grpc:users.v1.userservice.getuser"
         nodes[rpc_id] = {
             "type": "rpc",
             "label": "UserService.GetUser",
@@ -170,7 +175,7 @@ class UnmatchedStubTests(unittest.TestCase):
         }
         # Client edges
         all_edges.append({
-            "from": "file:client.py",
+            "from": "file:client",
             "to": rpc_id,
             "type": "invokes",
             "props": {"source_strategy": "grpc_bindings", "confidence": "inferred"},
@@ -235,10 +240,10 @@ class MultiChildTests(unittest.TestCase):
             "UserService", ["GetUser"], package="users.v1",
             source_file="user_client.py",
         )
-        # Add more client edges for the other service.
-        order_rpc_id = "rpc:grpc:orders.v1.OrderService.CreateOrder"
+        # Add more client edges for the other service (canonical ids).
+        order_rpc_id = "rpc:grpc:orders.v1.orderservice.createorder"
         client._data["edges"].append({
-            "from": "file:order_client.py",
+            "from": "file:order_client",
             "to": order_rpc_id,
             "type": "invokes",
             "props": {"source_strategy": "grpc_bindings", "confidence": "inferred"},
@@ -263,19 +268,20 @@ class MultiChildTests(unittest.TestCase):
 
         edge_targets = {e.to_id for e in edges}
         self.assertIn(
-            f"user-service{UNIT_SEP}rpc:grpc:users.v1.UserService.GetUser",
+            f"user-service{UNIT_SEP}rpc:grpc:users.v1.userservice.getuser",
             edge_targets,
         )
         self.assertIn(
-            f"order-service{UNIT_SEP}rpc:grpc:orders.v1.OrderService.CreateOrder",
+            f"order-service{UNIT_SEP}rpc:grpc:orders.v1.orderservice.createorder",
             edge_targets,
         )
 
     def test_bidirectional_services(self) -> None:
         """Two repos that are both client and server to each other."""
-        # repo-a: defines OrderService, calls UserService
+        # repo-a: defines OrderService, calls UserService (canonical ids
+        # per ADR 0041 § Layer 1).
         repo_a_nodes = {
-            "rpc:grpc:orders.v1.OrderService.CreateOrder": {
+            "rpc:grpc:orders.v1.orderservice.createorder": {
                 "type": "rpc",
                 "label": "OrderService.CreateOrder",
                 "props": {
@@ -288,8 +294,8 @@ class MultiChildTests(unittest.TestCase):
         }
         repo_a_edges = [
             {
-                "from": "file:user_client.py",
-                "to": "rpc:grpc:users.v1.UserService.GetUser",
+                "from": "file:user_client",
+                "to": "rpc:grpc:users.v1.userservice.getuser",
                 "type": "invokes",
                 "props": {"source_strategy": "grpc_bindings", "confidence": "inferred"},
             }
@@ -298,7 +304,7 @@ class MultiChildTests(unittest.TestCase):
 
         # repo-b: defines UserService, calls OrderService
         repo_b_nodes = {
-            "rpc:grpc:users.v1.UserService.GetUser": {
+            "rpc:grpc:users.v1.userservice.getuser": {
                 "type": "rpc",
                 "label": "UserService.GetUser",
                 "props": {
@@ -311,8 +317,8 @@ class MultiChildTests(unittest.TestCase):
         }
         repo_b_edges = [
             {
-                "from": "file:order_client.py",
-                "to": "rpc:grpc:orders.v1.OrderService.CreateOrder",
+                "from": "file:order_client",
+                "to": "rpc:grpc:orders.v1.orderservice.createorder",
                 "type": "invokes",
                 "props": {"source_strategy": "grpc_bindings", "confidence": "inferred"},
             }
@@ -328,14 +334,14 @@ class MultiChildTests(unittest.TestCase):
         self.assertEqual(len(ab_edges), 1)
         self.assertEqual(
             ab_edges[0].to_id,
-            f"repo-b{UNIT_SEP}rpc:grpc:users.v1.UserService.GetUser",
+            f"repo-b{UNIT_SEP}rpc:grpc:users.v1.userservice.getuser",
         )
         # repo-b calls OrderService in repo-a
         ba_edges = [e for e in edges if e.from_id.startswith("repo-b")]
         self.assertEqual(len(ba_edges), 1)
         self.assertEqual(
             ba_edges[0].to_id,
-            f"repo-a{UNIT_SEP}rpc:grpc:orders.v1.OrderService.CreateOrder",
+            f"repo-a{UNIT_SEP}rpc:grpc:orders.v1.orderservice.createorder",
         )
 
 

@@ -24,6 +24,10 @@ import re
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld.strategies._tree_sitter_ids import (
+    canonical_file_node_id as _make_node_id,
+    legacy_file_node_id as _legacy_make_node_id,
+)
 
 # ---------------------------------------------------------------------------
 # Optional dependency guard (mirrors tree_sitter.py pattern per ADR-0002)
@@ -129,34 +133,10 @@ def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
     return files, sorted(dirs)
 
 # ---------------------------------------------------------------------------
-# Node ID builder (mirrors python_module._make_node_id)
-# ---------------------------------------------------------------------------
-
-def _make_node_id(rel_path: str, id_prefix: str) -> str:
-    """Build a unique node ID from the relative path.
-
-    If ``id_prefix`` is set (e.g. ``"web"``), the ID becomes
-    ``file:web/subpath/stem``.  Without ``id_prefix``, falls back
-    to ``file:{stem}``.
-    """
-    p = Path(rel_path)
-    stem = p.stem
-    if id_prefix:
-        parts = p.parts
-        anchor_idx = None
-        for i, part in enumerate(parts):
-            if part == id_prefix:
-                anchor_idx = i
-        if anchor_idx is not None:
-            sub_parts = list(parts[anchor_idx + 1 :])
-            if sub_parts:
-                sub_parts[-1] = stem
-            else:
-                sub_parts = [stem]
-            return f"file:{id_prefix}/{'/'.join(sub_parts)}"
-        return f"file:{id_prefix}/{stem}"
-    return f"file:{stem}"
-
+# Node ID builders are imported from :mod:`weld.strategies._tree_sitter_ids`
+# (ADR 0041 § Layer 1). ``_make_node_id`` returns the canonical
+# ``file:<rel_path_no_ext>`` form; ``_legacy_make_node_id`` returns the
+# pre-migration shape for the ``aliases`` provenance list.
 # ---------------------------------------------------------------------------
 # Tree-sitter AST parsing (only called when TREE_SITTER_AVAILABLE is True)
 # ---------------------------------------------------------------------------
@@ -276,6 +256,7 @@ def _build_file_node(
     *,
     classes: list[str] | None = None,
     imports: list[str] | None = None,
+    aliases: list[str] | None = None,
 ) -> dict:
     """Assemble a file-type node dict shared by AST and regex paths."""
     props: dict = {
@@ -291,6 +272,8 @@ def _build_file_node(
         props["types"] = classes
     if imports:
         props["imports_from"] = imports
+    if aliases:
+        props["aliases"] = aliases
     return {"type": "file", "label": label, "props": props}
 
 
@@ -373,10 +356,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 if not exports:
                     continue
                 nid = _make_node_id(rel_path, id_prefix)
+                legacy_nid = _legacy_make_node_id(rel_path, id_prefix)
+                aliases = sorted({legacy_nid} - {nid})
                 nodes[nid] = _build_file_node(
                     rel_path, ts_file.stem, exports, line_count, "definite",
                     classes=symbols.get("classes", []),
                     imports=symbols.get("imports", []),
+                    aliases=aliases,
                 )
                 if package_id:
                     edges.append(_build_contains_edge(package_id, nid, "definite"))
@@ -389,8 +375,11 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         if not exports:
             continue
         nid = _make_node_id(rel_path, id_prefix)
+        legacy_nid = _legacy_make_node_id(rel_path, id_prefix)
+        aliases = sorted({legacy_nid} - {nid})
         nodes[nid] = _build_file_node(
             rel_path, ts_file.stem, exports, line_count, "inferred",
+            aliases=aliases,
         )
         if package_id:
             edges.append(_build_contains_edge(package_id, nid, "inferred"))

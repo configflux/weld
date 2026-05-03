@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from weld._node_ids import canonical_slug
 from weld.cross_repo.base import (
     CrossRepoEdge,
     CrossRepoResolver,
@@ -42,15 +43,30 @@ from weld.cross_repo.base import (
 from weld.workspace import UNIT_SEPARATOR
 
 
+def _service_match_key(service_name: str) -> str:
+    """Return the canonical-slug lookup key for a qualified service name.
+
+    Per ADR 0041 § Layer 1, gRPC ``rpc`` ids route through
+    ``canonical_slug`` so mixed-case service names lowercase. The
+    matching key normalises both sides (``props.service`` from the
+    proto strategy, which preserves the source-of-truth mixed case;
+    and the lowercased segments parsed from the rpc target id) so the
+    pairing is case-insensitive.
+    """
+    return canonical_slug(service_name)
+
+
 def _extract_service_definitions(
     child_name: str,
     graph: Any,
 ) -> dict[str, list[str]]:
-    """Return ``{service_name: [namespaced_rpc_node_id, ...]}`` from *graph*.
+    """Return ``{canonical_service_key: [namespaced_rpc_node_id, ...]}``.
 
     Scans nodes of type ``rpc`` whose ``props.source_strategy`` is
     ``grpc_proto`` and whose ``props.service`` is non-empty.  The
     returned rpc node ids are already namespaced with ``child_name``.
+    The dict key is the canonical-slug form of ``props.service`` so
+    the lookup matches the lowercased ids minted by ``grpc_proto``.
     """
     service_to_rpcs: dict[str, list[str]] = {}
     nodes = getattr(graph, "_data", {}).get("nodes", {})
@@ -64,22 +80,26 @@ def _extract_service_definitions(
         if not service:
             continue
         namespaced_id = f"{child_name}{UNIT_SEPARATOR}{node_id}"
-        service_to_rpcs.setdefault(service, []).append(namespaced_id)
+        key = _service_match_key(service)
+        service_to_rpcs.setdefault(key, []).append(namespaced_id)
     return service_to_rpcs
 
 
 def _extract_grpc_call_sites(
     child_name: str,
     graph: Any,
-) -> list[tuple[str, str, str]]:
-    """Return call-site triples ``(namespaced_from, service_name, method)``
-    from *graph*.
+) -> list[tuple[str, str, str, str]]:
+    """Return call-site quads ``(namespaced_from, service_key, service_label, method)``.
 
     Scans edges with ``source_strategy == "grpc_bindings"`` and type
     ``invokes`` whose target id follows the ``rpc:grpc:<svc>.<method>``
     convention.  The ``from`` side is namespaced with ``child_name``.
+    ``service_key`` is the canonical-slug lookup key (matches
+    :func:`_extract_service_definitions`); ``service_label`` is the
+    raw qualified service name parsed from the rpc id and is preserved
+    on the emitted edge for human-readability.
     """
-    call_sites: list[tuple[str, str, str]] = []
+    call_sites: list[tuple[str, str, str, str]] = []
     edges = getattr(graph, "_data", {}).get("edges", [])
     for edge in edges:
         props = edge.get("props", {})
@@ -97,30 +117,36 @@ def _extract_grpc_call_sites(
             continue
         service_name, method = parts
         from_id = f"{child_name}{UNIT_SEPARATOR}{edge['from']}"
-        call_sites.append((from_id, service_name, method))
+        call_sites.append(
+            (from_id, _service_match_key(service_name), service_name, method)
+        )
     return call_sites
 
 
 def _build_cross_repo_edges(
     service_defs: dict[str, dict[str, list[str]]],
-    call_sites: dict[str, list[tuple[str, str, str]]],
+    call_sites: dict[str, list[tuple[str, str, str, str]]],
 ) -> list[CrossRepoEdge]:
     """Match client call-sites to service definitions across children.
 
-    ``service_defs`` maps ``child_name -> {service_name -> [rpc_ids]}``.
-    ``call_sites`` maps ``child_name -> [(from_id, service_name, method)]``.
+    ``service_defs`` maps ``child_name -> {canonical_service_key -> [rpc_ids]}``.
+    ``call_sites`` maps ``child_name ->
+    [(from_id, canonical_service_key, service_label, method)]``.
 
     For each call-site, search all *other* children for a matching
     service definition.  When found, emit one ``cross_repo:grpc_calls``
-    edge per matched rpc method.
+    edge per matched rpc method. The emitted edge preserves the raw
+    ``service_label`` (lowercased canonical slug parsed from the
+    target id) so consumers see the same shape that ``grpc_proto``
+    minted.
     """
     edges: list[CrossRepoEdge] = []
     for client_child, sites in sorted(call_sites.items()):
-        for from_id, service_name, method in sites:
+        for from_id, service_key, service_label, method in sites:
             for def_child, defs in sorted(service_defs.items()):
                 if def_child == client_child:
                     continue
-                rpc_ids = defs.get(service_name)
+                rpc_ids = defs.get(service_key)
                 if rpc_ids is None:
                     continue
                 # Find the specific rpc node for this method.
@@ -133,7 +159,7 @@ def _build_cross_repo_edges(
                                 to_id=rpc_id,
                                 type="cross_repo:grpc_calls",
                                 props={
-                                    "service": service_name,
+                                    "service": service_label,
                                     "method": method,
                                 },
                             )
@@ -165,7 +191,7 @@ class GrpcServiceBindingResolver(CrossRepoResolver):
     def resolve(self, context: ResolverContext) -> list[CrossRepoEdge]:
         """Produce cross-repo gRPC call edges."""
         service_defs: dict[str, dict[str, list[str]]] = {}
-        all_call_sites: dict[str, list[tuple[str, str, str]]] = {}
+        all_call_sites: dict[str, list[tuple[str, str, str, str]]] = {}
 
         for child_name in sorted(context.children):
             graph = context.children[child_name]

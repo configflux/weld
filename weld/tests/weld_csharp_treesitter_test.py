@@ -69,7 +69,17 @@ class CSharpTreeSitterSupportTest(unittest.TestCase):
         self.assertEqual(props["property_visibility"]["Helper"], ["private"])
         deps = [e for e in result.edges if e["type"] == "depends_on"]
         self.assertEqual(len(deps), 2)
-        self.assertIn("package:csharp:Microsoft.AspNetCore.Mvc", result.nodes)
+        # ADR 0041 § Layer 1: package ids route through ``canonical_slug``
+        # which lowercases mixed-case names like ``Microsoft.AspNetCore.Mvc``.
+        self.assertIn("package:csharp:microsoft.aspnetcore.mvc", result.nodes)
+        # The pre-migration id is preserved on ``aliases`` per the
+        # one-minor-version deprecation timeline in ADR 0041.
+        self.assertIn(
+            "package:csharp:Microsoft.AspNetCore.Mvc",
+            result.nodes["package:csharp:microsoft.aspnetcore.mvc"][
+                "props"
+            ]["aliases"],
+        )
 
     def test_csharp_wrapper_sets_language_and_strategy_label(self) -> None:
         from weld.strategies import csharp, tree_sitter

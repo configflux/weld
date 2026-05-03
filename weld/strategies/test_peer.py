@@ -8,7 +8,8 @@ result even though the on-disk test files clearly exist.
 
 This strategy walks the configured glob (typically
 ``weld/tests/*_test.py``), emits one ``file`` node per test module with
-``roles: ["test"]`` and a stable ``file:tests/<stem>`` id, and adds a
+``roles: ["test"]`` and a stable canonical id (``file:<rel_path_no_ext>``
+per ADR 0041 § Layer 1, e.g. ``file:weld/tests/<stem>``), and adds a
 ``tests`` edge to the production peer when one can be located on disk.
 The strategy never reads file contents and applies the shared
 exclusion policy via :mod:`weld.strategies._helpers`, so the cost is
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld._node_ids import file_id as _canonical_file_id
 from weld.strategies._helpers import (
     StrategyResult,
     filter_glob_results,
@@ -40,14 +42,22 @@ _PEER_PREFIX_CANDIDATES: tuple[str, ...] = ("", "weld_")
 _PEER_FILENAME_PREFIXES: tuple[str, ...] = ("", "_")
 
 
-def _test_node_id(rel_path: Path) -> str:
-    """Return the deterministic node id for a discovered test module.
-
-    The shape ``file:tests/<stem>`` keeps the id collision-free with the
-    bundled ``python_module`` strategy, which models siblings under
-    ``weld/`` itself as ``file:<stem>``.
-    """
+def _legacy_test_node_id(rel_path: Path) -> str:
+    """Pre-ADR-0041 file-id shape; recorded under ``aliases`` for compat."""
     return f"file:tests/{rel_path.stem}"
+
+
+def _test_node_id(rel_path: Path) -> str:
+    """Return the canonical node id for a discovered test module.
+
+    Per ADR 0041 § Layer 1, the id is the full repo-relative POSIX
+    path without extension routed through :func:`weld._node_ids.file_id`.
+    The trailing ``_test`` suffix on the stem is preserved naturally so
+    downstream consumers retain the semantic distinction between a test
+    module and its production peer (lowest-blast-radius default per
+    PR 4c).
+    """
+    return _canonical_file_id(rel_path.as_posix())
 
 
 def _candidate_peer_stems(test_stem: str) -> list[str]:
@@ -83,6 +93,10 @@ def _resolve_peer(
     directory. Only the first existing file is returned; missing peers
     yield ``None`` so the caller skips edge emission instead of writing
     a dangling edge.
+
+    The peer id is the canonical ADR-0041 file-id for the resolved peer
+    file, matching the form emitted by ``python_module`` after the
+    PR 1 migration so the ``tests`` edge points at a real anchor.
     """
     parent = rel_path.parent.parent
     for stem_guess in _candidate_peer_stems(rel_path.stem):
@@ -90,10 +104,9 @@ def _resolve_peer(
             filename = f"{fn_prefix}{stem_guess}.py"
             candidate = root / parent / filename
             if candidate.is_file():
-                # Production peer modeled by python_module as
-                # ``file:<filename-stem>`` (no id_prefix).
-                peer_id = f"file:{Path(filename).stem}"
-                return peer_id, (parent / filename).as_posix()
+                peer_rel = (parent / filename).as_posix()
+                peer_id = _canonical_file_id(peer_rel)
+                return peer_id, peer_rel
     return None
 
 
@@ -104,11 +117,20 @@ def _peer_node_id(rel_path: Path) -> str | None:
     therefore only returns the leading candidate. The actual edge is
     emitted by :func:`extract` after :func:`_resolve_peer` confirms the
     file exists.
+
+    Per ADR 0041 § Layer 1, the candidate id is the canonical
+    ``file:<rel_path_without_ext>`` form. Because this helper never
+    touches the disk it cannot disambiguate the production directory;
+    callers that need a guaranteed match should call
+    :func:`_resolve_peer` instead.
     """
     candidates = _candidate_peer_stems(rel_path.stem)
     if not candidates:
         return None
-    return f"file:{candidates[0]}"
+    parent = rel_path.parent.parent.as_posix()
+    if parent and parent != ".":
+        return _canonical_file_id(f"{parent}/{candidates[0]}")
+    return _canonical_file_id(candidates[0])
 
 
 def _resolve_glob(root: Path, pattern: str, excludes: list[str]) -> list[Path]:
@@ -164,18 +186,23 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             continue
 
         nid = _test_node_id(rel)
+        legacy_nid = _legacy_test_node_id(rel)
+        aliases = sorted({legacy_nid} - {nid})
         rel_posix = rel.as_posix()
+        node_props: dict = {
+            "file": rel_posix,
+            "kind": "test",
+            "roles": ["test"],
+            "source_strategy": "test_peer",
+            "authority": "derived",
+            "confidence": "definite",
+        }
+        if aliases:
+            node_props["aliases"] = aliases
         nodes[nid] = {
             "type": "file",
             "label": rel.stem,
-            "props": {
-                "file": rel_posix,
-                "kind": "test",
-                "roles": ["test"],
-                "source_strategy": "test_peer",
-                "authority": "derived",
-                "confidence": "definite",
-            },
+            "props": node_props,
         }
         discovered_from.append(rel.parent.as_posix() + "/")
 

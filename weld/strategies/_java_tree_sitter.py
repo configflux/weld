@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from weld._node_ids import package_id as _canonical_package_id
+
 _SAFE_PACKAGE_RE = re.compile(r"[^0-9A-Za-z_.-]+")
 _VISIBILITY_RE = re.compile(r"\b(public|private|protected)\b")
 
@@ -67,18 +69,23 @@ def _add_import_dependencies(
             continue
         seen.add(package)
         package_id = _package_node_id(package)
+        legacy_pid = _legacy_package_id(package)
+        aliases = sorted({legacy_pid} - {package_id})
+        package_props: dict = {
+            "name": package,
+            "language": "java",
+            "source_strategy": source_strategy,
+            "authority": "derived",
+            "confidence": "definite",
+        }
+        if aliases:
+            package_props["aliases"] = aliases
         nodes.setdefault(
             package_id,
             {
                 "type": "package",
                 "label": package,
-                "props": {
-                    "name": package,
-                    "language": "java",
-                    "source_strategy": source_strategy,
-                    "authority": "derived",
-                    "confidence": "definite",
-                },
+                "props": package_props,
             },
         )
         edges.append(
@@ -115,9 +122,15 @@ def _import_to_package(import_name: str) -> str:
     return import_name
 
 
-def _package_node_id(package_name: str) -> str:
+def _legacy_package_id(package_name: str) -> str:
+    """Pre-ADR-0041 Java package id shape; recorded under ``aliases``."""
     safe = _SAFE_PACKAGE_RE.sub("_", package_name).strip("._")
     return f"package:java:{safe or 'unknown'}"
+
+
+def _package_node_id(package_name: str) -> str:
+    """Canonical Java package id per ADR 0041 (lowercased via ``canonical_slug``)."""
+    return _canonical_package_id("java", package_name)
 
 
 def _visibility_map(

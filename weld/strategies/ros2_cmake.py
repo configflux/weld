@@ -36,6 +36,8 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from weld._graph_node_registry import ensure_node
+from weld._node_ids import package_id
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
 
 _STRATEGY = "ros2_cmake"
@@ -96,21 +98,29 @@ def _split_args(block: str) -> list[str]:
     return tokens
 
 def _pkg_nid(name: str) -> str:
+    """Canonical ROS2 package ID (``package:ros2:<slug>``) per ADR 0041."""
+    return package_id("ros2", name)
+
+
+def _legacy_pkg_nid(name: str) -> str:
+    """Pre-ADR-0041 ID; recorded as ``aliases`` for one minor version."""
     return f"ros_package:{name}"
 
+
 def _ensure_sentinel(nodes: dict[str, dict], name: str) -> None:
-    nid = _pkg_nid(name)
-    nodes.setdefault(
-        nid,
-        {
-            "type": "ros_package",
-            "label": name,
-            "props": {
-                "source_strategy": _STRATEGY,
-                "authority": "external",
-                "confidence": "inferred",
-                "roles": ["config"],
-            },
+    """Ensure a ROS2 package sentinel exists (merge-safe via ensure_node)."""
+    ensure_node(
+        nodes,
+        _pkg_nid(name),
+        "ros_package",
+        source_strategy=_STRATEGY,
+        source_path=None,
+        authority="external",
+        props={
+            "name": name,
+            "confidence": "inferred",
+            "roles": ["config"],
+            "aliases": [_legacy_pkg_nid(name)],
         },
     )
 

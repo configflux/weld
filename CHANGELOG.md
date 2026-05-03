@@ -3,6 +3,171 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.16.0 - 2026-05-03
+
+### Added
+
+- Canonical node-ID library (`weld._node_ids`) provides one slug rule and one
+  shape rule for `file:`, `package:`, and entity IDs across every discovery
+  strategy. Replaces three divergent local `_slug` implementations with a
+  shared `canonical_slug` so paired strategies cannot drift on character-set
+  rules.
+  <!-- verify: file=weld/_node_ids.py grep=canonical_slug -->
+- Unified `ensure_node` primitive (`weld._graph_node_registry`) replaces the
+  twelve ad-hoc `_ensure_*` helpers across the agent-graph, ROS2, and
+  graph-closure layers. Two creation paths for the same logical entity now
+  merge into one node with set-union of `sources`, `aliases`, and list props,
+  and authority-precedence resolution on conflicts. Order-independent by
+  construction.
+  <!-- verify: file=weld/_graph_node_registry.py grep=ensure_node -->
+- Three new architectural lint rules close the closure-determinism gap by
+  construction: `canonical-id-uniqueness` rejects two non-aliased nodes
+  sharing a normalized canonical key; `file-anchor-symmetry` rejects file
+  nodes with outgoing `contains` but no inbound edge; and
+  `strategy-pair-consistency` rejects file-set drift between paired
+  strategies (e.g. `python_module` vs `python_callgraph`).
+  <!-- verify: file=weld/_graph_closure_invariants.py grep=check_canonical_id_uniqueness -->
+- Alias-aware lookup resolves legacy node IDs to their canonical form across
+  `wd query`, `wd context`, `wd path`, `wd export`, and the MCP server. The
+  alias index is built once at graph-load time and rides alongside the BM25
+  cache in `_query_sidecar`; the index invalidates by graph hash so old IDs
+  cannot bleed across upgrades. Defensive collision guard refuses to alias
+  into another node's canonical id.
+  <!-- verify: file=weld/_alias_index.py grep=build_alias_index -->
+- `python_package` strategy emits `package:python:<dotted>` nodes with
+  `contains` edges to each `*.py` file member, including a synthetic
+  `package:python:tools` namespace for `tools/` scripts that lack a Python
+  package marker file. Closes 134 file-anchor-symmetry violations the rule
+  would otherwise flag for the weld and tools surfaces.
+  <!-- verify: file=weld/strategies/python_package.py grep=_dotted_name -->
+- `python_module._extract_imports` now walks function-local lazy imports in
+  addition to top-level imports, matching the qualified `from foo import _bar`
+  pattern that strategy plugins use to avoid circular dependencies. Captures
+  the lazy import in `weld/strategies/ros2_topology.py:347` so
+  `file:weld/strategies/_ros2_py` gains an inbound `depends_on` edge.
+  <!-- verify: file=weld/strategies/python_module.py grep=_extract_imports -->
+
+### Fixed
+
+- Skill nodes no longer duplicate when the same logical skill is reached via
+  multiple discovery paths. Previously `skill:generic:architecture-decision`
+  surfaced as two separate nodes (one with edges, one orphan) because the
+  collision-suffix mechanism in `agent_graph_materialize._node_id_for_values`
+  hashed the discovery path into the ID. The merge now happens at construction
+  via `ensure_node`, with all source paths recorded under `sources` and prior
+  hash-suffixed IDs preserved under `aliases`.
+  <!-- verify: file=weld/agent_graph_materialize.py grep=ensure_node -->
+- `file:weld/strategies/_ros2_py` is no longer a structurally orphan file
+  anchor. Two independent fixes contribute: the lazy-import capture above
+  surfaces the `depends_on` edge from `ros2_topology`, and the new
+  `python_package` strategy supplies the `contains` edge from
+  `package:python:weld.strategies`.
+  <!-- verify: file=weld/_graph_closure_invariants.py grep=check_file_anchor_symmetry -->
+
+### Breaking changes
+
+- **Graph node IDs renamed (per ADR 0041) — Python file anchors.** Python file
+  IDs change shape from `file:{stem}` to `file:{rel_posix_path_without_ext}`
+  in 0.16.0 to eliminate stem-only collisions across directories
+  (`weld/strategies/python_module.py` and `tools/python_module.py` previously
+  collapsed onto the same `file:python_module` ID). The `python_module`
+  strategy also drops its unilateral `_*`-skip rule so paired strategies
+  (`python_module` + `python_callgraph`) process the same input set; the
+  symptom this closes is the orphan `file:weld/strategies/_ros2_py` shape
+  reported on 2026-05-02.
+
+  Old IDs are preserved on each renamed node's `props.aliases` list for one
+  minor version. `wd query`, `wd context`, the MCP server, and the query
+  sidecar resolve old IDs transparently through the alias index (alias-aware
+  lookup ships in PR 2). Sidecar caches invalidate by graph hash on first
+  discovery after upgrade; no stale-cache hits possible.
+
+  **User-visible impact:**
+  - Existing MCP conversation transcripts referencing old `file:<stem>` IDs
+    continue to work via alias lookup.
+  - Prior `wd query` JSON output that recorded an old ID can be fed back
+    into `wd context <old-id>` and will resolve.
+  - Files starting with `_` (other than the package init module) now appear
+    as graph nodes; expected node-count delta is small but non-zero on this
+    repo.
+
+  **Deprecation:** aliases retire in 0.17.0. Pin to 0.16.x if external
+  scripts assume the old prefix and cannot be updated before the next minor.
+
+  Full migration table and rationale:
+  [`docs/adrs/0041-graph-closure-determinism.md`](docs/adrs/0041-graph-closure-determinism.md).
+
+- **Skill node IDs (ADR 0041 PR 2).** Skill IDs no longer carry a SHA1 hash
+  suffix when the same logical skill is reached via multiple discovery paths.
+  Two-path collisions now merge into one node with both source paths recorded
+  under `sources` and the prior suffixed IDs preserved under `aliases` for one
+  minor version. Agent transcripts referencing `skill:generic:foo:abc12345`
+  still resolve.
+  <!-- verify: file=weld/agent_graph_materialize.py grep=legacy_skill_id_with_suffix -->
+
+- **ROS2 cluster IDs renamed (ADR 0041 PR 4).** ROS2 package IDs change shape
+  from `ros_package:<name>` to `package:ros2:<slug>` across the
+  `ros2_package`, `ros2_interfaces`, `ros2_topology`, `ros2_launch`, and
+  `ros2_cmake` strategies. ROS2 file-anchor IDs follow the same
+  `file:<rel_posix_path_without_ext>` form as Python file anchors.
+
+  Every renamed node carries the legacy ID under `props.aliases` for one
+  minor version (retired in 0.17.0). The `_ensure_*` helpers across the ROS2
+  cluster now route through the unified `weld._graph_node_registry.ensure_node`
+  primitive so that two strategies materializing the same node merge their
+  provenance instead of dropping the second claim.
+
+  `.weld/discover.yaml` registers `strategy_pairs` entries for the ROS2,
+  gRPC, and tree-sitter clusters. The strategy-pair-consistency rule
+  (ADR 0041 § Layer 3) is a structural no-op until a downstream workspace
+  configures these strategies in `sources`; it then catches file-set drift
+  with `pair_asymmetry_allowlist` entries documenting any genuine
+  asymmetry.
+
+  **User-visible impact:**
+  - MCP transcripts and prior `wd query` JSON referencing `ros_package:<name>`
+    still resolve via the alias index (alias-aware lookup landed in PR 2).
+  - Sidecar caches invalidate by graph hash on first discovery after upgrade;
+    no stale-cache hits possible.
+
+  **Deprecation:** aliases retire in 0.17.0. Pin to 0.16.x if external
+  scripts assume the old prefix and cannot be updated before the next minor.
+
+  Full migration table and rationale:
+  [`docs/adrs/0041-graph-closure-determinism.md`](docs/adrs/0041-graph-closure-determinism.md).
+
+- **gRPC and tree-sitter cluster IDs renamed (ADR 0041 PR 4b/4c).** gRPC
+  rpc, contract, and enum IDs (`rpc:grpc:<package>.<service>.<method>`
+  and friends) and the tree-sitter language family
+  (`tree_sitter`, `typescript_exports`, `_csharp_tree_sitter`,
+  `_java_tree_sitter`) now mint IDs through the canonical
+  `weld._node_ids` contract. Mixed-case package and service names
+  lower-case via `canonical_slug` (e.g. `package:csharp:Microsoft.AspNetCore.Mvc`
+  -> `package:csharp:microsoft.aspnetcore.mvc`); tree-sitter file
+  anchors move from `file:<stem>` to `file:<rel_posix_path_without_ext>`
+  to match the form Python file anchors picked up in PR 1.
+
+  The `runtime_contract` strategy's bespoke local `_slug` helper was
+  deleted in favour of the shared `canonical_slug` so the URL-derived
+  rpc IDs use the same rule as the rest of the graph. The `test_peer`
+  strategy now mints `file:weld/tests/<stem>` (full path) instead of
+  the legacy `file:tests/<stem>`, with the trailing `_test` suffix
+  preserved on the stem so test/production semantic distinction is
+  retained.
+
+  Every renamed node carries the legacy ID under `props.aliases` for
+  one minor version (retired in 0.17.0). MCP transcripts and prior
+  `wd query` JSON referencing the legacy IDs continue to resolve via
+  the alias index. Sidecar caches invalidate by graph hash on first
+  discovery after upgrade.
+
+  **Deprecation:** aliases retire in 0.17.0. Pin to 0.16.x if external
+  scripts assume the old prefix and cannot be updated before the next
+  minor.
+
+  Full migration table and rationale:
+  [`docs/adrs/0041-graph-closure-determinism.md`](docs/adrs/0041-graph-closure-determinism.md).
+
 ## v0.15.0 - 2026-05-02
 
 ### Added

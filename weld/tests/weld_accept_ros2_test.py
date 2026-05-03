@@ -208,18 +208,18 @@ class Ros2PackageAcceptanceTest(unittest.TestCase):
         )
 
     def test_nav_pkg_node_extracted(self) -> None:
-        self.assertIn("ros_package:nav_pkg", self.result.nodes)
+        self.assertIn("package:ros2:nav_pkg", self.result.nodes)
 
     def test_dependency_edges(self) -> None:
         deps = [
             e["to"]
             for e in self.result.edges
-            if e["from"] == "ros_package:nav_pkg"
+            if e["from"] == "package:ros2:nav_pkg"
             and e["type"] == "depends_on"
         ]
-        self.assertIn("ros_package:rclpy", deps)
-        self.assertIn("ros_package:geometry_msgs", deps)
-        self.assertIn("ros_package:sensor_msgs", deps)
+        self.assertIn("package:ros2:rclpy", deps)
+        self.assertIn("package:ros2:geometry_msgs", deps)
+        self.assertIn("package:ros2:sensor_msgs", deps)
 
     def test_package_fragment_validates(self) -> None:
         errs = validate_fragment(

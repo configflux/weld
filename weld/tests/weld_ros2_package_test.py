@@ -61,8 +61,8 @@ class Ros2PackageStrategyTest(unittest.TestCase):
 
     def test_emits_ros_package_node_with_core_props(self) -> None:
         result = self._run()
-        self.assertIn("ros_package:demo_pkg", result.nodes)
-        node = result.nodes["ros_package:demo_pkg"]
+        self.assertIn("package:ros2:demo_pkg", result.nodes)
+        node = result.nodes["package:ros2:demo_pkg"]
         self.assertEqual(node["type"], "ros_package")
         props = node["props"]
         self.assertEqual(props["version"], "0.1.0")
@@ -76,15 +76,15 @@ class Ros2PackageStrategyTest(unittest.TestCase):
         result = self._run()
         dep_edges = [
             e for e in result.edges
-            if e["from"] == "ros_package:demo_pkg" and e["type"] == "depends_on"
+            if e["from"] == "package:ros2:demo_pkg" and e["type"] == "depends_on"
         ]
         wanted = {
-            "ros_package:ament_cmake",
-            "ros_package:rclcpp",
-            "ros_package:std_msgs",
-            "ros_package:rosidl_default_generators",
-            "ros_package:rosidl_default_runtime",
-            "ros_package:ament_lint_auto",
+            "package:ros2:ament_cmake",
+            "package:ros2:rclcpp",
+            "package:ros2:std_msgs",
+            "package:ros2:rosidl_default_generators",
+            "package:ros2:rosidl_default_runtime",
+            "package:ros2:ament_lint_auto",
         }
         targets = {e["to"] for e in dep_edges}
         self.assertEqual(targets, wanted)
@@ -92,19 +92,25 @@ class Ros2PackageStrategyTest(unittest.TestCase):
     def test_dependency_sentinels_have_ros_package_type(self) -> None:
         result = self._run()
         for name in ("rclcpp", "std_msgs", "ament_cmake"):
-            nid = f"ros_package:{name}"
+            nid = f"package:ros2:{name}"
             self.assertIn(nid, result.nodes)
             self.assertEqual(result.nodes[nid]["type"], "ros_package")
+            # ADR 0041: legacy ``ros_package:<name>`` is preserved as alias.
+            self.assertIn(
+                f"ros_package:{name}",
+                result.nodes[nid]["props"].get("aliases", []),
+            )
 
     def test_contains_edges_to_sibling_files(self) -> None:
         result = self._run()
         contains = [
             e for e in result.edges
-            if e["from"] == "ros_package:demo_pkg" and e["type"] == "contains"
+            if e["from"] == "package:ros2:demo_pkg" and e["type"] == "contains"
         ]
         targets = {e["to"] for e in contains}
-        self.assertIn("file:src/demo_pkg/package.xml", targets)
-        self.assertIn("file:src/demo_pkg/CMakeLists.txt", targets)
+        # ADR 0041: ``file:`` IDs use rel-posix-path-without-ext.
+        self.assertIn("file:src/demo_pkg/package", targets)
+        self.assertIn("file:src/demo_pkg/cmakelists", targets)
 
     def test_fragment_validates_clean(self) -> None:
         result = self._run()
@@ -140,8 +146,8 @@ class Ros2PackageStrategyTest(unittest.TestCase):
         result = self._run()
         deps = [
             e for e in result.edges
-            if e["from"] == "ros_package:dup_pkg"
-            and e["to"] == "ros_package:rclcpp"
+            if e["from"] == "package:ros2:dup_pkg"
+            and e["to"] == "package:ros2:rclcpp"
             and e["type"] == "depends_on"
         ]
         self.assertEqual(len(deps), 1)
@@ -152,7 +158,7 @@ class Ros2PackageStrategyTest(unittest.TestCase):
         (bad / "package.xml").write_text("<not valid xml", encoding="utf-8")
         # Must not raise; just skips the bad file.
         result = self._run()
-        self.assertNotIn("ros_package:bad_pkg", result.nodes)
+        self.assertNotIn("package:ros2:bad_pkg", result.nodes)
 
 if __name__ == "__main__":
     unittest.main()

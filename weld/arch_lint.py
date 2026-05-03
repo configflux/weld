@@ -8,17 +8,20 @@ non-suppressed violation was reported -- suitable for use as a CI gate.
 
 Built-in rules:
 
-* ``orphan-detection`` -- flags nodes with neither incoming nor outgoing
-  edges.  By default suppresses doc/config/test node types because those
-  are almost always intentional leaves; ``--include-noisy`` restores the
-  broad sweep.
-* ``strategy-coverage`` -- reads ``.weld/discover.yaml`` and flags source
-  entries whose glob patterns match zero files (stale or misconfigured
-  discovery config).
-* ``no-circular-deps`` -- detects strongly connected components (cycles)
-  via Tarjan's algorithm.
-* ``boundary-enforcement`` -- flags edges crossing layer boundaries
-  without a ``topology.allowed_cross_layer`` entry in ``discover.yaml``.
+* ``orphan-detection`` -- nodes with no edges; default-suppresses
+  doc/config/test (``--include-noisy`` overrides).
+* ``strategy-coverage`` -- ``discover.yaml`` source globs matching zero
+  files.
+* ``no-circular-deps`` -- SCC detection via Tarjan's algorithm.
+* ``boundary-enforcement`` -- edges crossing layer boundaries without a
+  ``topology.allowed_cross_layer`` entry.
+* ``canonical-id-uniqueness`` -- two nodes share canonical
+  ``(type, platform, slug(name))`` base without alias link (ADR 0041
+  Layer 3).
+* ``file-anchor-symmetry`` -- ``file:`` nodes with outgoing ``contains``
+  but no inbound (ADR 0041 Layer 3).
+* ``strategy-pair-consistency`` -- declared strategy pairs whose
+  members visit divergent file sets (ADR 0041 Layer 3).
 """
 
 from __future__ import annotations
@@ -30,7 +33,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+from weld._graph_closure_invariants import (
+    check_canonical_id_uniqueness,
+    check_file_anchor_symmetry,
+    check_strategy_pair_consistency,
+)
 from weld.arch_lint_boundary import rule_boundary_enforcement
+from weld.arch_lint_coverage import rule_strategy_coverage
 from weld.arch_lint_custom import (
     CUSTOM_RULES_FILENAME,
     CustomRule,
@@ -86,64 +95,37 @@ class Rule:
 # Built-in rules
 # ---------------------------------------------------------------------------
 
-def _rule_strategy_coverage(data: dict, root: Path) -> Iterable[Violation]:
-    """Flag source entries in discover.yaml whose globs match zero files."""
+def _rule_canonical_id_uniqueness(data: dict) -> Iterable[Violation]:
+    """Adapter: feed graph-data ``nodes`` dict to the closure invariant."""
+    nodes = data.get("nodes", {}) or {}
+    yield from check_canonical_id_uniqueness(nodes)
+
+def _load_discover_yaml(root: Path) -> dict:
+    """Load ``.weld/discover.yaml`` under *root*; returns ``{}`` on miss."""
     config_path = root / ".weld" / "discover.yaml"
     if not config_path.is_file():
-        return
-
-    from weld._yaml import parse_yaml
-
+        return {}
     try:
         text = config_path.read_text(encoding="utf-8")
     except OSError:
-        return
+        return {}
+    from weld._yaml import parse_yaml
     config = parse_yaml(text)
-    sources = config.get("sources", []) if isinstance(config, dict) else []
+    return config if isinstance(config, dict) else {}
 
-    unmatched: list[tuple[str, str]] = []  # (pattern, strategy)
+def _rule_file_anchor_symmetry(data: dict, root: Path) -> Iterable[Violation]:
+    """Adapter: load the per-repo allow-list and forward to the invariant."""
+    config = _load_discover_yaml(root)
+    allowlist = config.get("file_anchor_symmetry_allowlist") or []
+    if not isinstance(allowlist, list):
+        allowlist = []
+    yield from check_file_anchor_symmetry(data, allowlist=allowlist)
 
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        strategy = source.get("strategy", "<unknown>")
-
-        glob_pattern = source.get("glob")
-        if glob_pattern:
-            if "**" in str(glob_pattern):
-                matched = list(root.glob(str(glob_pattern)))
-            else:
-                parent = (root / str(glob_pattern)).parent
-                if parent.is_dir():
-                    matched = list(
-                        parent.glob(Path(str(glob_pattern)).name)
-                    )
-                else:
-                    matched = []
-            if not matched:
-                unmatched.append((str(glob_pattern), str(strategy)))
-            continue
-
-        file_list = source.get("files", [])
-        if file_list:
-            missing = [
-                f for f in file_list
-                if not (root / str(f)).is_file()
-            ]
-            if len(missing) == len(file_list):
-                pattern = f"files:{file_list}"
-                unmatched.append((pattern, str(strategy)))
-
-    for pattern, strategy in sorted(unmatched, key=lambda t: t[0]):
-        yield Violation(
-            rule="strategy-coverage",
-            node_id=pattern,
-            message=(
-                f"source entry {pattern!r} (strategy: {strategy}) "
-                f"matched zero files; stale or misconfigured"
-            ),
-            severity="warning",
-        )
+def _rule_strategy_pair_consistency(
+    data: dict, root: Path
+) -> Iterable[Violation]:
+    """Adapter: filesystem-walking rule; ``data`` arg is unused but required."""
+    yield from check_strategy_pair_consistency(root)
 
 _RULES: tuple[Rule, ...] = (
     Rule(
@@ -160,13 +142,38 @@ _RULES: tuple[Rule, ...] = (
             "Flag source entries in discover.yaml whose glob patterns "
             "match zero files (stale or misconfigured config)."
         ),
-        check=_rule_strategy_coverage,
+        check=rule_strategy_coverage,
         needs_root=True,
     ),
     Rule(rule_id="no-circular-deps", description="Detect circular dependencies via SCC analysis.", check=rule_no_circular_deps),
-    Rule(rule_id="boundary-enforcement",
-         description="Flag edges crossing layer boundaries without topology declaration.",
-         check=rule_boundary_enforcement, needs_root=True),
+    Rule(rule_id="boundary-enforcement", description="Flag edges crossing layer boundaries without topology declaration.", check=rule_boundary_enforcement, needs_root=True),
+    Rule(
+        rule_id="canonical-id-uniqueness",
+        description=(
+            "Flag pairs of nodes that share a canonical base "
+            "(type+platform+slug(name)) without an alias link "
+            "(ADR 0041 Layer 3)."
+        ),
+        check=_rule_canonical_id_uniqueness,
+    ),
+    Rule(
+        rule_id="file-anchor-symmetry",
+        description=(
+            "Flag file: nodes that emit 'contains' edges but have no "
+            "inbound edge (strategy-pair drift; ADR 0041 Layer 3)."
+        ),
+        check=_rule_file_anchor_symmetry,
+        needs_root=True,
+    ),
+    Rule(
+        rule_id="strategy-pair-consistency",
+        description=(
+            "Flag declared strategy pairs whose members visit "
+            "divergent file sets (ADR 0041 Layer 3)."
+        ),
+        check=_rule_strategy_pair_consistency,
+        needs_root=True,
+    ),
 )
 
 def available_rule_ids(rules: Iterable[Rule] | None = None) -> list[str]:

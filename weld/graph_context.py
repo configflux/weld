@@ -15,6 +15,31 @@ from __future__ import annotations
 from typing import Callable
 
 
+def compute_neighborhood(
+    nodes: dict, edges: list, node_ids: set[str],
+) -> tuple[list[dict], list[dict]]:
+    """Return ``(neighbors, edges)`` for the 1-hop expansion of ``node_ids``.
+
+    Pure: no Graph reference. Pulled out of ``Graph._neighborhood`` to
+    keep ``weld/graph.py`` under its 400-line cap; ``Graph._neighborhood``
+    now delegates here.
+    """
+    out_edges = []
+    neighbor_ids: set[str] = set()
+    for e in edges:
+        if e["from"] in node_ids or e["to"] in node_ids:
+            out_edges.append(e)
+            neighbor_ids.add(e["from"])
+            neighbor_ids.add(e["to"])
+    neighbor_ids -= node_ids
+    neighbors = []
+    for nid in sorted(neighbor_ids):
+        n = nodes.get(nid)
+        if n:
+            neighbors.append({"id": nid, **n})
+    return neighbors, out_edges
+
+
 def simple_exact_context(get_node, neighborhood, node_id: str) -> dict | None:
     """Build the exact-match payload for a plain ``Graph``.
 

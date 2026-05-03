@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from weld._node_ids import entity_id, file_id
 from weld.cross_repo.base import ResolverContext
 
 UNIT_SEP = "\x1f"
@@ -47,12 +48,18 @@ def make_context(
 def proto_service_graph(
     service_name: str, methods: list[str], package: str = ""
 ) -> FakeGraph:
-    """Build a fake graph with grpc_proto rpc nodes for a service."""
+    """Build a fake graph with grpc_proto rpc nodes for a service.
+
+    Mirrors :mod:`weld.strategies.grpc_proto`'s canonical-id contract
+    (ADR 0041 § Layer 1): rpc / file ids route through ``entity_id`` /
+    ``file_id`` so the cross-repo resolver sees the same shape as the
+    live strategy.
+    """
     qualified = f"{package}.{service_name}" if package else service_name
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
     for method in methods:
-        rpc_id = f"rpc:grpc:{qualified}.{method}"
+        rpc_id = entity_id("rpc", platform="grpc", name=f"{qualified}.{method}")
         nodes[rpc_id] = {
             "type": "rpc",
             "label": f"{service_name}.{method}",
@@ -64,7 +71,7 @@ def proto_service_graph(
             },
         }
         edges.append({
-            "from": f"file:proto/{service_name.lower()}.proto",
+            "from": file_id(f"proto/{service_name.lower()}.proto"),
             "to": rpc_id,
             "type": "invokes",
             "props": {"source_strategy": "grpc_proto", "confidence": "definite"},
@@ -80,9 +87,9 @@ def client_stub_graph(
     qualified = f"{package}.{service_name}" if package else service_name
     edges: list[dict] = []
     for method in methods:
-        rpc_id = f"rpc:grpc:{qualified}.{method}"
+        rpc_id = entity_id("rpc", platform="grpc", name=f"{qualified}.{method}")
         edges.append({
-            "from": f"file:{source_file}",
+            "from": file_id(source_file),
             "to": rpc_id,
             "type": "invokes",
             "props": {"source_strategy": "grpc_bindings", "confidence": "inferred"},

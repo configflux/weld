@@ -30,20 +30,22 @@ def _touch(path: Path, content: str = "") -> None:
 class TestNodeIdHelpers(unittest.TestCase):
     """Stable, collision-free ids are required for deterministic graphs."""
 
-    def test_test_node_id_uses_file_prefix_and_stem(self) -> None:
+    def test_test_node_id_uses_canonical_full_path(self) -> None:
+        # ADR 0041 § Layer 1: file ids are the full repo-relative POSIX
+        # path without extension, routed through ``_node_ids.file_id``.
         self.assertEqual(
             _test_node_id(Path("weld/tests/weld_telemetry_cli_test.py")),
-            "file:tests/weld_telemetry_cli_test",
+            "file:weld/tests/weld_telemetry_cli_test",
         )
 
     def test_peer_node_id_drops_test_suffix(self) -> None:
         # weld_telemetry_cli_test.py -> weld_telemetry_cli, peer module
         # lives at weld/weld_telemetry_cli.py, modeled as
-        # ``file:weld_telemetry_cli`` by python_module._make_node_id with
-        # no id_prefix.
+        # ``file:weld/weld_telemetry_cli`` by python_module._make_node_id
+        # under the canonical ADR-0041 full-path file-id contract.
         self.assertEqual(
             _peer_node_id(Path("weld/tests/weld_telemetry_cli_test.py")),
-            "file:weld_telemetry_cli",
+            "file:weld/weld_telemetry_cli",
         )
 
     def test_peer_node_id_returns_none_when_stem_lacks_test_suffix(self) -> None:
@@ -105,17 +107,17 @@ class TestExtractEmitsNodes(unittest.TestCase):
 
     def test_emits_one_node_per_test_file(self) -> None:
         result = self._run()
-        self.assertIn("file:tests/weld_telemetry_cli_test", result.nodes)
-        self.assertIn("file:tests/weld_orphan_only_test", result.nodes)
+        self.assertIn("file:weld/tests/weld_telemetry_cli_test", result.nodes)
+        self.assertIn("file:weld/tests/weld_orphan_only_test", result.nodes)
         self.assertNotIn(
-            "file:tests/telemetry_test_helpers",
+            "file:weld/tests/telemetry_test_helpers",
             result.nodes,
             msg="helper modules without _test.py suffix must be skipped",
         )
 
     def test_node_carries_test_role_and_kind(self) -> None:
         result = self._run()
-        node = result.nodes["file:tests/weld_telemetry_cli_test"]
+        node = result.nodes["file:weld/tests/weld_telemetry_cli_test"]
         self.assertEqual(node["type"], "file")
         props = node["props"]
         self.assertEqual(props["roles"], ["test"])
@@ -124,11 +126,22 @@ class TestExtractEmitsNodes(unittest.TestCase):
         self.assertEqual(props["confidence"], "definite")
         self.assertEqual(props["source_strategy"], "test_peer")
 
+    def test_node_records_legacy_id_alias(self) -> None:
+        # ADR 0041 migration: the previous ``file:tests/<stem>`` shape is
+        # preserved on ``aliases`` for one minor version so external
+        # consumers (MCP transcripts, sidecar caches) keep resolving.
+        result = self._run()
+        node = result.nodes["file:weld/tests/weld_telemetry_cli_test"]
+        self.assertIn(
+            "file:tests/weld_telemetry_cli_test",
+            node["props"]["aliases"],
+        )
+
     def test_node_label_and_file_carry_telemetry_token(self) -> None:
         # The whole point of the strategy: tokens like 'telemetry' and
         # 'test' must be reachable via the query index.
         result = self._run()
-        node = result.nodes["file:tests/weld_telemetry_cli_test"]
+        node = result.nodes["file:weld/tests/weld_telemetry_cli_test"]
         self.assertIn("telemetry", node["label"].lower())
         self.assertIn("test", node["label"].lower())
         self.assertIn("telemetry", node["props"]["file"].lower())
@@ -138,12 +151,12 @@ class TestExtractEmitsNodes(unittest.TestCase):
         result = self._run()
         edges = [
             e for e in result.edges
-            if e["from"] == "file:tests/weld_telemetry_cli_test"
+            if e["from"] == "file:weld/tests/weld_telemetry_cli_test"
         ]
         self.assertEqual(len(edges), 1)
         edge = edges[0]
         self.assertEqual(edge["type"], "tests")
-        self.assertEqual(edge["to"], "file:weld_telemetry_cli")
+        self.assertEqual(edge["to"], "file:weld/weld_telemetry_cli")
         self.assertEqual(edge["props"]["confidence"], "inferred")
         self.assertEqual(edge["props"]["source_strategy"], "test_peer")
 
@@ -151,7 +164,7 @@ class TestExtractEmitsNodes(unittest.TestCase):
         result = self._run()
         edges_from_orphan = [
             e for e in result.edges
-            if e["from"] == "file:tests/weld_orphan_only_test"
+            if e["from"] == "file:weld/tests/weld_orphan_only_test"
         ]
         self.assertEqual(edges_from_orphan, [])
 
@@ -161,22 +174,22 @@ class TestExtractEmitsNodes(unittest.TestCase):
         result = self._run()
         edges = [
             e for e in result.edges
-            if e["from"] == "file:tests/weld_telemetry_writer_test"
+            if e["from"] == "file:weld/tests/weld_telemetry_writer_test"
         ]
         self.assertEqual(len(edges), 1)
-        self.assertEqual(edges[0]["to"], "file:telemetry_writer")
+        self.assertEqual(edges[0]["to"], "file:weld/telemetry_writer")
         self.assertEqual(edges[0]["type"], "tests")
 
     def test_falls_back_to_underscore_filename_peer(self) -> None:
         # internal_helper_test.py -> peer _internal_helper.py
-        # python_module ids private modules as ``file:_internal_helper``.
+        # python_module ids private modules as ``file:weld/_internal_helper``.
         result = self._run()
         edges = [
             e for e in result.edges
-            if e["from"] == "file:tests/internal_helper_test"
+            if e["from"] == "file:weld/tests/internal_helper_test"
         ]
         self.assertEqual(len(edges), 1)
-        self.assertEqual(edges[0]["to"], "file:_internal_helper")
+        self.assertEqual(edges[0]["to"], "file:weld/_internal_helper")
         self.assertEqual(edges[0]["type"], "tests")
 
 

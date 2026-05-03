@@ -1,16 +1,55 @@
-"""Materialize parsed Agent Graph metadata into nodes and edges."""
+"""Materialize parsed Agent Graph metadata into nodes and edges.
+
+ADR 0041 (PR 2) wires this module through the canonical ID contract
+(``weld._node_ids``) and the unified ``ensure_node`` merge primitive
+(``weld._graph_node_registry``). Two paths that reach the same logical
+entity (a Phase 1 SKILL.md asset and a Phase 3 ``uses_skills`` reference;
+two SKILL.md files classified as the same generic skill) merge into one
+canonical node rather than splitting via a SHA1-suffixed disambiguator.
+The historical ``_node_id_for_values`` helper is removed by construction.
+
+ADR 0041 § Migration -- the pre-rename SHA1-suffix form is recorded on
+each asset's ``aliases`` list via :func:`legacy_skill_id_with_suffix` so
+external consumers (MCP transcripts, sidecar caches, prior ``wd query``
+outputs) that reference the legacy ID resolve transparently for one
+minor version. The alias-aware lookup index lives in
+:mod:`weld.graph_query` / :mod:`weld.graph_context`.
+"""
 
 from __future__ import annotations
 
 import copy
 import hashlib
-import re
 from pathlib import Path
 from typing import Any
 
+from weld._graph_node_registry import ensure_node
+from weld._node_ids import canonical_slug, entity_id
 from weld.agent_graph_metadata import AgentGraphReference, ParsedAgentGraphAsset
 
-_NODE_ID_RE = re.compile(r"[^a-z0-9_.:-]+")
+
+def legacy_skill_id_with_suffix(
+    node_type: str, platform: str, name: str, path: str,
+) -> str:
+    """Reproduce the pre-ADR-0041 SHA1-suffixed ID for *path*.
+
+    The legacy ``agent_graph_materialize._node_id_for_values`` minted
+    ``<base>:<sha1(path)[:8]>`` whenever two assets collided on
+    ``<base>``. ADR 0041 retires the suffix path; the canonical merge
+    primitive merges instead. This helper reproduces the historical
+    suffix form so it can be recorded on the merged node's
+    ``aliases`` list and the alias-aware lookup keeps working for the
+    deprecation window (one minor version per ADR 0041).
+
+    The base form is intentionally identical to :func:`entity_id`'s
+    output (``canonical_slug`` applied to ``type:platform:name``); the
+    suffix is the first eight hex chars of the SHA1 of the
+    UTF-8-encoded source path. Both halves are deterministic across
+    operating systems.
+    """
+    base = entity_id(node_type, platform=platform, name=name)
+    suffix = hashlib.sha1(path.encode("utf-8")).hexdigest()[:8]
+    return f"{base}:{suffix}"
 
 
 def materialize_agent_graph(
@@ -55,18 +94,24 @@ def _nodes_for_assets(
     nodes: dict[str, dict] = {}
     source_ids: dict[str, str] = {}
     index: dict[tuple[str, str], list[str]] = {}
-    used_ids: set[str] = set()
     for asset in assets:
-        node_id = _node_id_for_values(
-            asset.node_type, asset.platform, asset.name, asset.path, used_ids,
+        node_id = entity_id(
+            asset.node_type, platform=asset.platform, name=asset.name,
         )
         props = asset.props()
         props.update(copy.deepcopy(parsed[asset.path].props))
-        nodes[node_id] = {
-            "type": asset.node_type,
-            "label": str(props.get("name") or asset.name),
-            "props": props,
-        }
+        ensure_node(
+            nodes,
+            node_id,
+            asset.node_type,
+            source_strategy=source_strategy,
+            source_path=asset.path,
+            authority="external",
+            props=props,
+            legacy_id=legacy_skill_id_with_suffix(
+                asset.node_type, asset.platform, asset.name, asset.path,
+            ),
+        )
         source_ids[asset.path] = node_id
         _index_node(index, nodes, node_id)
     for asset in assets:
@@ -82,10 +127,21 @@ def _nodes_for_assets(
                 "status": "manual",
             }
             props.update(copy.deepcopy(derived.props))
-            node_id = _node_id_for_values(
-                derived.node_type, derived.platform, derived.name, derived.path, used_ids,
+            node_id = entity_id(
+                derived.node_type, platform=derived.platform, name=derived.name,
             )
-            nodes[node_id] = {"type": derived.node_type, "label": derived.name, "props": props}
+            ensure_node(
+                nodes,
+                node_id,
+                derived.node_type,
+                source_strategy=source_strategy,
+                source_path=derived.path,
+                authority="external",
+                props=props,
+                legacy_id=legacy_skill_id_with_suffix(
+                    derived.node_type, derived.platform, derived.name, derived.path,
+                ),
+            )
             source_ids[derived.path] = node_id
             _index_node(index, nodes, node_id)
     return nodes, source_ids, index
@@ -103,12 +159,11 @@ def _edges_for_assets(
 ) -> list[dict]:
     edges: list[dict] = []
     seen: set[tuple[str, str, str, str]] = set()
-    used_ids = set(nodes)
     for asset in assets:
         source_id = source_ids[asset.path]
         _add_reference_edges(
             root, asset.path, asset.platform, source_id, parsed[asset.path].references,
-            nodes, used_ids, index, edges, seen, platform_labels, source_strategy,
+            nodes, index, edges, seen, platform_labels, source_strategy,
         )
         for derived in parsed[asset.path].derived_nodes:
             derived_id = source_ids[derived.path]
@@ -120,7 +175,7 @@ def _edges_for_assets(
             })
             _add_reference_edges(
                 root, asset.path, derived.platform, derived_id, derived.references,
-                nodes, used_ids, index, edges, seen, platform_labels, source_strategy,
+                nodes, index, edges, seen, platform_labels, source_strategy,
             )
     return edges
 
@@ -132,7 +187,6 @@ def _add_reference_edges(
     source_id: str,
     references: tuple[AgentGraphReference, ...],
     nodes: dict[str, dict],
-    used_ids: set[str],
     index: dict[tuple[str, str], list[str]],
     edges: list[dict],
     seen: set[tuple[str, str, str, str]],
@@ -141,7 +195,7 @@ def _add_reference_edges(
 ) -> None:
     for reference in references:
         for target_id in _target_ids(
-            root, source_path, source_platform, reference, nodes, used_ids,
+            root, source_path, source_platform, reference, nodes,
             index, platform_labels, source_strategy,
         ):
             _add_edge(edges, seen, source_id, target_id, reference.edge_type, {
@@ -163,40 +217,39 @@ def _target_ids(
     source_platform: str,
     reference: AgentGraphReference,
     nodes: dict[str, dict],
-    used_ids: set[str],
     index: dict[tuple[str, str], list[str]],
     platform_labels: dict[str, str],
     source_strategy: str,
 ) -> list[str]:
     if reference.target_type == "file":
         target = _resolved_file(root, source_path, reference.target_path or reference.target_name)
-        return [_ensure_node(
-            nodes, used_ids, index, "file", "generic", target or reference.target_name,
+        return [_ensure_referenced_node(
+            nodes, index, "file", "generic", target or reference.target_name,
             {"file": target or reference.target_name, "exists": target is not None},
-            platform_labels, source_strategy,
+            platform_labels, source_strategy, source_path,
         )]
     if reference.target_type in {"scope", "tool"}:
-        return [_ensure_node(
-            nodes, used_ids, index, reference.target_type, "generic",
-            reference.target_name, {}, platform_labels, source_strategy,
+        return [_ensure_referenced_node(
+            nodes, index, reference.target_type, "generic",
+            reference.target_name, {}, platform_labels, source_strategy, source_path,
         )]
 
-    matches = index.get((reference.target_type, _norm(reference.target_name)), [])
+    matches = index.get((reference.target_type, canonical_slug(reference.target_name)), [])
     same_platform = [
         node_id for node_id in matches
         if nodes[node_id]["props"].get("platform") == source_platform
     ]
     if same_platform or matches:
         return same_platform or matches[:1]
-    return [_ensure_node(
-        nodes, used_ids, index, reference.target_type, source_platform,
-        reference.target_name, {"status": "referenced"}, platform_labels, source_strategy,
+    return [_ensure_referenced_node(
+        nodes, index, reference.target_type, source_platform,
+        reference.target_name, {"status": "referenced"},
+        platform_labels, source_strategy, source_path,
     )]
 
 
-def _ensure_node(
+def _ensure_referenced_node(
     nodes: dict[str, dict],
-    used_ids: set[str],
     index: dict[tuple[str, str], list[str]],
     node_type: str,
     platform: str,
@@ -204,8 +257,10 @@ def _ensure_node(
     props: dict[str, Any],
     platform_labels: dict[str, str],
     source_strategy: str,
+    source_path: str,
 ) -> str:
-    existing = index.get((node_type, _norm(name)), [])
+    node_id = entity_id(node_type, platform=platform, name=name)
+    existing = index.get((node_type, canonical_slug(name)), [])
     if existing and node_type in {"file", "scope", "tool"}:
         return existing[0]
     merged = {"name": name, "source_strategy": source_strategy, "status": "referenced"}
@@ -213,10 +268,24 @@ def _ensure_node(
         merged["platform"] = platform
         merged["platform_name"] = platform_labels.get(platform, platform)
     merged.update(copy.deepcopy(props))
-    node_id = _node_id_for_values(
-        node_type, platform, name, str(merged.get("file", name)), used_ids,
+    # Reference-time legacy form: the historical ``_node_id_for_values``
+    # used the *target* path (``str(merged.get("file", name))``) for the
+    # SHA1 suffix on collision. Reference fall-throughs that materialise
+    # a sentinel record the corresponding alias so external transcripts
+    # that pasted the suffixed form still resolve through the
+    # alias-aware lookup.
+    legacy_path = str(merged.get("file") or name)
+    legacy_id = legacy_skill_id_with_suffix(node_type, platform, name, legacy_path)
+    ensure_node(
+        nodes,
+        node_id,
+        node_type,
+        source_strategy=source_strategy,
+        source_path=source_path,
+        authority="referenced",
+        props=merged,
+        legacy_id=legacy_id,
     )
-    nodes[node_id] = {"type": node_type, "label": name, "props": merged}
     _index_node(index, nodes, node_id)
     return node_id
 
@@ -232,28 +301,16 @@ def _resolved_file(root: Path, source_path: str, target: str) -> str | None:
     return None
 
 
-def _node_id_for_values(
-    node_type: str,
-    platform: str,
-    name: str,
-    path: str,
-    used_ids: set[str],
-) -> str:
-    base = _slug(f"{node_type}:{platform}:{name}")
-    if base not in used_ids:
-        used_ids.add(base)
-        return base
-    candidate = f"{base}:{hashlib.sha1(path.encode('utf-8')).hexdigest()[:8]}"
-    used_ids.add(candidate)
-    return candidate
-
-
 def _index_node(index: dict[tuple[str, str], list[str]], nodes: dict[str, dict], node_id: str) -> None:
     node = nodes[node_id]
     names = {node["label"], node.get("props", {}).get("name")}
     for name in names:
-        if name:
-            index.setdefault((node["type"], _norm(str(name))), []).append(node_id)
+        if not name:
+            continue
+        key = (node["type"], canonical_slug(str(name)))
+        bucket = index.setdefault(key, [])
+        if node_id not in bucket:
+            bucket.append(node_id)
 
 
 def _add_edge(
@@ -270,14 +327,3 @@ def _add_edge(
         return
     seen.add(key)
     edges.append({"from": from_id, "to": to_id, "type": edge_type, "props": props})
-
-
-def _norm(value: str) -> str:
-    return _slug(value)
-
-
-def _slug(value: str) -> str:
-    lowered = value.strip().lower()
-    collapsed = _NODE_ID_RE.sub("-", lowered)
-    return collapsed.strip("-") or "asset"
-

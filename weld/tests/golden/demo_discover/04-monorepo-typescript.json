@@ -566,9 +566,12 @@
       },
       "type": "file"
     },
-    "file:ui/src/Button": {
+    "file:ui/src/button": {
       "label": "Button",
       "props": {
+        "aliases": [
+          "file:ui/src/Button"
+        ],
         "authority": "derived",
         "confidence": "inferred",
         "exports": [
@@ -584,9 +587,12 @@
       },
       "type": "file"
     },
-    "file:ui/src/Card": {
+    "file:ui/src/card": {
       "label": "Card",
       "props": {
+        "aliases": [
+          "file:ui/src/Card"
+        ],
         "authority": "derived",
         "confidence": "inferred",
         "exports": [
@@ -602,9 +608,12 @@
       },
       "type": "file"
     },
-    "file:web/src/App": {
+    "file:web/src/app": {
       "label": "App",
       "props": {
+        "aliases": [
+          "file:web/src/App"
+        ],
         "authority": "derived",
         "confidence": "inferred",
         "exports": [

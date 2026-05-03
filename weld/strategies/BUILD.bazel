@@ -44,6 +44,7 @@ py_library(
         "pydantic.py",
         "python_callgraph.py",
         "python_module.py",
+        "python_package.py",
         "_ros2_cpp.py",
         "_ros2_py.py",
         "ros2_cmake.py",
@@ -57,6 +58,7 @@ py_library(
         "test_peer.py",
         "_ts_call_graph.py",
         "_ts_parse.py",
+        "_tree_sitter_ids.py",
         "tool_script.py",
         "tree_sitter.py",
         "typescript_exports.py",
@@ -69,6 +71,7 @@ py_library(
     deps = [
         ":helpers",
         "//weld:glob_match",
+        "//weld:node_ids",
         "//weld:repo_boundary",
         "//weld:yaml",
     ],

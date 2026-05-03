@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+from weld._node_ids import package_id as _canonical_package_id
+
 _SAFE_PACKAGE_RE = re.compile(r"[^0-9A-Za-z_.-]+")
 _VISIBILITY_RE = re.compile(r"\b(public|private|protected|internal)\b")
 _STARTUP_MARKERS = (
@@ -215,18 +217,23 @@ def _add_import_dependencies(
             continue
         seen.add(import_name)
         package_id = _package_node_id(import_name)
+        legacy_pid = _legacy_package_id(import_name)
+        aliases = sorted({legacy_pid} - {package_id})
+        package_props: dict = {
+            "name": import_name,
+            "language": "csharp",
+            "source_strategy": source_strategy,
+            "authority": "derived",
+            "confidence": "definite",
+        }
+        if aliases:
+            package_props["aliases"] = aliases
         nodes.setdefault(
             package_id,
             {
                 "type": "package",
                 "label": import_name,
-                "props": {
-                    "name": import_name,
-                    "language": "csharp",
-                    "source_strategy": source_strategy,
-                    "authority": "derived",
-                    "confidence": "definite",
-                },
+                "props": package_props,
             },
         )
         edges.append(
@@ -248,9 +255,15 @@ def _dedupe(values: list[str]) -> list[str]:
     return [v for v in values if v and not (v in seen or seen.add(v))]
 
 
-def _package_node_id(import_name: str) -> str:
+def _legacy_package_id(import_name: str) -> str:
+    """Pre-ADR-0041 C# package id shape; recorded under ``aliases``."""
     safe = _SAFE_PACKAGE_RE.sub("_", import_name).strip("._")
     return f"package:csharp:{safe or 'unknown'}"
+
+
+def _package_node_id(import_name: str) -> str:
+    """Canonical C# package id per ADR 0041 (lowercased via ``canonical_slug``)."""
+    return _canonical_package_id("csharp", import_name)
 
 
 def _visibility_map(

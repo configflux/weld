@@ -19,6 +19,10 @@ from pathlib import Path
 from weld._yaml import parse_yaml
 from weld.strategies import cpp_resolver as _cpp_resolver
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld.strategies._tree_sitter_ids import (
+    canonical_file_node_id as _make_node_id,
+    legacy_file_node_id as _legacy_make_node_id,
+)
 from weld.strategies import (
     _cpp_tree_sitter,
     _csharp_tree_sitter,
@@ -141,29 +145,10 @@ def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
     return files, sorted(dirs)
 
 # ---------------------------------------------------------------------------
-# Node ID builder (mirrors python_module._make_node_id)
-# ---------------------------------------------------------------------------
-
-def _make_node_id(rel_path: str, id_prefix: str) -> str:
-    """Build a unique node ID from the relative path."""
-    p = Path(rel_path)
-    stem = p.stem
-    if id_prefix:
-        parts = p.parts
-        anchor_idx = None
-        for i, part in enumerate(parts):
-            if part == id_prefix:
-                anchor_idx = i
-        if anchor_idx is not None:
-            sub_parts = list(parts[anchor_idx + 1:])
-            if sub_parts:
-                sub_parts[-1] = stem
-            else:
-                sub_parts = [stem]
-            return f"file:{id_prefix}/{'/'.join(sub_parts)}"
-        return f"file:{id_prefix}/{stem}"
-    return f"file:{stem}"
-
+# Node ID builders are imported from :mod:`weld.strategies._tree_sitter_ids`
+# (ADR 0041 § Layer 1). ``_make_node_id`` returns the canonical
+# ``file:<rel_path_no_ext>`` form; ``_legacy_make_node_id`` returns the
+# pre-migration shape for the ``aliases`` provenance list.
 # ---------------------------------------------------------------------------
 # C++ cross-file include resolver (layer 2; tracked project)
 # ---------------------------------------------------------------------------
@@ -310,6 +295,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             continue
 
         nid = _make_node_id(rel_path, id_prefix)
+        legacy_nid = _legacy_make_node_id(rel_path, id_prefix)
+        aliases = sorted({legacy_nid} - {nid})
         newlines = source_text.count("\n")
         line_count = newlines + (
             1 if source_text and not source_text.endswith("\n") else 0
@@ -320,6 +307,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             "exports": exports,
             "line_count": line_count,
         }
+        if aliases:
+            node_props["aliases"] = aliases
 
         # Include class/type definitions if present
         classes = symbols.get("classes", [])

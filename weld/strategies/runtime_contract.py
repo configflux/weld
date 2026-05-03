@@ -36,6 +36,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from weld._node_ids import canonical_slug
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
 
 #: Well-known boundaries from runtime-contract.md that map to service nodes.
@@ -106,18 +107,18 @@ def _extract_healthchecks(row: str) -> list[dict]:
         found.append({"method": method, "path": path})
     return found
 
-def _slug(path: str) -> str:
-    """Derive a stable slug from a URL path for use in node IDs."""
-    cleaned = path.strip("/").replace("/", "-")
-    return cleaned or "root"
-
 def _make_rpc_node(
     method: str,
     path: str,
     rel_path: str,
 ) -> tuple[str, dict]:
-    """Build a healthcheck ``rpc`` node with full interaction metadata."""
-    nid = f"rpc:runtime-contract/{method.lower()}-{_slug(path)}"
+    """Build a healthcheck ``rpc`` node with full interaction metadata.
+
+    Per ADR 0041 § Layer 1, the URL-path component of the node id is
+    routed through :func:`weld._node_ids.canonical_slug`, which replaces
+    the previously-bespoke local ``_slug`` helper.
+    """
+    nid = f"rpc:runtime-contract/{method.lower()}-{canonical_slug(path)}"
     label = f"{method} {path}"
     node = {
         "type": "rpc",

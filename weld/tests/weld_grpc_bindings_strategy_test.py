@@ -95,8 +95,9 @@ class GrpcServerBindingTest(unittest.TestCase):
                         return 1
             """)
             nodes, edges, discovered = _run(root)
-            rpc_get = "rpc:grpc:catalog.v1.CatalogService.GetProduct"
-            rpc_list = "rpc:grpc:catalog.v1.CatalogService.ListProducts"
+            # ADR 0041 § Layer 1: rpc ids lowercased; file ids drop ext.
+            rpc_get = "rpc:grpc:catalog.v1.catalogservice.getproduct"
+            rpc_list = "rpc:grpc:catalog.v1.catalogservice.listproducts"
             sym = "symbol:src/server/catalog.py:CatalogServicerImpl"
             # implements edges from the class symbol to each declared rpc.
             impls = {
@@ -117,13 +118,14 @@ class GrpcServerBindingTest(unittest.TestCase):
                     e["props"]["source_strategy"], "grpc_bindings"
                 )
             # file->rpc invokes edge emitted for the server side too.
+            file_node_id = "file:src/server/catalog"
             inbound = {
                 (e["from"], e["to"]) for e in edges
                 if e["type"] == "invokes"
-                and e["from"] == "file:src/server/catalog.py"
+                and e["from"] == file_node_id
             }
-            self.assertIn(("file:src/server/catalog.py", rpc_get), inbound)
-            self.assertIn(("file:src/server/catalog.py", rpc_list), inbound)
+            self.assertIn((file_node_id, rpc_get), inbound)
+            self.assertIn((file_node_id, rpc_list), inbound)
             self.assertIn("src/server/catalog.py", discovered)
 
     def test_class_without_servicer_parent_is_ignored(self) -> None:
@@ -183,12 +185,12 @@ class GrpcClientBindingTest(unittest.TestCase):
                     return stub.GetProduct(None)
             """)
             nodes, edges, discovered = _run(root)
-            rpc_get = "rpc:grpc:catalog.v1.CatalogService.GetProduct"
-            file_id = "file:src/client/caller.py"
+            rpc_get = "rpc:grpc:catalog.v1.catalogservice.getproduct"
+            file_node_id = "file:src/client/caller"
             matches = [
                 e for e in edges
                 if e["type"] == "invokes"
-                and e["from"] == file_id
+                and e["from"] == file_node_id
                 and e["to"] == rpc_get
             ]
             self.assertEqual(len(matches), 1)

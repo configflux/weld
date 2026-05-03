@@ -21,6 +21,26 @@ def _load_graph(root: Path) -> _Graph:
     g.load()
     return g
 
+
+def resolve_node_id_via_alias(graph: _Graph, node_id: str | None) -> str | None:
+    """Rewrite *node_id* through the graph's ADR 0041 alias index.
+
+    Returns the canonical id when *node_id* is a registered alias,
+    otherwise returns *node_id* unchanged. ``None`` passes through so
+    callers can pipe optional arguments. The lookup uses the same
+    shadow-collision-safe table built by :func:`weld._alias_index.build_alias_index`,
+    so an attacker-controlled alias that named an unrelated canonical
+    id never redirects the request.
+    """
+    if node_id is None:
+        return None
+    nodes = graph._data.get("nodes", {})  # type: ignore[attr-defined]
+    if node_id in nodes:
+        return node_id
+    alias_index = getattr(graph, "_alias_index", {})
+    return alias_index.get(node_id, node_id)
+
+
 def weld_trace(
     *,
     term: str | None = None,
@@ -32,9 +52,11 @@ def weld_trace(
     """Protocol-aware cross-boundary slice. Delegates to ``weld.trace.trace``.
 
     Exactly one of *term* or *node_id* must be supplied. Returns the
-    stable trace envelope (``TRACE_VERSION``).
+    stable trace envelope (``TRACE_VERSION``). Alias-aware per ADR
+    0041: a legacy *node_id* is rewritten to its canonical form.
     """
     g = _load_graph(Path(root))
+    node_id = resolve_node_id_via_alias(g, node_id)
     return _trace(
         g, term=term, node_id=node_id, depth=depth, seed_limit=seed_limit,
     )
@@ -46,8 +68,14 @@ def weld_impact(
     *,
     root: Path | str = ".",
 ) -> dict:
-    """Reverse-dependency blast radius for a node id or file path."""
+    """Reverse-dependency blast radius for a node id or file path.
+
+    Alias-aware per ADR 0041 when *target* is a node id (file paths
+    pass through unchanged because they are never registered as
+    aliases of node ids).
+    """
     g = _load_graph(Path(root))
+    target = resolve_node_id_via_alias(g, target) or target
     try:
         return _impact(g, target=target, depth=depth)
     except ValueError as exc:
@@ -64,8 +92,12 @@ def weld_enrich(
     max_cost: float | None = None,
     root: Path | str = ".",
 ) -> dict:
-    """LLM-assisted semantic enrichment for one node or the whole graph."""
+    """LLM-assisted semantic enrichment for one node or the whole graph.
+
+    Alias-aware per ADR 0041 for the optional *node_id* argument.
+    """
     g = _load_graph(Path(root))
+    node_id = resolve_node_id_via_alias(g, node_id)
     try:
         return _enrich(
             g,

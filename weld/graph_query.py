@@ -11,6 +11,11 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
     """Run tokenized graph query while preserving Graph.query's envelope.
 
     Behavior:
+    - Alias short-circuit (ADR 0041): when the entire ``term`` matches
+      a legacy node ID recorded in ``props.aliases``, resolve it to the
+      canonical id and return that single canonical node + its 1-hop
+      neighborhood. This lets transcripts that paste a pre-rename ID
+      keep working through ``wd query``.
     - Strict-AND: every token group must hit at least one field on a node.
     - OR-fallback: when strict-AND yields zero matches on a *multi-token*
       query, retry via :func:`query_or_fallback` (per-group union ranked
@@ -27,6 +32,9 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
     if not tokens:
         return {"query": term, "matches": [], "neighbors": [], "edges": []}
     graph._ensure_query_state()
+    alias_match = _alias_short_circuit(graph, term, limit)
+    if alias_match is not None:
+        return alias_match
     token_groups = expand_token_groups(tokens)
     candidates = candidate_nodes_grouped(graph._inverted_index, token_groups)
     if candidates is not None and not candidates:
@@ -55,6 +63,40 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
     matches = [{"id": node_id, **node} for node_id, node in ranked[:limit]]
     match_ids = {match["id"] for match in matches}
     neighbors, edges = graph._neighborhood(match_ids)
+    return {"query": term, "matches": matches, "neighbors": neighbors, "edges": edges}
+
+
+def _alias_short_circuit(graph: object, term: str, limit: int) -> dict | None:
+    """Return a one-match envelope if ``term`` is a registered legacy alias.
+
+    Only fires when the *exact* (case-preserving) ``term`` is a
+    registered alias entry that points to a canonical node id. Plain
+    canonical-id queries fall through to the normal BM25 path so that
+    users who type ``wd query <canonical_id>`` keep getting the
+    description / substring matches they would have gotten before
+    ADR 0041 (alias short-circuit must not break the existing
+    "search by id substring" UX). Returns ``None`` when ``term`` is
+    not an alias, so the normal BM25 path runs.
+
+    The envelope mirrors :func:`query_graph` so callers cannot
+    distinguish an alias-short-circuit hit from a normal one-match
+    result; that is intentional -- alias resolution is a guaranteed
+    rewrite to the canonical node and should be invisible to callers.
+    """
+    nodes = graph._data["nodes"]  # type: ignore[attr-defined]
+    alias_index = getattr(graph, "_alias_index", {})
+    # Only fire on legacy aliases, NOT on canonical ids that happen to
+    # be exact substrings of themselves -- BM25 already handles those
+    # and may surface multiple useful description-substring matches.
+    if term in nodes:
+        return None
+    canonical = alias_index.get(term)
+    if canonical is None or canonical not in nodes:
+        return None
+    node = nodes[canonical]
+    matches = [{"id": canonical, **node}][:limit]
+    match_ids = {canonical}
+    neighbors, edges = graph._neighborhood(match_ids)  # type: ignore[attr-defined]
     return {"query": term, "matches": matches, "neighbors": neighbors, "edges": edges}
 
 

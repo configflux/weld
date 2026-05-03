@@ -46,6 +46,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from weld._graph_node_registry import ensure_node
+from weld._node_ids import file_id, package_id
 from weld.strategies._helpers import (
     StrategyResult,
     filter_glob_results,
@@ -117,24 +119,43 @@ def _iter_node_calls(desc_list: ast.List) -> list[ast.Call]:
 # ---------------------------------------------------------------------------
 
 def _ensure_package(nodes: dict, pkg: str) -> str:
-    nid = f"ros_package:{pkg}"
-    nodes.setdefault(nid, {
-        "type": "ros_package", "label": pkg,
-        "props": {
-            "confidence": "inferred", "roles": ["config"], **_EXTERNAL,
+    """Ensure a ``package:ros2:<slug>`` sentinel exists (merge-safe)."""
+    nid = package_id("ros2", pkg)
+    ensure_node(
+        nodes,
+        nid,
+        "ros_package",
+        source_strategy=_STRATEGY,
+        source_path=None,
+        authority="external",
+        props={
+            "name": pkg,
+            "confidence": "inferred",
+            "roles": ["config"],
+            "aliases": [f"ros_package:{pkg}"],
         },
-    })
+    )
     return nid
 
 def _ensure_file_sentinel(nodes: dict, rel_path: str) -> str:
-    nid = f"file:{rel_path}"
-    nodes.setdefault(nid, {
-        "type": "file", "label": Path(rel_path).name,
-        "props": {
+    """Ensure a ``file:<rel_posix_no_ext>`` sentinel exists (merge-safe)."""
+    nid = file_id(rel_path)
+    legacy_nid = f"file:{rel_path}"
+    ensure_node(
+        nodes,
+        nid,
+        "file",
+        source_strategy=_STRATEGY,
+        source_path=rel_path,
+        authority="canonical",
+        props={
+            "name": Path(rel_path).name,
             "file": rel_path,
-            "confidence": "definite", "roles": ["config"], **_CANONICAL,
+            "confidence": "definite",
+            "roles": ["config"],
+            "aliases": ([legacy_nid] if legacy_nid != nid else []),
         },
-    })
+    )
     return nid
 
 def _emit_ros_node(
@@ -278,7 +299,7 @@ def _handle_node_call(
         },
     })
     edges.append({
-        "from": ros_node_nid, "to": f"ros_package:{pkg}",
+        "from": ros_node_nid, "to": package_id("ros2", pkg),
         "type": "depends_on",
         "props": {
             "source_strategy": _STRATEGY,

@@ -36,6 +36,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from weld._node_ids import entity_id, file_id
 from weld.strategies._helpers import StrategyResult, filter_glob_results
 from weld.strategies.grpc_proto_parser import parse_proto_text
 
@@ -247,7 +248,12 @@ def _collect_stub_calls(
 # ---------------------------------------------------------------------------
 
 def _rpc_id(qualified_service: str, method: str) -> str:
-    return f"rpc:grpc:{qualified_service}.{method}"
+    """Canonical gRPC rpc id per ADR 0041 (lowercased via ``canonical_slug``).
+
+    Mirrors :func:`weld.strategies.grpc_proto._rpc_id` so server / client
+    binding edges target the same id the ``grpc_proto`` strategy mints.
+    """
+    return entity_id("rpc", platform="grpc", name=f"{qualified_service}.{method}")
 
 def _edge(src: str, dst: str, etype: str) -> dict:
     return {
@@ -274,7 +280,7 @@ def _process_file(
     pb2_grpc = _collect_pb2_grpc_imports(tree)
     if not pb2_grpc:
         return False
-    file_id = f"file:{rel_path}"
+    file_node_id = file_id(rel_path)
     emitted = False
 
     # Server bindings: Servicer subclasses.
@@ -304,7 +310,7 @@ def _process_file(
                         f"{class_symbol}.{method_name}", rpc_id, "implements"
                     )
                 )
-                edges.append(_edge(file_id, rpc_id, "invokes"))
+                edges.append(_edge(file_node_id, rpc_id, "invokes"))
                 emitted = True
 
     # Client bindings: stub call sites inside function bodies.
@@ -321,7 +327,7 @@ def _process_file(
             if method not in index.methods(qualified):
                 continue
             rpc_id = _rpc_id(qualified, method)
-            edges.append(_edge(file_id, rpc_id, "invokes"))
+            edges.append(_edge(file_node_id, rpc_id, "invokes"))
             emitted = True
 
     return emitted

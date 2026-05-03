@@ -7,6 +7,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
+from weld._alias_index import build_alias_index as _build_alias_index
 from weld._git import get_git_sha, is_git_repo
 from weld._staleness import compute_stale_info as _compute_stale_info
 from weld._graph_schema import (
@@ -17,6 +18,7 @@ from weld._graph_schema import (
     schema_version_for as _graph_schema_version_for,
 )
 from weld.contract import SCHEMA_VERSION
+from weld.graph_context import compute_neighborhood as _compute_neighborhood
 from weld.graph_context import context_with_fallback as _context_with_fallback
 from weld.graph_context import simple_exact_context as _simple_exact_context
 from weld.graph_query import query_graph as _query_graph
@@ -64,6 +66,7 @@ class Graph:
         self._structural_scores: dict[str, float] = {}
         self._embedding_cache = None
         self._query_state_counts = (0, 0)
+        self._alias_index: dict[str, str] = {}  # ADR 0041 lookup
 
     def load(self) -> None:
         if self._path.exists():
@@ -167,6 +170,7 @@ class Graph:
         self._structural_scores = state.structural_scores
         self._embedding_cache = state.embedding_cache
         self._query_state_counts = (len(self._data["nodes"]), len(self._data["edges"]))
+        self._alias_index = _build_alias_index(self._data["nodes"])  # ADR 0041
 
     def _ensure_query_state(self) -> None:
         counts = (len(self._data["nodes"]), len(self._data["edges"]))
@@ -322,18 +326,23 @@ class Graph:
         }
 
     def context(self, node_id: str, *, fallback: bool = True) -> dict:
-        """Return a node plus its 1-hop neighborhood; see graph_context."""
+        """Node + 1-hop neighborhood; alias-aware per ADR 0041."""
+        eid = node_id if node_id in self._data["nodes"] else self._alias_index.get(node_id, node_id)
         return _context_with_fallback(
-            raw_node_id=node_id, error_node_id=node_id, fallback=fallback,
+            raw_node_id=eid, error_node_id=node_id, fallback=fallback,
             exact_fn=lambda: _simple_exact_context(
-                self.get_node, self._neighborhood, node_id),
+                self.get_node, self._neighborhood, eid),
             query_fn=self.query,
             recurse_fn=lambda nid: self.context(nid, fallback=False),
             match_tokens_fn=Graph._match_tokens,
         )
 
     def path(self, from_id: str, to_id: str) -> dict:
-        if from_id not in self._data["nodes"] or to_id not in self._data["nodes"]:
+        # ADR 0041 alias-aware: rewrite legacy IDs to canonical first.
+        nodes = self._data["nodes"]
+        from_id = from_id if from_id in nodes else self._alias_index.get(from_id, from_id)
+        to_id = to_id if to_id in nodes else self._alias_index.get(to_id, to_id)
+        if from_id not in nodes or to_id not in nodes:
             return {"path": None, "reason": "node not found"}
         adj: dict[str, list[tuple[str, dict]]] = {}
         for e in self._data["edges"]:
@@ -374,20 +383,7 @@ class Graph:
     # -- internal --
 
     def _neighborhood(self, node_ids: set[str]) -> tuple[list[dict], list[dict]]:
-        edges = []
-        neighbor_ids: set[str] = set()
-        for e in self._data["edges"]:
-            if e["from"] in node_ids or e["to"] in node_ids:
-                edges.append(e)
-                neighbor_ids.add(e["from"])
-                neighbor_ids.add(e["to"])
-        neighbor_ids -= node_ids
-        neighbors = []
-        for nid in sorted(neighbor_ids):
-            n = self._data["nodes"].get(nid)
-            if n:
-                neighbors.append({"id": nid, **n})
-        return neighbors, edges
+        return _compute_neighborhood(self._data["nodes"], self._data["edges"], node_ids)
 
 
 def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:

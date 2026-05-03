@@ -287,10 +287,36 @@ jobs:
         # where PyPI still shows the prior release. PKG_VERSION is
         # exported as an env var so the run script never interpolates a
         # raw GitHub expression mid-command.
+        #
+        # Retry-with-backoff: PyPI's CDN can take longer than the fixed
+        # propagation sleep above to surface a freshly uploaded release
+        # in every region. Matrix slots land on different CDN edges, so
+        # a single ``pip install`` call can race the cache and produce
+        # a "No matching distribution found for configflux-weld==<TAG>"
+        # failure on one slot while others succeed. Loop the install
+        # with a 60s pause between attempts so a slow CDN edge converts
+        # into a transient instead of a release-blocking matrix
+        # failure. Each retry re-runs the same ``pip install
+        # --no-cache-dir`` so we never trade safety for speed.
         env:
           PKG_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          pip install --no-cache-dir "configflux-weld==${PKG_VERSION}"
+          set -eu
+          installed=0
+          for attempt in 1 2 3 4 5; do
+            if pip install --no-cache-dir "configflux-weld==${PKG_VERSION}"; then
+              echo "pip install succeeded on attempt ${attempt}"
+              installed=1
+              break
+            fi
+            echo "attempt ${attempt} failed, sleeping 60s before retry..."
+            sleep 60
+          done
+          if [ "${installed}" -ne 1 ]; then
+            echo "pip install of configflux-weld==${PKG_VERSION} failed after 5 attempts"
+            exit 1
+          fi
+          pip show configflux-weld
 
       - name: Basic install smoke (all matrix slots)
         # Minimal cross-version smoke that runs on every advertised Python

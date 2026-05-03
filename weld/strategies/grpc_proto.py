@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld._node_ids import entity_id, file_id
 from weld.strategies._helpers import StrategyResult, filter_glob_results
 from weld.strategies.grpc_proto_parser import ProtoFile, parse_proto_text
 
@@ -54,14 +55,36 @@ from weld.strategies.grpc_proto_parser import ProtoFile, parse_proto_text
 def _qualified(package: str, name: str) -> str:
     return f"{package}.{name}" if package else name
 
-def _rpc_id(package: str, service: str, method: str) -> str:
+
+def _legacy_rpc_id(package: str, service: str, method: str) -> str:
+    """Pre-ADR-0041 rpc id shape; recorded under ``aliases`` for compat."""
     return f"rpc:grpc:{_qualified(package, service)}.{method}"
 
-def _contract_id(package: str, name: str) -> str:
+
+def _legacy_contract_id(package: str, name: str) -> str:
+    """Pre-ADR-0041 contract id shape; recorded under ``aliases``."""
     return f"contract:grpc:{_qualified(package, name)}"
 
-def _enum_id(package: str, name: str) -> str:
+
+def _legacy_enum_id(package: str, name: str) -> str:
+    """Pre-ADR-0041 enum id shape; recorded under ``aliases``."""
     return f"enum:grpc:{_qualified(package, name)}"
+
+
+def _rpc_id(package: str, service: str, method: str) -> str:
+    """Canonical gRPC rpc id per ADR 0041 (lowercased via ``canonical_slug``)."""
+    return entity_id("rpc", platform="grpc", name=f"{_qualified(package, service)}.{method}")
+
+
+def _contract_id(package: str, name: str) -> str:
+    """Canonical gRPC contract id per ADR 0041."""
+    return entity_id("contract", platform="grpc", name=_qualified(package, name))
+
+
+def _enum_id(package: str, name: str) -> str:
+    """Canonical gRPC enum id per ADR 0041."""
+    return entity_id("enum", platform="grpc", name=_qualified(package, name))
+
 
 def _proto_type_to_contract_id(package: str, type_name: str) -> str:
     """Map a proto type reference to a contract node id.
@@ -74,8 +97,8 @@ def _proto_type_to_contract_id(package: str, type_name: str) -> str:
     sweep drop it when no matching node exists.
     """
     if "." in type_name:
-        return f"contract:grpc:{type_name}"
-    return f"contract:grpc:{_qualified(package, type_name)}"
+        return entity_id("contract", platform="grpc", name=type_name)
+    return _contract_id(package, type_name)
 
 def _edge(src: str, dst: str, etype: str, *, confidence: str) -> dict:
     return {
@@ -93,7 +116,7 @@ def _edge(src: str, dst: str, etype: str, *, confidence: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _emit_services(
-    pf: ProtoFile, rel_path: str, file_id: str,
+    pf: ProtoFile, rel_path: str, file_node_id: str,
     nodes: dict[str, dict], edges: list[dict],
 ) -> bool:
     emitted = False
@@ -106,6 +129,8 @@ def _emit_services(
                 if (rpc.client_stream or rpc.server_stream)
                 else "request_response"
             )
+            legacy_rid = _legacy_rpc_id(package, service.name, rpc.name)
+            aliases = sorted({legacy_rid} - {rid})
             nodes[rid] = {
                 "type": "rpc",
                 "label": f"{service.name}.{rpc.name}",
@@ -120,6 +145,7 @@ def _emit_services(
                     "authority": "canonical",
                     "confidence": "definite",
                     "roles": ["implementation"],
+                    "aliases": aliases,
                     # ADR 0018 interaction metadata.
                     "protocol": "grpc",
                     "surface_kind": surface,
@@ -128,7 +154,7 @@ def _emit_services(
                     "declared_in": rel_path,
                 },
             }
-            edges.append(_edge(file_id, rid, "invokes", confidence="definite"))
+            edges.append(_edge(file_node_id, rid, "invokes", confidence="definite"))
             req_id = _proto_type_to_contract_id(package, rpc.request_type)
             resp_id = _proto_type_to_contract_id(package, rpc.response_type)
             edges.append(_edge(rid, req_id, "accepts", confidence="definite"))
@@ -139,13 +165,15 @@ def _emit_services(
     return emitted
 
 def _emit_messages(
-    pf: ProtoFile, rel_path: str, file_id: str,
+    pf: ProtoFile, rel_path: str, file_node_id: str,
     nodes: dict[str, dict], edges: list[dict],
 ) -> bool:
     emitted = False
     package = pf.package
     for msg in pf.messages:
         cid = _contract_id(package, msg.qualified_name)
+        legacy_cid = _legacy_contract_id(package, msg.qualified_name)
+        aliases = sorted({legacy_cid} - {cid})
         nodes[cid] = {
             "type": "contract",
             "label": msg.qualified_name,
@@ -156,22 +184,25 @@ def _emit_messages(
                 "authority": "canonical",
                 "confidence": "definite",
                 "roles": ["implementation"],
+                "aliases": aliases,
                 "protocol": "grpc",
                 "declared_in": rel_path,
             },
         }
-        edges.append(_edge(file_id, cid, "contains", confidence="definite"))
+        edges.append(_edge(file_node_id, cid, "contains", confidence="definite"))
         emitted = True
     return emitted
 
 def _emit_enums(
-    pf: ProtoFile, rel_path: str, file_id: str,
+    pf: ProtoFile, rel_path: str, file_node_id: str,
     nodes: dict[str, dict], edges: list[dict],
 ) -> bool:
     emitted = False
     package = pf.package
     for enum in pf.enums:
         eid = _enum_id(package, enum.name)
+        legacy_eid = _legacy_enum_id(package, enum.name)
+        aliases = sorted({legacy_eid} - {eid})
         nodes[eid] = {
             "type": "enum",
             "label": enum.name,
@@ -182,11 +213,12 @@ def _emit_enums(
                 "authority": "canonical",
                 "confidence": "definite",
                 "roles": ["implementation"],
+                "aliases": aliases,
                 "protocol": "grpc",
                 "declared_in": rel_path,
             },
         }
-        edges.append(_edge(file_id, eid, "contains", confidence="definite"))
+        edges.append(_edge(file_node_id, eid, "contains", confidence="definite"))
         emitted = True
     return emitted
 
@@ -198,10 +230,10 @@ def _build_fragment(
     Returns ``True`` when the file contributed at least one node,
     ``False`` when it had no recognisable declarations.
     """
-    file_id = f"file:{rel_path}"
-    s = _emit_services(pf, rel_path, file_id, nodes, edges)
-    m = _emit_messages(pf, rel_path, file_id, nodes, edges)
-    e = _emit_enums(pf, rel_path, file_id, nodes, edges)
+    file_node_id = file_id(rel_path)
+    s = _emit_services(pf, rel_path, file_node_id, nodes, edges)
+    m = _emit_messages(pf, rel_path, file_node_id, nodes, edges)
+    e = _emit_enums(pf, rel_path, file_node_id, nodes, edges)
     return s or m or e
 
 # ---------------------------------------------------------------------------

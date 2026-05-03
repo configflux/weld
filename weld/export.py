@@ -269,6 +269,9 @@ def export(
     serializer = _FORMATS[fmt]
 
     if node_id is not None:
+        # ADR 0041 alias-aware: rewrite legacy id to canonical first.
+        node_id = getattr(g, "_alias_index", {}).get(node_id, node_id) \
+            if node_id not in g._data.get("nodes", {}) else node_id
         nodes, edges = extract_subgraph(g, node_id, depth=depth)
         return serializer(g, nodes=nodes, edges=edges)
 

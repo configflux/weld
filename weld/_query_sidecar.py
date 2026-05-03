@@ -271,6 +271,17 @@ def _apply_query_state(graph: object, state: QueryState) -> None:
         len(graph._data["nodes"]),  # type: ignore[attr-defined]
         len(graph._data["edges"]),  # type: ignore[attr-defined]
     )
+    # ADR 0041 alias index. Rebuilt from the freshly-loaded
+    # ``nodes`` dict; not pickled into the sidecar because (a) it is
+    # cheap (single linear pass) and (b) keeping it out of the
+    # pickle envelope avoids a sidecar-format bump and the
+    # corresponding cache-invalidation rule. The graph hash on the
+    # sidecar already invalidates the cached inverted index when
+    # ``graph.json`` changes; the alias index, being derived from
+    # the same ``nodes`` dict, is implicitly fresh whenever the
+    # cached state itself is fresh.
+    from weld._alias_index import build_alias_index
+    graph._alias_index = build_alias_index(graph._data["nodes"])  # type: ignore[attr-defined]
 
 
 def _snapshot_from_graph(graph: object) -> QueryState | None:

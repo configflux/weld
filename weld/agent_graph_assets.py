@@ -42,7 +42,13 @@ def asset_status(props: dict[str, Any]) -> str:
         return "canonical"
     if props.get("generated") is True:
         return "generated"
-    if authority:
+    # ADR 0041: ``external`` and ``referenced`` are the registry's
+    # default authority levels for asset-discovered and reference-only
+    # nodes. They represent the historical workflow ``status`` axis
+    # (``manual`` / ``referenced``) rather than a frontmatter-declared
+    # authority claim, so callers that ask for the asset status keep
+    # the legacy values.
+    if authority and authority not in {"external", "referenced"}:
         return str(authority)
     status = props.get("status")
     return str(status) if status else "manual"

@@ -108,7 +108,7 @@ class Ros2InterfacesStrategyTest(unittest.TestCase):
 
     def test_msg_contains_edge_to_package(self) -> None:
         result = self._run("**/*.msg")
-        pkg_nid = "ros_package:demo_pkg"
+        pkg_nid = "package:ros2:demo_pkg"
         iface_nid = "ros_interface:demo_pkg/msg/Demo"
         self.assertIn(pkg_nid, result.nodes)
         match = [
@@ -141,7 +141,7 @@ class Ros2InterfacesStrategyTest(unittest.TestCase):
         result = self._run("**/*.srv")
         contains = [
             e for e in result.edges
-            if e["from"] == "ros_package:demo_pkg"
+            if e["from"] == "package:ros2:demo_pkg"
             and e["to"] == "ros_interface:demo_pkg/srv/Set"
             and e["type"] == "contains"
         ]
@@ -212,7 +212,7 @@ class Ros2InterfacesStrategyTest(unittest.TestCase):
         self,
     ) -> None:
         result = self._run("**/*.action")
-        pkg = "ros_package:demo_pkg"
+        pkg = "package:ros2:demo_pkg"
         contained = {
             e["to"]
             for e in result.edges
@@ -265,7 +265,7 @@ class Ros2InterfacesStrategyTest(unittest.TestCase):
         (odd / "Solo.msg").write_text("int32 n\n", encoding="utf-8")
         result = self._run("**/*.msg")
         self.assertIn("ros_interface:lonely_pkg/msg/Solo", result.nodes)
-        self.assertIn("ros_package:lonely_pkg", result.nodes)
+        self.assertIn("package:ros2:lonely_pkg", result.nodes)
 
     def test_malformed_fields_are_skipped_not_fatal(self) -> None:
         # Lines with only one token (e.g. typo'd field) must be dropped

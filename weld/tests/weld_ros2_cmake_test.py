@@ -82,15 +82,15 @@ class Ros2CmakeStrategyTest(unittest.TestCase):
         dep_targets = {
             e["to"]
             for e in result.edges
-            if e["from"] == "ros_package:demo_pkg"
+            if e["from"] == "package:ros2:demo_pkg"
             and e["type"] == "depends_on"
             and e["props"].get("kind") == "find_package"
         }
-        self.assertIn("ros_package:ament_cmake", dep_targets)
-        self.assertIn("ros_package:rclcpp", dep_targets)
-        self.assertIn("ros_package:std_msgs", dep_targets)
+        self.assertIn("package:ros2:ament_cmake", dep_targets)
+        self.assertIn("package:ros2:rclcpp", dep_targets)
+        self.assertIn("package:ros2:std_msgs", dep_targets)
         # Commented-out dep must not appear.
-        self.assertNotIn("ros_package:ignored_pkg", dep_targets)
+        self.assertNotIn("package:ros2:ignored_pkg", dep_targets)
 
     def test_add_executable_creates_build_targets(self) -> None:
         result = self._run()
@@ -102,7 +102,7 @@ class Ros2CmakeStrategyTest(unittest.TestCase):
         )
         builds = [
             e for e in result.edges
-            if e["from"] == "ros_package:demo_pkg" and e["type"] == "builds"
+            if e["from"] == "package:ros2:demo_pkg" and e["type"] == "builds"
         ]
         targets = {e["to"] for e in builds}
         self.assertIn("build-target:ros2:demo_pkg:demo_talker", targets)
@@ -118,7 +118,7 @@ class Ros2CmakeStrategyTest(unittest.TestCase):
         ]
         targets = {e["to"] for e in deps}
         self.assertEqual(
-            targets, {"ros_package:rclcpp", "ros_package:std_msgs"}
+            targets, {"package:ros2:rclcpp", "package:ros2:std_msgs"}
         )
 
     def test_rosidl_generate_interfaces_emits_interface_hint(self) -> None:
@@ -129,7 +129,7 @@ class Ros2CmakeStrategyTest(unittest.TestCase):
         match = next(
             (
                 e for e in result.edges
-                if e["from"] == "ros_package:demo_pkg"
+                if e["from"] == "package:ros2:demo_pkg"
                 and e["to"] == nid
                 and e["type"] == "builds"
             ),
@@ -170,11 +170,11 @@ class Ros2CmakeStrategyTest(unittest.TestCase):
             "find_package(rclcpp REQUIRED)\n", encoding="utf-8"
         )
         result = self._run()
-        self.assertIn("ros_package:standalone", result.nodes)
+        self.assertIn("package:ros2:standalone", result.nodes)
         self.assertTrue(
             any(
-                e["from"] == "ros_package:standalone"
-                and e["to"] == "ros_package:rclcpp"
+                e["from"] == "package:ros2:standalone"
+                and e["to"] == "package:ros2:rclcpp"
                 for e in result.edges
             )
         )

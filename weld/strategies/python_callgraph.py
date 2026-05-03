@@ -58,7 +58,15 @@ def _module_dotted_path(rel_path: str) -> str:
     return ".".join(parts)
 
 def _symbol_id(module_path: str, qualname: str) -> str:
-    """Return a stable id for a Python symbol."""
+    """Return a stable id for a Python symbol.
+
+    Symbol IDs preserve their original module-path and qualname casing
+    (ADR 0041 § Migration plan does not list ``symbol:py:*`` in the
+    rename table, and lowercasing class qualnames would silently
+    rewrite every symbol edge in the existing graph). The canonical
+    slug rule applies to ID *prefixes* and human-name segments;
+    qualnames are program identifiers and stay verbatim.
+    """
     return f"symbol:py:{module_path}:{qualname}"
 
 def _unresolved_id(name: str) -> str:

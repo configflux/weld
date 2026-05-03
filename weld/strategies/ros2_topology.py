@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from weld._graph_node_registry import ensure_node
 from weld.strategies import _ros2_cpp as _cpp
 from weld.strategies._helpers import (
     StrategyResult,
@@ -42,49 +43,53 @@ _DERIVED = {"source_strategy": _STRATEGY, "authority": "derived"}
 _CANONICAL = {"source_strategy": _STRATEGY, "authority": "canonical"}
 
 def _file_caller(nodes: dict, rel_path: str) -> str:
-    """Create (if needed) and return a ``symbol:cpp:<module>:<file>`` id."""
+    """Create (if needed) and return a ``symbol:cpp:<module>:<file>`` id.
+
+    Routed through ``ensure_node`` per ADR 0041 so two strategies that
+    materialize the same file-level caller merge instead of clobbering.
+    """
     p = Path(rel_path)
     parts = list(p.parts)
     parts[-1] = p.stem
     module = ".".join(parts) if parts else p.stem
     nid = f"symbol:cpp:{module}:<file>"
-    nodes.setdefault(nid, {
-        "type": "symbol", "label": module,
-        "props": {
-            "file": rel_path, "module": module, "qualname": "<file>",
-            "language": "cpp", "scope": "module",
+    ensure_node(
+        nodes, nid, "symbol",
+        source_strategy=_STRATEGY, source_path=rel_path, authority="derived",
+        props={
+            "name": module, "file": rel_path, "module": module,
+            "qualname": "<file>", "language": "cpp", "scope": "module",
             "confidence": "inferred", "roles": ["implementation"],
-            **_DERIVED,
         },
-    })
+    )
     return nid
 
 def _ensure_iface_sentinel(nodes: dict, iface_nid: str, mt: str) -> None:
-    """Create a light ``ros_interface`` sentinel; richer data wins."""
+    """Create a light ``ros_interface`` sentinel; richer data wins via merge."""
     kind = mt.split("/")[1] if mt and "/" in mt else "msg"
-    nodes.setdefault(iface_nid, {
-        "type": "ros_interface", "label": mt,
-        "props": {
-            "source_strategy": _STRATEGY, "authority": "external",
-            "confidence": "inferred", "roles": ["config"],
-            "interface_kind": kind,
+    ensure_node(
+        nodes, iface_nid, "ros_interface",
+        source_strategy=_STRATEGY, source_path=None, authority="external",
+        props={
+            "name": mt, "confidence": "inferred",
+            "roles": ["config"], "interface_kind": kind,
         },
-    })
+    )
 
 def _ensure_topic(
     nodes: dict, edges: list, *, topic_name: str, mt: str,
     iface_nid: str | None, rel_path: str, dynamic: bool,
 ) -> str:
     nid = f"ros_topic:{topic_name}"
-    nodes.setdefault(nid, {
-        "type": "ros_topic", "label": topic_name,
-        "props": {
-            "file": rel_path, "name": topic_name,
-            "message_type": mt, "dynamic": dynamic,
+    ensure_node(
+        nodes, nid, "ros_topic",
+        source_strategy=_STRATEGY, source_path=rel_path, authority="derived",
+        props={
+            "name": topic_name, "file": rel_path, "message_type": mt,
+            "dynamic": dynamic, "roles": ["implementation"],
             "confidence": "inferred" if dynamic else "definite",
-            "roles": ["implementation"], **_DERIVED,
         },
-    })
+    )
     props = nodes[nid]["props"]
     if props.get("message_type") == "<unresolved>" and mt != "<unresolved>":
         props["message_type"] = mt
@@ -102,17 +107,17 @@ def _ensure_topic(
 def _ensure_typed(
     nodes: dict, *, kind: str, name: str, typed: str, rel_path: str,
 ) -> str:
-    """Shared ``ros_service`` / ``ros_action`` helper."""
+    """Shared ``ros_service`` / ``ros_action`` helper (merge-safe)."""
     nid = f"ros_{kind}:{name}"
     type_prop = "service_type" if kind == "service" else "action_type"
-    nodes.setdefault(nid, {
-        "type": f"ros_{kind}", "label": name,
-        "props": {
-            "file": rel_path, "name": name, type_prop: typed,
+    ensure_node(
+        nodes, nid, f"ros_{kind}",
+        source_strategy=_STRATEGY, source_path=rel_path, authority="derived",
+        props={
+            "name": name, "file": rel_path, type_prop: typed,
             "confidence": "definite", "roles": ["implementation"],
-            **_DERIVED,
         },
-    })
+    )
     props = nodes[nid]["props"]
     if props.get(type_prop) == "<unresolved>" and typed != "<unresolved>":
         props[type_prop] = typed
@@ -123,22 +128,26 @@ def _ensure_param(
     declared: bool, rel_path: str,
 ) -> str:
     nid = f"ros_parameter:{owner}/{name}"
-    if nid in nodes:
-        existing = nodes[nid]["props"]
-        if declared and not existing.get("declared"):
-            existing["declared"] = True
-            existing["confidence"] = "definite"
-            if ptype:
-                existing["parameter_type"] = ptype
-        return nid
-    props: dict = {
-        "file": rel_path, "name": name, "declared": declared,
+    incoming: dict = {
+        "name": name, "file": rel_path, "declared": declared,
         "confidence": "definite" if declared else "inferred",
-        "roles": ["config"], **_DERIVED,
+        "roles": ["config"],
     }
     if ptype:
-        props["parameter_type"] = ptype
-    nodes[nid] = {"type": "ros_parameter", "label": name, "props": props}
+        incoming["parameter_type"] = ptype
+    ensure_node(
+        nodes, nid, "ros_parameter",
+        source_strategy=_STRATEGY, source_path=rel_path, authority="derived",
+        props=incoming,
+    )
+    # Promote ``declared`` regardless of which side won the merge: a later
+    # ``declare_parameter`` call must always upgrade an inferred sentinel.
+    existing = nodes[nid]["props"]
+    if declared and not existing.get("declared"):
+        existing["declared"] = True
+        existing["confidence"] = "definite"
+        if ptype:
+            existing["parameter_type"] = ptype
     return nid
 
 def _append_edge(

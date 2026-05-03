@@ -43,12 +43,14 @@ class GrpcProtoFixtureTest(unittest.TestCase):
         rpc_ids = {nid for nid, n in nodes.items() if n["type"] == "rpc"}
         contract_ids = {nid for nid, n in nodes.items() if n["type"] == "contract"}
         enum_ids = {nid for nid, n in nodes.items() if n["type"] == "enum"}
-        self.assertIn("rpc:grpc:catalog.v1.CatalogService.GetProduct", rpc_ids)
-        self.assertIn("rpc:grpc:catalog.v1.CatalogService.ListProducts", rpc_ids)
-        self.assertIn("contract:grpc:catalog.v1.GetProductRequest", contract_ids)
-        self.assertIn("contract:grpc:catalog.v1.GetProductResponse", contract_ids)
-        self.assertIn("contract:grpc:catalog.v1.Product", contract_ids)
-        self.assertIn("enum:grpc:catalog.v1.ProductStatus", enum_ids)
+        # ADR 0041 § Layer 1: ids route through ``canonical_slug`` so
+        # mixed-case service / contract / enum names lowercase.
+        self.assertIn("rpc:grpc:catalog.v1.catalogservice.getproduct", rpc_ids)
+        self.assertIn("rpc:grpc:catalog.v1.catalogservice.listproducts", rpc_ids)
+        self.assertIn("contract:grpc:catalog.v1.getproductrequest", contract_ids)
+        self.assertIn("contract:grpc:catalog.v1.getproductresponse", contract_ids)
+        self.assertIn("contract:grpc:catalog.v1.product", contract_ids)
+        self.assertIn("enum:grpc:catalog.v1.productstatus", enum_ids)
         self.assertIn("proto/catalog/v1/catalog.proto", discovered)
 
     def test_fixture_fragment_validates(self) -> None:
@@ -78,7 +80,7 @@ class GrpcProtoServiceTest(unittest.TestCase):
                 message ChargeResponse { bool ok = 1; }
             """)
             nodes, _edges, _ = _run(root)
-            rpc_id = "rpc:grpc:billing.v1.BillingService.Charge"
+            rpc_id = "rpc:grpc:billing.v1.billingservice.charge"
             self.assertIn(rpc_id, nodes)
             props = nodes[rpc_id]["props"]
             self.assertEqual(nodes[rpc_id]["type"], "rpc")
@@ -92,6 +94,11 @@ class GrpcProtoServiceTest(unittest.TestCase):
             self.assertEqual(props["source_strategy"], "grpc_proto")
             self.assertEqual(props["authority"], "canonical")
             self.assertEqual(props["confidence"], "definite")
+            # ADR 0041 § Layer 3: legacy mixed-case id preserved as alias.
+            self.assertIn(
+                "rpc:grpc:billing.v1.BillingService.Charge",
+                props["aliases"],
+            )
 
     def test_server_client_and_bidi_streams_tagged_as_stream(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -113,9 +120,9 @@ class GrpcProtoServiceTest(unittest.TestCase):
                 message ChatMsg { string text = 1; }
             """)
             nodes, _, _ = _run(root)
-            for method in ("Tail", "Upload", "Chat"):
+            for method in ("tail", "upload", "chat"):
                 self.assertEqual(
-                    nodes[f"rpc:grpc:s.S.{method}"]["props"]["surface_kind"],
+                    nodes[f"rpc:grpc:s.s.{method}"]["props"]["surface_kind"],
                     "stream",
                     f"expected {method} to be tagged as stream",
                 )
@@ -133,8 +140,8 @@ class GrpcProtoServiceTest(unittest.TestCase):
                 message P { int32 n = 1; }
             """)
             nodes, _, _ = _run(root)
-            self.assertIn("rpc:grpc:m.A.Ping", nodes)
-            self.assertIn("rpc:grpc:m.B.Pong", nodes)
+            self.assertIn("rpc:grpc:m.a.ping", nodes)
+            self.assertIn("rpc:grpc:m.b.pong", nodes)
 
     def test_file_without_package_uses_empty_namespace(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -148,8 +155,8 @@ class GrpcProtoServiceTest(unittest.TestCase):
                 message Resp {}
             """)
             nodes, _, _ = _run(root)
-            self.assertIn("rpc:grpc:NoPkg.Do", nodes)
-            self.assertIn("contract:grpc:Req", nodes)
+            self.assertIn("rpc:grpc:nopkg.do", nodes)
+            self.assertIn("contract:grpc:req", nodes)
 
 class GrpcProtoMessageTest(unittest.TestCase):
     """Message contracts and enums from proto declarations."""
@@ -169,7 +176,7 @@ class GrpcProtoMessageTest(unittest.TestCase):
                 }
             """)
             nodes, _, _ = _run(root)
-            nid = "contract:grpc:m.User"
+            nid = "contract:grpc:m.user"
             self.assertIn(nid, nodes)
             props = nodes[nid]["props"]
             self.assertEqual(props["protocol"], "grpc")
@@ -192,7 +199,7 @@ class GrpcProtoMessageTest(unittest.TestCase):
                 }
             """)
             nodes, _, _ = _run(root)
-            nid = "enum:grpc:e.Color"
+            nid = "enum:grpc:e.color"
             self.assertIn(nid, nodes)
             self.assertEqual(
                 nodes[nid]["props"]["members"],
@@ -216,8 +223,8 @@ class GrpcProtoMessageTest(unittest.TestCase):
                 }
             """)
             nodes, _, _ = _run(root)
-            self.assertIn("contract:grpc:n.Outer", nodes)
-            self.assertIn("contract:grpc:n.Outer.Inner", nodes)
+            self.assertIn("contract:grpc:n.outer", nodes)
+            self.assertIn("contract:grpc:n.outer.inner", nodes)
 
 class GrpcProtoEdgeTest(unittest.TestCase):
     """Structural edges between file, rpc, contract, and enum."""
@@ -242,18 +249,20 @@ class GrpcProtoEdgeTest(unittest.TestCase):
 
     def test_file_contains_rpc_contract_and_enum(self) -> None:
         _nodes, edges = self._extract_common()
-        file_id = "file:proto/svc.proto"
+        # ADR 0041 § Layer 1: file ids drop the extension and route
+        # through ``file_id``.
+        file_node_id = "file:proto/svc"
         keys = {(e["from"], e["to"], e["type"]) for e in edges}
-        self.assertIn((file_id, "rpc:grpc:svc.SvcService.DoThing", "invokes"), keys)
-        self.assertIn((file_id, "contract:grpc:svc.DoThingRequest", "contains"), keys)
-        self.assertIn((file_id, "contract:grpc:svc.DoThingResponse", "contains"), keys)
-        self.assertIn((file_id, "enum:grpc:svc.State", "contains"), keys)
+        self.assertIn((file_node_id, "rpc:grpc:svc.svcservice.dothing", "invokes"), keys)
+        self.assertIn((file_node_id, "contract:grpc:svc.dothingrequest", "contains"), keys)
+        self.assertIn((file_node_id, "contract:grpc:svc.dothingresponse", "contains"), keys)
+        self.assertIn((file_node_id, "enum:grpc:svc.state", "contains"), keys)
 
     def test_rpc_accepts_and_responds_with_contracts(self) -> None:
         _, edges = self._extract_common()
-        rpc_id = "rpc:grpc:svc.SvcService.DoThing"
-        req_id = "contract:grpc:svc.DoThingRequest"
-        resp_id = "contract:grpc:svc.DoThingResponse"
+        rpc_id = "rpc:grpc:svc.svcservice.dothing"
+        req_id = "contract:grpc:svc.dothingrequest"
+        resp_id = "contract:grpc:svc.dothingresponse"
         self.assertTrue(any(
             e["from"] == rpc_id and e["to"] == req_id and e["type"] == "accepts"
             for e in edges
@@ -306,9 +315,9 @@ class GrpcProtoRobustnessTest(unittest.TestCase):
                 message R {}
             """)
             nodes, _, _ = _run(root)
-            self.assertIn("rpc:grpc:c.Real.Do", nodes)
-            self.assertNotIn("rpc:grpc:c.Real.Ghost", nodes)
-            self.assertNotIn("rpc:grpc:c.Hidden.Nope", nodes)
+            self.assertIn("rpc:grpc:c.real.do", nodes)
+            self.assertNotIn("rpc:grpc:c.real.ghost", nodes)
+            self.assertNotIn("rpc:grpc:c.hidden.nope", nodes)
 
 if __name__ == "__main__":
     unittest.main()

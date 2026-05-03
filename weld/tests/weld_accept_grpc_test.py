@@ -41,13 +41,15 @@ class GrpcProtoAcceptanceTest(unittest.TestCase):
         rpcs = {
             nid for nid, n in self.nodes.items() if n["type"] == "rpc"
         }
-        self.assertIn("rpc:grpc:orders.v1.OrderService.PlaceOrder", rpcs)
-        self.assertIn("rpc:grpc:orders.v1.OrderService.GetOrder", rpcs)
-        self.assertIn("rpc:grpc:orders.v1.OrderService.WatchOrders", rpcs)
+        # ADR 0041 § Layer 1: rpc ids route through ``canonical_slug``
+        # so mixed-case service / method segments lowercase.
+        self.assertIn("rpc:grpc:orders.v1.orderservice.placeorder", rpcs)
+        self.assertIn("rpc:grpc:orders.v1.orderservice.getorder", rpcs)
+        self.assertIn("rpc:grpc:orders.v1.orderservice.watchorders", rpcs)
 
     def test_unary_rpcs_tagged_request_response(self) -> None:
-        for method in ("PlaceOrder", "GetOrder"):
-            nid = f"rpc:grpc:orders.v1.OrderService.{method}"
+        for method in ("placeorder", "getorder"):
+            nid = f"rpc:grpc:orders.v1.orderservice.{method}"
             self.assertEqual(
                 self.nodes[nid]["props"]["surface_kind"],
                 "request_response",
@@ -55,7 +57,7 @@ class GrpcProtoAcceptanceTest(unittest.TestCase):
             )
 
     def test_streaming_rpc_tagged_stream(self) -> None:
-        nid = "rpc:grpc:orders.v1.OrderService.WatchOrders"
+        nid = "rpc:grpc:orders.v1.orderservice.watchorders"
         self.assertEqual(
             self.nodes[nid]["props"]["surface_kind"], "stream"
         )
@@ -79,19 +81,19 @@ class GrpcProtoAcceptanceTest(unittest.TestCase):
             if n["type"] == "contract"
         }
         for name in (
-            "PlaceOrderRequest",
-            "PlaceOrderResponse",
-            "GetOrderRequest",
-            "WatchOrdersRequest",
-            "Order",
-            "OrderItem",
-            "OrderEvent",
+            "placeorderrequest",
+            "placeorderresponse",
+            "getorderrequest",
+            "watchordersrequest",
+            "order",
+            "orderitem",
+            "orderevent",
         ):
             fqn = f"contract:grpc:orders.v1.{name}"
             self.assertIn(fqn, contracts, f"missing contract: {name}")
 
     def test_enum_extracted_with_members(self) -> None:
-        nid = "enum:grpc:orders.v1.OrderStatus"
+        nid = "enum:grpc:orders.v1.orderstatus"
         self.assertIn(nid, self.nodes)
         members = self.nodes[nid]["props"]["members"]
         self.assertIn("ORDER_STATUS_PENDING", members)
@@ -103,26 +105,28 @@ class GrpcProtoAcceptanceTest(unittest.TestCase):
         edge_keys = {
             (e["from"], e["to"], e["type"]) for e in self.edges
         }
-        place = "rpc:grpc:orders.v1.OrderService.PlaceOrder"
+        place = "rpc:grpc:orders.v1.orderservice.placeorder"
         self.assertIn(
-            (place, "contract:grpc:orders.v1.PlaceOrderRequest", "accepts"),
+            (place, "contract:grpc:orders.v1.placeorderrequest", "accepts"),
             edge_keys,
         )
         self.assertIn(
             (
                 place,
-                "contract:grpc:orders.v1.PlaceOrderResponse",
+                "contract:grpc:orders.v1.placeorderresponse",
                 "responds_with",
             ),
             edge_keys,
         )
 
     def test_file_contains_edges(self) -> None:
-        file_id = "file:proto/orders/v1/orders.proto"
+        # ADR 0041 § Layer 1: file ids drop the extension and route
+        # through ``file_id``.
+        file_node_id = "file:proto/orders/v1/orders"
         contains = [
             e["to"]
             for e in self.edges
-            if e["from"] == file_id and e["type"] == "contains"
+            if e["from"] == file_node_id and e["type"] == "contains"
         ]
         self.assertGreaterEqual(len(contains), 7)
 
@@ -154,13 +158,13 @@ class GrpcBindingsAcceptanceTest(unittest.TestCase):
         ]
         targets = {e["to"] for e in impl_edges}
         self.assertIn(
-            "rpc:grpc:orders.v1.OrderService.PlaceOrder", targets
+            "rpc:grpc:orders.v1.orderservice.placeorder", targets
         )
         self.assertIn(
-            "rpc:grpc:orders.v1.OrderService.GetOrder", targets
+            "rpc:grpc:orders.v1.orderservice.getorder", targets
         )
         self.assertIn(
-            "rpc:grpc:orders.v1.OrderService.WatchOrders", targets
+            "rpc:grpc:orders.v1.orderservice.watchorders", targets
         )
 
     def test_client_invokes_edges(self) -> None:
@@ -168,14 +172,14 @@ class GrpcBindingsAcceptanceTest(unittest.TestCase):
             e
             for e in self.edges
             if e["type"] == "invokes"
-            and e["from"] == "file:src/client/order_caller.py"
+            and e["from"] == "file:src/client/order_caller"
         ]
         targets = {e["to"] for e in client_invokes}
         self.assertIn(
-            "rpc:grpc:orders.v1.OrderService.PlaceOrder", targets
+            "rpc:grpc:orders.v1.orderservice.placeorder", targets
         )
         self.assertIn(
-            "rpc:grpc:orders.v1.OrderService.WatchOrders", targets
+            "rpc:grpc:orders.v1.orderservice.watchorders", targets
         )
 
     def test_binding_edges_are_inferred_confidence(self) -> None:

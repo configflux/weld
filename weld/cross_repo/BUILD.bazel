@@ -13,6 +13,7 @@ py_library(
         "service_graph.py",
     ],
     deps = [
+        "//weld:node_ids",
         "//weld:workspace",
         "//weld:yaml",
     ],

@@ -79,9 +79,15 @@ class Ros2LaunchFixtureTest(unittest.TestCase):
         # The .launch.py file is the orchestrator; every Node(...) in the
         # LaunchDescription becomes an ``orchestrates`` edge from the
         # file sentinel to the ros_node.
-        file_nid = f"file:{_LAUNCH_REL}"
+        # ADR 0041: ``file:`` IDs are rel-posix-path-without-ext.
+        file_nid = "file:src/demo_pkg/launch/demo.launch"
         self.assertIn(file_nid, self.result.nodes)
         self.assertEqual(self.result.nodes[file_nid]["type"], "file")
+        # Legacy ``file:<full-path-with-ext>`` is preserved as alias.
+        self.assertIn(
+            f"file:{_LAUNCH_REL}",
+            self.result.nodes[file_nid]["props"].get("aliases", []),
+        )
         targets = sorted(
             e["to"] for e in self.result.edges
             if e["from"] == file_nid and e["type"] == "orchestrates"
@@ -102,7 +108,7 @@ class Ros2LaunchFixtureTest(unittest.TestCase):
         edges = [
             e for e in self.result.edges
             if e["type"] == "depends_on"
-            and e["to"] == "ros_package:demo_pkg"
+            and e["to"] == "package:ros2:demo_pkg"
             and e["from"].startswith("ros_node:demo_pkg/")
         ]
         froms = sorted({e["from"] for e in edges})
