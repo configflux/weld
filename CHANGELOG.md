@@ -3,6 +3,19 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.17.1 - 2026-05-07
+
+### Fixed
+
+- Blast-radius fixture test (`weld_blast_radius_fixtures_test`) now
+  passes consistently across published and source-tree environments.
+  The harness was reading capability-classification settings from the
+  surrounding workspace's `.weld/discover.yaml` instead of from each
+  fixture's own config, causing identical test data to drift between
+  environments. Fixed by scoping the harness's `Graph` wrapper to the
+  fixture's scratch directory.
+  <!-- verify: file=weld/tests/_blast_radius_harness.py grep=scratch_root -->
+
 ## v0.17.0 - 2026-05-07
 
 ### Added

@@ -95,7 +95,7 @@
       },
       "npm": {
         "deps_edges": false,
-        "nodes_emitted": false,
+        "nodes_emitted": true,
         "srcs_edges": false,
         "test_edges": false
       },
@@ -159,59 +159,59 @@
       },
       "csharp": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "go": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "java": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "javascript": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "python": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "rust": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "typescript": {
-        "calls": false,
+        "calls": true,
         "file": true,
-        "imports": false,
+        "imports": true,
         "module": false,
-        "symbols": false,
-        "tests": true
+        "symbols": true,
+        "tests": false
       }
     }
   },

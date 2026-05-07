@@ -128,13 +128,23 @@ def canonical_graph_text(graph: dict) -> str:
     return dumps_graph(normalise(graph))
 
 
-def impact_envelope(graph_dict: dict, seed: str, depth: int) -> dict:
+def impact_envelope(
+    graph_dict: dict, seed: str, depth: int, scratch_root: Path,
+) -> dict:
     """Run :func:`impact` against *graph_dict* using a fresh :class:`Graph`.
 
     The seed string may be a node id (``file:foo``) or a repo-relative
-    path the impact engine resolves itself.
+    path the impact engine resolves itself. *scratch_root* is the
+    fixture's writable scratch directory; it is required so the
+    :class:`Graph` wrapper resolves ``repo_root`` to the fixture
+    itself rather than the surrounding workspace. Capability
+    classification reads ``<repo_root>/.weld/discover.yaml`` to decide
+    which strategies are active, and the workspace's discover.yaml is
+    not part of the published surface -- pinning to the fixture keeps
+    the test contract identical between the internal and public
+    clones.
     """
-    g = Graph(_REPO_ROOT)
+    g = Graph(scratch_root)
     # The Graph constructor stamps ``self._data`` to a default empty
     # graph; we replace the in-memory state so we exercise the same
     # ``impact()`` path the CLI / MCP wrapper takes without writing a

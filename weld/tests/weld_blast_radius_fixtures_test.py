@@ -135,7 +135,7 @@ def run_one_fixture(
         # Impact comparisons -- one per impact_<slug>.json golden.
         for slug, golden in seed_pairs(expected_dir):
             seed, depth = seed_from_golden(golden)
-            envelope = impact_envelope(graph1, seed, depth)
+            envelope = impact_envelope(graph1, seed, depth, scratch)
             actual = impact_canonical_text(envelope)
             if regen:
                 _write(golden, actual)

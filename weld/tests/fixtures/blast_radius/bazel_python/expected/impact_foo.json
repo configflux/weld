@@ -23,9 +23,9 @@
   "capabilities": {
     "frameworks": {
       "bazel": {
-        "deps_edges": false,
-        "nodes_emitted": false,
-        "srcs_edges": false,
+        "deps_edges": true,
+        "nodes_emitted": true,
+        "srcs_edges": true,
         "test_edges": false
       },
       "bd": {
@@ -203,11 +203,11 @@
         "tests": true
       },
       "python": {
-        "calls": true,
+        "calls": false,
         "file": true,
         "imports": true,
         "module": true,
-        "symbols": true,
+        "symbols": false,
         "tests": true
       },
       "rust": {

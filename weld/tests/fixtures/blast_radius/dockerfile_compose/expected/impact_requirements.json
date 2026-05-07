@@ -28,9 +28,9 @@
         "test_edges": false
       },
       "compose": {
-        "deps_edges": false,
-        "nodes_emitted": false,
-        "srcs_edges": false,
+        "deps_edges": true,
+        "nodes_emitted": true,
+        "srcs_edges": true,
         "test_edges": false
       },
       "config": {
@@ -41,8 +41,8 @@
       },
       "dockerfile": {
         "deps_edges": false,
-        "nodes_emitted": false,
-        "srcs_edges": false,
+        "nodes_emitted": true,
+        "srcs_edges": true,
         "test_edges": false
       },
       "events": {
@@ -59,7 +59,7 @@
       },
       "github_workflow": {
         "deps_edges": false,
-        "nodes_emitted": true,
+        "nodes_emitted": false,
         "srcs_edges": false,
         "test_edges": false
       },
