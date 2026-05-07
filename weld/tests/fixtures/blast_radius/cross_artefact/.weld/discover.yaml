@@ -1,0 +1,35 @@
+# cross_artefact fixture: every artefact type in one repo.
+# Edit app/lib.py and the impact must reach:
+#   - app/main.py (Python imports, Layer A baseline)
+#   - file:app/lib_test (test_peer)
+#   - the Bazel build-target and test-target (Layer C1 / ADR 0044)
+#   - file:app via dockerfile COPY contains-edge (Layer C2 / ADR 0045)
+#   - dockerfile:Dockerfile (transitively via the file:app -> dockerfile contains)
+#   - service:default:api (Layer C2: service builds from the dockerfile)
+#
+# This is the user's "supports every framework, end-to-end" pin.
+topology:
+  nodes:
+    - id: pkg:app
+      type: package
+      label: app
+sources:
+  - glob: app/BUILD.bazel
+    type: file
+    strategy: bazel
+  - glob: app/**/*.py
+    type: file
+    strategy: python_module
+    package: pkg:app
+  - glob: app/**/*.py
+    type: file
+    strategy: python_callgraph
+  - glob: app/*_test.py
+    type: file
+    strategy: test_peer
+  - glob: Dockerfile*
+    type: file
+    strategy: dockerfile
+  - glob: docker-compose.yml
+    type: config
+    strategy: compose

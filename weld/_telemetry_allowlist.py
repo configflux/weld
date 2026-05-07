@@ -52,6 +52,7 @@ _CLI_COMMANDS: Final[frozenset[str]] = frozenset(
         "brief",
         "trace",
         "impact",
+        "capabilities",
         "query",
         "find",
         "context",

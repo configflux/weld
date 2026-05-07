@@ -1,0 +1,538 @@
+{
+  "affected_surfaces": {
+    "api_endpoints": [],
+    "boundaries": [],
+    "cli_commands": [],
+    "entrypoints": [],
+    "mcp_tools": [],
+    "tests": [
+      {
+        "file": "src/tests/lib_test.py",
+        "hop": 1,
+        "id": "file:src/tests/lib_test",
+        "type": "file"
+      },
+      {
+        "file": "src/tests/lib_test.py",
+        "hop": 1,
+        "id": "symbol:py:src.tests.lib_test:test_add",
+        "type": "symbol"
+      },
+      {
+        "file": "src/tests/lib_test.py",
+        "hop": 1,
+        "id": "symbol:py:src.tests.lib_test:test_double",
+        "type": "symbol"
+      }
+    ]
+  },
+  "capabilities": {
+    "frameworks": {
+      "bazel": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "bd": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "boundary": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "compose": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "config": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "dockerfile": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "events": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "fastapi": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "github_workflow": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "helm": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "http_client": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "k8s": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "make": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "markdown": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "npm": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "proto": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "pydantic": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "ros2": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "runbook": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "runtime_contract": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "sqlalchemy": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "terraform": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "worker": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      }
+    },
+    "languages": {
+      "cpp": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "csharp": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "go": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "java": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "javascript": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "python": {
+        "calls": true,
+        "file": true,
+        "imports": true,
+        "module": true,
+        "symbols": true,
+        "tests": true
+      },
+      "rust": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "typescript": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      }
+    }
+  },
+  "depth": 3,
+  "direct_dependents": [
+    {
+      "hop": 1,
+      "id": "file:src/main",
+      "label": "main",
+      "props": {
+        "aliases": [
+          "file:main"
+        ],
+        "authority": "derived",
+        "confidence": "definite",
+        "constants": [],
+        "exports": [
+          "run"
+        ],
+        "file": "src/main.py",
+        "imports_from": [
+          "src.lib"
+        ],
+        "line_count": 10,
+        "origin": "project",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_module"
+      },
+      "type": "file"
+    },
+    {
+      "hop": 1,
+      "id": "file:src/tests/lib_test",
+      "label": "lib_test",
+      "props": {
+        "aliases": [
+          "file:tests/lib_test"
+        ],
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "src/tests/lib_test.py",
+        "kind": "test",
+        "roles": [
+          "test"
+        ],
+        "source_strategy": "test_peer"
+      },
+      "type": "file"
+    },
+    {
+      "hop": 1,
+      "id": "pkg:src",
+      "label": "src",
+      "props": {
+        "authority": "manual",
+        "confidence": "definite",
+        "source_strategy": "topology"
+      },
+      "type": "package"
+    },
+    {
+      "hop": 1,
+      "id": "symbol:py:src.main:run",
+      "label": "run",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "src/main.py",
+        "language": "python",
+        "line": 5,
+        "module": "src.main",
+        "origin": "project",
+        "qualname": "run",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    },
+    {
+      "hop": 1,
+      "id": "symbol:py:src.tests.lib_test:test_add",
+      "label": "test_add",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "src/tests/lib_test.py",
+        "language": "python",
+        "line": 5,
+        "module": "src.tests.lib_test",
+        "origin": "project",
+        "qualname": "test_add",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    },
+    {
+      "hop": 1,
+      "id": "symbol:py:src.tests.lib_test:test_double",
+      "label": "test_double",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "src/tests/lib_test.py",
+        "language": "python",
+        "line": 9,
+        "module": "src.tests.lib_test",
+        "origin": "project",
+        "qualname": "test_double",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    }
+  ],
+  "edges": [
+    {
+      "from": "file:src/main",
+      "props": {
+        "confidence": "definite",
+        "import_name": "src.lib",
+        "language": "python",
+        "normalized_import": "src.lib",
+        "resolution": "local_module",
+        "source_strategy": "graph_closure"
+      },
+      "to": "file:src/lib",
+      "type": "depends_on"
+    },
+    {
+      "from": "file:src/tests/lib_test",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "test_peer"
+      },
+      "to": "file:src/lib",
+      "type": "tests"
+    },
+    {
+      "from": "pkg:src",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:src/lib",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/lib",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:src.lib:add",
+      "type": "contains"
+    },
+    {
+      "from": "symbol:py:src.lib:double",
+      "props": {
+        "confidence": "definite",
+        "provenance": {
+          "file": "src/lib.py",
+          "line": 9
+        },
+        "raw": "add",
+        "resolution": "local",
+        "resolved": true,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:py:src.lib:add",
+      "type": "calls"
+    },
+    {
+      "from": "symbol:py:src.tests.lib_test:test_add",
+      "props": {
+        "confidence": "definite",
+        "provenance": {
+          "file": "src/tests/lib_test.py",
+          "line": 6
+        },
+        "raw": "add",
+        "resolution": "import",
+        "resolved": true,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:py:src.lib:add",
+      "type": "calls"
+    },
+    {
+      "from": "file:src/lib",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:src.lib:double",
+      "type": "contains"
+    },
+    {
+      "from": "symbol:py:src.main:run",
+      "props": {
+        "confidence": "definite",
+        "provenance": {
+          "file": "src/main.py",
+          "line": 6
+        },
+        "raw": "double",
+        "resolution": "import",
+        "resolved": true,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:py:src.lib:double",
+      "type": "calls"
+    },
+    {
+      "from": "symbol:py:src.tests.lib_test:test_double",
+      "props": {
+        "confidence": "definite",
+        "provenance": {
+          "file": "src/tests/lib_test.py",
+          "line": 10
+        },
+        "raw": "double",
+        "resolution": "import",
+        "resolved": true,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:py:src.lib:double",
+      "type": "calls"
+    },
+    {
+      "from": "pkg:src",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:src/main",
+      "type": "contains"
+    },
+    {
+      "from": "pkg:src",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:src/tests/lib_test",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/tests/lib_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:src.tests.lib_test:test_add",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/main",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:src.main:run",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/tests/lib_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:src.tests.lib_test:test_double",
+      "type": "contains"
+    }
+  ],
+  "impact_version": 2,
+  "risk_level": "LOW",
+  "target": {
+    "input": "src/lib.py",
+    "kind": "path",
+    "resolved_nodes": [
+      "file:src/lib",
+      "symbol:py:src.lib:add",
+      "symbol:py:src.lib:double"
+    ],
+    "unresolved_inputs": []
+  },
+  "transitive_dependents": [],
+  "warnings": {
+    "low_capability_inputs": [],
+    "messages": [],
+    "out_of_scope_inputs": [],
+    "speculative_edges": 0,
+    "stale_graph": false,
+    "unresolved_callsites": 0
+  }
+}

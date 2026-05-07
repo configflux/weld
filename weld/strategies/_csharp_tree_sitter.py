@@ -6,6 +6,11 @@ from pathlib import Path
 import re
 
 from weld._node_ids import package_id as _canonical_package_id
+from weld.strategies._csharp_origin import (
+    classify_using_import,
+    load_package_references,
+    load_project_namespace_roots,
+)
 
 _SAFE_PACKAGE_RE = re.compile(r"[^0-9A-Za-z_.-]+")
 _VISIBILITY_RE = re.compile(r"\b(public|private|protected|internal)\b")
@@ -20,6 +25,16 @@ _STARTUP_MARKERS = (
 )
 
 
+def build_caches(root: Path, language: str) -> dict[str, frozenset[str]] | None:
+    """Pre-compute C# project metadata used for import-origin tagging."""
+    if language != "csharp":
+        return None
+    return {
+        "package_references": load_package_references(root),
+        "project_namespace_roots": load_project_namespace_roots(root),
+    }
+
+
 def enrich_file_node(
     nodes: dict[str, dict],
     edges: list[dict],
@@ -28,6 +43,9 @@ def enrich_file_node(
     symbols: dict[str, list[str]],
     source_text: str,
     source_strategy: str,
+    *,
+    package_references: frozenset[str] | None = None,
+    project_namespace_roots: frozenset[str] | None = None,
 ) -> None:
     """Add C#-specific metadata and import dependency nodes."""
     rel_path = str(node_props.get("file") or "")
@@ -72,6 +90,8 @@ def enrich_file_node(
         file_node_id,
         node_props.get("imports_from", []),
         source_strategy,
+        package_references=package_references,
+        project_namespace_roots=project_namespace_roots,
     )
     if is_startup_source(rel_path, source_text, symbols):
         _add_startup_nodes(
@@ -210,7 +230,12 @@ def _add_import_dependencies(
     file_node_id: str,
     imports: list[str],
     source_strategy: str,
+    *,
+    package_references: frozenset[str] | None = None,
+    project_namespace_roots: frozenset[str] | None = None,
 ) -> None:
+    package_references = package_references or frozenset()
+    project_namespace_roots = project_namespace_roots or frozenset()
     seen: set[str] = set()
     for import_name in imports:
         if import_name in seen:
@@ -219,12 +244,18 @@ def _add_import_dependencies(
         package_id = _package_node_id(import_name)
         legacy_pid = _legacy_package_id(import_name)
         aliases = sorted({legacy_pid} - {package_id})
+        origin = classify_using_import(
+            import_name,
+            package_references=package_references,
+            project_namespace_roots=project_namespace_roots,
+        )
         package_props: dict = {
             "name": import_name,
             "language": "csharp",
             "source_strategy": source_strategy,
             "authority": "derived",
             "confidence": "definite",
+            "origin": origin,
         }
         if aliases:
             package_props["aliases"] = aliases

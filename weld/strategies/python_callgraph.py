@@ -22,11 +22,19 @@ The strategy uses stdlib ``ast`` only -- no new mandatory dependencies.
 from __future__ import annotations
 
 import ast
-import builtins
-import sys
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld.strategies._python_origin import (
+    is_builtin_name,
+    is_stdlib_module,
+    make_resolved_target_node,
+    make_sentinel_node,
+    module_from_symbol_id,
+    origin_for_resolved,
+    origin_for_sentinel,
+    project_module_set,
+)
 
 # ---------------------------------------------------------------------------
 # ID helpers
@@ -36,8 +44,6 @@ from weld.strategies._helpers import StrategyResult, filter_glob_results, should
 #: resolved against the module's imports or local definitions. Kept stable
 #: so consumers can filter / rank these distinctly from resolved targets.
 UNRESOLVED_PREFIX = "symbol:unresolved:"
-_BUILTIN_NAMES = frozenset(dir(builtins))
-_STDLIB_MODULES = frozenset(getattr(sys, "stdlib_module_names", frozenset()))
 
 def _module_dotted_path(rel_path: str) -> str:
     """Return a python-style dotted module path for *rel_path*.
@@ -180,7 +186,7 @@ class _CallGraphVisitor(ast.NodeVisitor):
             if name in self.import_table:
                 module, attr = self.import_table[name]
                 if attr:
-                    resolution = "stdlib" if _is_stdlib_module(module) else "import"
+                    resolution = "stdlib" if is_stdlib_module(module) else "import"
                     return _symbol_id(module, attr), True, name, resolution
                 # bare module alias used as a callable -- treat as
                 # unresolved (we have no idea what the module's __call__
@@ -195,7 +201,7 @@ class _CallGraphVisitor(ast.NodeVisitor):
             value = func.value
             if isinstance(value, ast.Name) and value.id in self.import_table:
                 module, _ = self.import_table[value.id]
-                resolution = "stdlib" if _is_stdlib_module(module) else "import"
+                resolution = "stdlib" if is_stdlib_module(module) else "import"
                 return _symbol_id(module, attr), True, attr, resolution
             # self.foo() / cls.foo() / arbitrary chains: not resolved.
             return _unresolved_id(attr), False, attr, _unresolved_resolution(attr)
@@ -273,6 +279,20 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not matched:
         return StrategyResult(nodes, edges, discovered_from)
 
+    # Project-membership set per ADR 0042 §"Per-language detection rules"
+    # (Python). The "project file set" for an extract() call is the set
+    # of dotted module paths derived from the matched (non-skipped)
+    # source files. Imports whose target module matches any of these
+    # paths classify as ``project``; imports outside both this set and
+    # ``sys.stdlib_module_names`` classify as ``external``.
+    project_modules = project_module_set(
+        root,
+        matched,
+        excludes,
+        should_skip=should_skip,
+        module_dotted_path=_module_dotted_path,
+    )
+
     for py in matched:
         if should_skip(py, excludes, root=root):
             continue
@@ -307,6 +327,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "authority": "derived",
                     "confidence": "definite",
                     "roles": ["implementation"],
+                    "origin": "project",
                 },
             }
 
@@ -320,25 +341,25 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 seen.add((target_id, resolved))
                 # Materialize unresolved sentinel nodes lazily so the
                 # graph stays referentially closed for the orchestrator's
-                # final cleanup pass.
+                # final cleanup pass. Resolved cross-module targets are
+                # likewise speculatively minted so consumers always get
+                # an ``origin``-tagged node for every edge endpoint
+                # (ADR 0042 Python rules).
                 if target_id.startswith(UNRESOLVED_PREFIX):
                     nodes.setdefault(
                         target_id,
-                        {
-                            "type": "symbol",
-                            "label": target_id.split(":", 2)[-1],
-                            "props": {
-                                "module": "",
-                                "qualname": target_id.split(":", 2)[-1],
-                                "language": "python",
-                                "resolved": False,
-                                "resolution": resolution,
-                                "source_strategy": "python_callgraph",
-                                "authority": "derived",
-                                "confidence": "speculative",
-                                "roles": ["implementation"],
-                            },
-                        },
+                        make_sentinel_node(
+                            target_id, resolution, origin_for_sentinel(resolution)
+                        ),
+                    )
+                else:
+                    target_module = module_from_symbol_id(target_id)
+                    nodes.setdefault(
+                        target_id,
+                        make_resolved_target_node(
+                            target_id,
+                            origin_for_resolved(target_module, project_modules),
+                        ),
                     )
                 edges.append(
                     {
@@ -362,10 +383,11 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     return StrategyResult(nodes, edges, discovered_from)
 
 
-def _is_stdlib_module(module: str) -> bool:
-    root = module.split(".", 1)[0]
-    return root in _STDLIB_MODULES
-
-
 def _unresolved_resolution(name: str) -> str:
-    return "builtin" if name in _BUILTIN_NAMES else "unresolved"
+    """Edge-side resolution tag for an unresolved sentinel call.
+
+    Used by ``_resolve_call`` to populate the edge's ``props.resolution``
+    string; node-side origin tagging goes through ``origin_for_sentinel``
+    in ``_python_origin``.
+    """
+    return "builtin" if is_builtin_name(name) else "unresolved"

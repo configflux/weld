@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld.strategies._language_origin import origin_for_callgraph_sentinel
 from weld.strategies._ts_parse import load_ts_language
 
 
@@ -80,21 +81,26 @@ def extract_call_edges(
 
     for name in definitions:
         sid = f"symbol:{language}:{module_path}:{name}"
+        props: dict = {
+            "file": rel_path,
+            "module": module_path,
+            "qualname": name,
+            "language": language,
+            "source_strategy": "tree_sitter",
+            "authority": "derived",
+            "confidence": "definite",
+            "roles": ["implementation"],
+            # ADR 0042: layer-1 only iterates project files, so every
+            # definition symbol minted here is project-origin (this
+            # holds for every language, not just C++).
+            "origin": "project",
+        }
         nodes.setdefault(
             sid,
             {
                 "type": "symbol",
                 "label": name,
-                "props": {
-                    "file": rel_path,
-                    "module": module_path,
-                    "qualname": name,
-                    "language": language,
-                    "source_strategy": "tree_sitter",
-                    "authority": "derived",
-                    "confidence": "definite",
-                    "roles": ["implementation"],
-                },
+                "props": props,
             },
         )
 
@@ -103,22 +109,27 @@ def extract_call_edges(
     # tracking for free, so for the smoke-test surface we emit a single
     # module-level "<file>" symbol that owns every call site in the file.
     file_caller_id = f"symbol:{language}:{module_path}:<file>"
+    file_caller_props: dict = {
+        "file": rel_path,
+        "module": module_path,
+        "qualname": "<file>",
+        "language": language,
+        "scope": "module",
+        "source_strategy": "tree_sitter",
+        "authority": "derived",
+        "confidence": "inferred",
+        "roles": ["implementation"],
+        # ADR 0042: layer-1 iterates project files only, so the
+        # synthetic file-level caller belongs to the project tree for
+        # every language we support.
+        "origin": "project",
+    }
     nodes.setdefault(
         file_caller_id,
         {
             "type": "symbol",
             "label": f"{module_path}",
-            "props": {
-                "file": rel_path,
-                "module": module_path,
-                "qualname": "<file>",
-                "language": language,
-                "scope": "module",
-                "source_strategy": "tree_sitter",
-                "authority": "derived",
-                "confidence": "inferred",
-                "roles": ["implementation"],
-            },
+            "props": file_caller_props,
         },
     )
 
@@ -134,20 +145,33 @@ def extract_call_edges(
                     continue
                 seen.add(callee)
                 target = f"symbol:unresolved:{callee}"
+                sentinel_props: dict = {
+                    "qualname": callee,
+                    "language": language,
+                    "resolved": False,
+                    "source_strategy": "tree_sitter",
+                    "authority": "derived",
+                    "confidence": "speculative",
+                    "roles": ["implementation"],
+                    # ADR 0042: classify the sentinel per-language. For
+                    # C++ this stays ``"unresolved"`` so layer-2's
+                    # include resolver can upgrade it; for TS/JS the
+                    # JS built-in globals (``Array``, ``Math``, ...)
+                    # collapse to ``stdlib``; for Rust the
+                    # ``std::``/``core::``/``alloc::`` qualifier does
+                    # the same. Go / Java / C# default to
+                    # ``unresolved`` at this layer because the
+                    # bare-name capture is not enough signal — Go's
+                    # richer import-layer classification lives in
+                    # ``weld.strategies._go_origin``.
+                    "origin": origin_for_callgraph_sentinel(language, callee),
+                }
                 nodes.setdefault(
                     target,
                     {
                         "type": "symbol",
                         "label": callee,
-                        "props": {
-                            "qualname": callee,
-                            "language": language,
-                            "resolved": False,
-                            "source_strategy": "tree_sitter",
-                            "authority": "derived",
-                            "confidence": "speculative",
-                            "roles": ["implementation"],
-                        },
+                        "props": sentinel_props,
                     },
                 )
                 edges.append(

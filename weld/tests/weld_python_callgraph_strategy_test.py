@@ -171,5 +171,181 @@ class PythonCallgraphStrategyTest(unittest.TestCase):
         nodes, edges = self._run()
         self.assertNotIn("symbol:py:pkg.broken:oops", nodes)
 
+
+class PythonCallgraphOriginTaggingTest(unittest.TestCase):
+    """ADR 0042 Python rules: every emitted node carries ``props.origin``."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="weld_origin_"))
+        (self.tmp / "pkg").mkdir()
+        (self.tmp / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+        # ``a.py``: project def + project-import + stdlib imports + builtin
+        # call + genuinely-unresolved call + third-party import.
+        (self.tmp / "pkg" / "a.py").write_text(
+            textwrap.dedent(
+                """
+                from os.path import join
+                from pkg.b import other_helper
+                from third_party_pkg import foo
+
+                def helper():
+                    return 1
+
+                def main():
+                    helper()
+                    other_helper()
+                    join("a", "b")
+                    foo()
+                    print("hi")
+                    nope_unknown()
+                """
+            ).lstrip(),
+            encoding="utf-8",
+        )
+        (self.tmp / "pkg" / "b.py").write_text(
+            textwrap.dedent(
+                """
+                def other_helper():
+                    return 2
+                """
+            ).lstrip(),
+            encoding="utf-8",
+        )
+
+    def _run(self) -> dict:
+        from weld.strategies import python_callgraph as pc
+
+        result = pc.extract(
+            self.tmp,
+            {"glob": "pkg/**/*.py"},
+            {},
+        )
+        return result.nodes
+
+    def test_project_symbol_origin_is_project(self) -> None:
+        """Locally-defined symbols carry origin=project."""
+        nodes = self._run()
+        for nid in (
+            "symbol:py:pkg.a:helper",
+            "symbol:py:pkg.a:main",
+            "symbol:py:pkg.b:other_helper",
+        ):
+            self.assertEqual(
+                nodes[nid]["props"].get("origin"),
+                "project",
+                f"{nid} should be origin=project",
+            )
+
+    def test_project_import_origin_is_project(self) -> None:
+        """An import resolved to another project module is origin=project."""
+        nodes = self._run()
+        # ``other_helper`` is owned by pkg.b and walked as a project def;
+        # the symbols-pass already emits it with origin=project. The
+        # cross-module-import ``setdefault`` from pkg.a's main() must
+        # not overwrite that.
+        node = nodes["symbol:py:pkg.b:other_helper"]
+        self.assertEqual(node["props"].get("origin"), "project")
+
+    def test_stdlib_resolved_import_origin_is_stdlib(self) -> None:
+        """``from os.path import join`` then ``join(...)`` -> origin=stdlib."""
+        nodes = self._run()
+        nid = "symbol:py:os.path:join"
+        self.assertIn(nid, nodes, "stdlib import target node not minted")
+        self.assertEqual(nodes[nid]["props"].get("origin"), "stdlib")
+
+    def test_builtin_sentinel_origin_is_stdlib(self) -> None:
+        """``print(...)`` -> sentinel with resolution=builtin -> origin=stdlib."""
+        nodes = self._run()
+        nid = "symbol:unresolved:print"
+        self.assertIn(nid, nodes)
+        self.assertEqual(nodes[nid]["props"].get("origin"), "stdlib")
+        self.assertEqual(nodes[nid]["props"].get("resolution"), "builtin")
+
+    def test_external_import_origin_is_external(self) -> None:
+        """Third-party import (not in stdlib, not in project) -> external."""
+        nodes = self._run()
+        nid = "symbol:py:third_party_pkg:foo"
+        self.assertIn(nid, nodes)
+        self.assertEqual(nodes[nid]["props"].get("origin"), "external")
+
+    def test_unresolved_sentinel_origin_is_unresolved(self) -> None:
+        """A name that resolves nowhere -> sentinel with origin=unresolved."""
+        nodes = self._run()
+        nid = "symbol:unresolved:nope_unknown"
+        self.assertIn(nid, nodes)
+        self.assertEqual(nodes[nid]["props"].get("origin"), "unresolved")
+        self.assertEqual(nodes[nid]["props"].get("resolution"), "unresolved")
+
+    def test_every_emitted_node_has_origin(self) -> None:
+        """ADR 0042 contract: every node from this strategy carries origin."""
+        nodes = self._run()
+        self.assertGreater(len(nodes), 0)
+        missing = [
+            nid
+            for nid, node in nodes.items()
+            if "origin" not in (node.get("props") or {})
+        ]
+        self.assertEqual(missing, [], f"nodes missing props.origin: {missing}")
+
+    def test_origin_set_is_subset_of_taxonomy(self) -> None:
+        """Only the four ADR 0042 origin values may appear."""
+        nodes = self._run()
+        seen = {node["props"]["origin"] for node in nodes.values()}
+        allowed = {"project", "stdlib", "external", "unresolved"}
+        self.assertTrue(
+            seen.issubset(allowed), f"unexpected origin values: {seen - allowed}"
+        )
+
+    def test_origin_is_deterministic(self) -> None:
+        """Re-running extraction yields identical origin tags per node."""
+        first = {nid: node["props"]["origin"] for nid, node in self._run().items()}
+        second = {nid: node["props"]["origin"] for nid, node in self._run().items()}
+        self.assertEqual(first, second)
+
+
+class PythonCallgraphOriginPackageMembershipTest(unittest.TestCase):
+    """An import to a module that is itself a project file is origin=project.
+
+    Distinct from ``test_project_import_origin_is_project`` above: that
+    case relies on the symbol-walking pass already emitting the target.
+    Here, the imported module is a sibling project file but the call
+    site does not also walk it directly -- so the resolved-target
+    ``setdefault`` is the one that mints the node, and it must still
+    classify as project via ``project_modules`` membership.
+    """
+
+    def test_resolved_setdefault_uses_project_module_set(self) -> None:
+        from weld.strategies import python_callgraph as pc
+
+        td = Path(tempfile.mkdtemp(prefix="weld_proj_origin_"))
+        (td / "myapp").mkdir()
+        (td / "myapp" / "__init__.py").write_text("", encoding="utf-8")
+        # Module ``myapp.config`` only declares a constant; no ``def``.
+        # ``python_callgraph`` will walk the file but mint no symbol
+        # nodes for it -- so any ``symbol:py:myapp.config:*`` must come
+        # from a ``setdefault`` in the resolved-target path.
+        (td / "myapp" / "config.py").write_text(
+            "VALUE = 1\n", encoding="utf-8"
+        )
+        (td / "myapp" / "main.py").write_text(
+            textwrap.dedent(
+                """
+                from myapp.config import lookup
+
+                def go():
+                    lookup()
+                """
+            ).lstrip(),
+            encoding="utf-8",
+        )
+        result = pc.extract(td, {"glob": "myapp/**/*.py"}, {})
+        nid = "symbol:py:myapp.config:lookup"
+        self.assertIn(nid, result.nodes)
+        self.assertEqual(
+            result.nodes[nid]["props"].get("origin"),
+            "project",
+            "resolved import to a project module must classify as project",
+        )
+
 if __name__ == "__main__":
     unittest.main()

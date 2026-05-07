@@ -67,7 +67,10 @@ class LoadTasksTest(unittest.TestCase):
             / "default.yaml"
         )
         tasks = load_tasks(path)
-        self.assertGreaterEqual(len(tasks), 3)
+        # First-increment corpus expansion (bd ec80.5) lifted the floor
+        # from the original 4 tasks to 12; a follow-up issue tracks the
+        # 20-30 target. Tighten this bound when the next increment lands.
+        self.assertGreaterEqual(len(tasks), 12)
         # Every task must have at least one expected answer file so the
         # accuracy metric is well-defined.
         for t in tasks:
@@ -76,6 +79,97 @@ class LoadTasksTest(unittest.TestCase):
                 0,
                 f"task {t.id!r} has no answer_files",
             )
+
+    def test_real_fixture_category_diversity(self) -> None:
+        """The corpus must span more than one category.
+
+        With n=4 all-navigation tasks the bench median was statistically
+        flimsy. The first-increment expansion adds comprehension and
+        refactor tasks. We assert >= 3 distinct categories and that each
+        category has at least 3 representatives so the per-category
+        median in the report is meaningful (not a single-task headline).
+        """
+        path = (
+            Path(_repo_root)
+            / "weld"
+            / "bench_tasks"
+            / "fixtures"
+            / "default.yaml"
+        )
+        tasks = load_tasks(path)
+        cats: dict[str, int] = {}
+        for t in tasks:
+            cats[t.category] = cats.get(t.category, 0) + 1
+        self.assertGreaterEqual(
+            len(cats),
+            3,
+            f"corpus must span >= 3 categories; got {cats}",
+        )
+        for cat, count in cats.items():
+            self.assertGreaterEqual(
+                count,
+                3,
+                f"category {cat!r} has only {count} tasks; "
+                "need >= 3 for a stable per-category median",
+            )
+
+    def test_real_fixture_answer_files_exist(self) -> None:
+        """Every answer_file path must point at a real repo file.
+
+        The bench scores retrieval against the answer key. If the answer
+        key drifts from the repo (file renamed or removed), grep can hit
+        nothing and weld can hit nothing, and both retrieval modes look
+        equally bad for a reason that has nothing to do with retrieval
+        quality. This guards the corpus against silent rot.
+        """
+        path = (
+            Path(_repo_root)
+            / "weld"
+            / "bench_tasks"
+            / "fixtures"
+            / "default.yaml"
+        )
+        tasks = load_tasks(path)
+        repo = Path(_repo_root)
+        missing: list[tuple[str, str]] = []
+        for t in tasks:
+            for af in t.answer_files:
+                if not (repo / af).exists():
+                    missing.append((t.id, af))
+        self.assertEqual(
+            missing,
+            [],
+            "fixture answer_files must point at real files; missing: "
+            f"{missing}",
+        )
+
+    def test_real_fixture_callgraph_tasks_have_symbol(self) -> None:
+        """`callgraph` tasks route to the references surface.
+
+        :func:`weld.bench_tasks.compare.weld_files_and_text` only takes
+        the references path when both ``category == 'callgraph'`` AND
+        ``symbol`` is set; otherwise it falls through to ``query``. A
+        callgraph task missing a symbol is silently downgraded -- the
+        bench number for that task no longer measures what the
+        category label claims to measure. Catch the misconfiguration at
+        load time instead of in a flat report a week later.
+        """
+        path = (
+            Path(_repo_root)
+            / "weld"
+            / "bench_tasks"
+            / "fixtures"
+            / "default.yaml"
+        )
+        tasks = load_tasks(path)
+        offenders = [
+            t.id for t in tasks if t.category == "callgraph" and not t.symbol
+        ]
+        self.assertEqual(
+            offenders,
+            [],
+            f"callgraph tasks missing `symbol`: {offenders}",
+        )
 
     def test_load_tasks_filters_non_dicts(self) -> None:
         path = Path(tempfile.mktemp(suffix=".yaml"))

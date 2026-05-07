@@ -1,0 +1,26 @@
+# bazel_python fixture: pins Layer C1 (ADR 0044) Bazel srcs/deps
+# edges plus the python_module + test_peer baseline. The BUILD
+# file declares py_library(:foo) and py_test(:foo_test) so the
+# Bazel strategy emits the build-target/test-target nodes and the
+# srcs/deps edges.
+#
+# NOTE: BUILD.bazel and MODULE.bazel are checked in as
+# `*.bazel.in` so the parent Bazel build globs do not pick them
+# up. The harness renames them at copy time. Discovery sees the
+# real filenames inside the scratch tree.
+topology:
+  nodes:
+    - id: pkg:foo
+      type: package
+      label: foo
+sources:
+  - glob: BUILD.bazel
+    type: file
+    strategy: bazel
+  - glob: "*.py"
+    type: file
+    strategy: python_module
+    package: pkg:foo
+  - glob: "*_test.py"
+    type: file
+    strategy: test_peer

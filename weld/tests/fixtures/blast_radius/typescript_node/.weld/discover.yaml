@@ -1,0 +1,16 @@
+# typescript_node fixture: TypeScript repo with exports + npm
+# package.json. Wires the typescript_exports strategy (regex or
+# tree-sitter, whichever is available -- both produce
+# deterministic output) and the manifest strategy for package.json.
+#
+# Layer C3 (multi-language test_peer) is NOT covered here; until
+# that lands the *.test.ts file is just a regular TS module with
+# no `tests` edge to its peer. See the README for the expected
+# behavior change after C3.
+sources:
+  - glob: src/**/*.ts
+    type: file
+    strategy: typescript_exports
+  - glob: package.json
+    type: config
+    strategy: manifest

@@ -16,10 +16,24 @@ class CSharpTreeSitterSupportTest(unittest.TestCase):
         root = Path(tmp)
         src = root / "src"
         src.mkdir()
+        (root / "Sample.Api.csproj").write_text(
+            textwrap.dedent("""\
+                <Project Sdk="Microsoft.NET.Sdk.Web">
+                  <PropertyGroup>
+                    <RootNamespace>Sample.Api</RootNamespace>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <PackageReference Include="Microsoft.AspNetCore.Mvc" />
+                  </ItemGroup>
+                </Project>
+            """),
+            encoding="utf-8",
+        )
         (src / "OrdersController.cs").write_text(
             textwrap.dedent("""\
                 using System.Threading.Tasks;
                 using Microsoft.AspNetCore.Mvc;
+                using Sample.Api.Contracts;
 
                 namespace Sample.Api.Controllers;
 
@@ -49,6 +63,7 @@ class CSharpTreeSitterSupportTest(unittest.TestCase):
                          "imports": [
                              "System.Threading.Tasks",
                              "Microsoft.AspNetCore.Mvc",
+                             "Sample.Api.Contracts",
                          ],
                          "methods": ["GetAsync"],
                          "properties": ["Helper"],
@@ -68,10 +83,28 @@ class CSharpTreeSitterSupportTest(unittest.TestCase):
         self.assertEqual(props["method_visibility"]["GetAsync"], ["public"])
         self.assertEqual(props["property_visibility"]["Helper"], ["private"])
         deps = [e for e in result.edges if e["type"] == "depends_on"]
-        self.assertEqual(len(deps), 2)
+        self.assertEqual(len(deps), 3)
         # ADR 0041 § Layer 1: package ids route through ``canonical_slug``
         # which lowercases mixed-case names like ``Microsoft.AspNetCore.Mvc``.
         self.assertIn("package:csharp:microsoft.aspnetcore.mvc", result.nodes)
+        self.assertEqual(
+            result.nodes["package:csharp:system.threading.tasks"]["props"][
+                "origin"
+            ],
+            "stdlib",
+        )
+        self.assertEqual(
+            result.nodes["package:csharp:microsoft.aspnetcore.mvc"]["props"][
+                "origin"
+            ],
+            "external",
+        )
+        self.assertEqual(
+            result.nodes["package:csharp:sample.api.contracts"]["props"][
+                "origin"
+            ],
+            "project",
+        )
         # The pre-migration id is preserved on ``aliases`` per the
         # one-minor-version deprecation timeline in ADR 0041.
         self.assertIn(

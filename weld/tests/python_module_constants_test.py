@@ -119,6 +119,15 @@ class PythonModuleStrategyConstantsTest(unittest.TestCase):
             exports, {"Holder", "helper", "PublicClass", "public_function"},
         )
 
+    def test_file_node_origin_is_project(self) -> None:
+        """ADR 0042: every file node minted by python_module is a project
+        file (the strategy walks repo-local globs only) and must carry
+        ``props.origin = "project"``.
+        """
+        nodes = self._run()
+        node = next(iter(nodes.values()))
+        self.assertEqual(node["props"].get("origin"), "project")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,15 @@
+[package]
+name = "myapi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1.0"
+tokio = "1.32"
+rename-me = { version = "0.2", package = "actual-crate" }
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+
+[build-dependencies]
+cc = "1.0"

@@ -1,0 +1,7 @@
+[project]
+name = "python-pip-fixture"
+version = "0.0.0"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

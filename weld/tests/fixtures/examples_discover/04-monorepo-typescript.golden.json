@@ -1,6 +1,24 @@
 {
   "edges": [
     {
+      "from": "compose:default",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "compose"
+      },
+      "to": "service:default:orders-api",
+      "type": "contains"
+    },
+    {
+      "from": "compose:default",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "compose"
+      },
+      "to": "service:default:postgres",
+      "type": "contains"
+    },
+    {
       "from": "config:apps_web_package_json",
       "props": {
         "confidence": "definite",
@@ -170,6 +188,42 @@
       },
       "to": "test-target:npm:@acme/orders-api:test",
       "type": "configures"
+    },
+    {
+      "from": "dockerfile:Dockerfile",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "dockerfile"
+      },
+      "to": "file:docker/libs/shared-types",
+      "type": "contains"
+    },
+    {
+      "from": "dockerfile:Dockerfile",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "dockerfile"
+      },
+      "to": "file:docker/package.json",
+      "type": "contains"
+    },
+    {
+      "from": "dockerfile:Dockerfile",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "dockerfile"
+      },
+      "to": "file:docker/services/orders-api",
+      "type": "contains"
+    },
+    {
+      "from": "service:default:orders-api",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "compose"
+      },
+      "to": "dockerfile:Dockerfile",
+      "type": "depends_on"
     }
   ],
   "meta": {
@@ -449,6 +503,7 @@
         "base_image": "node:20-alpine",
         "confidence": "definite",
         "file": "docker/Dockerfile.orders-api",
+        "multistage_skipped": 1,
         "roles": [
           "build"
         ],
@@ -467,6 +522,7 @@
         ],
         "file": "packages/api/src/client.ts",
         "line_count": 29,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
@@ -484,10 +540,53 @@
         ],
         "file": "packages/api/src/types.ts",
         "line_count": 12,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
         "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:docker/libs/shared-types": {
+      "label": "shared-types",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "docker/libs/shared-types",
+        "origin": "project",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "file"
+    },
+    "file:docker/package.json": {
+      "label": "package.json",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "docker/package.json",
+        "origin": "project",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "file"
+    },
+    "file:docker/services/orders-api": {
+      "label": "orders-api",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "docker/services/orders-api",
+        "origin": "project",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
       },
       "type": "file"
     },
@@ -503,6 +602,7 @@
         ],
         "file": "services/orders-api/src/routes.ts",
         "line_count": 19,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
@@ -522,6 +622,7 @@
         ],
         "file": "services/orders-api/src/server.ts",
         "line_count": 32,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
@@ -541,6 +642,7 @@
         ],
         "file": "libs/shared-types/src/index.ts",
         "line_count": 24,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
@@ -562,6 +664,7 @@
         ],
         "file": "packages/ui/src/Button.tsx",
         "line_count": 13,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
@@ -583,6 +686,7 @@
         ],
         "file": "packages/ui/src/Card.tsx",
         "line_count": 12,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
@@ -603,6 +707,7 @@
         ],
         "file": "apps/web/src/App.tsx",
         "line_count": 19,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
@@ -621,6 +726,7 @@
         ],
         "file": "apps/web/src/layout.tsx",
         "line_count": 13,
+        "origin": "project",
         "roles": [
           "implementation"
         ],
@@ -641,6 +747,37 @@
         "source_strategy": "markdown"
       },
       "type": "doc"
+    },
+    "service:default:orders-api": {
+      "label": "orders-api",
+      "props": {
+        "authority": "canonical",
+        "compose_stem": "default",
+        "confidence": "definite",
+        "file": "docker/docker-compose.yml",
+        "roles": [
+          "config"
+        ],
+        "service_name": "orders-api",
+        "source_strategy": "compose"
+      },
+      "type": "service"
+    },
+    "service:default:postgres": {
+      "label": "postgres",
+      "props": {
+        "authority": "canonical",
+        "compose_stem": "default",
+        "confidence": "definite",
+        "file": "docker/docker-compose.yml",
+        "roles": [
+          "config"
+        ],
+        "runtime_image": "postgres:16-alpine",
+        "service_name": "postgres",
+        "source_strategy": "compose"
+      },
+      "type": "service"
     },
     "test-target:npm:@acme/api:test": {
       "label": "npm run test",

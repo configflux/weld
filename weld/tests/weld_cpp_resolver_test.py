@@ -216,7 +216,12 @@ class CppIncludeResolverHeaderResolutionTest(unittest.TestCase):
                 resolved.resolve(), (root / "include" / "foo.h").resolve()
             )
 
-    def test_system_include_returns_none(self) -> None:
+    def test_system_include_unknown_header_returns_none(self) -> None:
+        """Angle-bracket includes that no toolchain root provides
+        return None. Per ADR 0042's C++ follow-up the resolver now
+        consults ``STDLIB_INCLUDE_ROOTS``; this test uses an obviously
+        bogus header name so the probe fails on every toolchain layout.
+        """
         from weld.strategies.tree_sitter import _resolve_cpp_include
 
         with tempfile.TemporaryDirectory() as td:
@@ -226,7 +231,7 @@ class CppIncludeResolverHeaderResolutionTest(unittest.TestCase):
                 _resolve_cpp_include(
                     root=root,
                     file_path=root / "src" / "main.cpp",
-                    include_text="<iostream>",
+                    include_text="<wd_definitely_not_a_real_header_xyzzy>",
                 )
             )
 

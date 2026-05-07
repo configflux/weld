@@ -1,0 +1,10 @@
+py_library(
+    name = "foo",
+    srcs = ["foo.py"],
+)
+
+py_test(
+    name = "foo_test",
+    srcs = ["foo_test.py"],
+    deps = [":foo"],
+)

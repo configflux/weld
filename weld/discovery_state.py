@@ -49,12 +49,20 @@ class DiscoveryState:
     version: int = STATE_VERSION
     created_at: str = ""
     files: dict[str, str] = field(default_factory=dict)
+    # ADR 0008 §file-level cross-check: files that the previous run
+    # processed but which produced zero graph nodes (e.g. empty
+    # ``__init__.py`` skipped by ``python_module``). Recording the
+    # empty-output set lets the per-file graph<->state audit
+    # distinguish "stale graph predates this file" (re-run) from
+    # "strategy legitimately produces nothing for this file" (skip).
+    files_with_no_nodes: set[str] = field(default_factory=set)
 
     def to_dict(self) -> dict:
         return {
             "version": self.version,
             "created_at": self.created_at,
             "files": dict(self.files),
+            "files_with_no_nodes": sorted(self.files_with_no_nodes),
         }
 
 
@@ -122,10 +130,15 @@ def load_state(root: Path) -> DiscoveryState | None:
         )
         return None
 
+    raw_no_nodes = raw.get("files_with_no_nodes", [])
+    files_with_no_nodes: set[str] = (
+        set(raw_no_nodes) if isinstance(raw_no_nodes, list) else set()
+    )
     return DiscoveryState(
         version=version,
         created_at=raw.get("created_at", ""),
         files=files,
+        files_with_no_nodes=files_with_no_nodes,
     )
 
 

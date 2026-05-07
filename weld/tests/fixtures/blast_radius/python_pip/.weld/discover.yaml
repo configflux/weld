@@ -1,0 +1,22 @@
+# python_pip fixture: pip-style Python repo with a library, an
+# entrypoint, and a filename test peer. Pins blast-radius layers A
+# (impact engine), B (capabilities matrix), C1 (no Bazel here -- the
+# bazel_python fixture covers that), C2 (no Dockerfile -- see
+# dockerfile_compose), and the python_module + python_callgraph +
+# test_peer strategies.
+topology:
+  nodes:
+    - id: pkg:src
+      type: package
+      label: src
+sources:
+  - strategy: python_module
+    glob: src/**/*.py
+    type: file
+    package: pkg:src
+  - strategy: python_callgraph
+    glob: src/**/*.py
+    type: file
+  - strategy: test_peer
+    glob: src/tests/*_test.py
+    type: file

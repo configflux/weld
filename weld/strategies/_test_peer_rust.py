@@ -1,0 +1,55 @@
+"""Rust integration-test resolver for the test_peer strategy.
+
+Per ADR 0046, the recognized convention is Cargo's integration tests
+directory: ``tests/<name>.rs`` paired with ``src/<name>.rs`` in the
+same crate root.
+
+In-file ``#[cfg(test)]`` modules in the same source file are out of
+scope for v1 -- those would require parsing source, not just file
+names. They are documented as a follow-up in ADR 0046.
+
+Detection rule: the test file's parent directory name must be exactly
+``tests`` and a sibling ``src/`` directory must exist (this disambiguates
+the Rust convention from generic ``tests/`` directories used by other
+languages such as Python or TS).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from weld._node_ids import file_id as _canonical_file_id
+
+_TESTS_DIR = "tests"
+_SRC_DIR = "src"
+
+
+def is_test_file(rel: Path) -> bool:
+    """Return True iff *rel* matches the Cargo ``tests/<name>.rs`` shape.
+
+    Does not require the sibling ``src/`` to exist at this stage --
+    the existence check happens in :func:`resolve_peer` so a missing
+    ``src/`` simply yields no edge instead of misclassifying the file.
+    """
+    if rel.suffix != ".rs":
+        return False
+    return rel.parent.name == _TESTS_DIR
+
+
+def resolve_peer(root: Path, rel: Path) -> tuple[str, str] | None:
+    """Return ``(peer_id, peer_rel)`` for the matching ``src/<name>.rs`` file.
+
+    Resolves to ``<crate-root>/src/<name>.rs`` where ``<crate-root>``
+    is the parent of the ``tests`` directory. Returns ``None`` when the
+    peer file does not exist or when the test file's grandparent
+    directory is invalid (e.g. the test lives at repo root with no
+    ``src/`` sibling).
+    """
+    if not is_test_file(rel):
+        return None
+    crate_root = rel.parent.parent
+    candidate = crate_root / _SRC_DIR / f"{rel.stem}.rs"
+    if not (root / candidate).is_file():
+        return None
+    peer_rel = candidate.as_posix()
+    return _canonical_file_id(peer_rel), peer_rel

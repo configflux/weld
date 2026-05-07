@@ -1,0 +1,240 @@
+{
+  "affected_surfaces": {
+    "api_endpoints": [],
+    "boundaries": [],
+    "cli_commands": [],
+    "entrypoints": [],
+    "mcp_tools": [],
+    "tests": []
+  },
+  "capabilities": {
+    "frameworks": {
+      "bazel": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "bd": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "boundary": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "compose": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "config": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "dockerfile": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "events": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "fastapi": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "github_workflow": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "helm": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "http_client": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "k8s": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "make": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "markdown": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "npm": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "proto": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "pydantic": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "ros2": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "runbook": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "runtime_contract": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "sqlalchemy": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "terraform": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "worker": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      }
+    },
+    "languages": {
+      "cpp": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "csharp": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "go": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "java": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "javascript": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "python": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "rust": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "typescript": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      }
+    }
+  },
+  "depth": 3,
+  "direct_dependents": [],
+  "edges": [],
+  "impact_version": 2,
+  "risk_level": "LOW",
+  "target": {
+    "input": "src/lib.ts",
+    "kind": "path",
+    "resolved_nodes": [
+      "file:src/lib"
+    ],
+    "unresolved_inputs": []
+  },
+  "transitive_dependents": [],
+  "warnings": {
+    "low_capability_inputs": [],
+    "messages": [],
+    "out_of_scope_inputs": [],
+    "speculative_edges": 0,
+    "stale_graph": false,
+    "unresolved_callsites": 0
+  }
+}

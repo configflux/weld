@@ -3,6 +3,92 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.17.0 - 2026-05-07
+
+### Added
+
+- `wd impact` ships as a v1 blast-radius command. Multi-seed selection
+  resolves seeds from a node ID, an explicit file list (`--files`), the
+  current working tree (`--working-tree`), or a git diff range
+  (`--from-diff REF`); the diff parser uses hardened porcelain rename
+  detection so file moves do not orphan their seeds. Output carries a
+  runtime capability matrix and structured `warnings` (including a
+  `stale_graph` warning), and a stale-graph gate refuses to emit results
+  unless `--allow-stale` is passed. A `<framework>` fixture suite
+  (Python pip, Bazel Python, TypeScript Node, Dockerfile/Compose)
+  underwrites the multi-language coverage with end-to-end expected-output
+  fixtures.
+  <!-- verify: file=weld/impact_cli.py grep=from-diff -->
+- Multi-language origin classification stamps `props.origin` at strategy
+  emission time across Python, Go, TypeScript / JavaScript, Rust, Java,
+  C#, and C++. Origins are now produced by the language strategies
+  themselves rather than derived after the fact, which collapses an
+  entire class of post-discovery drift between origin and language. The
+  visualization adapter accepts a `hide_origins` filter so external,
+  stdlib, and toolchain nodes can be hidden from the graph view, and
+  polyrepo federation re-tags cross-child origins from `external` to
+  `project` when one child imports another.
+  <!-- verify: file=weld/_graph_origin.py grep=ORIGINS -->
+- C++ system-include resolution discovers includes installed under Nix
+  store paths, Conda environments, `/opt`, Bazel hermetic toolchain
+  roots, and the platform toolchain's standard search paths. C++ nodes
+  whose include path resolves to one of these origins are now linked
+  rather than left unresolved.
+  <!-- verify: file=weld/strategies/_cpp_system_include.py -->
+- Bazel `srcs` and `deps` edges connect each `BUILD.bazel` rule to its
+  source files and dependency labels, so `wd query` and `wd impact` can
+  walk the build graph alongside the language graphs.
+  <!-- verify: file=weld/strategies/bazel.py grep=srcs -->
+- Dockerfile and Compose edges link container images to their build
+  context. `COPY` and `ADD` instructions whose source resolves to a
+  repo-relative path emit edges to the copied file, and a directory-COPY
+  bridge expands `COPY ./app /service/app` into per-file edges to every
+  source file inside the bridged directory.
+  <!-- verify: file=weld/strategies/dockerfile.py grep=COPY -->
+- Multi-language test-peer edges discover each module's canonical
+  sibling test across Python, Go, TypeScript / JavaScript, Rust, Java,
+  and C#. `wd query` and `wd find` can now locate the nearest test for
+  a non-Python module directly from the graph.
+  <!-- verify: file=weld/strategies/test_peer.py grep=test_peer -->
+- `wd find` ranks basename matches above prose mentions. A query that is
+  a literal filename for a node in the graph now surfaces that file
+  ahead of documentation that mentions the basename in passing, so the
+  primary hit is the file itself rather than the doc that talks about
+  it.
+  <!-- verify: file=weld/file_index.py grep=basename -->
+- `wd bench --compare` corpus expands from 4 to 26 tasks. The benchmark
+  fixture covers a wider range of agent-prompt shapes (lookup,
+  ownership, route discovery, dependency tracing, test-peer resolution),
+  giving the comparative score against a grep baseline a more
+  representative signal.
+  <!-- verify: file=weld/bench_tasks/fixtures/default.yaml grep=id: -->
+- Markdown inter-doc reference edges connect each Markdown file to the
+  other Markdown files it links to, so doc-cluster discovery follows the
+  hyperlink graph rather than only filename heuristics.
+  <!-- verify: file=weld/strategies/markdown.py -->
+- Per-file graph<->state cross-check on incremental discovery catches
+  the case where the on-disk graph and the discovery state file disagree
+  on which files have been processed. A file present in the state cache
+  but missing from the graph (or vice versa) now triggers a re-discovery
+  of that file rather than silently producing a partial graph.
+  <!-- verify: file=weld/_discover_state_check.py grep=cross-check -->
+- Capabilities classifier deduplicates multi-framework entries. When a
+  capability matches more than one framework signal (e.g. a service
+  that has both a `deploy_surface` annotation and a manifest entry), it
+  appears exactly once in the capabilities output rather than producing
+  duplicate rows.
+  <!-- verify: file=weld/capabilities.py grep=deduplicated -->
+
+### Changed
+
+- Deprecated alias compatibility (Python file-anchor IDs and ROS2
+  cluster IDs) remains in place. The v0.16.0 release notes flagged
+  retirement in v0.17.0; that retirement is deferred to a future
+  release. Pinning to 0.16.x is no longer required to keep external
+  consumers of the prior IDs working — alias-aware lookup continues to
+  resolve legacy IDs to their canonical form.
+  <!-- verify: file=weld/_alias_index.py grep=build_alias_index -->
+
 ## v0.16.0 - 2026-05-03
 
 ### Added

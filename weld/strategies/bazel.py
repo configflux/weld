@@ -11,6 +11,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from weld.strategies._bazel_labels import (
+    resolve_dep_label,
+    resolve_src_label,
+)
 from weld.strategies._helpers import (
     StrategyResult,
     filter_glob_results,
@@ -44,8 +48,27 @@ _SRCS_RE = re.compile(
 _DEPS_RE = re.compile(
     r'^\s*deps\s*=\s*\['
 )
+# Capture quoted entries inside ``srcs = [...]`` and ``deps = [...]``
+# blocks. Four label shapes are recognised:
+#
+# - ``//path:name``     absolute Bazel label
+# - ``:name``           package-relative label
+# - ``@external//...``  external-workspace label (kept so the resolver can
+#                       drop it and bump ``unresolved_labels_dropped``)
+# - bare ``foo.py``     filename relative to the BUILD package; constrained
+#                       to a leading alphanumeric/underscore plus an
+#                       extension to avoid catching unrelated string kwargs
+#
+# The parser only invokes this regex while ``in_srcs`` or ``in_deps`` is
+# set, so quoted strings outside list contexts (e.g. ``cmd = "..."``) are
+# never seen.
 _DEP_ENTRY_RE = re.compile(
-    r'"(//[^"]+|:[^"]+)"'
+    r'"('
+    r'//[^"]+'
+    r'|:[^"]+'
+    r'|@[^"]+'
+    r'|[A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]+'
+    r')"'
 )
 
 def _parse_build_file(text: str) -> list[dict]:
@@ -159,6 +182,26 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             nid = f"{node_type}:{pkg_label}:{name}"
             bazel_label = f"{pkg_label}:{name}"
 
+            # Resolve labels deterministically.  Sort inputs first so
+            # downstream emit order is independent of BUILD file order.
+            unresolved: list[str] = []
+            srcs_targets: list[str] = []
+            for src in sorted(target["srcs"]):
+                resolved = resolve_src_label(src, pkg_label)
+                if resolved is None:
+                    unresolved.append(src)
+                else:
+                    srcs_targets.append(resolved)
+
+            deps_targets: list[str] = []
+            for dep in sorted(target["deps"]):
+                resolved = resolve_dep_label(dep, pkg_label)
+                if resolved is None:
+                    unresolved.append(dep)
+                else:
+                    deps_targets.append(resolved)
+
+            unresolved_sorted = sorted(set(unresolved))
             nodes[nid] = {
                 "type": node_type,
                 "label": bazel_label,
@@ -170,38 +213,44 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "authority": "canonical",
                     "confidence": "definite",
                     "roles": [role],
+                    "unresolved_labels": unresolved_sorted,
+                    "unresolved_labels_dropped": len(unresolved_sorted),
                 },
             }
 
-            # Create edges for deps that reference other packages
-            for dep in target["deps"]:
-                # Normalize dep label
-                if dep.startswith(":"):
-                    dep_full = f"{pkg_label}{dep}"
-                else:
-                    dep_full = dep
-
-                # Determine target node type for the dep (assume build-target)
-                dep_nid = f"build-target:{dep_full}"
-                edge_type = "depends_on"
+            # build-target -> contains -> file:<src> for every srcs entry
+            # (ADR 0044 Layer C1).  Sorted for determinism.
+            for file_nid in sorted(srcs_targets):
                 edges.append({
                     "from": nid,
-                    "to": dep_nid,
-                    "type": edge_type,
+                    "to": file_nid,
+                    "type": "contains",
                     "props": {
                         "source_strategy": "bazel",
                         "confidence": "definite",
                     },
                 })
 
-            # For test targets, add a "tests" edge to the package
+            # build-target -> depends_on -> build-target for every deps
+            # entry (preserved from pre-Layer-C1 behaviour, now using
+            # the canonical resolver).
+            for dep_nid in sorted(deps_targets):
+                edges.append({
+                    "from": nid,
+                    "to": dep_nid,
+                    "type": "depends_on",
+                    "props": {
+                        "source_strategy": "bazel",
+                        "confidence": "definite",
+                    },
+                })
+
+            # For test targets, also emit a "tests" edge to the
+            # depended-on build target.  Inferred confidence: a test
+            # depends on the lib it is testing, but Bazel does not name
+            # this relationship explicitly.
             if node_type == "test-target":
-                for dep in target["deps"]:
-                    if dep.startswith(":"):
-                        dep_full = f"{pkg_label}{dep}"
-                    else:
-                        dep_full = dep
-                    dep_nid = f"build-target:{dep_full}"
+                for dep_nid in sorted(deps_targets):
                     edges.append({
                         "from": nid,
                         "to": dep_nid,

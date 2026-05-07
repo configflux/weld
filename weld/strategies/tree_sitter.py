@@ -26,9 +26,12 @@ from weld.strategies._tree_sitter_ids import (
 from weld.strategies import (
     _cpp_tree_sitter,
     _csharp_tree_sitter,
+    _go_tree_sitter,
     _java_tree_sitter,
+    _rust_tree_sitter,
     _ts_call_graph,
     _ts_parse,
+    _typescript_tree_sitter,
 )
 
 # ---------------------------------------------------------------------------
@@ -145,20 +148,12 @@ def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
     return files, sorted(dirs)
 
 # ---------------------------------------------------------------------------
-# Node ID builders are imported from :mod:`weld.strategies._tree_sitter_ids`
-# (ADR 0041 § Layer 1). ``_make_node_id`` returns the canonical
-# ``file:<rel_path_no_ext>`` form; ``_legacy_make_node_id`` returns the
-# pre-migration shape for the ``aliases`` provenance list.
+# Node ID builders (ADR 0041 § Layer 1) are imported from
+# :mod:`weld.strategies._tree_sitter_ids`. The C++ cross-file include
+# resolver (layer 2) lives in :mod:`weld.strategies.cpp_resolver`; we
+# re-export its private names below so existing test mocks against
+# ``tree_sitter._resolve_cpp_include`` etc. continue to work.
 # ---------------------------------------------------------------------------
-# C++ cross-file include resolver (layer 2; tracked project)
-# ---------------------------------------------------------------------------
-#
-# The full implementation lives in ``weld.strategies.cpp_resolver`` so this
-# module stays inside its line-count budget. We re-export the
-# resolver-private symbol names that the tests patch so the public
-# surface of ``tree_sitter`` is unchanged.
-
-# Re-exports kept for tests/back-compat. Underscored to signal "internal".
 _resolve_cpp_include = _cpp_resolver.resolve_cpp_include
 _cpp_match_callee = _cpp_resolver.match_callee
 _resolve_cpp_includes_pass = _cpp_resolver.resolve_includes_pass
@@ -237,6 +232,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     # State accumulator for the C++ cross-file include resolver pass.
     cpp_per_file: list[dict] = []
+
+    # ADR 0042: cache per-language manifests once per discovery run.
+    # Each ``build_caches`` returns ``None`` for non-matching languages.
+    ts_caches = _typescript_tree_sitter.build_caches(root, language)
+    enricher_caches: dict = (_csharp_tree_sitter.build_caches(root, language) or _java_tree_sitter.build_caches(root, language) or {})
+    go_module_path = _go_tree_sitter.load_module_path(root) if language == "go" else ""
+    rust_cargo = _rust_tree_sitter.load_cargo_metadata(root, language)
 
     for fpath in matched:
         if not fpath.is_file():
@@ -319,11 +321,20 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         imports = symbols.get("imports", [])
         if imports:
             node_props["imports_from"] = imports
+            if language == "go":
+                _go_tree_sitter.stamp_import_origins(node_props, imports, go_module_path)
+            elif language == "rust":
+                _rust_tree_sitter.stamp_import_origins(node_props, imports, rust_cargo)
 
         node_props["source_strategy"] = source_strategy
         node_props["authority"] = "derived"
         node_props["confidence"] = "definite"
         node_props["roles"] = ["implementation"]
+        # ADR 0042: project file nodes are minted from the configured
+        # project glob for every language we support, so they are
+        # always project-origin. Per-language sentinel classification
+        # for the call-graph layer happens in ``_ts_call_graph``.
+        node_props["origin"] = "project"
 
         language_enricher = {
             "cpp": _cpp_tree_sitter,
@@ -332,13 +343,14 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         }.get(language)
         if language_enricher:
             language_enricher.enrich_file_node(
-                nodes,
-                edges,
-                nid,
-                node_props,
-                symbols,
-                source_text,
-                source_strategy,
+                nodes, edges, nid, node_props, symbols,
+                source_text, source_strategy, **enricher_caches,
+            )
+        elif ts_caches is not None:
+            _typescript_tree_sitter.enrich_file_node(
+                nodes, edges, nid, node_props, symbols,
+                source_text, source_strategy,
+                root=root, **ts_caches,
             )
 
         nodes[nid] = {

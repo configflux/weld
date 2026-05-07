@@ -144,6 +144,7 @@ additional prop is tolerated and round-tripped.
 |---|---|---|
 | `source_strategy` | string | Name of the discovery strategy or agent that emitted the node. Primary provenance signal. |
 | `authority` | string | One of `canonical`, `derived`, `manual`, `external`. |
+| `origin` | string | One of `project`, `stdlib`, `external`, `unresolved` — where the symbol comes from, independent of merge precedence. Set on `symbol`, `file`, and `module` nodes by post-ADR-0042 strategies; legacy graphs without the field are classified deterministically by `weld._graph_origin.classify_node`. Used by `wd viz` to drive the "Hide standard library" / "Hide third-party dependencies" toggles (`hide_origins=stdlib,external` query parameter). See [ADR 0042](adrs/0042-graph-node-origin.md). |
 | `confidence` | string | One of `definite`, `inferred`, `speculative`. |
 | `roles` | list[string] | Subset of `implementation`, `test`, `config`, `doc`, `build`, `migration`, `fixture`, `script`. |
 | `file` | string | Source file path relative to the repository root. |

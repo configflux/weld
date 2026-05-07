@@ -1,0 +1,581 @@
+{
+  "edges": [
+    {
+      "from": "build-target://app:lib",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "file:app/lib",
+      "type": "contains"
+    },
+    {
+      "from": "build-target://app:main",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "build-target://app:lib",
+      "type": "depends_on"
+    },
+    {
+      "from": "build-target://app:main",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "file:app/main",
+      "type": "contains"
+    },
+    {
+      "from": "compose:default",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "compose"
+      },
+      "to": "service:default:api",
+      "type": "contains"
+    },
+    {
+      "from": "dockerfile:Dockerfile",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "dockerfile"
+      },
+      "to": "file:app",
+      "type": "contains"
+    },
+    {
+      "from": "file:app",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "dockerfile"
+      },
+      "to": "file:app/BUILD.bazel",
+      "type": "contains"
+    },
+    {
+      "from": "file:app",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "dockerfile"
+      },
+      "to": "file:app/lib.py",
+      "type": "contains"
+    },
+    {
+      "from": "file:app",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "dockerfile"
+      },
+      "to": "file:app/lib_test.py",
+      "type": "contains"
+    },
+    {
+      "from": "file:app",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "dockerfile"
+      },
+      "to": "file:app/main.py",
+      "type": "contains"
+    },
+    {
+      "from": "file:app/lib",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:app.lib:greet",
+      "type": "contains"
+    },
+    {
+      "from": "file:app/lib_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:app.lib_test:GreetTest",
+      "type": "contains"
+    },
+    {
+      "from": "file:app/lib_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:app.lib_test:GreetTest.test_greet",
+      "type": "contains"
+    },
+    {
+      "from": "file:app/main",
+      "props": {
+        "confidence": "definite",
+        "import_name": "app.lib",
+        "language": "python",
+        "normalized_import": "app.lib",
+        "resolution": "local_module",
+        "source_strategy": "graph_closure"
+      },
+      "to": "file:app/lib",
+      "type": "depends_on"
+    },
+    {
+      "from": "file:app/main",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "graph_closure"
+      },
+      "to": "symbol:py:app.main:run",
+      "type": "contains"
+    },
+    {
+      "from": "pkg:app",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:app/lib",
+      "type": "contains"
+    },
+    {
+      "from": "pkg:app",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:app/lib_test",
+      "type": "contains"
+    },
+    {
+      "from": "pkg:app",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:app/main",
+      "type": "contains"
+    },
+    {
+      "from": "service:default:api",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "compose"
+      },
+      "to": "dockerfile:Dockerfile",
+      "type": "depends_on"
+    },
+    {
+      "from": "symbol:py:app.lib_test:GreetTest.test_greet",
+      "props": {
+        "confidence": "definite",
+        "provenance": {
+          "file": "app/lib_test.py",
+          "line": 9
+        },
+        "raw": "greet",
+        "resolution": "import",
+        "resolved": true,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:py:app.lib:greet",
+      "type": "calls"
+    },
+    {
+      "from": "symbol:py:app.lib_test:GreetTest.test_greet",
+      "props": {
+        "confidence": "speculative",
+        "provenance": {
+          "file": "app/lib_test.py",
+          "line": 9
+        },
+        "raw": "assertEqual",
+        "resolution": "unresolved",
+        "resolved": false,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:unresolved:assertEqual",
+      "type": "calls"
+    },
+    {
+      "from": "symbol:py:app.main:run",
+      "props": {
+        "confidence": "definite",
+        "provenance": {
+          "file": "app/main.py",
+          "line": 6
+        },
+        "raw": "greet",
+        "resolution": "import",
+        "resolved": true,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:py:app.lib:greet",
+      "type": "calls"
+    },
+    {
+      "from": "test-target://app:lib_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "build-target://app:lib",
+      "type": "depends_on"
+    },
+    {
+      "from": "test-target://app:lib_test",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "bazel"
+      },
+      "to": "build-target://app:lib",
+      "type": "tests"
+    },
+    {
+      "from": "test-target://app:lib_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "file:app/lib_test",
+      "type": "contains"
+    }
+  ],
+  "meta": {
+    "schema_version": 1,
+    "version": 5
+  },
+  "nodes": {
+    "build-target://app:lib": {
+      "label": "//app:lib",
+      "props": {
+        "authority": "canonical",
+        "bazel_label": "//app:lib",
+        "confidence": "definite",
+        "file": "app/BUILD.bazel",
+        "roles": [
+          "build"
+        ],
+        "rule": "py_library",
+        "source_strategy": "bazel",
+        "unresolved_labels": [],
+        "unresolved_labels_dropped": 0
+      },
+      "type": "build-target"
+    },
+    "build-target://app:main": {
+      "label": "//app:main",
+      "props": {
+        "authority": "canonical",
+        "bazel_label": "//app:main",
+        "confidence": "definite",
+        "file": "app/BUILD.bazel",
+        "roles": [
+          "build"
+        ],
+        "rule": "py_library",
+        "source_strategy": "bazel",
+        "unresolved_labels": [],
+        "unresolved_labels_dropped": 0
+      },
+      "type": "build-target"
+    },
+    "compose:default": {
+      "label": "docker-compose.yml",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "docker-compose.yml",
+        "roles": [
+          "config"
+        ],
+        "services": [
+          "api"
+        ],
+        "source_strategy": "compose"
+      },
+      "type": "compose"
+    },
+    "dockerfile:Dockerfile": {
+      "label": "Dockerfile",
+      "props": {
+        "authority": "canonical",
+        "base_image": "python:3.12-slim",
+        "confidence": "definite",
+        "file": "Dockerfile",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "dockerfile"
+    },
+    "file:app": {
+      "label": "app",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app",
+        "origin": "project",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "file"
+    },
+    "file:app/BUILD.bazel": {
+      "label": "BUILD.bazel",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/BUILD.bazel",
+        "origin": "project",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "file"
+    },
+    "file:app/lib": {
+      "label": "lib",
+      "props": {
+        "aliases": [
+          "file:lib"
+        ],
+        "authority": "derived",
+        "confidence": "definite",
+        "constants": [],
+        "exports": [
+          "greet"
+        ],
+        "file": "app/lib.py",
+        "imports_from": [],
+        "line_count": 5,
+        "origin": "project",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_module"
+      },
+      "type": "file"
+    },
+    "file:app/lib.py": {
+      "label": "lib.py",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/lib.py",
+        "origin": "project",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "file"
+    },
+    "file:app/lib_test": {
+      "label": "lib_test",
+      "props": {
+        "aliases": [
+          "file:tests/lib_test"
+        ],
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/lib_test.py",
+        "kind": "test",
+        "roles": [
+          "test"
+        ],
+        "source_strategy": "test_peer"
+      },
+      "type": "file"
+    },
+    "file:app/lib_test.py": {
+      "label": "lib_test.py",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/lib_test.py",
+        "origin": "project",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "file"
+    },
+    "file:app/main": {
+      "label": "main",
+      "props": {
+        "aliases": [
+          "file:main"
+        ],
+        "authority": "derived",
+        "confidence": "definite",
+        "constants": [],
+        "exports": [
+          "run"
+        ],
+        "file": "app/main.py",
+        "imports_from": [
+          "app.lib"
+        ],
+        "line_count": 10,
+        "origin": "project",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_module"
+      },
+      "type": "file"
+    },
+    "file:app/main.py": {
+      "label": "main.py",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/main.py",
+        "origin": "project",
+        "roles": [
+          "build"
+        ],
+        "source_strategy": "dockerfile"
+      },
+      "type": "file"
+    },
+    "pkg:app": {
+      "label": "app",
+      "props": {
+        "authority": "manual",
+        "confidence": "definite",
+        "source_strategy": "topology"
+      },
+      "type": "package"
+    },
+    "service:default:api": {
+      "label": "api",
+      "props": {
+        "authority": "canonical",
+        "compose_stem": "default",
+        "confidence": "definite",
+        "file": "docker-compose.yml",
+        "roles": [
+          "config"
+        ],
+        "service_name": "api",
+        "source_strategy": "compose"
+      },
+      "type": "service"
+    },
+    "symbol:py:app.lib:greet": {
+      "label": "greet",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/lib.py",
+        "language": "python",
+        "line": 4,
+        "module": "app.lib",
+        "origin": "project",
+        "qualname": "greet",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    },
+    "symbol:py:app.lib_test:GreetTest": {
+      "label": "GreetTest",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/lib_test.py",
+        "language": "python",
+        "line": 7,
+        "module": "app.lib_test",
+        "origin": "project",
+        "qualname": "GreetTest",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    },
+    "symbol:py:app.lib_test:GreetTest.test_greet": {
+      "label": "GreetTest.test_greet",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/lib_test.py",
+        "language": "python",
+        "line": 8,
+        "module": "app.lib_test",
+        "origin": "project",
+        "qualname": "GreetTest.test_greet",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    },
+    "symbol:py:app.main:run": {
+      "label": "run",
+      "props": {
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/main.py",
+        "language": "python",
+        "line": 5,
+        "module": "app.main",
+        "origin": "project",
+        "qualname": "run",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    },
+    "symbol:unresolved:assertEqual": {
+      "label": "assertEqual",
+      "props": {
+        "authority": "derived",
+        "confidence": "speculative",
+        "language": "python",
+        "module": "",
+        "origin": "unresolved",
+        "qualname": "assertEqual",
+        "resolution": "unresolved",
+        "resolved": false,
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    },
+    "test-target://app:lib_test": {
+      "label": "//app:lib_test",
+      "props": {
+        "authority": "canonical",
+        "bazel_label": "//app:lib_test",
+        "confidence": "definite",
+        "file": "app/BUILD.bazel",
+        "roles": [
+          "test"
+        ],
+        "rule": "py_test",
+        "source_strategy": "bazel",
+        "unresolved_labels": [],
+        "unresolved_labels_dropped": 0
+      },
+      "type": "test-target"
+    }
+  }
+}

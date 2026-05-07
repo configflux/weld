@@ -1,0 +1,297 @@
+{
+  "affected_surfaces": {
+    "api_endpoints": [],
+    "boundaries": [],
+    "cli_commands": [],
+    "entrypoints": [],
+    "mcp_tools": [],
+    "tests": []
+  },
+  "capabilities": {
+    "frameworks": {
+      "bazel": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "bd": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "boundary": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "compose": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "config": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "dockerfile": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "events": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "fastapi": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "github_workflow": {
+        "deps_edges": false,
+        "nodes_emitted": true,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "helm": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "http_client": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "k8s": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "make": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "markdown": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "npm": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "proto": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "pydantic": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "ros2": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "runbook": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "runtime_contract": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "sqlalchemy": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "terraform": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "worker": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      }
+    },
+    "languages": {
+      "cpp": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "csharp": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "go": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "java": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "javascript": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "python": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "rust": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "typescript": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      }
+    }
+  },
+  "depth": 2,
+  "direct_dependents": [
+    {
+      "hop": 1,
+      "id": "service:default:api",
+      "label": "api",
+      "props": {
+        "authority": "canonical",
+        "compose_stem": "default",
+        "confidence": "definite",
+        "file": "docker-compose.yml",
+        "roles": [
+          "config"
+        ],
+        "service_name": "api",
+        "source_strategy": "compose"
+      },
+      "type": "service"
+    }
+  ],
+  "edges": [
+    {
+      "from": "service:default:api",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "compose"
+      },
+      "to": "dockerfile:Dockerfile",
+      "type": "depends_on"
+    },
+    {
+      "from": "compose:default",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "compose"
+      },
+      "to": "service:default:api",
+      "type": "contains"
+    }
+  ],
+  "impact_version": 2,
+  "risk_level": "LOW",
+  "target": {
+    "input": "dockerfile:Dockerfile",
+    "kind": "node",
+    "resolved_nodes": [
+      "dockerfile:Dockerfile"
+    ],
+    "unresolved_inputs": []
+  },
+  "transitive_dependents": [
+    {
+      "hop": 2,
+      "id": "compose:default",
+      "label": "docker-compose.yml",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "docker-compose.yml",
+        "roles": [
+          "config"
+        ],
+        "services": [
+          "api",
+          "cache"
+        ],
+        "source_strategy": "compose"
+      },
+      "type": "compose"
+    }
+  ],
+  "warnings": {
+    "low_capability_inputs": [],
+    "messages": [],
+    "out_of_scope_inputs": [],
+    "speculative_edges": 0,
+    "stale_graph": false,
+    "unresolved_callsites": 0
+  }
+}

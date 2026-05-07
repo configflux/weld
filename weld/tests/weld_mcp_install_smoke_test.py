@@ -247,6 +247,21 @@ def _weld_source_root() -> Path:
     return _REPO_ROOT / "weld"
 
 
+def _copy_weld_source(src: Path, dest: Path) -> None:
+    """Copy the package tree to keep wheel-build side effects off source."""
+    shutil.copytree(
+        src,
+        dest,
+        ignore=shutil.ignore_patterns(
+            "__pycache__",
+            "*.pyc",
+            "*.egg-info",
+            "build",
+            "dist",
+        ),
+    )
+
+
 class WheelInstallSmokeTest(unittest.TestCase):
     """Build a wheel from ``weld/`` and import the MCP server from it.
 
@@ -287,20 +302,35 @@ class WheelInstallSmokeTest(unittest.TestCase):
             f"weld pyproject.toml not found at {weld_root}",
         )
 
+        source_init_text = (weld_root / "__init__.py").read_text(encoding="utf-8")
+
         with tempfile.TemporaryDirectory(prefix="weld-mcp-wheel-") as tmp:
             tmp_path = Path(tmp)
+            package_src = tmp_path / "weld-src"
+            _copy_weld_source(weld_root, package_src)
             dist_dir = tmp_path / "dist"
             dist_dir.mkdir()
 
-            # 1. Build a wheel from weld/ source. ``--no-deps`` keeps it
-            # offline; ``--no-build-isolation`` is intentionally NOT
-            # passed because the smoke must mirror what users actually
-            # do (``pip install configflux-weld``).
+            # 1. Build a wheel from a disposable copy of weld/ source.
+            # ``--no-deps`` keeps it offline; ``--no-build-isolation`` is
+            # intentionally NOT passed because the smoke must mirror what
+            # users actually do (``pip install configflux-weld``). The copy
+            # prevents backend side effects from rewriting the checkout.
             self._run([
                 sys.executable, "-m", "pip", "wheel",
-                "--quiet", "--no-deps", str(weld_root),
+                "--quiet", "--no-deps", str(package_src),
                 "-w", str(dist_dir),
             ], "build wheel")
+            self.assertEqual(
+                (package_src / "__init__.py").read_text(encoding="utf-8"),
+                source_init_text,
+                "wheel build mutated package __init__.py in the staging copy",
+            )
+            self.assertEqual(
+                (weld_root / "__init__.py").read_text(encoding="utf-8"),
+                source_init_text,
+                "wheel smoke must not mutate the live package __init__.py",
+            )
             wheels = sorted(dist_dir.glob("*.whl"))
             self.assertEqual(
                 len(wheels), 1,

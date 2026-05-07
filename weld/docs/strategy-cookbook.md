@@ -27,7 +27,18 @@ Use a bundled or optional tree-sitter path when:
 For C# repositories, use the shared tree-sitter path with
 `language: csharp`. It extracts class-like types, methods, properties,
 attributes, namespaces, and `using` dependencies without requiring a compiler
-workspace.
+workspace. Import package nodes use `.csproj` `PackageReference` entries and
+common .NET namespace prefixes to classify `origin` as project, standard
+library, external, or unresolved.
+
+For Java repositories, use the shared tree-sitter path with
+`language: java`. It extracts class-like types, methods, annotations,
+package declarations, and `import` dependencies without requiring a compiler
+workspace. Import package nodes are classified per ADR 0042: ``java.*``,
+``javax.*``, and ``jdk.*`` prefixes resolve to stdlib; the project's own
+``<groupId>`` (read from any ``pom.xml`` under the project root) resolves to
+project; declared Maven ``<dependency><groupId>`` entries resolve to external;
+everything else stays unresolved. Gradle parsing is not yet implemented.
 
 Use a project-local or external adapter when:
 

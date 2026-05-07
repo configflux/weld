@@ -17,11 +17,14 @@ This module provides the layer-2 pass that:
 Hard limits — these mirror python_callgraph's import-table pass and are
 deliberate, not bugs:
 
-  * Only ``#include "..."`` (string-literal) form is followed; system
-    ``<...>`` includes are ignored.
-  * Header search paths: file's parent dir, then a small fixed set of
-    conventional dirs under root. We do NOT read CMake / Bazel for
-    full include-path discovery.
+  * ``#include "..."`` (string-literal) form is resolved via the
+    project tree. ``<...>`` system includes are dispatched to
+    :mod:`weld.strategies._cpp_system_include`, which probes the host
+    toolchain's stdlib roots (libstdc++, libc++, clang builtins). We
+    do NOT invoke ``cc -E`` or read CMake / Bazel for full include-path
+    discovery.
+  * Project header search paths: file's parent dir, then a small fixed
+    set of conventional dirs under root.
   * Match strategies for qualified callees: exact match, then
     ``Class::method`` against (classes_in_header, exports_in_header),
     then tail-segment fallback. Overload sets collapse on name only.
@@ -33,6 +36,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld.strategies._cpp_origin import (
+    classify_layer2_origin,
+    upgrade_origin,
+)
+from weld.strategies._cpp_system_include import resolve_system_include
 from weld.strategies._helpers import should_skip
 
 CPP_HEADER_EXTS: frozenset[str] = frozenset(
@@ -74,18 +82,27 @@ def resolve_cpp_include(
             parent directory).
         include_text: Raw text captured by the tree-sitter ``imports``
             query, e.g. ``"foo.h"`` (with quotes), ``<iostream>`` for
-            system includes (which return None), or a bare ``foo.h``.
+            system includes, or a bare ``foo.h``. Angle-bracket
+            ``<...>`` directives are dispatched to
+            :func:`weld.strategies._cpp_system_include.resolve_system_include`,
+            which probes the host toolchain's include roots.
 
     Returns:
-        Absolute Path to the resolved header, or None if the include
-        is a system include or no candidate file exists.
+        Absolute Path to the resolved header, or None when no host
+        toolchain root or project search-dir provides the include.
     """
     if not include_text:
         return None
     text = include_text.strip()
-    # Reject system includes outright.
+    # Angle-bracket ``<...>`` form: probe known toolchain include roots
+    # so libstdc++/libc++ headers like ``<vector>`` resolve to a real
+    # path on a typical Linux/macOS install. The probe consults
+    # ``STDLIB_INCLUDE_ROOTS`` first, then a small system-C fallback.
+    # Implements ADR 0042's C++ §"angle-bracket" follow-up: without
+    # this branch only the ``std::`` namespace heuristic flagged
+    # stdlib callees.
     if text.startswith("<") and text.endswith(">"):
-        return None
+        return resolve_system_include(text[1:-1])
     # Strip surrounding quotes from the captured ``"foo.h"`` form.
     if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
         text = text[1:-1]
@@ -289,6 +306,13 @@ def resolve_includes_pass(
                     continue
                 hdr_module = hdr["module_path"]
                 resolved_id = f"symbol:cpp:{hdr_module}:{callee}"
+                # ADR 0042 §C++: classify the rewrite by callee namespace
+                # and resolved-header location. ``upgrade_origin`` ensures
+                # we never downgrade an existing definite tag to
+                # ``unresolved``.
+                hdr_origin = classify_layer2_origin(
+                    callee, hdr["abs_path"], root,
+                )
                 if resolved_id not in nodes and resolved_id not in new_nodes:
                     new_nodes[resolved_id] = {
                         "type": "symbol",
@@ -303,8 +327,18 @@ def resolve_includes_pass(
                             "authority": "derived",
                             "confidence": "definite",
                             "roles": ["implementation"],
+                            "origin": hdr_origin,
                         },
                     }
+                else:
+                    target_props = (
+                        new_nodes[resolved_id]["props"]
+                        if resolved_id in new_nodes
+                        else nodes[resolved_id]["props"]
+                    )
+                    target_props["origin"] = upgrade_origin(
+                        target_props.get("origin"), hdr_origin,
+                    )
                 edge["to"] = resolved_id
                 edge["props"]["resolved"] = True
                 edge["props"]["confidence"] = "definite"

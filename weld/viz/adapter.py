@@ -3,28 +3,25 @@
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 from collections import Counter, deque
 from typing import Iterable
 
+from weld._graph_origin import classify_node
 from weld.viz import VIZ_API_VERSION
+from weld.viz._adapter_helpers import (
+    dedupe as _dedupe,
+    degree_by_node as _degree_by_node,
+    edge_element as _edge_element,
+    edge_id as _edge_id,
+    empty_payload as _empty_payload,
+    node_element as _node_element,
+    overview_key as _overview_key,
+)
 
 DEFAULT_MAX_NODES = 300
 DEFAULT_MAX_EDGES = 1500
 HARD_MAX_NODES = 2000
 HARD_MAX_EDGES = 6000
-
-_NODE_TYPE_PRIORITY = {
-    "repo": 0, "platform": 0,
-    "service": 1, "agent": 1, "subagent": 1, "workflow": 1,
-    "package": 2, "ros_package": 2, "skill": 2, "mcp-server": 2,
-    "boundary": 3, "entrypoint": 3, "instruction": 3, "prompt": 3,
-    "route": 4, "rpc": 4, "channel": 4, "command": 4, "hook": 4,
-    "entity": 5, "contract": 5, "enum": 5, "permission": 5, "scope": 5,
-    "file": 8, "config": 8, "tool": 8,
-    "symbol": 12,
-}
 
 
 def clamp_limit(raw: str | int | None, default: int, hard: int) -> int:
@@ -41,7 +38,12 @@ def clamp_limit(raw: str | int | None, default: int, hard: int) -> int:
 
 
 def graph_counts(data: dict) -> dict:
-    """Return summary counts for a graph-shaped dict."""
+    """Return summary counts for a graph-shaped dict.
+
+    ``nodes_by_origin`` reports the ADR-0042 origin classification
+    (project / stdlib / external / unresolved) and is what the viz UI
+    uses to render '(N hidden)' next to each filter toggle.
+    """
     nodes = data.get("nodes", {}) or {}
     edges = data.get("edges", []) or []
     return {
@@ -49,6 +51,9 @@ def graph_counts(data: dict) -> dict:
         "total_edges": len(edges),
         "nodes_by_type": dict(Counter(n.get("type", "") for n in nodes.values())),
         "edges_by_type": dict(Counter(e.get("type", "") for e in edges)),
+        "nodes_by_origin": dict(
+            Counter(classify_node({"id": nid, **node}) for nid, node in nodes.items())
+        ),
     }
 
 
@@ -220,6 +225,7 @@ def normalize_records(
     focus_ids: list[str] | None = None,
     node_types: set[str] | None = None,
     edge_types: set[str] | None = None,
+    hide_origins: set[str] | None = None,
     max_nodes: int = DEFAULT_MAX_NODES,
     max_edges: int = DEFAULT_MAX_EDGES,
 ) -> dict:
@@ -240,6 +246,7 @@ def normalize_records(
         focus_ids=focus_ids or [],
         node_types=node_types,
         edge_types=edge_types,
+        hide_origins=hide_origins,
         max_nodes=max_nodes,
         max_edges=max_edges,
     )
@@ -252,10 +259,20 @@ def normalize_graph_data(
     focus_ids: list[str] | None = None,
     node_types: set[str] | None = None,
     edge_types: set[str] | None = None,
+    hide_origins: set[str] | None = None,
     max_nodes: int = DEFAULT_MAX_NODES,
     max_edges: int = DEFAULT_MAX_EDGES,
 ) -> dict:
-    """Return graph data as a small, deterministic browser payload."""
+    """Return graph data as a small, deterministic browser payload.
+
+    ``hide_origins`` drops nodes whose ADR-0042 origin classification
+    (``project | stdlib | external | unresolved``) is in the set. An
+    explicit empty set disables origin filtering. When ``hide_origins
+    is None``, the overview slice (``requested_node_ids is None``)
+    defaults to ``{"unresolved"}`` to preserve the legacy
+    ``symbol:unresolved:*`` strip; query / context / path slices keep
+    all four origins by default. See :func:`_effective_hide_origins`.
+    """
     nodes = data.get("nodes", {}) or {}
     edges = [
         e for e in (data.get("edges", []) or [])
@@ -263,12 +280,12 @@ def normalize_graph_data(
     ]
     degree = _degree_by_node(edges)
 
+    effective_hide_origins = _effective_hide_origins(
+        hide_origins, node_types, overview=requested_node_ids is None,
+    )
+
     if requested_node_ids is None:
         ordered_ids = sorted(nodes, key=lambda nid: _overview_key(nid, nodes[nid], degree))
-        if node_types is None:
-            ordered_ids = [
-                nid for nid in ordered_ids if not nid.startswith("symbol:unresolved:")
-            ]
     else:
         ordered_ids = _dedupe(requested_node_ids)
 
@@ -279,6 +296,12 @@ def normalize_graph_data(
         ]
     else:
         ordered_ids = [nid for nid in ordered_ids if nid in nodes]
+
+    if effective_hide_origins:
+        ordered_ids = [
+            nid for nid in ordered_ids
+            if classify_node({"id": nid, **nodes[nid]}) not in effective_hide_origins
+        ]
 
     focus = [nid for nid in _dedupe(focus_ids or []) if nid in nodes]
     selected_ids = _dedupe(focus + ordered_ids)[:max_nodes]
@@ -309,88 +332,25 @@ def normalize_graph_data(
     }
 
 
-def _node_element(node_id: str, node: dict, degree: int) -> dict:
-    props = copy.deepcopy(node.get("props", {}) or {})
-    display_id = node.get("display_id") or node_id
-    return {
-        "data": {
-            "id": node_id,
-            "display_id": display_id,
-            "label": node.get("label") or display_id,
-            "type": node.get("type") or "unknown",
-            "props": props,
-            "file": props.get("file"),
-            "degree": degree,
-        },
-        "classes": f"type-{_css_token(node.get('type') or 'unknown')}",
-    }
+def _effective_hide_origins(
+    hide_origins: set[str] | None,
+    node_types: set[str] | None,
+    *,
+    overview: bool,
+) -> set[str]:
+    """Resolve the origin filter applied to a slice.
 
-
-def _edge_element(edge: dict) -> dict:
-    edge_type = edge.get("type") or "relates_to"
-    return {
-        "data": {
-            "id": _edge_id(edge),
-            "source": edge["from"],
-            "target": edge["to"],
-            "type": edge_type,
-            "label": edge_type,
-            "props": copy.deepcopy(edge.get("props", {}) or {}),
-            "from_display": edge.get("from_display") or edge["from"],
-            "to_display": edge.get("to_display") or edge["to"],
-        },
-        "classes": f"type-{_css_token(edge_type)}",
-    }
-
-
-def _degree_by_node(edges: list[dict]) -> dict[str, int]:
-    degree: Counter[str] = Counter()
-    for edge in edges:
-        degree[edge["from"]] += 1
-        degree[edge["to"]] += 1
-    return dict(degree)
-
-
-def _overview_key(node_id: str, node: dict, degree: dict[str, int]) -> tuple:
-    priority = _NODE_TYPE_PRIORITY.get(node.get("type", ""), 10)
-    return (priority, -degree.get(node_id, 0), node_id)
-
-
-def _edge_id(edge: dict) -> str:
-    raw = json.dumps(
-        {
-            "from": edge.get("from"),
-            "to": edge.get("to"),
-            "type": edge.get("type"),
-            "props": edge.get("props") or {},
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return "edge:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
-
-
-def _dedupe(values: Iterable[str]) -> list[str]:
-    out = []
-    seen: set[str] = set()
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        out.append(value)
-    return out
-
-
-def _css_token(value: str) -> str:
-    return "".join(ch if ch.isalnum() else "-" for ch in value.lower())
-
-
-def _empty_payload(warnings: list[str]) -> dict:
-    return {
-        "viz_api_version": VIZ_API_VERSION,
-        "elements": {"nodes": [], "edges": []},
-        "stats": {"total_nodes": 0, "total_edges": 0, "visible_nodes": 0, "visible_edges": 0},
-        "truncated": {"nodes": False, "edges": False},
-        "focus_ids": [],
-        "warnings": warnings,
-    }
+    Explicit ``hide_origins`` (including an empty set) is honored
+    everywhere. When ``hide_origins is None``, the legacy behavior of
+    stripping ``symbol:unresolved:*`` sentinels is preserved only in
+    the overview slice (``requested_node_ids is None``) and only when
+    the caller did not pin ``node_types``. Query, context, and path
+    slices keep all four origins by default so explicit user actions
+    (clicking a symbol, searching for ``print``) never silently drop
+    nodes.
+    """
+    if hide_origins is not None:
+        return set(hide_origins)
+    if overview and node_types is None:
+        return {"unresolved"}
+    return set()

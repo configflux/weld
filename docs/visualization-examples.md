@@ -14,6 +14,7 @@ lists the exact commands and order to regenerate everything.
 - [Monorepo graph](#monorepo-graph)
 - [Polyrepo workspace and `repo:` nodes](#polyrepo-workspace-and-repo-nodes)
 - [Agent Graph](#agent-graph)
+- [Filtering noise in `wd viz`](#filtering-noise-in-wd-viz)
 - [MCP config snippet](#mcp-config-snippet)
 - [Reproducing locally](#reproducing-locally)
 
@@ -414,6 +415,41 @@ for the full list of finding codes.
 
 ---
 
+## Filtering noise in `wd viz`
+
+The sidebar in `wd viz` carries two checkboxes under a **Hide** group:
+
+- **Hide standard library** — drops nodes whose `props.origin` is `stdlib`
+  (Python builtins, `sys.stdlib_module_names`, C++ `std::` and toolchain
+  headers, per-language equivalents).
+- **Hide third-party dependencies** — drops nodes whose `props.origin` is
+  `external` (PyPI, npm, Cargo, vendored libraries — anything resolved
+  outside the project tree but not part of the language stdlib).
+
+Each label carries a count, e.g. "Hide standard library (412)", read from
+the `nodes_by_origin` field in the `/api/summary` payload. Unchecked, the
+overview slice still hides `unresolved` nodes by default — the same
+default the pre-ADR-0042 adapter applied via its ad-hoc
+`symbol:unresolved:*` strip, now expressed uniformly through the same
+filter mechanism.
+
+The same filter is reachable directly from the JSON API:
+
+```text
+GET /api/slice?hide_origins=stdlib,external
+GET /api/slice?hide_origins=stdlib
+```
+
+Filtering is presentation-only. The graph file on disk is unchanged, and
+non-viz surfaces (`wd query`, `wd context`, MCP) continue to return the
+hidden nodes — `wd query "print"` still surfaces the stdlib `print` node
+even when "Hide standard library" is ticked. See the README's
+[Filtering noise in `wd viz`](../README.md#filtering-noise-in-wd-viz)
+section for the full taxonomy and [ADR 0042](adrs/0042-graph-node-origin.md)
+for the rationale.
+
+---
+
 ## MCP config snippet
 
 `wd mcp config --client=<name>` prints the JSON snippet your MCP-aware
@@ -459,7 +495,7 @@ The full MCP install story (including the `[mcp]` extra) is covered in
 
 ## Reproducing locally
 
-Snippets on this page were captured against `wd 0.16.0` from a Linux
+Snippets on this page were captured against `wd 0.17.0` from a Linux
 host. To reproduce them on your own machine:
 
 ```bash

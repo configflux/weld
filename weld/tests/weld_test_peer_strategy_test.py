@@ -5,6 +5,11 @@ per test module, plus a ``tests`` edge to the production peer when one
 can be located. The intent is to surface test modules to ``wd query``
 so a query for a domain term like ``telemetry test`` returns the test
 files alongside their production siblings, instead of empty results.
+
+Per ADR 0046 (multi-language test-peer edges) the strategy now
+dispatches by file extension to per-language resolvers. The original
+Python tests in this file cover the dispatcher's Python path; the
+multi-language test classes below cover Go, TS/JS, Java, C#, and Rust.
 """
 
 from __future__ import annotations

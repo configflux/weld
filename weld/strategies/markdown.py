@@ -36,6 +36,21 @@ _PREFIX_TO_KIND: dict[str, str] = {
     "guide": "guide",
 }
 
+# -- Inter-doc link extraction ----------------------------------------------
+# Matches inline markdown links of the form ``[text](path.md)`` or
+# ``[text](path.md#anchor)``. We deliberately restrict the target to
+# end in ``.md`` (with an optional ``#anchor`` fragment) to avoid
+# emitting edges to unrelated assets (images, code, external URLs).
+# Reference-style links ``[text][ref]`` and angle-bracket autolinks are
+# intentionally out of scope; cross-doc graph signal does not require
+# them today.
+#
+# Edge type is ``relates_to`` (the existing generic "this artifact mentions
+# that one" vocabulary; see ``concept_from_bd`` for the same precedent).
+# Using an existing contract type avoids a vocabulary expansion that would
+# require an ADR.
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s#]+\.md)(#[^)\s]*)?\)")
+
 # -- Section kind classification ---------------------------------------------
 # Maps heading-text patterns (lowercased) to section_kind values.
 # Order matters: first match wins.  Patterns are checked with substring
@@ -145,12 +160,32 @@ def _parse_sections(text: str) -> list[dict]:
 
     return sections
 
+def _extract_md_link_targets(text: str) -> list[tuple[str, str]]:
+    """Return ``(href_without_anchor, anchor_or_empty)`` per markdown link.
+
+    Order is preserved for caller-side dedupe stability. Only ``.md``
+    targets are returned (other links are filtered by the regex).
+    """
+    return [
+        (m.group(2), m.group(3) or "")
+        for m in _MD_LINK_RE.finditer(text)
+    ]
+
+
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract markdown doc nodes with authority tagging.
 
     When ``source["extract_sections"]`` is truthy, also emits section-level
     nodes for each H2 heading found in the document, linked to the parent
     doc node via ``contains`` edges.
+
+    Inter-doc ``[label](other.md)`` references are extracted in a second
+    pass and emitted as ``relates_to`` edges between the source ``doc:*``
+    node and the resolved target ``doc:*`` node. Edges are only emitted
+    when the resolved target file would itself produce a doc node by this
+    same strategy invocation (i.e. the target is in the same glob set and
+    not excluded). Anchors are stripped before resolution; missing targets,
+    self-links, and non-``.md`` links are silently skipped.
     """
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
@@ -168,13 +203,28 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         return StrategyResult(nodes, edges, discovered_from)
     discovered_from.append(str(parent.relative_to(root)) + "/")
 
-    for md in filter_glob_results(root, sorted(parent.glob(Path(pattern).name)), excludes=excludes):
+    # Pass 1: collect (path, nid) pairs and a resolved-path -> nid map so
+    # the link-extraction pass can verify each target would itself
+    # produce a node before emitting an edge.
+    md_paths: list[Path] = []
+    path_to_nid: dict[Path, str] = {}
+    for md in filter_glob_results(
+        root, sorted(parent.glob(Path(pattern).name)), excludes=excludes,
+    ):
         if md.name == "README.md":
             continue
         if should_skip(md, excludes, root=root):
             continue
-        rel_path = str(md.relative_to(root))
         nid = f"{id_prefix}/{md.stem}"
+        md_paths.append(md)
+        try:
+            path_to_nid[md.resolve()] = nid
+        except OSError:
+            path_to_nid[md] = nid
+
+    for md in md_paths:
+        rel_path = str(md.relative_to(root))
+        nid = path_to_nid.get(md.resolve(), f"{id_prefix}/{md.stem}")
         if "runbook" in id_prefix:
             label = md.stem.replace("_", " ").title()
         else:
@@ -192,13 +242,38 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             },
         }
 
-        # -- Section-level extraction (opt-in) --
-        if do_sections:
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        # -- Inter-doc link extraction --
+        link_targets: set[str] = set()
+        for href, _anchor in _extract_md_link_targets(text):
             try:
-                text = md.read_text(encoding="utf-8")
+                target_path = (md.parent / href).resolve()
             except OSError:
                 continue
+            target_nid = path_to_nid.get(target_path)
+            if target_nid is None or target_nid == nid:
+                # Unknown target (missing file, excluded, outside glob)
+                # or self-link -- skip silently.
+                continue
+            link_targets.add(target_nid)
+        for target_nid in sorted(link_targets):
+            edges.append({
+                "from": nid,
+                "to": target_nid,
+                "type": "relates_to",
+                "props": {
+                    "source_strategy": "markdown",
+                    "authority": "derived",
+                    "confidence": "inferred",
+                },
+            })
 
+        # -- Section-level extraction (opt-in) --
+        if do_sections:
             sections = _parse_sections(text)
             for sec in sections:
                 sec_nid = f"{nid}#{sec['slug']}"

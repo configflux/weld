@@ -37,6 +37,19 @@
           Edges
           <select id="edge-type-select" multiple size="7"></select>
         </label>
+        <fieldset class="origin-filter">
+          <legend>Hide</legend>
+          <label class="check">
+            <input id="hide-stdlib-check" type="checkbox">
+            Hide standard library
+            <span id="hide-stdlib-count" class="hint"></span>
+          </label>
+          <label class="check">
+            <input id="hide-external-check" type="checkbox">
+            Hide third-party dependencies
+            <span id="hide-external-count" class="hint"></span>
+          </label>
+        </fieldset>
         <label>
           Limit
           <input id="limit-input" type="number" min="20" max="2000" value="300">

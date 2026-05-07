@@ -1,0 +1,12 @@
+# dockerfile_compose fixture: pins Layer C2 (ADR 0045).
+# A change to requirements.txt must reverse-traverse to the
+# Dockerfile that COPYs it AND the compose service that builds
+# from that Dockerfile. The cache service uses image: only and
+# must NOT be reached.
+sources:
+  - glob: Dockerfile*
+    type: file
+    strategy: dockerfile
+  - glob: docker-compose.yml
+    type: config
+    strategy: compose

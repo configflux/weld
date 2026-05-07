@@ -63,6 +63,7 @@ Retrieval commands:
   brief          Agent-facing context briefing (stable JSON contract)
   trace          Startup/runtime and interaction slice
   impact         Reverse-dependency blast-radius analysis
+  capabilities   Runtime capability matrix (per-language, per-framework)
   query          Tokenized graph search
   find           File-index keyword search
   context        Node + immediate neighborhood
@@ -316,6 +317,11 @@ def _dispatch(argv: list[str] | None) -> int:
         from weld import impact as impact_mod
 
         return impact_mod.main(rest)
+
+    if subcmd == "capabilities":
+        from weld._capabilities_cli import main as capabilities_main
+
+        return capabilities_main(rest)
 
     if subcmd == "enrich":
         from weld import enrich as enrich_mod

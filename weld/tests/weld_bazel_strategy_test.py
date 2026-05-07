@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import tempfile
+import unittest
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
 from weld.strategies.bazel import extract, _parse_build_file
 
-class TestParseBuildFile:
+class TestParseBuildFile(unittest.TestCase):
     """Unit tests for the BUILD file parser."""
 
     def test_extracts_py_library(self) -> None:
@@ -23,12 +24,12 @@ py_library(
 )
 '''
         targets = _parse_build_file(text)
-        assert len(targets) == 1
+        self.assertEqual(len(targets), 1)
         t = targets[0]
-        assert t["rule"] == "py_library"
-        assert t["name"] == "runtime"
-        assert "//weld/strategies" in t["deps"]
-        assert ":yaml" in t["deps"]
+        self.assertEqual(t["rule"], "py_library")
+        self.assertEqual(t["name"], "runtime")
+        self.assertIn("//weld/strategies", t["deps"])
+        self.assertIn(":yaml", t["deps"])
 
     def test_extracts_py_test(self) -> None:
         text = '''\
@@ -44,11 +45,11 @@ py_test(
 )
 '''
         targets = _parse_build_file(text)
-        assert len(targets) == 1
+        self.assertEqual(len(targets), 1)
         t = targets[0]
-        assert t["rule"] == "py_test"
-        assert t["name"] == "contract_test"
-        assert "//weld:contract" in t["deps"]
+        self.assertEqual(t["rule"], "py_test")
+        self.assertEqual(t["name"], "contract_test")
+        self.assertIn("//weld:contract", t["deps"])
 
     def test_extracts_sh_test(self) -> None:
         text = '''\
@@ -63,10 +64,10 @@ sh_test(
 )
 '''
         targets = _parse_build_file(text)
-        assert len(targets) == 1
+        self.assertEqual(len(targets), 1)
         t = targets[0]
-        assert t["rule"] == "sh_test"
-        assert t["name"] == "weld_test"
+        self.assertEqual(t["rule"], "sh_test")
+        self.assertEqual(t["name"], "weld_test")
 
     def test_extracts_multiple_targets(self) -> None:
         text = '''\
@@ -82,10 +83,10 @@ py_library(
 )
 '''
         targets = _parse_build_file(text)
-        assert len(targets) == 2
+        self.assertEqual(len(targets), 2)
         names = [t["name"] for t in targets]
-        assert "helpers" in names
-        assert "strategies" in names
+        self.assertIn("helpers", names)
+        self.assertIn("strategies", names)
 
     def test_ignores_unknown_rules(self) -> None:
         text = '''\
@@ -101,12 +102,12 @@ py_library(
 )
 '''
         targets = _parse_build_file(text)
-        assert len(targets) == 1
-        assert targets[0]["name"] == "lib"
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["name"], "lib")
 
     def test_empty_file(self) -> None:
         targets = _parse_build_file("")
-        assert targets == []
+        self.assertEqual(targets, [])
 
     def test_extracts_genrule(self) -> None:
         text = '''\
@@ -118,11 +119,11 @@ genrule(
 )
 '''
         targets = _parse_build_file(text)
-        assert len(targets) == 1
-        assert targets[0]["rule"] == "genrule"
-        assert targets[0]["name"] == "gen_proto"
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["rule"], "genrule")
+        self.assertEqual(targets[0]["name"], "gen_proto")
 
-class TestBazelExtract:
+class TestBazelExtract(unittest.TestCase):
     """Integration tests for the Bazel strategy extract() function."""
 
     def test_extracts_build_and_test_targets(self) -> None:
@@ -149,26 +150,26 @@ py_library(
             source = {"glob": "weld/tests/BUILD.bazel"}
             result = extract(root, source, {})
 
-            assert isinstance(result, StrategyResult)
-            assert len(result.nodes) == 2
-            assert len(result.discovered_from) == 1
+            self.assertIsInstance(result, StrategyResult)
+            self.assertEqual(len(result.nodes), 2)
+            self.assertEqual(len(result.discovered_from), 1)
 
             # Check test target
             test_nodes = {k: v for k, v in result.nodes.items()
                          if v["type"] == "test-target"}
-            assert len(test_nodes) == 1
+            self.assertEqual(len(test_nodes), 1)
             test_nid = list(test_nodes.keys())[0]
             test_node = test_nodes[test_nid]
-            assert test_node["props"]["rule"] == "py_test"
-            assert test_node["props"]["source_strategy"] == "bazel"
-            assert test_node["props"]["authority"] == "canonical"
-            assert test_node["props"]["confidence"] == "definite"
-            assert "test" in test_node["props"]["roles"]
+            self.assertEqual(test_node["props"]["rule"], "py_test")
+            self.assertEqual(test_node["props"]["source_strategy"], "bazel")
+            self.assertEqual(test_node["props"]["authority"], "canonical")
+            self.assertEqual(test_node["props"]["confidence"], "definite")
+            self.assertIn("test", test_node["props"]["roles"])
 
             # Check build target
             build_nodes = {k: v for k, v in result.nodes.items()
                           if v["type"] == "build-target"}
-            assert len(build_nodes) == 1
+            self.assertEqual(len(build_nodes), 1)
 
     def test_recursive_glob(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -192,8 +193,8 @@ py_test(
             source = {"glob": "**/BUILD.bazel"}
             result = extract(root, source, {})
 
-            assert len(result.nodes) == 2
-            assert len(result.discovered_from) == 2
+            self.assertEqual(len(result.nodes), 2)
+            self.assertEqual(len(result.discovered_from), 2)
 
     def test_empty_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -201,9 +202,9 @@ py_test(
             source = {"glob": "nonexistent/BUILD.bazel"}
             result = extract(root, source, {})
 
-            assert result.nodes == {}
-            assert result.edges == []
-            assert result.discovered_from == []
+            self.assertEqual(result.nodes, {})
+            self.assertEqual(result.edges, [])
+            self.assertEqual(result.discovered_from, [])
 
     def test_node_metadata_contract(self) -> None:
         """Every node must include source_strategy, authority, confidence, roles."""
@@ -220,11 +221,11 @@ py_library(
 
             for nid, node in result.nodes.items():
                 props = node["props"]
-                assert props["source_strategy"] == "bazel"
-                assert props["authority"] == "canonical"
-                assert props["confidence"] == "definite"
-                assert isinstance(props["roles"], list)
-                assert len(props["roles"]) > 0
+                self.assertEqual(props["source_strategy"], "bazel")
+                self.assertEqual(props["authority"], "canonical")
+                self.assertEqual(props["confidence"], "definite")
+                self.assertIsInstance(props["roles"], list)
+                self.assertGreater(len(props["roles"]), 0)
 
     def test_edge_metadata_contract(self) -> None:
         """Every edge must include source_strategy and confidence."""
@@ -241,9 +242,9 @@ py_test(
             result = extract(root, source, {})
 
             for edge in result.edges:
-                assert "source_strategy" in edge["props"]
-                assert edge["props"]["source_strategy"] == "bazel"
-                assert "confidence" in edge["props"]
+                self.assertIn("source_strategy", edge["props"])
+                self.assertEqual(edge["props"]["source_strategy"], "bazel")
+                self.assertIn("confidence", edge["props"])
 
     def test_bazel_label_in_props(self) -> None:
         """Targets must have a bazel_label prop for tooling lookup."""
@@ -260,10 +261,10 @@ py_library(
             source = {"glob": "weld/BUILD.bazel"}
             result = extract(root, source, {})
 
-            assert len(result.nodes) == 1
+            self.assertEqual(len(result.nodes), 1)
             node = list(result.nodes.values())[0]
-            assert "bazel_label" in node["props"]
-            assert node["props"]["bazel_label"] == "//weld:runtime"
+            self.assertIn("bazel_label", node["props"])
+            self.assertEqual(node["props"]["bazel_label"], "//weld:runtime")
 
     def test_excludes_worktree_copies(self) -> None:
         """BUILD files inside .claude/worktrees should be filtered out."""
@@ -290,5 +291,9 @@ py_library(
             result = extract(root, source, {})
 
             names = [n["props"].get("bazel_label", "") for n in result.nodes.values()]
-            assert any("real" in name for name in names)
-            assert not any("shadow" in name for name in names)
+            self.assertTrue(any("real" in name for name in names))
+            self.assertFalse(any("shadow" in name for name in names))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -149,7 +149,7 @@ class ImpactAnalysisTest(unittest.TestCase):
 
         result = impact(graph, target="symbol:py:weld.graph:Graph.query", depth=2)
 
-        self.assertEqual(result["impact_version"], 1)
+        self.assertEqual(result["impact_version"], 2)
         self.assertEqual(result["target"]["kind"], "node")
         direct = {node["id"] for node in result["direct_dependents"]}
         transitive = {node["id"] for node in result["transitive_dependents"]}
@@ -211,7 +211,19 @@ class ImpactAnalysisTest(unittest.TestCase):
 
         self.assertEqual(result["direct_dependents"], [])
         self.assertEqual(result["transitive_dependents"], [])
-        self.assertEqual(result["warnings"], ["no nodes matched target: missing.py"])
+        # ``warnings`` is now a structured dict (IMPACT_VERSION 2). The free-form
+        # message moves to ``warnings.messages``; the new fields default to
+        # empty/zero/None so consumers can rely on their presence.
+        self.assertIsInstance(result["warnings"], dict)
+        self.assertEqual(
+            result["warnings"]["messages"],
+            ["no nodes matched target: missing.py"],
+        )
+        self.assertEqual(result["warnings"]["unresolved_callsites"], 0)
+        self.assertEqual(result["warnings"]["speculative_edges"], 0)
+        self.assertIsNone(result["warnings"]["stale_graph"])
+        self.assertEqual(result["warnings"]["out_of_scope_inputs"], [])
+        self.assertEqual(result["warnings"]["low_capability_inputs"], [])
 
     def test_symbol_only_dependents_still_surface_cli_and_mcp_risk(self) -> None:
         from weld.graph import Graph

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import unittest
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
@@ -40,7 +41,7 @@ The extraction worker processes raw artifacts from the acquisition stage.
 - Timeout on slow retailer sites
 """
 
-class TestRunbookExtract:
+class TestRunbookExtract(unittest.TestCase):
     """Tests for runbook strategy extract()."""
 
     def test_extracts_runbook_node(self) -> None:
@@ -53,11 +54,11 @@ class TestRunbookExtract:
             source = {"glob": "docs/runbooks/*.md"}
             result = extract(root, source, {})
 
-            assert isinstance(result, StrategyResult)
-            assert len(result.nodes) == 1
+            self.assertIsInstance(result, StrategyResult)
+            self.assertEqual(len(result.nodes), 1)
             nid = list(result.nodes.keys())[0]
             node = result.nodes[nid]
-            assert node["type"] == "runbook"
+            self.assertEqual(node["type"], "runbook")
 
     def test_runbook_label_from_heading(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -70,7 +71,7 @@ class TestRunbookExtract:
             result = extract(root, source, {})
 
             node = list(result.nodes.values())[0]
-            assert node["label"] == "Acquisition Worker Runbook"
+            self.assertEqual(node["label"], "Acquisition Worker Runbook")
 
     def test_normalized_metadata_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -84,12 +85,12 @@ class TestRunbookExtract:
 
             for nid, node in result.nodes.items():
                 props = node["props"]
-                assert props["source_strategy"] == "runbook"
-                assert props["authority"] == "canonical"
-                assert props["confidence"] == "definite"
-                assert isinstance(props["roles"], list)
-                assert "doc" in props["roles"]
-                assert props["doc_kind"] == "runbook"
+                self.assertEqual(props["source_strategy"], "runbook")
+                self.assertEqual(props["authority"], "canonical")
+                self.assertEqual(props["confidence"], "definite")
+                self.assertIsInstance(props["roles"], list)
+                self.assertIn("doc", props["roles"])
+                self.assertEqual(props["doc_kind"], "runbook")
 
     def test_multiple_runbooks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -102,8 +103,8 @@ class TestRunbookExtract:
             source = {"glob": "docs/runbooks/*.md"}
             result = extract(root, source, {})
 
-            assert len(result.nodes) == 2
-            assert len(result.discovered_from) == 2
+            self.assertEqual(len(result.nodes), 2)
+            self.assertEqual(len(result.discovered_from), 2)
 
     def test_skips_readme(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -116,7 +117,7 @@ class TestRunbookExtract:
             source = {"glob": "docs/runbooks/*.md"}
             result = extract(root, source, {})
 
-            assert len(result.nodes) == 1
+            self.assertEqual(len(result.nodes), 1)
 
     def test_exclude_pattern(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -129,7 +130,7 @@ class TestRunbookExtract:
                       "exclude": ["acquisition_worker.md"]}
             result = extract(root, source, {})
 
-            assert len(result.nodes) == 0
+            self.assertEqual(len(result.nodes), 0)
 
     def test_missing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -137,8 +138,8 @@ class TestRunbookExtract:
             source = {"glob": "docs/runbooks/*.md"}
             result = extract(root, source, {})
 
-            assert result.nodes == {}
-            assert result.edges == []
+            self.assertEqual(result.nodes, {})
+            self.assertEqual(result.edges, [])
 
     def test_discovered_from_populated(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -150,7 +151,7 @@ class TestRunbookExtract:
             source = {"glob": "docs/runbooks/*.md"}
             result = extract(root, source, {})
 
-            assert "docs/runbooks/acquisition_worker.md" in result.discovered_from
+            self.assertIn("docs/runbooks/acquisition_worker.md", result.discovered_from)
 
     def test_service_association_edge(self) -> None:
         """Runbooks mentioning a worker stage should produce edges."""
@@ -166,7 +167,7 @@ class TestRunbookExtract:
             # The runbook filename contains "acquisition" which maps to the
             # acquisition stage — an edge should be created
             docs_edges = [e for e in result.edges if e["type"] == "documents"]
-            assert len(docs_edges) >= 1
+            self.assertGreaterEqual(len(docs_edges), 1)
 
     def test_node_id_uses_runbook_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -179,7 +180,7 @@ class TestRunbookExtract:
             result = extract(root, source, {})
 
             nid = list(result.nodes.keys())[0]
-            assert nid.startswith("runbook:")
+            self.assertTrue(nid.startswith("runbook:"))
 
     def test_fallback_label_from_filename(self) -> None:
         """When no heading is found, label from filename."""
@@ -195,4 +196,8 @@ class TestRunbookExtract:
             result = extract(root, source, {})
 
             node = list(result.nodes.values())[0]
-            assert "Replay" in node["label"]
+            self.assertIn("Replay", node["label"])
+
+
+if __name__ == "__main__":
+    unittest.main()

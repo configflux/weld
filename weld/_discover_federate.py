@@ -39,6 +39,15 @@ import hashlib
 import sys
 from pathlib import Path
 
+from weld._discover_federate_origin import (
+    federated_cpp_project_modules,
+    federated_project_modules_for_language,
+    federated_python_project_modules,
+    retag_external_cpp_origins,
+    retag_external_origins_for_language,
+    retag_external_python_origins,
+    retag_federated_origins_on_disk,
+)
 from weld._workspace_inspect import resolve_child_root
 from weld.cross_repo import ResolverContext, run_resolvers
 from weld.federation_support import edge_key, sorted_edges
@@ -46,7 +55,16 @@ from weld.graph import Graph
 from weld.workspace import WorkspaceConfig
 from weld.workspace_state import WorkspaceState
 
-__all__ = ["merge_cross_repo_edges"]
+__all__ = [
+    "federated_cpp_project_modules",
+    "federated_project_modules_for_language",
+    "federated_python_project_modules",
+    "merge_cross_repo_edges",
+    "retag_external_cpp_origins",
+    "retag_external_origins_for_language",
+    "retag_external_python_origins",
+    "retag_federated_origins_on_disk",
+]
 
 
 def _load_present_child_graph(

@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import re
 
 from weld._node_ids import package_id as _canonical_package_id
+from weld.strategies._java_origin import (
+    classify_import_package,
+    load_pom_metadata,
+)
 
 _SAFE_PACKAGE_RE = re.compile(r"[^0-9A-Za-z_.-]+")
 _VISIBILITY_RE = re.compile(r"\b(public|private|protected)\b")
+
+
+def build_caches(root: Path, language: str) -> dict[str, frozenset[str]] | None:
+    """Pre-compute Java project metadata used for import-origin tagging.
+
+    Returned mapping is splatted as kwargs into :func:`enrich_file_node`
+    so the per-file path is constant time. ``None`` is returned for any
+    non-Java language so the caller can treat the result uniformly with
+    the other per-language cache builders.
+    """
+    if language != "java":
+        return None
+    return load_pom_metadata(root)
 
 
 def enrich_file_node(
@@ -18,6 +36,9 @@ def enrich_file_node(
     symbols: dict[str, list[str]],
     source_text: str,
     source_strategy: str,
+    *,
+    project_groupids: frozenset[str] | None = None,
+    dependency_groupids: frozenset[str] | None = None,
 ) -> None:
     """Add Java-specific metadata and import dependency nodes."""
     for key in ("exports", "classes", "imports"):
@@ -50,6 +71,8 @@ def enrich_file_node(
         file_node_id,
         node_props.get("imports_from", []),
         source_strategy,
+        project_groupids=project_groupids,
+        dependency_groupids=dependency_groupids,
     )
 
 
@@ -59,8 +82,13 @@ def _add_import_dependencies(
     file_node_id: str,
     imports: list[str],
     source_strategy: str,
+    *,
+    project_groupids: frozenset[str] | None = None,
+    dependency_groupids: frozenset[str] | None = None,
 ) -> None:
     """Create package nodes and depends_on edges for each import."""
+    project_groupids = project_groupids or frozenset()
+    dependency_groupids = dependency_groupids or frozenset()
     seen: set[str] = set()
     for import_name in imports:
         # Extract the package portion (everything up to the last dot).
@@ -71,12 +99,24 @@ def _add_import_dependencies(
         package_id = _package_node_id(package)
         legacy_pid = _legacy_package_id(package)
         aliases = sorted({legacy_pid} - {package_id})
+        # ADR 0042: classify the package against ``pom.xml`` metadata
+        # collected at discovery time. ``java.*``/``javax.*``/``jdk.*``
+        # always resolves to ``stdlib``; the project's own groupId
+        # resolves to ``project``; declared ``<dependency>`` groupIds
+        # resolve to ``external``; everything else stays
+        # ``unresolved``. Gradle parsing is tracked as a follow-up.
+        origin = classify_import_package(
+            package,
+            project_groupids=project_groupids,
+            dependency_groupids=dependency_groupids,
+        )
         package_props: dict = {
             "name": package,
             "language": "java",
             "source_strategy": source_strategy,
             "authority": "derived",
             "confidence": "definite",
+            "origin": origin,
         }
         if aliases:
             package_props["aliases"] = aliases

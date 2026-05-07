@@ -67,6 +67,7 @@ def fake_call_edges(file_path, rel_path, language, queries):  # noqa: ANN001, AR
                 "authority": "derived",
                 "confidence": "inferred",
                 "roles": ["implementation"],
+                "origin": "project",
             },
         }
     }
@@ -99,6 +100,7 @@ def fake_call_edges(file_path, rel_path, language, queries):  # noqa: ANN001, AR
                     "authority": "derived",
                     "confidence": "definite",
                     "roles": ["implementation"],
+                    "origin": "project",
                 },
             }
         callees = ["Foo::baz", "identity"]
@@ -117,6 +119,7 @@ def fake_call_edges(file_path, rel_path, language, queries):  # noqa: ANN001, AR
                     "authority": "derived",
                     "confidence": "definite",
                     "roles": ["implementation"],
+                    "origin": "project",
                 },
             }
     elif name == "test_main.cpp":
@@ -137,6 +140,7 @@ def fake_call_edges(file_path, rel_path, language, queries):  # noqa: ANN001, AR
                     "authority": "derived",
                     "confidence": "speculative",
                     "roles": ["implementation"],
+                    "origin": "unresolved",
                 },
             },
         )

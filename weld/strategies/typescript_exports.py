@@ -267,6 +267,10 @@ def _build_file_node(
         "authority": "derived",
         "confidence": confidence,
         "roles": ["implementation"],
+        # ADR 0042: ``typescript_exports`` only iterates files matched
+        # by the configured project glob, so every emitted file node
+        # is project-origin.
+        "origin": "project",
     }
     if classes:
         props["types"] = classes

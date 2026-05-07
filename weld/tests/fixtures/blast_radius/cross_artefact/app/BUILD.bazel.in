@@ -1,0 +1,16 @@
+py_library(
+    name = "lib",
+    srcs = ["lib.py"],
+)
+
+py_library(
+    name = "main",
+    srcs = ["main.py"],
+    deps = [":lib"],
+)
+
+py_test(
+    name = "lib_test",
+    srcs = ["lib_test.py"],
+    deps = [":lib"],
+)

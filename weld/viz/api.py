@@ -73,6 +73,7 @@ class VizApi:
         max_edges = params.get("max_edges", DEFAULT_MAX_EDGES)
         node_types = _csv_set(params.get("node_types"))
         edge_types = _csv_set(params.get("edge_types"))
+        hide_origins = _csv_set(params.get("hide_origins"))
         scope = str(params.get("scope") or "root")
         query = _clean(params.get("q"))
         node_id = _clean(params.get("node_id"))
@@ -89,6 +90,7 @@ class VizApi:
         if query:
             return self._query_slice(
                 query, scope, node_types=node_types, edge_types=edge_types,
+                hide_origins=hide_origins,
                 max_nodes=max_nodes, max_edges=max_edges)
 
         data = self._data_for_scope(scope)
@@ -98,6 +100,7 @@ class VizApi:
             data,
             node_types=node_types,
             edge_types=edge_types,
+            hide_origins=hide_origins,
             max_nodes=max_nodes,
             max_edges=max_edges,
         )
@@ -176,13 +179,15 @@ class VizApi:
         *,
         node_types: set[str] | None,
         edge_types: set[str] | None,
+        hide_origins: set[str] | None = None,
         max_nodes: int,
         max_edges: int,
     ) -> dict:
         if _is_child_scope(scope):
             return self._child_query_slice(
                 query, _child_name(scope), node_types=node_types,
-                edge_types=edge_types, max_nodes=max_nodes, max_edges=max_edges)
+                edge_types=edge_types, hide_origins=hide_origins,
+                max_nodes=max_nodes, max_edges=max_edges)
         graph = self._graph_for_scope(scope)
         result = graph.query(query, limit=max_nodes)
         records = list(result.get("matches", []) or [])
@@ -194,6 +199,7 @@ class VizApi:
             focus_ids=focus_ids,
             node_types=node_types,
             edge_types=edge_types,
+            hide_origins=hide_origins,
             max_nodes=max_nodes,
             max_edges=max_edges,
         )
@@ -205,6 +211,7 @@ class VizApi:
         *,
         node_types: set[str] | None,
         edge_types: set[str] | None,
+        hide_origins: set[str] | None = None,
         max_nodes: int,
         max_edges: int,
     ) -> dict:
@@ -232,6 +239,7 @@ class VizApi:
             focus_ids=focus_ids,
             node_types=node_types,
             edge_types=edge_types,
+            hide_origins=hide_origins,
             max_nodes=max_nodes,
             max_edges=max_edges,
         )

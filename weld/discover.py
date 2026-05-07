@@ -24,80 +24,34 @@ from weld._discover_empty_guard import (
     EmptyFederatedGraphRefusedError,
     enforce_nonempty_federated_write as _enforce_nonempty_federated_write,
 )
-from weld._discover_federate import merge_cross_repo_edges
+from weld._discover_federate import merge_cross_repo_edges, retag_federated_origins_on_disk
 from weld._discover_postprocess import post_process as _post_process
+from weld._discover_sidecar import (persist_file_index as _persist_file_index,
+                                    persist_query_state_sidecar
+                                    as _persist_query_state_sidecar)
+from weld._discover_state_check import (files_missing_from_graph,
+                                         graph_files_with_nodes,
+                                         save_state_for_graph)
 from weld._discover_strategies import (
     load_strategy as _load_strategy,  # noqa: F401 -- re-export for test consumers
     run_external_json as _run_external_json,  # noqa: F401 -- re-export for test consumers
     run_source as _run_source,
 )
 from weld._discover_summary import emit_summary as _emit_summary
-from weld._query_sidecar import write_sidecar_for_bytes as _write_query_sidecar_bytes
 from weld._git import get_git_sha
 from weld._yaml import parse_yaml
 from weld.contract import SCHEMA_VERSION  # noqa: F401 -- re-export for consumers
+from weld.discovery_state import (StateDiff, build_file_hashes, diff_state,
+                                   files_missing_strategy_outputs, load_state,
+                                   purge_stale_nodes, resolve_source_files)
 from weld.federation_root import build_root_meta_graph
 from weld.serializer import dumps_graph as _dumps_graph
 from weld.workspace import WorkspaceConfigError
 from weld.workspace_state import (WorkspaceLock, WorkspaceLockedError,
                                   build_workspace_state, load_workspace_config,
                                   save_workspace_state)
-from weld.discovery_state import (DiscoveryState, StateDiff, build_file_hashes,
-                                   diff_state, files_missing_strategy_outputs,
-                                   load_state, purge_stale_nodes,
-                                   resolve_source_files, save_state)
 from weld.strategies._helpers import filter_glob_results
 
-
-def _persist_query_state_sidecar(weld_dir: Path, graph: dict) -> None:
-    """Write the .weld/query_state.bin sidecar for the freshly-built graph.
-
-    ADR 0031: the inverted index, BM25 corpus, and structural-score table
-    are pure functions of the graph's node and edge sets and dominate
-    the ``wd query`` cold path. Persisting them here makes the next
-    cold ``Graph.load`` skip the rebuild. Failures inside the sidecar
-    writer are logged and swallowed -- a missing sidecar simply means
-    the next cold load rebuilds and writes one itself.
-    """
-    try:
-        from weld.query_state import build_query_state
-
-        nodes = graph.get("nodes", {})
-        edges = graph.get("edges", [])
-        graph_bytes = _dumps_graph(graph).encode("utf-8")
-        state = build_query_state(nodes, edges)
-        _write_query_sidecar_bytes(weld_dir, graph_bytes, nodes, edges, state)
-    except Exception as exc:  # noqa: BLE001 -- sidecar is best-effort.
-        print(
-            f"[weld] notice: skipped query-state sidecar write: {exc}",
-            file=sys.stderr,
-        )
-
-
-def _persist_file_index(root: Path) -> None:
-    """Refresh the keyword-to-file index alongside the graph.
-
-    The file index backs ``wd find`` and is functionally a sibling of
-    ``graph.json``: callers expect both to be in sync after a discovery
-    run. Historically only the standalone ``wd build-index`` verb wrote
-    it, so a fresh checkout that ran ``wd discover`` could leave
-    ``wd find`` returning empty results for symbols that clearly
-    existed on disk and in the graph (the canonical dogfood gap).
-
-    Failures here are logged and swallowed -- a missing index simply
-    means the next ``wd build-index`` (or the next discover) rebuilds
-    one. We never let an indexing hiccup fail the whole discovery run.
-    """
-    try:
-        from weld.file_index import build_file_index, save_file_index
-
-        index = build_file_index(root)
-        save_file_index(root, index)
-    except Exception as exc:  # noqa: BLE001 -- index refresh is best-effort.
-        print(
-            f"[weld] notice: skipped file-index refresh: {exc}",
-            file=sys.stderr,
-        )
 
 def _discover_single_repo(
     root: Path,
@@ -178,7 +132,7 @@ def _discover_single_repo(
             edges.extend(r.edges)
             df.extend(r.discovered_from)
         graph = _post_process(nodes, edges, context, config, root, df)
-        save_state(root, DiscoveryState(files=current_hashes))
+        save_state_for_graph(root, current_hashes, graph)
         _persist_query_state_sidecar(root / ".weld", graph)
         _persist_file_index(root)
         return graph
@@ -186,10 +140,19 @@ def _discover_single_repo(
     # --- Incremental path ---
     assert existing_graph is not None and old_state is not None
     missing_outputs = files_missing_strategy_outputs(existing_graph, source_file_map)
-    dirty = state_diff.dirty | missing_outputs
+    # Per-file audit: catches files that are state-disk-consistent
+    # but absent from a graph that predates them, even when sibling
+    # files in the same source still have nodes (which satisfies the
+    # source-level audit above). ``state.files_with_no_nodes`` exempts
+    # legitimate empty-output files from re-running.
+    missing_per_file = files_missing_from_graph(
+        old_state, set(current_hashes.keys()),
+        graph_files_with_nodes(existing_graph),
+    )
+    dirty = state_diff.dirty | missing_outputs | missing_per_file
     stale = dirty | state_diff.deleted
 
-    if not state_diff.has_changes and not missing_outputs:
+    if not state_diff.has_changes and not missing_outputs and not missing_per_file:
         print("[weld] notice: no files changed, graph is up to date", file=sys.stderr)
         refreshed = copy.deepcopy(existing_graph)
         refreshed["meta"]["version"] = SCHEMA_VERSION
@@ -199,7 +162,7 @@ def _discover_single_repo(
             refreshed["meta"]["git_sha"] = sha
         if not refreshed["meta"].get("discovered_from"):
             refreshed["meta"]["discovered_from"] = current_file_set
-        save_state(root, DiscoveryState(files=current_hashes))
+        save_state_for_graph(root, current_hashes, refreshed)
         _persist_query_state_sidecar(root / ".weld", refreshed)
         _persist_file_index(root)
         return refreshed
@@ -227,7 +190,7 @@ def _discover_single_repo(
     old_df = [p for p in existing_graph.get("meta", {}).get("discovered_from", []) if p not in state_diff.deleted]
     new_df = [str(p) for files in source_file_map for p in files if p in dirty]
     graph = _post_process(ex_nodes, ex_edges, context, config, root, old_df + new_df)
-    save_state(root, DiscoveryState(files=current_hashes))
+    save_state_for_graph(root, current_hashes, graph)
     _persist_query_state_sidecar(root / ".weld", graph)
     _persist_file_index(root)
     return graph
@@ -281,6 +244,10 @@ def discover(
                 incremental=incremental, safe=safe,
             )
             state = build_workspace_state(root, workspace_config)
+        # ADR 0042 §Federation: re-tag cross-child Python targets that
+        # each child's python_callgraph saw as origin="external" because
+        # it only knew its own glob.
+        retag_federated_origins_on_disk(root, workspace_config, state)
         graph = build_root_meta_graph(root, workspace_config, state)
         # Invoke cross-repo resolvers after the meta-graph is built and
         # after any recurse pass has refreshed each child's graph.json:

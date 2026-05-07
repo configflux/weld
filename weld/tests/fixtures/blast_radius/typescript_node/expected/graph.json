@@ -1,0 +1,115 @@
+{
+  "edges": [
+    {
+      "from": "config:package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "build-target:npm:typescript-node-fixture:build",
+      "type": "configures"
+    },
+    {
+      "from": "config:package_json",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "manifest"
+      },
+      "to": "test-target:npm:typescript-node-fixture:test",
+      "type": "configures"
+    }
+  ],
+  "meta": {
+    "schema_version": 1,
+    "version": 5
+  },
+  "nodes": {
+    "build-target:npm:typescript-node-fixture:build": {
+      "label": "npm run build",
+      "props": {
+        "authority": "canonical",
+        "command": "tsc",
+        "confidence": "definite",
+        "file": "package.json",
+        "roles": [
+          "build"
+        ],
+        "script_name": "build",
+        "source_strategy": "manifest"
+      },
+      "type": "build-target"
+    },
+    "config:package_json": {
+      "label": "package.json (typescript-node-fixture)",
+      "props": {
+        "authority": "canonical",
+        "confidence": "definite",
+        "file": "package.json",
+        "package_name": "typescript-node-fixture",
+        "roles": [
+          "config"
+        ],
+        "source_strategy": "manifest"
+      },
+      "type": "config"
+    },
+    "file:src/lib": {
+      "label": "lib",
+      "props": {
+        "aliases": [
+          "file:lib"
+        ],
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "add",
+          "double"
+        ],
+        "file": "src/lib.ts",
+        "line_count": 7,
+        "origin": "project",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "file:src/main": {
+      "label": "main",
+      "props": {
+        "aliases": [
+          "file:main"
+        ],
+        "authority": "derived",
+        "confidence": "inferred",
+        "exports": [
+          "run"
+        ],
+        "file": "src/main.ts",
+        "line_count": 5,
+        "origin": "project",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "typescript_exports"
+      },
+      "type": "file"
+    },
+    "test-target:npm:typescript-node-fixture:test": {
+      "label": "npm run test",
+      "props": {
+        "authority": "canonical",
+        "command": "jest",
+        "confidence": "definite",
+        "file": "package.json",
+        "roles": [
+          "test"
+        ],
+        "script_name": "test",
+        "source_strategy": "manifest"
+      },
+      "type": "test-target"
+    }
+  }
+}

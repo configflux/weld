@@ -248,6 +248,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 "confidence": "definite",
                 "roles": ["implementation"],
                 "aliases": aliases,
+                # ADR 0042: project files are always project-origin --
+                # the strategy only walks files inside the discovered
+                # glob, which by construction is the project tree.
+                "origin": "project",
             },
         }
         if package_id:

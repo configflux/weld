@@ -1,0 +1,387 @@
+{
+  "affected_surfaces": {
+    "api_endpoints": [],
+    "boundaries": [],
+    "cli_commands": [],
+    "entrypoints": [],
+    "mcp_tools": [],
+    "tests": [
+      {
+        "file": "foo_test.py",
+        "hop": 1,
+        "id": "file:foo_test",
+        "type": "file"
+      },
+      {
+        "file": "BUILD.bazel",
+        "hop": 2,
+        "id": "test-target://:foo_test",
+        "type": "test-target"
+      }
+    ]
+  },
+  "capabilities": {
+    "frameworks": {
+      "bazel": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "bd": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "boundary": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "compose": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "config": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "dockerfile": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "events": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "fastapi": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "github_workflow": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "helm": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "http_client": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "k8s": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "make": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "markdown": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "npm": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "proto": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "pydantic": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "ros2": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "runbook": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "runtime_contract": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "sqlalchemy": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "terraform": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "worker": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      }
+    },
+    "languages": {
+      "cpp": {
+        "calls": false,
+        "file": false,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": false
+      },
+      "csharp": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "go": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "java": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "javascript": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "python": {
+        "calls": true,
+        "file": true,
+        "imports": true,
+        "module": true,
+        "symbols": true,
+        "tests": true
+      },
+      "rust": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      },
+      "typescript": {
+        "calls": false,
+        "file": true,
+        "imports": false,
+        "module": false,
+        "symbols": false,
+        "tests": true
+      }
+    }
+  },
+  "depth": 3,
+  "direct_dependents": [
+    {
+      "hop": 1,
+      "id": "build-target://:foo",
+      "label": "//:foo",
+      "props": {
+        "authority": "canonical",
+        "bazel_label": "//:foo",
+        "confidence": "definite",
+        "file": "BUILD.bazel",
+        "roles": [
+          "build"
+        ],
+        "rule": "py_library",
+        "source_strategy": "bazel",
+        "unresolved_labels": [],
+        "unresolved_labels_dropped": 0
+      },
+      "type": "build-target"
+    },
+    {
+      "hop": 1,
+      "id": "file:foo_test",
+      "label": "foo_test",
+      "props": {
+        "aliases": [
+          "file:tests/foo_test"
+        ],
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "foo_test.py",
+        "kind": "test",
+        "roles": [
+          "test"
+        ],
+        "source_strategy": "test_peer"
+      },
+      "type": "file"
+    },
+    {
+      "hop": 1,
+      "id": "pkg:foo",
+      "label": "foo",
+      "props": {
+        "authority": "manual",
+        "confidence": "definite",
+        "source_strategy": "topology"
+      },
+      "type": "package"
+    }
+  ],
+  "edges": [
+    {
+      "from": "build-target://:foo",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "file:foo",
+      "type": "contains"
+    },
+    {
+      "from": "file:foo_test",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "test_peer"
+      },
+      "to": "file:foo",
+      "type": "tests"
+    },
+    {
+      "from": "pkg:foo",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:foo",
+      "type": "contains"
+    },
+    {
+      "from": "test-target://:foo_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "build-target://:foo",
+      "type": "depends_on"
+    },
+    {
+      "from": "test-target://:foo_test",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "bazel"
+      },
+      "to": "build-target://:foo",
+      "type": "tests"
+    },
+    {
+      "from": "pkg:foo",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:foo_test",
+      "type": "contains"
+    },
+    {
+      "from": "test-target://:foo_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "file:foo_test",
+      "type": "contains"
+    }
+  ],
+  "impact_version": 2,
+  "risk_level": "LOW",
+  "target": {
+    "input": "foo.py",
+    "kind": "path",
+    "resolved_nodes": [
+      "file:foo"
+    ],
+    "unresolved_inputs": []
+  },
+  "transitive_dependents": [
+    {
+      "hop": 2,
+      "id": "test-target://:foo_test",
+      "label": "//:foo_test",
+      "props": {
+        "authority": "canonical",
+        "bazel_label": "//:foo_test",
+        "confidence": "definite",
+        "file": "BUILD.bazel",
+        "roles": [
+          "test"
+        ],
+        "rule": "py_test",
+        "source_strategy": "bazel",
+        "unresolved_labels": [],
+        "unresolved_labels_dropped": 0
+      },
+      "type": "test-target"
+    }
+  ],
+  "warnings": {
+    "low_capability_inputs": [],
+    "messages": [],
+    "out_of_scope_inputs": [],
+    "speculative_edges": 0,
+    "stale_graph": false,
+    "unresolved_callsites": 0
+  }
+}

@@ -153,6 +153,44 @@ button:focus-visible {
   padding: 4px;
 }
 
+.rail .origin-filter {
+  margin: 0 0 14px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rail .origin-filter legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rail .origin-filter label.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  font-weight: 500;
+}
+
+.rail .origin-filter input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.rail .origin-filter .hint {
+  color: var(--muted);
+  font-weight: 400;
+}
+
 #cy {
   grid-column: 2;
   grid-row: 2;

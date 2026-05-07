@@ -10,14 +10,29 @@
 # Fields:
 #   id           : short stable id (t01..)
 #   prompt       : human prompt
-#   category     : navigation | dependency | callgraph
+#   category     : navigation | comprehension | refactor | callgraph |
+#                  dependency
+#                  -- runner routing (weld/bench_tasks/compare.py):
+#                       navigation -> wd brief
+#                       callgraph (with symbol) -> wd references + file index
+#                       anything else -> wd query
+#                  comprehension and refactor are reporting-only labels --
+#                  they share the query surface but tell a reader why the
+#                  task is in the corpus.
 #   term         : token used by both the grep baseline and the weld
 #                  query/brief/references call
 #   symbol       : (optional) bare symbol name for callgraph prompts
 #   answer_files : repo-relative path list -- the expected hits
 #
-# Edit freely. New tasks are picked up automatically.
+# Sourcing: tasks are derived from real questions surfaced in this repo
+# (bd issue history, inspector epic, recent commit topics, dogfood gaps).
+# Where a task is taken from a specific signal, the source is noted in a
+# comment above the entry. Edit freely. New tasks are picked up
+# automatically. Keep answer_files honest -- bench credibility depends on
+# the answer key being what an operator would accept, not what we wish
+# weld would find.
 tasks:
+  # --- Navigation (where is X? what file defines Y?) -------------------
   - id: t01
     prompt: "Where is the wd brief surface implemented?"
     category: navigation
@@ -46,3 +61,324 @@ tasks:
     term: discover
     answer_files:
       - weld/discover.py
+
+  # Source: dogfood gap captured during multi-language origin work --
+  # `wd query` for an underscored module-level term returned empty
+  # while `wd find` handled the same input. Kept as a regression marker
+  # for multi-token query ranking.
+  - id: t05
+    prompt: "Where is the Rust origin classifier implemented?"
+    category: navigation
+    term: _rust_origin
+    answer_files:
+      - weld/strategies/_rust_origin.py
+
+  # --- Comprehension (how does X work? what calls X?) ------------------
+  # Source: inspector epic theme #1 -- 'wd query' multi-word retrieval
+  # quality is one of the headline gaps. This task asks for the live
+  # telemetry surface, which spans recorder + redactor + allowlist.
+  - id: t06
+    prompt: "How does weld telemetry redact arguments before recording?"
+    category: comprehension
+    term: telemetry
+    answer_files:
+      - weld/_telemetry.py
+      - weld/_telemetry_redact.py
+      - weld/_telemetry_allowlist.py
+
+  # Source: ADR 0042 (graph-node-origin) cited across recent fix commits
+  # (Java / Rust origin classification). Agents repeatedly ask which
+  # files implement the per-language origin contract.
+  - id: t07
+    prompt: "Which strategies implement per-language import origin classification?"
+    category: comprehension
+    term: origin
+    answer_files:
+      - weld/strategies/_python_origin.py
+      - weld/strategies/_rust_origin.py
+      - weld/strategies/_java_origin.py
+      - weld/strategies/_go_origin.py
+      - weld/strategies/_typescript_origin.py
+      - weld/strategies/_csharp_origin.py
+      - weld/strategies/_cpp_origin.py
+      - weld/strategies/_language_origin.py
+
+  # Source: inspector epic 'horizon' -- bench corpus expansion (this very
+  # task). Asks where the comparative runner lives so a contributor can
+  # extend it.
+  - id: t08
+    prompt: "How does the comparative bench score weld against grep?"
+    category: comprehension
+    term: compare
+    answer_files:
+      - weld/bench_tasks/compare.py
+      - weld/bench_tasks/report.py
+
+  # Source: ADR 0035 (local-telemetry) and recurring agent question --
+  # 'where does staleness come from?' covers both the staleness module
+  # and the discovery state writer it consults.
+  - id: t09
+    prompt: "How does wd stale decide a graph is stale?"
+    category: comprehension
+    term: stale
+    answer_files:
+      - weld/_staleness.py
+
+  # --- Refactor / impact (what breaks if I change X?) ------------------
+  # Source: inspector epic theme #1 + recent commits touching graph
+  # closure. Renaming Graph would cascade across query, brief,
+  # references, callers, and the comparative bench's weld_files_and_text.
+  # Note: routes through query (category != 'navigation' / 'callgraph').
+  # We keep `symbol` here for documentation -- the loader preserves it
+  # and a future runner change could promote this to callgraph.
+  - id: t10
+    prompt: "What breaks if I rename the Graph class?"
+    category: refactor
+    term: Graph
+    symbol: Graph
+    answer_files:
+      - weld/graph.py
+      - weld/brief.py
+      - weld/bench_tasks/compare.py
+      - weld/_query_sidecar.py
+
+  # Source: ADR 0033 (bootstrap managed content) + ADR 0028 (federation
+  # worktree resolution). Concept node IDs are produced by multiple
+  # strategies; touching the helper would ripple.
+  - id: t11
+    prompt: "What depends on the node-ID helpers if I change the slug format?"
+    category: refactor
+    term: _node_ids
+    answer_files:
+      - weld/_node_ids.py
+      - weld/strategies/concept_from_bd.py
+
+  # Source: ADR 0044 (bazel srcs/deps edges) -- changing the Bazel
+  # strategy is a known multi-file ripple (strategy + tests + edge
+  # vocabulary).
+  - id: t12
+    prompt: "What is affected if I change the Bazel discovery strategy?"
+    category: refactor
+    term: bazel
+    answer_files:
+      - weld/strategies/bazel.py
+      - weld/strategies/_bazel_labels.py
+
+  # === Second increment (bd 6fdc) ====================================
+  # Sourcing notes for this batch (12 -> 26 tasks):
+  # - Comprehension tasks (+5) track recently-shipped surfaces (origin
+  #   classification, blast-radius, dockerfile/compose, multilang
+  #   test-peer, federation) so the corpus exercises the parts of the
+  #   codebase agents actually have to reason about today.
+  # - Refactor tasks (+5) were chosen against the ADR-cited ripple sets
+  #   (ADR 0044/0045/0046/0047) plus high-fan-in helpers (graph
+  #   loader, query path, telemetry), where Bazel srcs/deps and import
+  #   relationships make the answer key concrete.
+  # - Callgraph tasks (+3) are introduced so the references surface
+  #   gets non-trivial corpus coverage. Symbols are picked for low
+  #   ambiguity (single definition site, verified via grep).
+  # - One polyrepo-federation task (t15) per the bd 6fdc requirement
+  #   ("federation surface is undertested in the corpus").
+  # - Navigation (+1) gets a single addition for the language-origin
+  #   contract module; the category was already at a healthy floor.
+
+  # --- Navigation (continued) ------------------------------------------
+  # Source: ADR 0042 (graph-node-origin) -- agents repeatedly ask where
+  # the per-language origin contract lives. The contract module itself
+  # is more useful than any single language flavour as a navigation hit.
+  - id: t13
+    prompt: "Where is the per-language origin contract defined?"
+    category: navigation
+    term: _language_origin
+    answer_files:
+      - weld/strategies/_language_origin.py
+
+  # --- Comprehension (continued) ---------------------------------------
+  # Source: inspector epic theme #1 -- 'wd query' multi-word retrieval
+  # quality. Ranking is the headline gap; the ranker plus its
+  # synonyms/alias inputs are the answer.
+  - id: t14
+    prompt: "How does wd query rank results?"
+    category: comprehension
+    term: ranking
+    answer_files:
+      - weld/ranking.py
+      - weld/query_index.py
+      - weld/graph_query.py
+
+  # Source: ADR 0011 (polyrepo-federation) + ADR 0028 (federation
+  # worktree resolution). Federation-surface task per the bd 6fdc
+  # requirement; weld/federation.py is the entry point and the
+  # _discover_federate* modules orchestrate child-graph merge.
+  - id: t15
+    prompt: "How does weld federate child repositories into a root graph?"
+    category: comprehension
+    term: federation
+    answer_files:
+      - weld/federation.py
+      - weld/federation_root.py
+      - weld/federation_support.py
+      - weld/_discover_federate.py
+      - weld/_discover_federate_origin.py
+
+  # Source: ADR 0043 (blast-radius extensions). Blast-radius is one of
+  # the headline impact features; the impact_* split is the right
+  # answer for "what is the impact engine".
+  - id: t16
+    prompt: "How does the impact engine compute blast radius?"
+    category: comprehension
+    term: impact
+    answer_files:
+      - weld/impact.py
+      - weld/impact_core.py
+      - weld/impact_surfaces.py
+      - weld/impact_cli.py
+
+  # Source: ADR 0024 (discover safe-mode) + ADR 0025 (wd-security trust
+  # posture). The --safe boundary is enforced in two places: discovery
+  # (project-local strategy gating) and enrichment (provider gating).
+  # Verified via `grep -rln "\-\-safe\|safe_mode" weld/` -- the two
+  # core consumers are weld/discover.py and weld/_enrich_safe.py.
+  - id: t17
+    prompt: "How does wd enforce its --safe trust boundary?"
+    category: comprehension
+    term: safe
+    answer_files:
+      - weld/discover.py
+      - weld/_discover_strategies.py
+      - weld/_enrich_safe.py
+      - weld/_security_posture.py
+
+  # Source: ADR 0045 (dockerfile/compose edges). Recently shipped
+  # surface; agents now ask "what does weld extract from a Dockerfile".
+  - id: t18
+    prompt: "How does weld extract container deployment edges from Dockerfiles?"
+    category: comprehension
+    term: dockerfile
+    answer_files:
+      - weld/strategies/dockerfile.py
+      - weld/strategies/compose.py
+
+  # --- Refactor / impact (continued) -----------------------------------
+  # Source: ADR 0046 (multilang test-peer). The test_peer coordinator
+  # delegates to _test_peer_<lang> helpers; touching the coordinator
+  # ripples through every language helper at minimum.
+  - id: t19
+    prompt: "What breaks if I change the test_peer strategy contract?"
+    category: refactor
+    term: test_peer
+    answer_files:
+      - weld/strategies/test_peer.py
+      - weld/strategies/_test_peer_python.py
+      - weld/strategies/_test_peer_go.py
+      - weld/strategies/_test_peer_java.py
+      - weld/strategies/_test_peer_csharp.py
+      - weld/strategies/_test_peer_rust.py
+      - weld/strategies/_test_peer_ts.py
+
+  # Source: graph.py is the high-fan-in module behind brief / query /
+  # references / callers / context. file_index sits right next to it
+  # and is the second touch-point the comparative bench's
+  # weld_files_and_text uses.
+  - id: t20
+    prompt: "What depends on the Graph loader if I change the load() contract?"
+    category: refactor
+    term: graph
+    symbol: Graph
+    answer_files:
+      - weld/graph.py
+      - weld/brief.py
+      - weld/graph_query.py
+      - weld/graph_context.py
+      - weld/graph_closure.py
+      - weld/bench_tasks/compare.py
+
+  # Source: ADR 0035 (local-telemetry) + dogfood gap bd 28il (rust-origin tokenizer report)
+  # (telemetry arg-redaction observed). The redactor and allowlist are a
+  # tight pair; touching the redactor without updating the allowlist
+  # silently widens the redaction scope.
+  - id: t21
+    prompt: "What breaks if I change the telemetry redaction policy?"
+    category: refactor
+    term: telemetry_redact
+    answer_files:
+      - weld/_telemetry.py
+      - weld/_telemetry_redact.py
+      - weld/_telemetry_allowlist.py
+      - weld/telemetry_cli.py
+
+  # Source: ADR 0044 (bazel srcs/deps edges). Bazel labels are the
+  # canonical surface for srcs/deps; renaming the parser ripples
+  # through bazel.py and the discovery tests.
+  - id: t22
+    prompt: "What is affected if I rename _bazel_labels parsing helpers?"
+    category: refactor
+    term: _bazel_labels
+    answer_files:
+      - weld/strategies/_bazel_labels.py
+      - weld/strategies/bazel.py
+
+  # Source: ADR 0042 phase 3 (graph-node-origin) -- _graph_origin is
+  # the canonical consumer that reads props.origin (and the legacy
+  # fallback path). Direct importers (verified via grep) are the viz
+  # adapter and the test surface; the language-origin helpers are
+  # producer-side helpers for strategies that set props.origin.
+  - id: t23
+    prompt: "What depends on _graph_origin if I change classify_node's contract?"
+    category: refactor
+    term: _graph_origin
+    symbol: classify_node
+    answer_files:
+      - weld/_graph_origin.py
+      - weld/viz/adapter.py
+
+  # --- Callgraph -------------------------------------------------------
+  # Note: the callgraph route requires both category == 'callgraph'
+  # AND a symbol (see weld_bench_tasks_test.test_real_fixture_callgraph
+  # _tasks_have_symbol). Symbols are picked for low ambiguity (single
+  # definition site) so the answer key is unambiguous.
+
+  # Source: ADR 0042 + dogfood gap bd 28il (rust-origin tokenizer report) -- the rust
+  # origin classifier was the symbol agents repeatedly tried to locate.
+  # parse_cargo_dependencies has a single definition site (verified via
+  # `grep -rn "^def parse_cargo_dependencies" weld/`).
+  - id: t24
+    prompt: "Who calls parse_cargo_dependencies?"
+    category: callgraph
+    term: parse_cargo_dependencies
+    symbol: parse_cargo_dependencies
+    answer_files:
+      - weld/strategies/_rust_origin.py
+
+  # Source: comparative-bench self-coverage. grep_baseline is the
+  # single grep-mode renderer used by both the existing token-cost
+  # bench (weld/bench/runner.py) and the comparative bench
+  # (weld/bench_tasks/compare.py). One def site
+  # (weld/bench/primitives.py).
+  - id: t25
+    prompt: "Where is grep_baseline defined and which callers use it?"
+    category: callgraph
+    term: grep_baseline
+    symbol: grep_baseline
+    answer_files:
+      - weld/bench/primitives.py
+      - weld/bench_tasks/compare.py
+      - weld/bench/runner.py
+
+  # Source: comparative-bench self-coverage. render_compare_report has
+  # one def site (weld/bench_tasks/report.py); the bench CLI
+  # (weld/bench/bench_cli.py) is the primary external caller.
+  - id: t26
+    prompt: "Who calls render_compare_report?"
+    category: callgraph
+    term: render_compare_report
+    symbol: render_compare_report
+    answer_files:
+      - weld/bench_tasks/report.py
+      - weld/bench/bench_cli.py
+
+# Future increments: if a third increment is pursued, add cross-language
+# coverage (parallel comprehension tasks for Go / Java / TS that mirror
+# the existing Python / Rust depth) and consider promoting `symbol` on
+# more refactor tasks once the runner supports it. Keep navigation count
+# roughly stable -- 6 is already a healthy floor for that category.

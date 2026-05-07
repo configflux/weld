@@ -46,15 +46,24 @@ function paramsFromControls(extra = {}) {
   const limit = $("limit-input").value || "300";
   const nodeTypes = selectedValues($("node-type-select"));
   const edgeTypes = selectedValues($("edge-type-select"));
+  const hideOrigins = selectedHideOrigins();
   params.set("scope", scope);
   params.set("max_nodes", limit);
   params.set("max_edges", "1500");
   if (nodeTypes.length) params.set("node_types", nodeTypes.join(","));
   if (edgeTypes.length) params.set("edge_types", edgeTypes.join(","));
+  if (hideOrigins.length) params.set("hide_origins", hideOrigins.join(","));
   for (const [key, value] of Object.entries(extra)) {
     if (value !== undefined && value !== null && value !== "") params.set(key, value);
   }
   return params;
+}
+
+function selectedHideOrigins() {
+  const origins = [];
+  if ($("hide-stdlib-check") && $("hide-stdlib-check").checked) origins.push("stdlib");
+  if ($("hide-external-check") && $("hide-external-check").checked) origins.push("external");
+  return origins;
 }
 
 function selectedValues(select) {
@@ -83,6 +92,14 @@ function populateControls(summary) {
   fillSelect($("scope-select"), summary.scopes || ["root"], false);
   fillSelect($("node-type-select"), Object.keys(summary.counts.nodes_by_type || {}).sort(), true);
   fillSelect($("edge-type-select"), Object.keys(summary.counts.edges_by_type || {}).sort(), true);
+  populateOriginCounts(summary.counts.nodes_by_origin || {});
+}
+
+function populateOriginCounts(byOrigin) {
+  const stdlib = byOrigin.stdlib || 0;
+  const external = byOrigin.external || 0;
+  $("hide-stdlib-count").textContent = stdlib ? `(${stdlib})` : "";
+  $("hide-external-count").textContent = external ? `(${external})` : "";
 }
 
 function fillSelect(select, values, multi) {
@@ -210,6 +227,8 @@ function bindEvents() {
   });
   $("apply-filters").addEventListener("click", () => loadSlice());
   $("scope-select").addEventListener("change", () => loadSlice());
+  $("hide-stdlib-check").addEventListener("change", () => loadSlice());
+  $("hide-external-check").addEventListener("change", () => loadSlice());
   $("expand-button").addEventListener("click", () => {
     const data = selectedNodeData();
     if (data) loadSlice({ node_id: data.id, depth: 1 });

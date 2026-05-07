@@ -1,0 +1,8 @@
+{
+  "name": "typescript-node-fixture",
+  "version": "0.0.0",
+  "scripts": {
+    "test": "jest",
+    "build": "tsc"
+  }
+}

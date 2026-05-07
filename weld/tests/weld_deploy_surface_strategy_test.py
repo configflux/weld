@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import unittest
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
@@ -37,7 +38,7 @@ spec:
             - containerPort: 8080
 """
 
-class TestDeploySurfaceExtract:
+class TestDeploySurfaceExtract(unittest.TestCase):
     """Tests for deploy_surface strategy extract()."""
 
     def test_detects_compose_deploy_config(self) -> None:
@@ -48,11 +49,11 @@ class TestDeploySurfaceExtract:
             source = {"glob": "docker-compose*.yml"}
             result = extract(root, source, {})
 
-            assert isinstance(result, StrategyResult)
+            self.assertIsInstance(result, StrategyResult)
             # Should find a deploy node
             deploy_nodes = {k: v for k, v in result.nodes.items()
                           if v["type"] == "deploy"}
-            assert len(deploy_nodes) >= 1
+            self.assertGreaterEqual(len(deploy_nodes), 1)
 
     def test_detects_cloud_run_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -66,7 +67,7 @@ class TestDeploySurfaceExtract:
 
             deploy_nodes = {k: v for k, v in result.nodes.items()
                           if v["type"] == "deploy"}
-            assert len(deploy_nodes) >= 1
+            self.assertGreaterEqual(len(deploy_nodes), 1)
 
     def test_normalized_metadata_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -78,11 +79,11 @@ class TestDeploySurfaceExtract:
 
             for nid, node in result.nodes.items():
                 props = node["props"]
-                assert props["source_strategy"] == "deploy_surface"
-                assert props["authority"] == "canonical"
-                assert props["confidence"] == "definite"
-                assert isinstance(props["roles"], list)
-                assert len(props["roles"]) > 0
+                self.assertEqual(props["source_strategy"], "deploy_surface")
+                self.assertEqual(props["authority"], "canonical")
+                self.assertEqual(props["confidence"], "definite")
+                self.assertIsInstance(props["roles"], list)
+                self.assertGreater(len(props["roles"]), 0)
 
     def test_edge_metadata_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -93,8 +94,8 @@ class TestDeploySurfaceExtract:
             result = extract(root, source, {})
 
             for edge in result.edges:
-                assert "source_strategy" in edge["props"]
-                assert edge["props"]["source_strategy"] == "deploy_surface"
+                self.assertIn("source_strategy", edge["props"])
+                self.assertEqual(edge["props"]["source_strategy"], "deploy_surface")
 
     def test_exclude_pattern(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -105,7 +106,7 @@ class TestDeploySurfaceExtract:
                       "exclude": ["docker-compose.prod.yml"]}
             result = extract(root, source, {})
 
-            assert len(result.nodes) == 0
+            self.assertEqual(len(result.nodes), 0)
 
     def test_missing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -113,8 +114,8 @@ class TestDeploySurfaceExtract:
             source = {"glob": "deploy/*.yaml"}
             result = extract(root, source, {})
 
-            assert result.nodes == {}
-            assert result.edges == []
+            self.assertEqual(result.nodes, {})
+            self.assertEqual(result.edges, [])
 
     def test_non_deploy_yaml_skipped(self) -> None:
         """Strategy should skip YAML files that are not deploy configs."""
@@ -128,7 +129,7 @@ class TestDeploySurfaceExtract:
             # Generic YAML with no deploy/service markers -> no deploy nodes
             deploy_nodes = {k: v for k, v in result.nodes.items()
                           if v["type"] == "deploy"}
-            assert len(deploy_nodes) == 0
+            self.assertEqual(len(deploy_nodes), 0)
 
     def test_discovered_from_populated(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -138,7 +139,7 @@ class TestDeploySurfaceExtract:
             source = {"glob": "docker-compose*.yml"}
             result = extract(root, source, {})
 
-            assert "docker-compose.prod.yml" in result.discovered_from
+            self.assertIn("docker-compose.prod.yml", result.discovered_from)
 
     def test_terraform_file_detected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -156,4 +157,8 @@ resource "google_cloud_run_service" "api" {
 
             deploy_nodes = {k: v for k, v in result.nodes.items()
                           if v["type"] == "deploy"}
-            assert len(deploy_nodes) >= 1
+            self.assertGreaterEqual(len(deploy_nodes), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

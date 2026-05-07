@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import unittest
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
@@ -84,7 +85,7 @@ jobs:
       - run: echo hello
 """
 
-class TestGhWorkflowExtract:
+class TestGhWorkflowExtract(unittest.TestCase):
     """Tests for gh_workflow strategy extract()."""
 
     def test_extracts_workflow_node(self) -> None:
@@ -97,11 +98,11 @@ class TestGhWorkflowExtract:
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            assert isinstance(result, StrategyResult)
-            assert "workflow:ci" in result.nodes
+            self.assertIsInstance(result, StrategyResult)
+            self.assertIn("workflow:ci", result.nodes)
             node = result.nodes["workflow:ci"]
-            assert node["type"] == "workflow"
-            assert node["label"] == "CI"
+            self.assertEqual(node["type"], "workflow")
+            self.assertEqual(node["label"], "CI")
 
     def test_extracts_triggers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -114,8 +115,8 @@ class TestGhWorkflowExtract:
             result = extract(root, source, {})
 
             props = result.nodes["workflow:ci"]["props"]
-            assert "pull_request" in props["triggers"]
-            assert "push" in props["triggers"]
+            self.assertIn("pull_request", props["triggers"])
+            self.assertIn("push", props["triggers"])
 
     def test_extracts_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -128,8 +129,8 @@ class TestGhWorkflowExtract:
             result = extract(root, source, {})
 
             props = result.nodes["workflow:ci"]["props"]
-            assert "build" in props["jobs"]
-            assert "lint" in props["jobs"]
+            self.assertIn("build", props["jobs"])
+            self.assertIn("lint", props["jobs"])
 
     def test_extracts_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -142,7 +143,7 @@ class TestGhWorkflowExtract:
             result = extract(root, source, {})
 
             props = result.nodes["workflow:ci"]["props"]
-            assert "contents: read" in props["permissions"]
+            self.assertIn("contents: read", props["permissions"])
 
     def test_extracts_concurrency(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -155,7 +156,7 @@ class TestGhWorkflowExtract:
             result = extract(root, source, {})
 
             props = result.nodes["workflow:ci"]["props"]
-            assert props["concurrency"] is not None
+            self.assertIsNotNone(props["concurrency"])
 
     def test_normalized_metadata_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,11 +170,11 @@ class TestGhWorkflowExtract:
 
             for nid, node in result.nodes.items():
                 props = node["props"]
-                assert props["source_strategy"] == "gh_workflow"
-                assert props["authority"] == "canonical"
-                assert props["confidence"] == "definite"
-                assert isinstance(props["roles"], list)
-                assert len(props["roles"]) > 0
+                self.assertEqual(props["source_strategy"], "gh_workflow")
+                self.assertEqual(props["authority"], "canonical")
+                self.assertEqual(props["confidence"], "definite")
+                self.assertIsInstance(props["roles"], list)
+                self.assertGreater(len(props["roles"]), 0)
 
     def test_deploy_workflow_detected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -186,11 +187,11 @@ class TestGhWorkflowExtract:
             result = extract(root, source, {})
 
             node = result.nodes["workflow:delivery_placeholder"]
-            assert node["type"] == "workflow"
+            self.assertEqual(node["type"], "workflow")
             props = node["props"]
-            assert "workflow_dispatch" in props["triggers"]
-            assert "plan" in props["jobs"]
-            assert "publish" in props["jobs"]
+            self.assertIn("workflow_dispatch", props["triggers"])
+            self.assertIn("plan", props["jobs"])
+            self.assertIn("publish", props["jobs"])
 
     def test_multiple_workflows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -203,9 +204,9 @@ class TestGhWorkflowExtract:
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            assert "workflow:ci" in result.nodes
-            assert "workflow:deploy" in result.nodes
-            assert len(result.discovered_from) == 2
+            self.assertIn("workflow:ci", result.nodes)
+            self.assertIn("workflow:deploy", result.nodes)
+            self.assertEqual(len(result.discovered_from), 2)
 
     def test_exclude_pattern(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -217,7 +218,7 @@ class TestGhWorkflowExtract:
             source = {"glob": ".github/workflows/*.yml", "exclude": ["ci.yml"]}
             result = extract(root, source, {})
 
-            assert len(result.nodes) == 0
+            self.assertEqual(len(result.nodes), 0)
 
     def test_missing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -225,8 +226,8 @@ class TestGhWorkflowExtract:
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            assert result.nodes == {}
-            assert result.edges == []
+            self.assertEqual(result.nodes, {})
+            self.assertEqual(result.edges, [])
 
     def test_malformed_yaml_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -239,8 +240,8 @@ class TestGhWorkflowExtract:
             result = extract(root, source, {})
 
             # Should discover the file but produce no nodes
-            assert len(result.discovered_from) == 1
-            assert len(result.nodes) == 0
+            self.assertEqual(len(result.discovered_from), 1)
+            self.assertEqual(len(result.nodes), 0)
 
     def test_minimal_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -252,10 +253,10 @@ class TestGhWorkflowExtract:
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            assert "workflow:simple" in result.nodes
+            self.assertIn("workflow:simple", result.nodes)
             props = result.nodes["workflow:simple"]["props"]
-            assert props["triggers"] == ["push"]
-            assert "check" in props["jobs"]
+            self.assertEqual(props["triggers"], ["push"])
+            self.assertIn("check", props["jobs"])
 
     def test_discovered_from_populated(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -267,4 +268,8 @@ class TestGhWorkflowExtract:
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            assert ".github/workflows/ci.yml" in result.discovered_from
+            self.assertIn(".github/workflows/ci.yml", result.discovered_from)
+
+
+if __name__ == "__main__":
+    unittest.main()

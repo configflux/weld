@@ -61,6 +61,51 @@ class PythonPackageStrategyTest(unittest.TestCase):
         self.assertEqual(node["props"]["name"], "mypkg")
         self.assertFalse(node["props"]["synthetic"])
 
+    def test_package_node_carries_explicit_origin(self) -> None:
+        """ADR 0042: every emitted package node must set ``props.origin``
+        directly so the legacy fallback in ``classify_node`` is never
+        reached for a freshly-discovered graph."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _make_tree(root)
+            result = extract(root, {"glob": "mypkg/*.py"}, {})
+        node = result.nodes["package:python:mypkg"]
+        # Real project package whose directory was walked: origin is
+        # project (the strategy only ever sees globs inside the
+        # workspace root).
+        self.assertEqual(node["props"]["origin"], "project")
+
+    def test_synthetic_package_node_carries_explicit_origin(self) -> None:
+        """The synthetic-namespace branch (no ``__init__.py``) must also
+        set ``props.origin`` explicitly. Mirrors the python_callgraph
+        rule: project-membership is checked against this run's package
+        set, and ``scripts`` is a project directory."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _make_tree(root)
+            result = extract(
+                root,
+                {"glob": "scripts/*.py", "package": "scripts"},
+                {},
+            )
+        node = result.nodes["package:python:scripts"]
+        self.assertEqual(node["props"]["origin"], "project")
+
+    def test_stdlib_named_project_package_is_stdlib(self) -> None:
+        """If a project directory shadows a stdlib top-level name (e.g.
+        ``json/``), the stdlib rule wins per ADR 0042: stdlib check runs
+        before project membership in ``origin_for_resolved``. This
+        matches python_callgraph's ordering and avoids silently
+        mis-tagging shadowing modules as project."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "json").mkdir()
+            (root / "json" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "json" / "helper.py").write_text("X = 1\n", encoding="utf-8")
+            result = extract(root, {"glob": "json/*.py"}, {})
+        node = result.nodes["package:python:json"]
+        self.assertEqual(node["props"]["origin"], "stdlib")
+
     def test_dotted_subpackage_name(self) -> None:
         """``mypkg/sub`` with ``__init__.py`` becomes
         ``package:python:mypkg.sub``."""

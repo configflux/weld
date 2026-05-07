@@ -13,7 +13,7 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.16.0 -->
+<!-- evaluator-note: latest=v0.17.0 -->
 > **Evaluators: start with v0.14.0.** v0.14.0 lands deterministic
 > multi-language graph closure, two new discovery strategies
 > (`concept_from_bd`, `test_peer`), module-level Python constants in
@@ -476,7 +476,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 ```
 
 See [examples/02-custom-strategy](examples/02-custom-strategy/) for a
-working example that extracts TODO comments as graph nodes.
+working example that extracts TODO comments as graph nodes, and
+[docs/extending-discovery.md](docs/extending-discovery.md) for the
+full step-by-step guide (contract, capability matrix, fixtures, and
+a worked end-to-end walkthrough).
 
 ## Polyrepo Federation
 
@@ -556,6 +559,11 @@ for every present child, and runs the declared cross-repo resolvers to emit
 edges between children. Children that are missing, uninitialized, or corrupt
 degrade gracefully -- they are skipped and recorded in the workspace ledger
 but do not block discovery.
+
+Federation also re-tags `props.origin` on cross-child symbol references:
+a Python target imported from a sibling child whose strategy saw it as
+`external` is promoted to `project`, so "hide third-party" filters do
+not lose cross-repo application code.
 
 Discovery is safe to run from a linked git worktree of the workspace root:
 the federation pass falls back to the main worktree's checkout when sibling
@@ -669,8 +677,9 @@ rm .weld/workspace-state.json
 | `wd path <from> <to>` | Shortest path |
 | `wd trace <term>` | Startup/runtime and interaction slice around a term or node |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
+| `wd capabilities` | Runtime per-language / per-framework support matrix (`--json`, `--missing`) |
 | `wd callers <symbol>` | Direct/transitive callers |
-| `wd viz` | Local read-only browser graph explorer |
+| `wd viz` | Local read-only browser graph explorer (sidebar toggles: **Hide standard library**, **Hide third-party dependencies** — see [Filtering noise in `wd viz`](#filtering-noise-in-wd-viz)) |
 | `wd stale` | Check graph freshness |
 | `wd graph stats` | Graph statistics |
 | `wd graph communities [--format json\|markdown] [--top N] [--write]` | Detect deterministic graph communities, report top-level hubs, and optionally write derived JSON/report/index artifacts (unresolved-symbol nodes are excluded from the projected subgraph) |
@@ -750,6 +759,71 @@ The `source` value is free-form (agent name, tool name, `llm`,
 (`definite`, `inferred`, `speculative`). This replaces the 0.3.0-era
 `--source` and `--relation` flags.
 
+## Filtering noise in `wd viz`
+
+A real codebase's graph mixes the application code you wrote with calls into
+the language standard library (`print`, `len`, `std::string`) and third-party
+dependencies (numpy, boost, npm packages, Cargo crates). When you open
+`wd viz`, the sidebar gives you two checkboxes for collapsing that noise so
+you can focus on application code:
+
+- **Hide standard library** — drops nodes classified as language built-ins
+  or stdlib (Python `builtins` and `sys.stdlib_module_names`; C++ `std::`
+  and toolchain libc++/libstdc++ headers; analogous lists per language).
+- **Hide third-party dependencies** — drops nodes resolved outside the
+  project tree but not part of the language stdlib (PyPI / npm / Cargo /
+  Go-module / vendored boost / vendored serde, etc.).
+
+Each label shows a count next to it (for example "Hide standard library
+(412)") so you can see how much each toggle would remove before applying it.
+The two checkboxes are independent and compose: tick both to focus on
+project-only code, tick neither to see the full graph.
+
+Hiding is a presentation choice. The underlying graph is unchanged: every
+node still exists in `.weld/graph.json`, and every other surface
+(`wd query`, `wd context`, MCP) still returns the hidden nodes. `wd query
+"print"` continues to surface the stdlib `print` node even when "Hide
+standard library" is ticked in the visualizer.
+
+### How a node is classified
+
+Every `symbol`, `file`, and `module` node in the graph carries a
+`props.origin` value taking one of four lower-case strings:
+
+| Value | Meaning |
+|---|---|
+| `project` | Defined in this repo, or in any federated child repo of the active workspace — the application code you wrote. |
+| `stdlib` | Language standard library or built-in (Python builtins, `sys.stdlib_module_names`; C++ `std::` and toolchain headers; per-language equivalents). |
+| `external` | Third-party dependency resolved outside the project tree but not part of the language stdlib (PyPI, npm, Cargo, vendored libraries). |
+| `unresolved` | The discovery strategy could not determine the target's source — for example a `from foo import bar` whose `foo` does not exist. Hidden by default in the overview slice (the two checkboxes only toggle `stdlib` and `external`); a custom UI or scripted call can override this by passing an explicit `hide_origins` value to the API. |
+
+The four values are exhaustive and mutually exclusive. Strategies that
+emit `props.origin` directly are authoritative; legacy graphs without
+the field are classified deterministically from existing signals
+(`authority`, `resolved`, `symbol:unresolved:` ID prefix, edge-side
+`props.resolution`). Re-running `wd discover` upgrades a legacy graph
+to explicit origin tags. The graph schema reference in
+[`docs/graph-schema.md`](docs/graph-schema.md) documents `props.origin`
+alongside the other optional node props, including links to the design
+notes and per-language detection rules.
+
+### Driving the same filter from the API or URL
+
+`wd viz` exposes the same filter as a query parameter on its slice
+endpoints, which is useful when scripting screenshots or driving the
+visualizer from another tool:
+
+```text
+GET /api/slice?hide_origins=stdlib,external
+GET /api/slice?hide_origins=stdlib
+```
+
+`hide_origins` is a comma-separated list drawn from the four values
+above. Omitting it falls back to the default overview behavior (hide
+`unresolved` only). The `/api/summary` payload carries
+`nodes_by_origin` (a per-origin count) so a custom UI can render the
+same "(412)" hint next to its own toggles.
+
 ## Examples
 
 - [01-python-fastapi](examples/01-python-fastapi/) — discover a FastAPI
@@ -766,7 +840,7 @@ The `source` value is free-form (agent name, tool name, `llm`,
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.16.0`.
+terminal snippets captured against `wd 0.17.0`.
 
 ## Install
 

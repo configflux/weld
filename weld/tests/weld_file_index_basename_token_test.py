@@ -152,6 +152,147 @@ class FindFilesBasenameSearchTest(unittest.TestCase):
         self.assertIn("pyproject.toml", paths)
 
 
+class FindFilesBasenameBoostTest(unittest.TestCase):
+    """Ranking: a literal-basename query must rank the file itself above
+    documents that merely mention the same basename in prose.
+
+    Background
+    ----------
+    Indexing the raw basename (``install.sh``, ``publish.sh``,
+    ``BUILD.bazel``) lets a literal-with-dot query match the file by
+    name. But a generic-text extractor (``_extract_generic_tokens``)
+    also harvests dotted tokens out of prose, so a doc that mentions
+    ``tools/publish.sh`` once also yields a single matching token. With
+    the previous ``score == len(matching_tokens)`` ranker, the file and
+    every doc that mentioned it tied at score 1, and the order fell back
+    to alphabetical path -- ``docs/`` shows up before ``tools/``, so the
+    actual file dropped below docs that merely referred to it.
+
+    These tests pin the new contract: when a matching token equals the
+    file's own basename AND is a case-insensitive exact match for the
+    query, that file gets a score boost so it wins ties against body
+    mentions.
+    """
+
+    def test_publish_sh_ranks_above_docs_that_mention_it(self) -> None:
+        """The reported regression: ``wd find 'publish.sh'`` must put
+        ``tools/publish.sh`` first, above three docs that each carry one
+        body mention of ``publish.sh`` / ``tools/publish.sh``.
+        """
+        index = {
+            "tools/publish.sh": _tokenize_path("tools/publish.sh") + [
+                "set", "echo", "release",
+            ],
+            "tools/audit_publish.sh": _tokenize_path(
+                "tools/audit_publish.sh"
+            ) + ["set", "echo"],
+            # Body mentions: the generic extractor harvests dotted
+            # tokens out of prose, so each of these contributes exactly
+            # one matching token (the literal string from the doc).
+            "docs/release.md": _tokenize_path("docs/release.md") + [
+                "publish.sh", "Release", "guide",
+            ],
+            "docs/adrs/0048-release-coordinator-agent.md": _tokenize_path(
+                "docs/adrs/0048-release-coordinator-agent.md"
+            ) + ["tools/publish.sh", "ADR"],
+            "docs/postmortems/2026-05-02-x.md": _tokenize_path(
+                "docs/postmortems/2026-05-02-x.md"
+            ) + ["tools/publish.sh", "postmortem"],
+        }
+        result = find_files(index, "publish.sh")
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertTrue(paths, "expected at least one match")
+        self.assertEqual(
+            paths[0], "tools/publish.sh",
+            f"tools/publish.sh must rank first; got {paths!r}",
+        )
+
+    def test_basename_match_outranks_multiple_body_mentions(self) -> None:
+        """A file whose basename equals the query must rank above a doc
+        that mentions the same basename multiple times. The boost is
+        large enough that ordinary prose densities cannot defeat it.
+        """
+        index = {
+            "tools/publish.sh": _tokenize_path("tools/publish.sh") + [
+                "set", "echo",
+            ],
+            # Doc with two prose mentions of the basename; the generic
+            # extractor deduplicates within a file, but we model two
+            # distinct tokens that both contain "publish.sh" as a
+            # substring to simulate maximum body density.
+            "docs/release.md": _tokenize_path("docs/release.md") + [
+                "publish.sh", "tools/publish.sh", "release",
+            ],
+        }
+        result = find_files(index, "publish.sh")
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertEqual(paths[0], "tools/publish.sh")
+
+    def test_basename_match_is_case_insensitive(self) -> None:
+        """Query case must not affect the basename boost.
+        ``BUILD.bazel`` is the canonical mixed-case basename in this
+        repo; ensure ``wd find 'build.bazel'`` still pins the file.
+        """
+        index = {
+            "weld/BUILD.bazel": _tokenize_path("weld/BUILD.bazel") + [
+                "py_library", "py_test",
+            ],
+            "docs/build.md": _tokenize_path("docs/build.md") + [
+                "BUILD.bazel", "guide",
+            ],
+        }
+        result = find_files(index, "build.bazel")
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertEqual(paths[0], "weld/BUILD.bazel")
+
+    def test_substring_query_does_not_get_basename_boost(self) -> None:
+        """A query that is a substring of a basename (but not equal to
+        it) must NOT trigger the boost -- otherwise every ``.sh`` file
+        would be promoted on a query for ``sh``. Existing substring
+        ranking by len(matching_tokens) must be preserved for that case.
+        """
+        index = {
+            # Two .sh files: one with one matching token, one with three.
+            "tools/a.sh": _tokenize_path("tools/a.sh"),  # 'a', 'a.sh'
+            "tools/b.sh": _tokenize_path("tools/b.sh") + [
+                "she", "shell", "sharing",
+            ],
+        }
+        result = find_files(index, "sh")
+        paths = [entry["path"] for entry in result["files"]]
+        # b.sh has more matching tokens; without boost it must rank above a.sh.
+        self.assertEqual(paths[0], "tools/b.sh")
+
+    def test_score_remains_positive_int(self) -> None:
+        """The score field must remain a positive integer so existing
+        consumers/CLI formatting (``%5d``) keep working.
+        """
+        index = {
+            "tools/publish.sh": _tokenize_path("tools/publish.sh"),
+            "docs/release.md": _tokenize_path("docs/release.md") + [
+                "publish.sh",
+            ],
+        }
+        result = find_files(index, "publish.sh")
+        for entry in result["files"]:
+            self.assertIsInstance(entry["score"], int)
+            self.assertGreater(entry["score"], 0)
+
+    def test_basename_boost_does_not_reorder_basename_vs_basename(self) -> None:
+        """Two files whose basenames both equal the query (impossible
+        in practice for the same path, but possible across paths via a
+        nested file with the same basename, e.g. two ``BUILD.bazel`` files)
+        must remain ordered by path ascending -- the existing tiebreak.
+        """
+        index = {
+            "weld/BUILD.bazel": _tokenize_path("weld/BUILD.bazel"),
+            "tools/BUILD.bazel": _tokenize_path("tools/BUILD.bazel"),
+        }
+        result = find_files(index, "BUILD.bazel")
+        paths = [entry["path"] for entry in result["files"]]
+        self.assertEqual(paths, ["tools/BUILD.bazel", "weld/BUILD.bazel"])
+
+
 class TokenizePathIndexSizeRegressionTest(unittest.TestCase):
     """The basename-token rule must not silently inflate the index for
     extensionless filenames -- the common case for build/config files

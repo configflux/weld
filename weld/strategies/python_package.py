@@ -42,6 +42,7 @@ from weld._node_ids import file_id as _canonical_file_id
 from weld._node_ids import package_id as _canonical_package_id
 from weld.glob_match import walk_glob
 from weld.strategies._helpers import StrategyResult, should_skip
+from weld.strategies._python_origin import origin_for_resolved
 
 _STRATEGY = "python_package"
 
@@ -102,6 +103,16 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             rel_dir = ""
         by_dir[rel_dir].append(py)
 
+    # Two-pass emission so ``props.origin`` (ADR 0042) can be derived
+    # against the *complete* project-package set this run discovered.
+    # Pass 1 resolves each rel_dir to its package name + has_init flag;
+    # pass 2 emits nodes/edges using that map. We need the full set up
+    # front because ``origin_for_resolved`` checks stdlib membership
+    # first and then asks "is this name in the project set?". Building
+    # the set after we already emitted would leave the first node's
+    # origin classified against an incomplete membership view.
+    resolved: list[tuple[str, str, bool, list[Path]]] = []
+    project_packages: set[str] = set()
     for rel_dir in sorted(by_dir.keys()):
         files = by_dir[rel_dir]
         # Derive the package name. Priority:
@@ -130,7 +141,21 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         if not pkg_name:
             continue
 
+        resolved.append((rel_dir, pkg_name, has_init, files))
+        project_packages.add(pkg_name)
+
+    project_packages_frozen = frozenset(project_packages)
+
+    for rel_dir, pkg_name, has_init, files in resolved:
         pkg_nid = _canonical_package_id("python", pkg_name)
+        # ADR 0042: classify with the same stdlib-first / project /
+        # external rules python_callgraph uses. Reuses
+        # ``origin_for_resolved`` so the ordering (stdlib check before
+        # project membership) stays in lock-step across strategies. A
+        # project directory whose first dotted segment shadows a stdlib
+        # name (e.g. ``json/``) classifies as ``stdlib`` -- consistent
+        # with how python_callgraph tags imports of the same name.
+        origin = origin_for_resolved(pkg_name, project_packages_frozen)
         # Idempotent merge: same strategy run may already have populated
         # this node from a different glob entry. Last-write wins on
         # props since both invocations carry the same values.
@@ -146,6 +171,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 "confidence": "definite",
                 "roles": ["package"],
                 "synthetic": not has_init,
+                "origin": origin,
             },
         }
         if rel_dir:
