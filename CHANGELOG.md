@@ -3,6 +3,18 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.17.2 - 2026-05-07
+
+### Fixed
+
+- Test-suite isolation: `weld_graph_integrity_regression_test` now
+  re-checks for `.weld/discover.yaml` at test execution time rather
+  than at module import time. This avoids a spurious failure when
+  another test in the same parallel run transiently creates and
+  deletes the workspace's discover.yaml between import and test
+  execution.
+  <!-- verify: file=weld/tests/weld_graph_integrity_regression_test.py grep=_DiscoverYamlGated -->
+
 ## v0.17.1 - 2026-05-07
 
 ### Fixed
