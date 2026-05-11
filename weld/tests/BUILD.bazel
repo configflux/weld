@@ -425,7 +425,7 @@ py_test(
 ) for _name in ("weld_brief_test", "weld_brief_v2_test", "weld_trace_test", "weld_warnings_test", "weld_brief_or_fallback_test")]
 
 [py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_ranking_test", "weld_query_resolution_penalty_test")]
-[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_enrich_test", "weld_enrich_safe_mode_test", "weld_enrich_copilot_cli_test", "weld_enrich_missing_provider_message_test", "weld_enrich_reset_prompt_test", "weld_enrichment_cost_test", "weld_first_run_enrich_test", "weld_first_run_detect_test", "weld_discover_first_run_test")]
+[py_test(name = _n, srcs = [_n + ".py"], deps = ["//weld:runtime"], local = True, tags = ["no-sandbox"]) for _n in ("weld_enrich_test", "weld_enrich_safe_mode_test", "weld_enrich_copilot_cli_test", "weld_enrich_missing_provider_message_test", "weld_enrich_reset_prompt_test", "weld_enrichment_cost_test")]
 py_test(
     name = "weld_confidence_discrimination_test",
     srcs = ["weld_confidence_discrimination_test.py"],

@@ -5,6 +5,20 @@ All notable user-facing changes to this project are recorded here.
 
 ## Unreleased
 
+## v0.18.1 - 2026-05-11
+
+### Fixed
+
+- Public CI on the v0.18.0 tag failed at `bazel build` with
+  "missing input file" errors for three test targets
+  (`weld_first_run_detect_test`, `weld_first_run_enrich_test`,
+  `weld_discover_first_run_test`). The corresponding source files are
+  intentionally not shipped, but the public `BUILD.bazel` still
+  referenced them. The publish-time BUILD-stripping logic now drops
+  those names from the comprehension before sync, so the public
+  `bazel test //...` no longer breaks on missing inputs.
+  <!-- verify: file=tools/publish_strip_exclusions.py grep=_FIRST_RUN_NAMES -->
+
 ## v0.18.0 - 2026-05-11
 
 ### Added
