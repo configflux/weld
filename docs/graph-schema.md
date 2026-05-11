@@ -17,25 +17,9 @@ Source of truth for the constants lives in:
   `graph.json` must go through.
 - `weld/_graph_schema.py` -- federation schema-version gating.
 
-Related ADRs:
-
-- `docs/adrs/0011-polyrepo-federation.md` -- polyrepo federation
-  (`repo:*` nodes, cross-repo edges).
-- `docs/adrs/0012-determinism-contract.md` -- determinism contract and
-  schema versioning.
-- `docs/adrs/0016-edge-type-vocabulary-extension.md` -- governance and
-  provenance edges (`owned_by`, `gates`, `supersedes`, `validates`,
-  `generates`, `migrates`, `contracts`).
-- `docs/adrs/0017-graph-freshness-source-file-model.md` -- graph
-  freshness and the `meta.git_sha` stamp.
-- `docs/adrs/0021-agent-graph-schema-vocabulary.md` -- Agent Graph node
-  and edge vocabulary.
-- `weld/docs/adr/0004-call-graph-schema-extension.md` -- symbol nodes
-  and `calls` edges.
-
 For the ROS2 and interaction-surface prop vocabularies, `weld/contract.py`
-is the canonical source of truth. The inline docstrings in that module
-cite the deciding ADRs.
+is the canonical source of truth; its inline docstrings document the
+constraints each edge and prop family is expected to honour.
 
 ## Location and top-level shape
 
@@ -65,8 +49,8 @@ the federation schema version, and optional freshness metadata.
 |---|---|---|---|
 | `version` | yes | int | Contract vocabulary version. Must equal `weld.contract.SCHEMA_VERSION` (currently `5`). A mismatch causes `validate_graph` to emit a remediation message that names the current version and the `wd discover` invocation needed to regenerate. |
 | `updated_at` | yes | string | ISO-8601 timestamp written by the emitter on every save. |
-| `schema_version` | written on save | int | Federation layout version: `1` for a single-repo or child graph, `2` for a federated root graph that contains `repo:*` nodes. See ADR 0011 and ADR 0012 for the gating rules. |
-| `git_sha` | optional | string | HEAD commit SHA stamped by `Graph.save(touch_git_sha=True)` when the root is a git working tree. ADR 0017 describes how this participates in `wd stale`. |
+| `schema_version` | written on save | int | Federation layout version: `1` for a single-repo or child graph, `2` for a federated root graph that contains `repo:*` nodes. See `weld/_graph_schema.py` for the gating rules. |
+| `git_sha` | optional | string | HEAD commit SHA stamped by `Graph.save(touch_git_sha=True)` when the root is a git working tree. Used by `wd stale` to detect when the graph is older than the working tree. |
 
 `meta.version` is the **contract** version (what node/edge types exist).
 `meta.schema_version` is the **layout** version (whether the file carries
@@ -110,8 +94,7 @@ Core domain model:
   `policy`, `runbook`
 - `build-target`, `test-target`, `boundary`, `entrypoint`, `gate`,
   `deploy`
-- `symbol` -- function-level callable. See
-  `weld/docs/adr/0004-call-graph-schema-extension.md`.
+- `symbol` -- function-level callable.
 
 ROS2 vocabulary:
 
@@ -124,7 +107,7 @@ Generalized interaction surfaces:
   module.
 - `channel` -- named pub/sub or stream endpoint.
 
-Agent Graph (see ADR 0021):
+Agent Graph vocabulary:
 
 - `subagent`, `skill`, `instruction`, `prompt`, `hook`, `mcp-server`,
   `permission`, `platform`, `scope`.
@@ -133,7 +116,7 @@ Polyrepo federation:
 
 - `repo` -- one `repo:<name>` node per registered child in the root
   meta-graph. Presence of any `repo:*` node triggers
-  `meta.schema_version = 2` on save. See ADR 0011.
+  `meta.schema_version = 2` on save.
 
 ### Optional node props
 
@@ -144,7 +127,7 @@ additional prop is tolerated and round-tripped.
 |---|---|---|
 | `source_strategy` | string | Name of the discovery strategy or agent that emitted the node. Primary provenance signal. |
 | `authority` | string | One of `canonical`, `derived`, `manual`, `external`. |
-| `origin` | string | One of `project`, `stdlib`, `external`, `unresolved` — where the symbol comes from, independent of merge precedence. Set on `symbol`, `file`, and `module` nodes by post-ADR-0042 strategies; legacy graphs without the field are classified deterministically by `weld._graph_origin.classify_node`. Used by `wd viz` to drive the "Hide standard library" / "Hide third-party dependencies" toggles (`hide_origins=stdlib,external` query parameter). See [ADR 0042](adrs/0042-graph-node-origin.md). |
+| `origin` | string | One of `project`, `stdlib`, `external`, `unresolved` — where the symbol comes from, independent of merge precedence. Set on `symbol`, `file`, and `module` nodes by current strategies; legacy graphs without the field are classified deterministically by `weld._graph_origin.classify_node`. Used by `wd viz` to drive the "Hide standard library" / "Hide third-party dependencies" toggles (`hide_origins=stdlib,external` query parameter). |
 | `confidence` | string | One of `definite`, `inferred`, `speculative`. |
 | `roles` | list[string] | Subset of `implementation`, `test`, `config`, `doc`, `build`, `migration`, `fixture`, `script`. |
 | `file` | string | Source file path relative to the repository root. |
@@ -189,8 +172,8 @@ that will be stitched into a larger graph later.
 
 ### Edge type vocabulary
 
-The set below reflects `VALID_EDGE_TYPES` as of contract version 5. The
-canonical reference for governance and provenance additions is ADR 0016.
+The set below reflects `VALID_EDGE_TYPES` as of contract version 5.
+`weld/contract.py` is the canonical source of truth.
 
 Core relationships:
 
@@ -200,8 +183,7 @@ Core relationships:
   `configures`, `tests`.
 - `represents`, `feeds_into`, `enforces`, `verifies`, `exposes`,
   `governs`.
-- `calls` -- symbol-to-symbol call edge (see
-  `weld/docs/adr/0004-call-graph-schema-extension.md`).
+- `calls` -- symbol-to-symbol call edge.
 
 ### Trace-participating vocabulary
 
@@ -225,11 +207,11 @@ fragment has nodes or edges but none of them participate in this trace
 contract. To make custom semantics traceable, map them onto these buckets
 and edge labels at adapter output time.
 
-Governance and provenance (ADR 0016):
+Governance and provenance:
 
 - `owned_by` -- responsibility ownership.
 - `gates` / `gated_by` -- bidirectional gate-to-target relationship.
-- `supersedes` -- temporal replacement (new ADR over old ADR, new
+- `supersedes` -- temporal replacement (new decision over old, new
   migration over old).
 - `validates` -- validator-subject assertion, broader than `tests` or
   `verifies`.
@@ -239,7 +221,7 @@ Governance and provenance (ADR 0016):
 - `contracts` -- "agrees to honor" relationship between parties and
   interfaces.
 
-Agent Graph (see ADR 0021):
+Agent Graph edge vocabulary:
 
 - `uses_skill`, `uses_command`, `invokes_agent`, `handoff_to`,
   `references_file`, `applies_to_path`, `provides_tool`,
@@ -262,7 +244,7 @@ Additional props are tolerated and round-tripped but not validated.
 
 ## Determinism and schema versioning
 
-Per ADR 0012, `graph.json` is a deterministic artifact: two runs over
+`graph.json` is a deterministic artifact by contract: two runs over
 the same filesystem state produce byte-identical output. Every writer
 goes through `weld.serializer.dumps_graph`, which enforces:
 
@@ -289,7 +271,7 @@ misinterpreting federation constructs.
 
 ## Polyrepo federation
 
-Under federation (ADR 0011), a workspace root holds a meta-graph that
+Under federation, a workspace root holds a meta-graph that
 aggregates across registered child repositories:
 
 - Each child writes an ordinary `schema_version = 1` graph.
@@ -309,7 +291,7 @@ aggregates across registered child repositories:
   design. Adding a node or edge type requires an ADR, a contract
   `SCHEMA_VERSION` bump, and an entry in `VALID_NODE_TYPES` /
   `VALID_EDGE_TYPES` in `weld/contract.py`. Examples of prior
-  extensions: ADR 0016 (governance edges), ADR 0021 (Agent Graph), and
+  extensions: governance edges, Agent Graph, and
   the call-graph extension in `weld/docs/adr/0004`.
 - **New strategies.** Discovery strategies (config-driven via
   `.weld/discover.yaml`, with plugins in `weld/strategies/` or a
@@ -365,18 +347,18 @@ A minimal valid `graph.json`:
         "roles": ["implementation"]
       }
     },
-    "doc:adr-0016": {
+    "doc:billing-architecture": {
       "type": "doc",
-      "label": "ADR 0016: Edge-type vocabulary",
+      "label": "Billing service architecture decision",
       "props": {
         "doc_kind": "adr",
-        "file": "docs/adrs/0016-edge-type-vocabulary-extension.md"
+        "file": "docs/architecture/billing.md"
       }
     }
   },
   "edges": [
     {
-      "from": "doc:adr-0016",
+      "from": "doc:billing-architecture",
       "to": "service:billing",
       "type": "governs",
       "props": {

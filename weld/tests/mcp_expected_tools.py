@@ -33,8 +33,9 @@ EXPECTED_TOOL_NAMES: frozenset[str] = frozenset(
         "weld_path",
         "weld_query",
         "weld_references",
+        "weld_review",
         "weld_stale",
         "weld_trace",
     }
 )
-"""The 13 tool names exposed by the weld MCP server registry."""
+"""The 14 tool names exposed by the weld MCP server registry."""

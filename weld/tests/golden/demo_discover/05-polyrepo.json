@@ -3,6 +3,7 @@
     {
       "from": "services-api\u001frpc:http:out:POST:http://services-auth:8080/tokens",
       "props": {
+        "confidence": "definite",
         "host": "services-auth",
         "method": "POST",
         "path": "/tokens",

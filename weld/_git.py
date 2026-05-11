@@ -135,6 +135,12 @@ _WELD_BOOKKEEPING_PATHS = frozenset({
     # ``wd prime`` report spurious source drift and fall into the same
     # touch/commit loop the other bookkeeping entries already prevent.
     ".weld/file-index.json",
+    # SQLite sidecar written alongside graph.json by ``wd discover``
+    # (ADR 0058). Pure derived index; same trust boundary as graph.json
+    # itself. Must be in this set so a commit that includes graph.db
+    # alongside a wd-touched graph.json does not trip the source-drift
+    # detector and force a spurious rebuild.
+    ".weld/graph.db",
 })
 
 

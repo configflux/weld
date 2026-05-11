@@ -1,8 +1,50 @@
 package(default_visibility = ["//visibility:public"])
 
+exports_files([
+    "public_corpus.yaml",
+])
+
+filegroup(
+    name = "public_corpus_manifest",
+    srcs = ["public_corpus.yaml"],
+)
+
+filegroup(
+    name = "public_corpus_smoke_fixture",
+    # Glob recursively across the smoke fixture; Bazel's `**` walks
+    # into hidden ``.weld/`` directories so the per-repo
+    # ``discover.yaml`` files end up in the runfiles tree for tests.
+    srcs = glob(
+        ["fixtures/public_corpus_smoke/**"],
+        allow_empty = False,
+    ),
+)
+
 py_library(
     name = "bench_primitives",
     srcs = ["primitives.py"],
+)
+
+py_library(
+    name = "public_bench_lib",
+    srcs = [
+        "_public_corpus.py",
+        "_public_report.py",
+        "_public_report_cpp.py",
+        "_public_runner.py",
+        "_public_setup.py",
+        "adapters/__init__.py",
+        "adapters/graphify.py",
+        "adapters/grep.py",
+        "adapters/tree_sitter.py",
+        "adapters/weld.py",
+        "adapters/weld_libclang.py",
+    ],
+    deps = [
+        ":bench_primitives",
+        "//weld:runtime",
+        "//weld:yaml",
+    ],
 )
 
 py_library(
@@ -15,6 +57,7 @@ py_library(
     ],
     deps = [
         ":bench_primitives",
+        ":public_bench_lib",
         "//weld:runtime",
         "//weld:yaml",
         "//weld/bench_tasks:bench_tasks_lib",
@@ -31,10 +74,13 @@ py_binary(
     srcs = ["__main__.py"],
     main = "__main__.py",
     data = [
+        ":public_corpus_manifest",
+        ":public_corpus_smoke_fixture",
         "//weld/bench_tasks:fixtures",
         "//weld/tests:bench_prompts",
     ],
     deps = [
+        ":public_bench_lib",
         "//weld:runtime",
         "//weld/bench_tasks:bench_tasks_lib",
     ],

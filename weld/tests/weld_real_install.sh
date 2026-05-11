@@ -31,6 +31,15 @@ fi
 TMPDIR="$(mktemp -d -t weld-real-install.XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
+# Hermetic pip cache per-invocation. The shared ~/.cache/pip was
+# identified as the likely race seed in the source-pollution
+# investigation -- pin pip to a tmp-only cache for the lifetime of this
+# run so concurrent CI jobs cannot interfere.
+PIP_CACHE_DIR="${TMPDIR}/pip-cache"
+mkdir -p "${PIP_CACHE_DIR}"
+export PIP_CACHE_DIR
+export PIP_NO_CACHE_DIR=1
+
 FAILURES=0
 fail() {
   echo "FAIL: $1" >&2

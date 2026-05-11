@@ -35,6 +35,7 @@ from weld.file_index import load_file_index as _load_file_index
 from weld.graph import Graph as _Graph
 from weld.mcp_helpers import weld_enrich as _weld_enrich
 from weld.mcp_helpers import weld_impact as _weld_impact
+from weld.mcp_helpers import weld_review_guarded as _weld_review_guarded
 from weld.mcp_helpers import weld_trace as _weld_trace
 from weld.workspace_state import find_workspaces_yaml as _find_workspaces_yaml
 
@@ -57,12 +58,6 @@ def _load_graph(root: Path) -> _Graph | _FederatedGraph:
     ``query``/``context``/``path`` transparently span child repos."""
     if _find_workspaces_yaml(root) is not None:
         return _FederatedGraph(root)
-    return _load_single_repo_graph(root)
-
-
-def _load_single_repo_graph(root: Path) -> _Graph:
-    """Load a plain ``Graph`` at *root*. Used as fallback by
-    ``_load_graph`` when no ``workspaces.yaml`` is present."""
     g = _Graph(root)
     g.load()
     return g
@@ -253,6 +248,7 @@ def weld_enrich(
         max_tokens=max_tokens, max_cost=max_cost, root=root,
     )
 
+
 # ---------------------------------------------------------------------------
 # Registry + dispatch
 # ---------------------------------------------------------------------------
@@ -278,6 +274,7 @@ def build_tools() -> list[Tool]:
         weld_trace=weld_trace,
         weld_impact=weld_impact,
         weld_enrich=weld_enrich,
+        weld_review=_weld_review_guarded,
         tool_cls=Tool,
     )
 

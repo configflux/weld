@@ -13,7 +13,7 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.17.2 -->
+<!-- evaluator-note: latest=v0.18.0 -->
 > **Evaluators: start with v0.14.0.** v0.14.0 lands deterministic
 > multi-language graph closure, two new discovery strategies
 > (`concept_from_bd`, `test_peer`), module-level Python constants in
@@ -92,8 +92,12 @@ were not designed to provide.
   and connects them to services, boundaries, and deploy/runtime surfaces.
 - **Config-driven** — point `.weld/discover.yaml` at your repo and tune
   what gets extracted.
-- **Multi-language** — bundled tree-sitter strategies for Python, TypeScript/JS,
-  Go, Rust, C#, C++, Java, and ROS2.
+- **Multi-language** — tree-sitter strategies ship for Python, TypeScript/JS,
+  Go, Rust, C#, C++, Java, and ROS2. **Tree-sitter Python packages are an
+  optional extra** (`pip install configflux-weld[tree-sitter]`); without
+  them only Python is extracted natively. See
+  [Supported languages](#supported-languages) for the per-language status
+  and the optional libclang path for C++.
 - **Plugin architecture** — drop a `.py` file in `.weld/strategies/` to
   extract anything repo-specific.
 - **Agent Graph** — discover agents, skills, prompts, commands, hooks,
@@ -217,9 +221,19 @@ wd prime                  # show setup status + per-framework surface matrix
 wd bootstrap claude       # writes .claude/commands/weld.md
 wd bootstrap codex        # writes .codex/skills/weld/SKILL.md + .codex/config.toml
 wd bootstrap copilot      # writes .github/skills/weld/SKILL.md + .github/instructions/weld.instructions.md
+wd bootstrap cursor       # writes .cursor/rules/weld.mdc + .cursor/mcp.json
+wd bootstrap aider        # writes CONVENTIONS.md + .aider.conf.yml (wiki fallback; no MCP)
+wd bootstrap gemini-cli   # writes .gemini/skills/weld.md + .gemini/mcp.json
+wd bootstrap copilot-cli  # writes .copilot/skills/weld.md + .copilot/config.json
 ```
 
-All three `wd bootstrap` frameworks accept opt-out flags:
+Cursor, Gemini CLI, and Copilot CLI register the local weld stdio MCP server
+in the host-native config file. Aider has no native MCP protocol, so its
+`CONVENTIONS.md` stanza points at the agent-readable wiki export: run
+`wd export --format=wiki --output=.weld/wiki` and read `.weld/wiki/index.md`
+to navigate the graph.
+
+All seven `wd bootstrap` frameworks accept opt-out flags:
 
 - `--no-mcp` — skip the MCP pair (`.codex/config.toml` for codex; the `.mcp.json` guidance block for copilot/claude).
 - `--no-enrich` — write the `.cli.md` variant that omits `wd enrich`.
@@ -297,29 +311,68 @@ schema and design rationale.
 
 ## Supported languages
 
-All language strategies use tree-sitter and degrade gracefully when the
-grammar package is not installed.
+Weld's only built-in extractor is for Python. **Every other language
+listed below depends on the `[tree-sitter]` optional extra.** Without
+it, the tree-sitter strategies silently no-op on ImportError and the
+graph will contain zero nodes for those languages — by design, so weld
+still runs in a minimal environment. Install the extra to actually use
+multi-language support:
 
-| Language | Extraction surface | Grammar package |
-|---|---|---|
-| Python | modules, classes, functions, imports, call graph | `tree-sitter-python` |
-| TypeScript / JS | exports, classes, imports | `tree-sitter-typescript` |
-| Go | exports, types, imports | `tree-sitter-go` |
-| Rust | exports, types, imports | `tree-sitter-rust` |
-| C# | types, methods, properties, attributes, namespaces, using dependencies | `tree-sitter-c-sharp` |
-| C++ | exports, classes, imports, best-effort call graph | `tree-sitter-cpp` |
-| Java | classes, methods, annotations, imports, package dependencies | `tree-sitter-java` |
-| ROS2 | packages, nodes, topics, services, actions, parameters | (reuses Python + C++) |
+```bash
+uv tool install "configflux-weld[tree-sitter]"
+# or
+pip install "configflux-weld[tree-sitter]"
+```
+
+| Language | Extraction surface | Grammar package | Status |
+|---|---|---|---|
+| Python | modules, classes, functions, imports, call graph | built-in (no extra) | Battle-tested. This repo dogfoods it. |
+| TypeScript / JS | exports, classes, imports | `tree-sitter-typescript` | Ships, used in production by the configflux-weld self-graph. |
+| Go | exports, types, imports | `tree-sitter-go` | Ships, light dogfooding. |
+| Rust | exports, types, imports | `tree-sitter-rust` | Ships, light dogfooding. |
+| C# | types, methods, properties, attributes, namespaces, using dependencies | `tree-sitter-c-sharp` | Tier-2 "best-in-class" effort completed; csproj/sln parsers ship as separate strategies. |
+| C++ | exports, classes, imports, best-effort call graph | `tree-sitter-cpp` | **Tier 2 (preview) — not Tier 1.** Ships and runs; real-world quality unverified at scale. See the C++ subsection below. |
+| Java | classes, methods, annotations, imports, package dependencies | `tree-sitter-java` | Ships, no dogfooding evidence. |
+| ROS2 | packages, nodes, topics, services, actions, parameters | (reuses Python + C++) | Tier 2 (preview) — inherits the C++ caveat. |
 
 Discovery also adds deterministic closure edges from files to source-backed
 symbols and from import/include/use declarations to local files or external
 package nodes across every listed language.
 
-To enable tree-sitter support:
+### C++ — honest status
 
-```bash
-uv tool install "configflux-weld[tree-sitter]"
-```
+**Tier: 2 (preview).** Not Tier 1 — extraction works end-to-end, but
+real-world quality is unverified at scale.
+
+C++ has two extraction paths, both opt-in, both with caveats worth knowing
+before you rely on them:
+
+1. **Tree-sitter** (default once `[tree-sitter]` is installed). Indexes
+   `.hpp`, `.cpp`, `.cc`, `.h`, `.hh`, `.hxx`, `.cxx`, `.ipp`, `.tpp`
+   files into `file:` and `symbol:` nodes. Query patterns live in
+   [weld/languages/cpp.yaml](weld/languages/cpp.yaml). This is the
+   fast path; no compilation database required.
+
+2. **libclang** (optional, off by default). Adds macro-expansion,
+   template-instantiation, and cross-translation-unit call edges that
+   tree-sitter cannot resolve from a syntactic walk alone. Requires:
+   - `pip install "configflux-weld[cpp-libclang]"` (Python bindings)
+   - A `compile_commands.json` at the repo root, e.g.
+     `cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON .`
+   - `WELD_CPP_LIBCLANG=1` in the environment that runs `wd discover`
+
+   When any prerequisite is missing the libclang strategy silently
+   returns no nodes — tree-sitter still runs.
+
+**The unverified part.** The first end-to-end public benchmark run
+against `nlohmann/json` (`docs/bench/PUBLIC-BENCHMARK-0.17.2.md`) was
+done in an environment that did not have the `[tree-sitter]` extra
+installed, so the recorded F1 numbers reflect "feature didn't load,"
+not "feature ran and missed." A real-numbers re-run is open as a
+follow-up. **Treat C++ support as "ships and runs, quality not yet
+measured at scale"** until that follow-up lands. If you adopt C++
+support and measure it against your own corpus, please share the
+numbers — that is the fastest way to close this gap.
 
 To use the built-in semantic enrichment providers:
 
@@ -331,6 +384,28 @@ The `copilot-cli` provider needs no Python extra — install the standalone
 GitHub Copilot CLI binary (`copilot`) and run
 `wd enrich --provider copilot-cli`. Set `WELD_COPILOT_BINARY` to override
 the binary path.
+
+### First-run enrichment prompt
+
+When you run `wd discover` for the first time and weld detects an
+enrichment provider through the usual environment variables (the
+Anthropic API key, the OpenAI API key, an `OLLAMA_HOST` value, or
+the `copilot` binary on `PATH`), discover prints a cost-honest
+prompt with the estimated dollar range and asks whether to run
+enrichment now. The answer is persisted to
+`.weld/.enrichment-prompted` and the prompt is not re-shown.
+
+- `wd discover --no-enrich` skips the prompt for one invocation.
+- `WELD_NO_ENRICH=1` skips it globally (CI-friendly).
+- `wd discover --safe` implies skip (network/LLM calls forbidden).
+- `wd enrich --reset-prompt` clears `.weld/.enrichment-prompted` so
+  the next `wd discover` re-asks (useful after configuring a
+  provider for the first time).
+
+Graphs over 2,000 nodes are out of the auto-flow: the message points
+you at the explicit `wd enrich --batch=N` path instead. Inside an
+agent harness (Claude Code, Cursor, Codex, etc.) with no provider
+configured, the prompt is replaced by a tip to run `/enrich-weld`.
 
 For a source-checkout install (contributors editing Weld itself), see
 [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -681,12 +756,14 @@ rm .weld/workspace-state.json
 | `wd callers <symbol>` | Direct/transitive callers |
 | `wd viz` | Local read-only browser graph explorer (sidebar toggles: **Hide standard library**, **Hide third-party dependencies** — see [Filtering noise in `wd viz`](#filtering-noise-in-wd-viz)) |
 | `wd stale` | Check graph freshness |
+| `wd <read-cmd> --no-refresh` | Skip the auto-refresh that runs when the graph is stale; a warning is emitted to stderr. Set `WELD_AUTO_REFRESH=0` to disable globally for CI / batch runs. |
 | `wd graph stats` | Graph statistics |
 | `wd graph communities [--format json\|markdown] [--top N] [--write]` | Detect deterministic graph communities, report top-level hubs, and optionally write derived JSON/report/index artifacts (unresolved-symbol nodes are excluded from the projected subgraph) |
 | `wd stats` | Backward-compatible alias for `wd graph stats` |
 | `wd graph validate` | Validate graph against the contract |
 | `wd graph validate-fragment <file>` | Validate imported graph fragments and warn on trace-inert semantics |
 | `wd validate` | Backward-compatible alias for `wd graph validate` |
+| `wd migrate --add-confidence` | Backfill missing edge `confidence` props (`definite` / `inferred` / `speculative`) by classifying each edge from its `source_strategy`; strategies without a declared default land at `speculative`. Writes the graph back and emits a JSON report `{filled, unchanged, invalid}`. |
 | `wd doctor` | Check setup health; exits 0 in directories that are not Weld projects yet |
 | `wd prime` | Setup status + per-framework agent surface matrix (skill / instruction / mcp) with fix commands; `--agent {auto,claude,codex,copilot,all}` forces an agent row even when its framework files are absent |
 | `wd scaffold` | Write starter templates |
@@ -840,7 +917,7 @@ same "(412)" hint next to its own toggles.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.17.2`.
+terminal snippets captured against `wd 0.18.0`.
 
 ## Install
 

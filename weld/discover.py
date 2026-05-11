@@ -12,7 +12,6 @@ a complete re-scan.
 
 from __future__ import annotations
 
-import argparse
 import copy
 import json
 import sys
@@ -27,8 +26,8 @@ from weld._discover_empty_guard import (
 from weld._discover_federate import merge_cross_repo_edges, retag_federated_origins_on_disk
 from weld._discover_postprocess import post_process as _post_process
 from weld._discover_sidecar import (persist_file_index as _persist_file_index,
-                                    persist_query_state_sidecar
-                                    as _persist_query_state_sidecar)
+                                    persist_query_state_sidecar as _persist_query_state_sidecar,
+                                    persist_sqlite_sidecar as _persist_sqlite_sidecar)
 from weld._discover_state_check import (files_missing_from_graph,
                                          graph_files_with_nodes,
                                          save_state_for_graph)
@@ -58,6 +57,7 @@ def _discover_single_repo(
     *,
     incremental: bool | None = None,
     safe: bool = False,
+    with_sqlite: bool = True,
 ) -> dict:
     """Walk the codebase and build a connected structure from config.
 
@@ -134,6 +134,8 @@ def _discover_single_repo(
         graph = _post_process(nodes, edges, context, config, root, df)
         save_state_for_graph(root, current_hashes, graph)
         _persist_query_state_sidecar(root / ".weld", graph)
+        if with_sqlite:
+            _persist_sqlite_sidecar(root / ".weld", graph)
         _persist_file_index(root)
         return graph
 
@@ -164,6 +166,8 @@ def _discover_single_repo(
             refreshed["meta"]["discovered_from"] = current_file_set
         save_state_for_graph(root, current_hashes, refreshed)
         _persist_query_state_sidecar(root / ".weld", refreshed)
+        if with_sqlite:
+            _persist_sqlite_sidecar(root / ".weld", refreshed)
         _persist_file_index(root)
         return refreshed
 
@@ -192,6 +196,8 @@ def _discover_single_repo(
     graph = _post_process(ex_nodes, ex_edges, context, config, root, old_df + new_df)
     save_state_for_graph(root, current_hashes, graph)
     _persist_query_state_sidecar(root / ".weld", graph)
+    if with_sqlite:
+        _persist_sqlite_sidecar(root / ".weld", graph)
     _persist_file_index(root)
     return graph
 
@@ -205,6 +211,7 @@ def discover(
     output: Path | None = None,
     safe: bool = False,
     allow_empty: bool = False,
+    with_sqlite: bool = True,
 ) -> dict:
     """Walk the codebase and build a connected structure from config.
 
@@ -234,7 +241,9 @@ def discover(
     """
     workspace_config = load_workspace_config(root)
     if workspace_config is None:
-        return _discover_single_repo(root, incremental=incremental, safe=safe)
+        return _discover_single_repo(
+            root, incremental=incremental, safe=safe, with_sqlite=with_sqlite,
+        )
     with WorkspaceLock(root):
         state = build_workspace_state(root, workspace_config)
         if recurse:
@@ -260,6 +269,8 @@ def discover(
                 output, graph, state, allow_empty=allow_empty,
             )
             atomic_write_text(output, _dumps_graph(graph))
+            if with_sqlite and output.name == "graph.json":  # ADR 0058: sidecar pairs by name
+                _persist_sqlite_sidecar(output.parent, graph)
         elif write_root_graph:
             from weld.workspace_state import atomic_write_text
 
@@ -268,60 +279,29 @@ def discover(
                 target, graph, state, allow_empty=allow_empty,
             )
             atomic_write_text(target, _dumps_graph(graph))
+            if with_sqlite:
+                _persist_sqlite_sidecar(target.parent, graph)
         save_workspace_state(root, state)
         return graph
 
 
+def _emit_compile_db_stub_main(root: Path) -> int:
+    """Write the libclang compile-db stub and return an exit code."""
+    from weld._doctor_cpp import emit_compile_db_stub
+    try:
+        json_p, readme_p = emit_compile_db_stub(root)
+    except FileExistsError as exc:
+        print(f"[weld] error: {exc}", file=sys.stderr)
+        return 2
+    print(f"[weld] wrote stub {json_p} and {readme_p}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="wd discover",
-        description="Run config-driven Weld discovery and emit graph JSON to stdout")
-    parser.add_argument("root", nargs="?", default=".", help="Project root directory (default: .)")
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--incremental", action="store_true", default=False,
-        help="Only re-extract changed files (default when state file exists)")
-    mode.add_argument("--full", action="store_true", default=False,
-        help="Force full discovery, ignoring any previous state")
-    parser.add_argument(
-        "--write-root-graph",
-        action="store_true",
-        default=False,
-        help="On a federated root, write .weld/graph.json atomically "
-             "inside the workspace lock (required for crash-safety).",
-    )
-    parser.add_argument(
-        "--recurse", action="store_true", default=False,
-        help="Cascade discovery into each present child before building the root meta-graph.",
-    )
-    parser.add_argument(
-        "--output",
-        default=None,
-        help="Atomically write canonical graph JSON to this path "
-             "(parent directories are created). When set, stdout is "
-             "empty; human status still goes to stderr. (ADR 0019)",
-    )
-    parser.add_argument(
-        "--safe",
-        action="store_true",
-        default=False,
-        help="Refuse project-local strategies under .weld/strategies/ and "
-             "the external_json subprocess adapter. Use this when scanning "
-             "an untrusted repository. (ADR 0024)",
-    )
-    parser.add_argument(
-        "--allow-empty",
-        action="store_true",
-        default=False,
-        help="Bypass the federated empty-graph guard. By default, a "
-             "federated discover that would overwrite a non-empty graph "
-             "with a 0-node meta-graph is refused; pass this flag to "
-             "intentionally tear the workspace graph down. (ADR 0028)",
-    )
-    parser.add_argument(
-        "--quiet", action="store_true", default=False,
-        help="Suppress the one-line stderr success summary "
-             "(node/edge counts, elapsed time). Use for scripted callers.",
-    )
-    args = parser.parse_args(argv)
+    from weld._discover_cli import build_parser
+    args = build_parser().parse_args(argv)
+    if args.emit_compile_db_stub:
+        return _emit_compile_db_stub_main(Path(args.root))
 
     inc = False if args.full else (True if args.incremental else None)
     output_path = Path(args.output) if args.output else None
@@ -339,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
             output=output_path if is_federated else None,
             safe=args.safe,
             allow_empty=args.allow_empty,
+            with_sqlite=not args.no_sqlite,
         )
     except (WorkspaceConfigError, WorkspaceLockedError) as exc:
         print(f"[weld] error: {exc}", file=sys.stderr)
@@ -349,11 +330,20 @@ def main(argv: list[str] | None = None) -> int:
     if output_path is not None and not is_federated:
         from weld.workspace_state import atomic_write_text
         atomic_write_text(output_path, _dumps_graph(result))
+        if not args.no_sqlite and output_path.name == "graph.json":  # ADR 0058: sidecar pairs by name
+            _persist_sqlite_sidecar(output_path.parent, result)
     elif output_path is None:
         sys.stdout.write(_dumps_graph(result))
     sp = output_path or ((root_path / ".weld" / "graph.json")
                          if args.write_root_graph and is_federated else None)
     _emit_summary(result, sp, time.monotonic() - started, quiet=args.quiet)
+    # ADR 0052: first-run enrichment policy. Federated roots are
+    # scoped out today.
+    if not is_federated:
+        from weld._first_run_enrich import maybe_propose_enrichment
+        maybe_propose_enrichment(
+            root_path, result, safe=args.safe, no_enrich_flag=args.no_enrich,
+        )
     return 0
 
 

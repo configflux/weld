@@ -40,6 +40,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from weld._bootstrap_hosts import (
+    add_framework_subparser,
+    dispatch_per_host_bootstrap,
+    per_host_names,
+    per_host_targets,
+)
 from weld.bootstrap_writer import process_template_dest
 from weld.workspace_state import find_workspaces_yaml
 
@@ -184,6 +190,24 @@ def _display_path(path: Path, *, cwd: Path | None = None) -> str:
         return str(path)
 
 
+def _seed_discover_yaml_if_missing(root: Path) -> None:
+    """Bootstrap ``.weld/discover.yaml`` when absent.
+
+    ``discover.yaml`` is generated content (not a template copy), so it stays
+    outside the diff/force surface -- existing files keep the silent-skip
+    behaviour. Shared by the legacy framework path and the new ADR-0054 host
+    registry so a fresh repo always gets a discover.yaml regardless of which
+    host the agent ran ``wd bootstrap`` for.
+    """
+    discover_path = root / ".weld" / "discover.yaml"
+    if discover_path.is_file():
+        print("discover.yaml already exists, skipping.")
+        return
+    from weld.init import init as init_bootstrap
+
+    init_bootstrap(root, discover_path)
+
+
 def bootstrap(
     framework: str,
     root: Path,
@@ -222,10 +246,11 @@ def bootstrap(
     Returns the number of files with diffs when ``diff=True`` (0 when all
     targeted assets match the bundled templates); always 0 in write mode.
     """
-    if framework not in _FRAMEWORKS:
+    if framework not in _FRAMEWORKS and framework not in per_host_names():
+        all_names = sorted(set(_FRAMEWORKS) | set(per_host_names()))
         raise ValueError(
             f"unknown framework: {framework!r} "
-            f"(expected one of {', '.join(sorted(_FRAMEWORKS))})"
+            f"(expected one of {', '.join(all_names)})"
         )
 
     # cli_only folds into the two underlying flags so downstream logic only
@@ -233,6 +258,26 @@ def bootstrap(
     if cli_only:
         no_mcp = True
         no_enrich = True
+
+    # ADR-0054 hosts use a separate registry and rendering pipeline (single
+    # canonical body + per-host overlays + optional wiki fallback). Dispatch
+    # to the helper module to keep this function focused on the legacy path.
+    if framework in per_host_names():
+        root = root.resolve()
+        readme_diff = _process_template(
+            _README_TEMPLATE, root / ".weld" / "README.md",
+            force=force, diff=diff, cwd=root, append=None,
+            framework=framework, include_unmanaged=include_unmanaged,
+        )
+        host_diff_count = dispatch_per_host_bootstrap(
+            framework, root,
+            force=force, diff=diff, no_mcp=no_mcp,
+            include_unmanaged=include_unmanaged,
+        )
+        if diff:
+            return host_diff_count + (1 if readme_diff else 0)
+        _seed_discover_yaml_if_missing(root)
+        return 0
 
     # Any opt-out triggers the .cli.md variant for markdown templates that
     # carry MCP or enrich content. The variant strips both concerns, which
@@ -287,13 +332,7 @@ def bootstrap(
     # surface -- existing files keep the silent-skip behaviour.
     if diff:
         return diff_count
-    discover_path = root / ".weld" / "discover.yaml"
-    if discover_path.is_file():
-        print("discover.yaml already exists, skipping.")
-    else:
-        from weld.init import init as init_bootstrap
-
-        init_bootstrap(root, discover_path)
+    _seed_discover_yaml_if_missing(root)
     return 0
 
 
@@ -310,51 +349,14 @@ def main(argv: list[str] | None = None) -> None:
             str(dest)
             for _, dest in (*_FRAMEWORKS[name], *_MCP_PAIRS.get(name, ()))
         )
-        fw_parser = sub.add_parser(
-            name,
-            help=f"Write onboarding assets for {name} (-> {dests})",
-        )
-        fw_parser.add_argument(
-            "--root", type=Path, default=Path("."),
-            help="Project root directory (default: current directory)",
-        )
-        fw_parser.add_argument(
-            "--force", action="store_true",
-            help="Overwrite existing files",
-        )
-        fw_parser.add_argument(
-            "--diff", action="store_true",
-            help=(
-                "Print unified diffs between bundled templates and the "
-                "on-disk copies without writing; exits 1 when any diffs "
-                "are found, 0 otherwise."
-            ),
-        )
-        fw_parser.add_argument(
-            "--no-mcp", action="store_true", dest="no_mcp",
-            help=(
-                "Do not write MCP configuration, and strip MCP mentions "
-                "from generated markdown"
-            ),
-        )
-        fw_parser.add_argument(
-            "--no-enrich", action="store_true", dest="no_enrich",
-            help="Strip wd enrich guidance from generated markdown",
-        )
-        fw_parser.add_argument(
-            "--cli-only", action="store_true", dest="cli_only",
-            help="Shortcut for --no-mcp --no-enrich",
-        )
-        fw_parser.add_argument(
-            "--include-unmanaged",
-            action="store_true",
-            dest="include_unmanaged",
-            help=(
-                "With --diff, fall back to the whole-file unified diff "
-                "(default --diff is region-scoped per ADR 0033). "
-                "Requires --diff; rejected otherwise."
-            ),
-        )
+        add_framework_subparser(sub, name, dests)
+
+    # ADR-0054 hosts (cursor, aider, gemini-cli, copilot-cli). The targets
+    # come from the new registry; the rest of the flag surface is identical
+    # to the legacy frameworks (the helper above is the source of truth).
+    for name in per_host_names():
+        dests = ", ".join(str(p) for p in per_host_targets(name))
+        add_framework_subparser(sub, name, dests)
 
     args = parser.parse_args(argv)
 

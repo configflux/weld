@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
+from weld._sqlite_reader import SqliteBackedGraph
 from weld.graph import CHILD_SCHEMA_VERSION, Graph, SchemaVersionError
 from weld.workspace import UNIT_SEPARATOR
 
@@ -47,7 +48,14 @@ class CorruptChild:
     status: str = "corrupt"
 
 
-LoadedChild: TypeAlias = Graph | MissingChild | UninitializedChild | CorruptChild
+#: ADR 0058: ``_load_child`` may now return a :class:`SqliteBackedGraph`
+#: when the child's sidecar is fresh; callers that need the full
+#: in-memory query state (``Graph.query``) must request the JSON path
+#: explicitly via :func:`weld.federation` helpers.
+ChildHandle: TypeAlias = Graph | SqliteBackedGraph
+LoadedChild: TypeAlias = (
+    Graph | SqliteBackedGraph | MissingChild | UninitializedChild | CorruptChild
+)
 
 
 def prefix_node_id(child_name: str, node_id: str) -> str:

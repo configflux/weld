@@ -315,11 +315,19 @@ def main(argv: list[str] | None = None) -> None:
             f"(default {_DEFAULT_SEED_LIMIT})"
         ),
     )
+    parser.add_argument(
+        "--no-refresh", dest="no_refresh", action="store_true", default=False,
+        help=(
+            "Skip the auto-refresh that runs when the graph is stale "
+            "(ADR 0051). A warning is emitted to stderr."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if (args.term is None) == (args.node_id is None):
         parser.error("provide either a term or --node, not both")
 
+    from weld._auto_refresh import auto_refresh_if_stale
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
     from weld.graph import Graph
 
@@ -332,6 +340,12 @@ def main(argv: list[str] | None = None) -> None:
         else _build_retry_hint("trace", node=args.node_id)
     )
     ensure_graph_exists(args.root, retry_cmd)
+    auto_refresh_if_stale(
+        args.root,
+        no_refresh=args.no_refresh,
+        # trace always emits JSON; suppress the banner.
+        json_output=True,
+    )
 
     g = Graph(args.root)
     g.load()

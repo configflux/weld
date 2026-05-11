@@ -51,7 +51,7 @@ import sys
 import tempfile
 import threading
 
-# The 13 tool names exposed by weld's MCP server registry. Embedded
+# The 14 tool names exposed by weld's MCP server registry. Embedded
 # sorted so a reader can audit the assertion locally without grepping
 # the wheel. Drift between this list and the live registry fails the
 # handshake; drift between this list and the in-tree fixture is
@@ -68,6 +68,7 @@ _EXPECTED_TOOL_NAMES = [
     "weld_path",
     "weld_query",
     "weld_references",
+    "weld_review",
     "weld_stale",
     "weld_trace",
 ]

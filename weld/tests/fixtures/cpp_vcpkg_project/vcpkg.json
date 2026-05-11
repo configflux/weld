@@ -1,0 +1,14 @@
+{
+  "name": "example-vcpkg",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "fmt",
+    {
+      "name": "boost-system",
+      "version>=": "1.81.0"
+    },
+    {
+      "name": "spdlog"
+    }
+  ]
+}

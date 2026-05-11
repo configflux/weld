@@ -11,6 +11,7 @@ from __future__ import annotations
 from weld.mcp_helpers import (
     build_enrich_tool as _build_enrich_tool,
     build_impact_tool as _build_impact_tool,
+    build_review_tool as _build_review_tool,
     build_trace_tool as _build_trace_tool,
 )
 
@@ -31,6 +32,7 @@ def build_tools(
     weld_trace=None,
     weld_impact=None,
     weld_enrich=None,
+    weld_review=None,
 ) -> list:
     """Return the ordered list of MCP tool descriptors.
 
@@ -281,4 +283,11 @@ def build_tools(
             handler=weld_diff,
         ),
     )
+    # ADR 0055: ambiguous-edge review queue.
+    _rd = _build_review_tool()
+    tools.append(tool_cls(
+        name=_rd["name"], description=_rd["description"],
+        input_schema=_rd["input_schema"],
+        handler=weld_review if weld_review is not None else _rd["handler"],
+    ))
     return tools

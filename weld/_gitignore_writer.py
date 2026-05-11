@@ -54,11 +54,13 @@ workspace-state.json
 workspace.lock
 query_state.bin
 graph.json
+graph.db
 agent-graph.json
 graph-communities.json
 graph-community-report.md
 graph-community-index.md
 telemetry.jsonl
+review-state.json
 """
 
 TRACK_GRAPHS_GITIGNORE = """\
@@ -72,10 +74,12 @@ graph-previous.json
 workspace-state.json
 workspace.lock
 query_state.bin
+graph.db
 graph-communities.json
 graph-community-report.md
 graph-community-index.md
 telemetry.jsonl
+review-state.json
 """
 
 IGNORE_ALL_GITIGNORE = """\

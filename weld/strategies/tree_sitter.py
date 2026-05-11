@@ -18,6 +18,7 @@ from pathlib import Path
 
 from weld._yaml import parse_yaml
 from weld.strategies import cpp_resolver as _cpp_resolver
+from weld.strategies._cpp_post_pass import run_cpp_post_pass as _run_cpp_post_pass
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
 from weld.strategies._tree_sitter_ids import (
     canonical_file_node_id as _make_node_id,
@@ -372,25 +373,27 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 }
             )
 
-    # Layer 2 (cpp only): rewrite unresolved sentinels across includes.
+    # Layer 2 (cpp only): rewrite unresolved sentinels + ADR 0057
+    # Wave 2 header/source pairing edges. The consolidated post-pass
+    # lives in :mod:`weld.strategies._cpp_post_pass` so this strategy
+    # stays under the 400-line cap.
     if language == "cpp" and emit_calls and cpp_per_file:
-        # The configured glob may not have covered headers (a common
-        # case is ``**/*.cpp``), so do a side-channel header walk to
-        # populate the include resolver's symbol index.  We only
-        # surface header parses to the resolver — we do NOT add file
-        # nodes for them, so the rest of the graph is unchanged.
         def _parse_for_resolver(file_path: Path, lang: str) -> dict:
             return _parse_file_symbols(file_path, lang, queries)
 
-        _cpp_resolver.augment_state_with_headers(
-            root,
-            cpp_per_file,
-            language,
-            excludes,
-            _parse_for_resolver,
+        _run_cpp_post_pass(
+            root, cpp_per_file, nodes, edges,
+            language, excludes, _parse_for_resolver,
+            source_strategy=source_strategy,
         )
-        _cpp_resolver.resolve_includes_pass(
-            root, cpp_per_file, nodes, edges
+
+    # ADR 0056 Wave 3 post-pass: merge ``partial class`` declarations
+    # accumulated into ``enricher_caches["partial_class_state"]`` into
+    # one ``symbol:csharp:<ns>.<class>`` node each plus ``contains``
+    # edges to every contributing file.
+    if language == "csharp":
+        _csharp_tree_sitter.finalise(
+            nodes, edges, enricher_caches, source_strategy,
         )
 
     return StrategyResult(nodes, edges, discovered_from)

@@ -188,6 +188,125 @@ def build_impact_tool() -> dict:
     }
 
 
+def weld_review(
+    *,
+    op: str,
+    edge_id: str | None = None,
+    reason: str = "",
+    limit: int | None = None,
+    type_filter: str | None = None,
+    source_filter: str | None = None,
+    root: Path | str = ".",
+) -> dict:
+    """``weld_review`` MCP tool: list / show / accept / reject (ADR 0055).
+
+    ``op`` selects the operation. ``accept`` / ``reject`` / ``show``
+    require ``edge_id`` (the 16-hex stable id minted by
+    :func:`weld._review.mint_edge_id`). ``list`` honors the optional
+    ``type_filter`` / ``source_filter`` / ``limit`` arguments. Unknown
+    ops return ``{"error": ...}`` so the dispatcher does not raise.
+    """
+    from weld._review import (
+        accept_edge as _accept,
+        list_pending as _list,
+        reject_edge as _reject,
+        show_edge as _show,
+    )
+
+    if op == "list":
+        return _list(
+            root,
+            limit=limit,
+            type_filter=type_filter,
+            source_filter=source_filter,
+        )
+    if op == "show":
+        if not edge_id:
+            return {"error": "weld_review show requires edge_id"}
+        return _show(root, edge_id)
+    if op == "accept":
+        if not edge_id:
+            return {"error": "weld_review accept requires edge_id"}
+        return _accept(root, edge_id, reason=reason)
+    if op == "reject":
+        if not edge_id:
+            return {"error": "weld_review reject requires edge_id"}
+        return _reject(root, edge_id, reason=reason)
+    return {
+        "error": (
+            f"weld_review: unknown op {op!r}; "
+            "expected one of list, show, accept, reject."
+        ),
+    }
+
+
+def weld_review_guarded(**kwargs) -> dict:
+    """``weld_review`` wrapped with the missing-graph guard (ADR 0023).
+
+    Used by :func:`weld.mcp_server.build_tools`. Kept here so the
+    server module stays under the 400-line cap. The guard short-circuits
+    when ``.weld/graph.json`` (single repo) or ``.weld/workspaces.yaml``
+    (federated) is absent and the call would otherwise raise.
+    """
+    from weld._mcp_guard import (
+        graph_present as _graph_present,
+        missing_graph_payload as _missing_graph_payload,
+    )
+    if not _graph_present(Path(kwargs.get("root", "."))):
+        return _missing_graph_payload("weld_review")
+    return weld_review(**kwargs)
+
+
+def build_review_tool() -> dict:
+    """Return the MCP tool descriptor for ``weld_review`` (ADR 0055)."""
+    return {
+        "name": "weld_review",
+        "description": (
+            "Triage speculative edges in the connected structure. "
+            "op=list returns pending edges; op=show returns one edge; "
+            "op=accept promotes confidence speculative -> definite; "
+            "op=reject records a drop for the next discover."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "enum": ["list", "show", "accept", "reject"],
+                    "description": "Operation selector.",
+                },
+                "edge_id": {
+                    "type": "string",
+                    "description": (
+                        "Stable 16-hex review id (required for show / "
+                        "accept / reject)."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional reason recorded with the decision.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Cap on list results.",
+                    "minimum": 1,
+                },
+                "type_filter": {
+                    "type": "string",
+                    "description": "Limit list to a specific edge type.",
+                },
+                "source_filter": {
+                    "type": "string",
+                    "description": "Limit list to a specific source_strategy.",
+                },
+            },
+            "required": ["op"],
+            "additionalProperties": False,
+        },
+        "handler": weld_review,
+    }
+
+
 def build_enrich_tool() -> dict:
     """Return the MCP tool descriptor for ``weld_enrich``."""
     return {

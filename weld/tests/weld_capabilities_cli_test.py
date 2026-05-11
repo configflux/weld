@@ -96,10 +96,13 @@ class CapabilitiesCliTest(unittest.TestCase):
         self.assertIn("python", data["languages"])
 
     def test_missing_returns_sorted_list(self) -> None:
-        # Drop a csproj into the temp repo so --missing has something to find.
+        # Drop an uncovered manifest (``Cargo.toml``) so ``--missing``
+        # has at least one framework to surface. ``.csproj`` is owned
+        # by ``csharp_project`` post-ADR-0056, so it no longer appears
+        # in the missing list; use a still-uncovered framework here.
         (self.root / "App").mkdir(exist_ok=True)
-        (self.root / "App" / "App.csproj").write_text(
-            "<Project></Project>\n", encoding="utf-8",
+        (self.root / "App" / "Cargo.toml").write_text(
+            "[package]\nname = \"x\"\n", encoding="utf-8",
         )
         code, stdout, _ = _run_cli(
             ["--missing", "--json", "--root", str(self.root)],
@@ -108,7 +111,7 @@ class CapabilitiesCliTest(unittest.TestCase):
         data = json.loads(stdout)
         self.assertIsInstance(data, list)
         self.assertEqual(data, sorted(data))
-        self.assertIn("dotnet", data)
+        self.assertIn("cargo", data)
 
 
 class CapabilitiesCliCorruptedGraphTest(unittest.TestCase):
@@ -162,11 +165,13 @@ class CapabilitiesCliCorruptedGraphTest(unittest.TestCase):
     def test_corrupted_graph_missing_json_does_not_crash(self) -> None:
         # --missing path uses detect_missing(root), which scans disk and is
         # independent of the graph file. It must still work even when the
-        # graph load fails.
+        # graph load fails. Use a still-uncovered framework -- ``cargo``
+        # via ``Cargo.toml`` -- because ``.csproj`` is owned by the new
+        # csharp_project strategy (ADR 0056 Wave 1).
         root = self._corrupt_repo()
         (root / "App").mkdir(exist_ok=True)
-        (root / "App" / "App.csproj").write_text(
-            "<Project></Project>\n", encoding="utf-8",
+        (root / "App" / "Cargo.toml").write_text(
+            "[package]\nname = \"x\"\n", encoding="utf-8",
         )
         code, stdout, _ = _run_cli(
             ["--missing", "--json", "--root", str(root)],
@@ -174,7 +179,7 @@ class CapabilitiesCliCorruptedGraphTest(unittest.TestCase):
         self.assertEqual(code, 0)
         data = json.loads(stdout)
         self.assertIsInstance(data, list)
-        self.assertIn("dotnet", data)
+        self.assertIn("cargo", data)
 
 
 if __name__ == "__main__":

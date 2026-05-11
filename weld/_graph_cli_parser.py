@@ -15,6 +15,22 @@ from pathlib import Path
 from weld.contract import VALID_EDGE_TYPES, VALID_NODE_TYPES
 
 _JSON_HELP = "Emit JSON envelope instead of human text (ADR 0040)."
+_NO_REFRESH_HELP = (
+    "Skip the auto-refresh that runs when the graph is stale. "
+    "A warning is printed to stderr; the answer is served from the "
+    "current (possibly stale) graph. (ADR 0051)"
+)
+
+
+def _add_no_refresh(parser: argparse.ArgumentParser) -> None:
+    """Add ``--no-refresh`` to a read-command subparser (ADR 0051)."""
+    parser.add_argument(
+        "--no-refresh",
+        dest="no_refresh",
+        action="store_true",
+        default=False,
+        help=_NO_REFRESH_HELP,
+    )
 
 
 def _positive_int(value: str) -> int:
@@ -59,7 +75,27 @@ def build_parser(prog: str = "wd") -> argparse.ArgumentParser:
     _add_stats(sub)
     _add_communities(sub)
     _add_import_validate(sub)
+    _add_migrate(sub)
+    _add_index(sub)
     return parser
+
+
+def _add_index(sub) -> None:
+    """Register ``wd graph index`` -- ADR 0058 sqlite sidecar rebuild."""
+    p = sub.add_parser(
+        "index",
+        help=(
+            "Rebuild the .weld/graph.db sqlite sidecar from the current "
+            "graph.json (ADR 0058)."
+        ),
+    )
+    p.add_argument(
+        "--rebuild", action="store_true", default=False,
+        help=(
+            "Required flag: force a sqlite rebuild from the canonical "
+            "graph.json. Future incremental modes will share this verb."
+        ),
+    )
 
 
 def _add_query(sub) -> None:
@@ -81,6 +117,7 @@ def _add_query(sub) -> None:
     p.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_no_refresh(p)
 
 
 def _add_context(sub) -> None:
@@ -89,6 +126,7 @@ def _add_context(sub) -> None:
     p.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_no_refresh(p)
 
 
 def _add_path(sub) -> None:
@@ -98,6 +136,7 @@ def _add_path(sub) -> None:
     p.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_no_refresh(p)
 
 
 def _add_mutators(sub) -> None:
@@ -167,6 +206,7 @@ def _add_find(sub) -> None:
     p.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_no_refresh(p)
 
 
 def _add_callers_refs(sub) -> None:
@@ -188,6 +228,7 @@ def _add_callers_refs(sub) -> None:
     p_callers.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_no_refresh(p_callers)
     p_refs = sub.add_parser(
         "references",
         help="Callers + textual file-index references for a symbol name",
@@ -196,6 +237,7 @@ def _add_callers_refs(sub) -> None:
     p_refs.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_no_refresh(p_refs)
 
 
 def _add_simple(sub) -> None:
@@ -272,4 +314,30 @@ def _add_import_validate(sub) -> None:
     )
     p_vf.add_argument(
         "--allow-dangling", action="store_true", help="Skip ref checks",
+    )
+
+
+def _add_migrate(sub) -> None:
+    """Register ``wd migrate`` -- ADR-driven graph migrations.
+
+    The first migration shipped under this command is
+    ``--add-confidence`` (ADR 0050): backfill missing ``confidence``
+    props on legacy graphs by classifying each edge's
+    ``source_strategy`` against the static map in
+    :mod:`weld._confidence_defaults`.
+    """
+    p = sub.add_parser(
+        "migrate",
+        help=(
+            "Apply ADR-driven graph migrations "
+            "(currently --add-confidence per ADR 0050)."
+        ),
+    )
+    p.add_argument(
+        "--add-confidence", action="store_true",
+        help=(
+            "Backfill missing edge confidence props using the "
+            "source_strategy -> confidence map from ADR 0050. "
+            "Strategies not in the map default to 'speculative'."
+        ),
     )

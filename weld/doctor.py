@@ -29,8 +29,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-from weld._git import commits_behind, get_git_sha, is_git_repo
 from weld._doctor_agent_graph import check_agent_graph
+# Re-exported for backwards compatibility with tests that monkey-patch
+# these names on ``weld.doctor``. The staleness check moved to
+# :mod:`weld._doctor_staleness`; consumers should target that module
+# directly for new patches.
+from weld._git import (  # noqa: F401 -- re-exported for monkeypatch targets
+    commits_behind, get_git_sha, is_git_repo,
+)
 from weld._doctor_format import (
     apply_suppressions as _apply_suppressions,
     format_results,
@@ -113,40 +119,15 @@ def _check_graph_json(weld_dir: Path) -> list[CheckResult]:
     ]
 
 
+def _check_sqlite_sidecar(weld_dir: Path) -> list[CheckResult]:
+    """Report sqlite sidecar staleness (ADR 0058). Delegates to :mod:`weld._doctor_sqlite`."""
+    from weld._doctor_sqlite import check_sqlite_sidecar
+    return check_sqlite_sidecar(weld_dir, CheckResult)
+
+
 def _check_staleness(weld_dir: Path, root: Path) -> list[CheckResult]:
-    path = weld_dir / "graph.json"
-    if not path.is_file():
-        return []  # already covered by _check_graph_json
-
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-
-    if not is_git_repo(root):
-        return []
-
-    current_sha = get_git_sha(root)
-    meta = data.get("meta") or {}
-    graph_sha = meta.get("git_sha")
-
-    if graph_sha is None:
-        return [CheckResult("warn", "graph has no git SHA -- staleness unknown", "Graph")]
-
-    if graph_sha == current_sha:
-        return []
-
-    behind = commits_behind(root, graph_sha, current_sha) if current_sha else -1
-    if behind > 0:
-        suffix = "commits" if behind != 1 else "commit"
-        return [
-            CheckResult(
-                "warn",
-                f"graph is {behind} {suffix} behind HEAD -- run wd discover",
-                "Graph",
-            )
-        ]
-    return [CheckResult("warn", "graph is behind HEAD -- run wd discover", "Graph")]
+    from weld._doctor_staleness import check_staleness
+    return check_staleness(weld_dir, root, CheckResult)
 
 
 # Re-export helpers used by tests that monkey-patch tree-sitter. We import
@@ -237,6 +218,7 @@ def doctor(root: Path) -> list[CheckResult]:
     results.extend(_check_python_version())
     results.extend(_check_discover_yaml(weld_dir))
     results.extend(_check_graph_json(weld_dir))
+    results.extend(_check_sqlite_sidecar(weld_dir))
     results.extend(_check_staleness(weld_dir, root))
     results.extend(_check_strategies(weld_dir, root))
     results.extend(_check_trust_boundaries(weld_dir))
@@ -306,6 +288,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show the Agent Graph health summary only",
     )
     mode.add_argument(
+        "--cpp",
+        action="store_true",
+        help="Show the C++ libclang readiness report only (ADR 0057 Wave 3).",
+    )
+    mode.add_argument(
         "--ack",
         action="append",
         metavar="NOTE_ID",
@@ -358,10 +345,14 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_security(root, as_json=args.json)
 
-    if args.agent_graph:
-        ag_results = doctor_agent_graph(root)
-        sys.stdout.write(format_results(ag_results) + "\n")
-        return 1 if any(r.level == "fail" for r in ag_results) else 0
+    if args.agent_graph or args.cpp:
+        if args.cpp:
+            from weld._doctor_cpp import check_cpp
+            section = check_cpp(root, CheckResult)
+        else:
+            section = doctor_agent_graph(root)
+        sys.stdout.write(format_results(section) + "\n")
+        return 1 if any(r.level == "fail" for r in section) else 0
 
     results = doctor(root)
     weld_dir = root / ".weld"

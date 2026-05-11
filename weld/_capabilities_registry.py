@@ -265,12 +265,86 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
     "ros2_topology": _fw("ros2", ("nodes_emitted",), (".py", ".cpp")),
     "ros2_launch": _fw("ros2", ("nodes_emitted",), (".launch.py",)),
     "ros2_cmake": _fw("ros2", ("nodes_emitted",), basenames=("CMakeLists.txt",)),
+    # ADR 0057 Wave 1: general-purpose C++ build-system parsers. Each
+    # entry attributes to a distinct package-manager / build-system
+    # framework so the capability matrix lights up per ecosystem.
+    "cpp_cmake": _fw(
+        "cmake",
+        ("nodes_emitted",),
+        exts=(".cmake",),
+        basenames=("CMakeLists.txt",),
+    ),
+    "cpp_conan": _fw(
+        "conan",
+        ("nodes_emitted",),
+        basenames=("conanfile.txt", "conanfile.py"),
+    ),
+    "cpp_vcpkg": _fw(
+        "vcpkg",
+        ("nodes_emitted",),
+        basenames=("vcpkg.json",),
+    ),
+    "cpp_buildsystem_detector": _fw(
+        "cpp_buildsystem",
+        ("nodes_emitted",),
+        basenames=(
+            "CMakeLists.txt",
+            "Makefile",
+            "GNUmakefile",
+            "meson.build",
+            "BUILD",
+            "BUILD.bazel",
+        ),
+    ),
+    # ADR 0057 Wave 3: optional libclang-driven semantic layer. The
+    # strategy is opt-in (``pip install configflux-weld[cpp-libclang]``
+    # + ``WELD_CPP_LIBCLANG=1`` + a ``compile_commands.json``); when
+    # dormant it contributes nothing. The capability is registered
+    # nonetheless so ``wd capabilities`` lists the libclang framework
+    # row instead of hiding it.
+    "cpp_libclang": _fw(
+        "cpp_libclang",
+        ("nodes_emitted",),
+        basenames=("compile_commands.json",),
+    ),
     "markdown": _fw("markdown", ("nodes_emitted",), (".md",)),
     "firstline_md": _fw("markdown", ("nodes_emitted",), (".md",)),
     "frontmatter_md": _fw("markdown", ("nodes_emitted",), (".md",)),
     "runbook": _fw("runbook", ("nodes_emitted",), (".md",)),
     "concept_from_bd": _fw(
         "bd", ("nodes_emitted",), basenames=("issues.jsonl",),
+    ),
+    # ADR 0056 Wave 1: ``.csproj`` and ``.sln`` parsers. Wave 1 covers
+    # project + solution graph (ProjectReference, Directory.Build.props,
+    # solution-level configurations). Wave 2 / Wave 3 layer framework
+    # awareness (routes, EF Core, MSBuild targets) on top.
+    "csharp_project": _fw(
+        "dotnet", ("nodes_emitted", "deps_edges"), (".csproj",),
+    ),
+    "csharp_solution": _fw(
+        "dotnet", ("nodes_emitted",), (".sln",),
+    ),
+    # ADR 0056 Wave 2: framework-aware extraction over C# source files.
+    # Each strategy attributes to a distinct framework so the
+    # capability matrix lights up per ecosystem (aspnetcore, efcore,
+    # xUnit/NUnit/MSTest).
+    "csharp_aspnet_routes": _fw(
+        "aspnetcore", ("nodes_emitted",), (".cs",),
+    ),
+    "csharp_efcore": _fw(
+        "efcore", ("nodes_emitted",), (".cs",),
+    ),
+    "csharp_test_framework": _fw(
+        "csharp_test", ("nodes_emitted",), (".cs",),
+    ),
+    # ADR 0056 Wave 3: MSBuild target extraction. Parses
+    # <Target Name="..."> declarations from .csproj/.props/.targets and
+    # emits build-target nodes plus BeforeTargets/AfterTargets
+    # depends_on edges.
+    "csharp_msbuild_targets": _fw(
+        "msbuild",
+        ("nodes_emitted", "deps_edges"),
+        exts=(".csproj", ".props", ".targets"),
     ),
 }
 
@@ -317,44 +391,10 @@ MULTI_FRAMEWORK_FILES: dict[
 }
 
 
-# Frameworks present-on-disk by these patterns but with no registry-based
-# edge support yet. Drives ``wd capabilities --missing``. Grows as Layer
-# C and the v1.1+ roadmap add proper strategies.
-#
-# Invariant (enforced by
-# ``test_missing_patterns_disjoint_from_known_frameworks``): no
-# framework name and no basename in this table may overlap with a
-# wired strategy in :data:`STRATEGY_CAPABILITIES`. Examples of
-# already-owned basenames (and the strategy that owns them):
-# ``Makefile`` / ``GNUmakefile`` -> ``manifest`` (npm+make);
-# ``CMakeLists.txt`` -> ``ros2_cmake``; ``Chart.yaml`` and ``*.tf``
-# -> ``deploy_surface`` (k8s+helm+terraform). Re-introducing them
-# here would double-count the same files in ``--missing``.
-MISSING_FRAMEWORK_PATTERNS: dict[
-    str, tuple[tuple[str, ...], tuple[str, ...]]
-] = {
-    # name -> (extensions, basenames)
-    "dotnet": ((".csproj", ".sln", ".fsproj", ".vbproj"), ()),
-    "maven": ((), ("pom.xml",)),
-    "gradle": (
-        (),
-        (
-            "build.gradle",
-            "build.gradle.kts",
-            "settings.gradle",
-            "settings.gradle.kts",
-        ),
-    ),
-    "cargo": ((), ("Cargo.toml",)),
-    "go_modules": ((), ("go.mod",)),
-    "swift_pm": ((), ("Package.swift",)),
-    "composer": ((), ("composer.json",)),
-    "bundler": ((), ("Gemfile",)),
-    "pyproject": ((), ("pyproject.toml",)),
-    "requirements_txt": ((), ("requirements.txt",)),
-    "setuptools": ((), ("setup.py", "setup.cfg")),
-    # ``helm`` and ``terraform`` are owned by ``deploy_surface``
-    # (``Chart.yaml`` and ``*.tf`` respectively); see its
-    # multi-framework declaration in :data:`STRATEGY_CAPABILITIES`
-    # and the per-framework split in :data:`MULTI_FRAMEWORK_FILES`.
-}
+# Frameworks present-on-disk but not yet wired to a strategy. Extracted
+# to :mod:`weld._capabilities_registry_missing` to keep this file under
+# the 400-line cap. Re-exported here so all existing import sites are
+# unaffected.
+from weld._capabilities_registry_missing import (  # noqa: E402
+    MISSING_FRAMEWORK_PATTERNS,  # noqa: F401 -- re-exported for callers
+)

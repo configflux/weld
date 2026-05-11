@@ -89,27 +89,24 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--allow-stale",
-        dest="allow_stale",
-        action="store_true",
+        "--allow-stale", dest="allow_stale", action="store_true",
         help="Proceed even when the graph is stale (warnings.stale_graph is set)",
     )
     parser.add_argument(
-        "--depth",
-        type=_parse_depth,
-        default=3,
+        "--depth", type=_parse_depth, default=3,
         help="Maximum reverse traversal depth (default: 3)",
     )
     parser.add_argument(
-        "--json",
-        action="store_true",
+        "--json", action="store_true",
         help="Emit the stable JSON envelope instead of human-readable text",
     )
     parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("."),
+        "--root", type=Path, default=Path("."),
         help="Project root containing .weld/graph.json",
+    )
+    parser.add_argument(
+        "--no-refresh", dest="no_refresh", action="store_true", default=False,
+        help="Skip auto-refresh on stale graph (ADR 0051).",
     )
     return parser
 
@@ -337,12 +334,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _validate_seed_inputs(args)
 
+    from weld._auto_refresh import auto_refresh_if_stale
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
 
     # Surface the friendly first-run message if the graph has not been
     # built. Mirrors trace/diff/enrich behaviour.
     retry_target = args.target if args.target is not None else "<seed>"
     ensure_graph_exists(args.root, _build_retry_hint("impact", retry_target))
+    # ADR 0051: auto-refresh stale graphs before the existing
+    # --allow-stale gate fires. The banner is suppressed under --json.
+    auto_refresh_if_stale(
+        args.root, no_refresh=args.no_refresh, json_output=args.json,
+    )
 
     graph = Graph(args.root)
     graph.load()

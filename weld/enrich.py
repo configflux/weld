@@ -9,11 +9,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from weld._enrich_safe import (
-    SafeModeRefusedError,
-    refuse_if_network_provider,
-    resolve_provider_name,
-)
+from weld._enrich_safe import (SafeModeRefusedError, refuse_if_network_provider, resolve_provider_name)
+from weld._first_run_enrich import cli_reset_prompt
+from weld._graph_cli import _build_retry_hint, ensure_graph_exists
 from weld.graph import Graph
 from weld.providers import EnrichmentProvider, resolve_provider
 
@@ -364,10 +362,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-tokens", type=_parse_non_negative_int, help="Stop after this many tokens are used")
     parser.add_argument("--max-cost", type=_parse_non_negative_float, help="Stop after this much tracked cost is used")
     parser.add_argument("--json", dest="json_output", action="store_true", help="Emit machine-readable JSON")
-    parser.add_argument("--safe", action="store_true", help="Refuse network/LLM providers (ADR 0024 trust boundary, extended to enrich)")
+    parser.add_argument("--safe", action="store_true", help="Refuse network/LLM providers (ADR 0024)")
+    parser.add_argument("--reset-prompt", action="store_true", help="Re-arm wd discover's first-run enrichment prompt (ADR 0052).")
     args = parser.parse_args(argv)
-    # Friendly first-run guidance when graph.json is missing (tracked issue).
-    from weld._graph_cli import _build_retry_hint, ensure_graph_exists
+    if args.reset_prompt:
+        return cli_reset_prompt(args.root)
     ensure_graph_exists(args.root, _build_retry_hint("enrich", node=args.node_id) if args.node_id else _build_retry_hint("enrich"))
     graph = Graph(args.root)
     graph.load()

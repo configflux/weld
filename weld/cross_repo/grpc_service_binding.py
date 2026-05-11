@@ -159,6 +159,15 @@ def _build_cross_repo_edges(
                                 to_id=rpc_id,
                                 type="cross_repo:grpc_calls",
                                 props={
+                                    # ADR 0050: the resolver matches a
+                                    # qualified service name AND an
+                                    # exact method name against the
+                                    # proto file's source-of-truth
+                                    # declaration. That is two pieces
+                                    # of disambiguating evidence, so
+                                    # the emitted edge is `definite`.
+                                    "source_strategy": "grpc_service_binding",
+                                    "confidence": "definite",
                                     "service": service_label,
                                     "method": method,
                                 },

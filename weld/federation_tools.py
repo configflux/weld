@@ -45,12 +45,15 @@ def federated_stale(fg: FederatedGraph) -> dict:
 
     Returns the root stale result augmented with a ``children`` dict
     mapping each child name to its stale result (or a graceful
-    degradation payload for non-present children).
+    degradation payload for non-present children). Uses the JSON
+    path explicitly because ``Graph.stale`` depends on
+    ``Graph._data['meta']`` which the sqlite handle does not expose
+    (ADR 0058 Option A scope).
     """
     result = fg._root_graph.stale()
     children: dict[str, dict] = {}
     for name in sorted(fg._children):
-        child = fg._load_child(name)
+        child = fg._load_child_for_query(name)
         if isinstance(child, Graph):
             children[name] = child.stale()
         elif isinstance(
@@ -71,12 +74,14 @@ def federated_callers(
 
     If *symbol_id* uses the federation prefix (``child<US>local_id``),
     the search targets that specific child.  Otherwise the root graph
-    is searched.
+    is searched. Uses the JSON path because ``Graph.callers`` builds
+    a full reverse-adjacency over the edge list -- not yet built from
+    sqlite (ADR 0058 Option A scope).
     """
     parts = split_prefixed_id(symbol_id)
     if parts is not None:
         child_name, local_id = parts
-        child = fg._load_child(child_name)
+        child = fg._load_child_for_query(child_name)
         if not isinstance(child, Graph):
             return {
                 "symbol": symbol_id,
@@ -108,7 +113,10 @@ def federated_references(
     """Fan out symbol references across root and all present children.
 
     Merges matches from every child, prefixing IDs, and aggregates
-    callers across all of them.
+    callers across all of them. Uses the JSON path because
+    ``Graph.references`` chains into ``Graph.callers`` and
+    ``Graph._resolve_symbol_name``, both of which scan the full
+    in-memory node/edge list (ADR 0058 Option A scope).
     """
     all_matches: list[dict] = []
     all_callers: dict[str, dict] = {}
@@ -123,7 +131,7 @@ def federated_references(
 
     # Children.
     for name in sorted(fg._children):
-        child = fg._load_child(name)
+        child = fg._load_child_for_query(name)
         if not isinstance(child, Graph):
             continue
         child_refs = child.references(symbol_name)

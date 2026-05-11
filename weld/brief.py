@@ -368,19 +368,22 @@ def main(argv: list[str] | None = None) -> None:
         "--root", type=Path, default=Path("."),
         help="Project root directory",
     )
+    parser.add_argument("--limit", type=int, default=20, help="Max nodes per section")
     parser.add_argument(
-        "--limit", type=int, default=20,
-        help="Max nodes per section",
+        "--no-refresh", dest="no_refresh", action="store_true", default=False,
+        help="Skip auto-refresh on stale graph (ADR 0051).",
     )
     args = parser.parse_args(argv)
 
+    from weld._auto_refresh import auto_refresh_if_stale
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
     from weld.graph import Graph
 
-    # Surface a friendly first-run message when the graph has not been
-    # built yet; mirrors the behaviour of read commands in _graph_cli
-    # (tracked issue).
+    # Friendly first-run message when the graph has not been built.
     ensure_graph_exists(args.root, _build_retry_hint("brief", args.term))
+    # ADR 0051: auto-refresh stale graphs. ``brief`` always emits JSON,
+    # so the human banner is unconditionally suppressed.
+    auto_refresh_if_stale(args.root, no_refresh=args.no_refresh, json_output=True)
     g = Graph(args.root)
     g.load()
     result = brief(g, args.term, limit=args.limit)

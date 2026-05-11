@@ -122,8 +122,8 @@ Nodes are keyed by deterministic IDs of the form
 - `applies_to_path` — an instruction or rule scopes itself to a file
   glob. Instruction files without an explicit `applyTo:` / `globs:` /
   `path_globs:` declaration default to repo-wide scope and emit one
-  inferred edge to `**` (ADR 0021 Amendment 2). Explicit declarations
-  always win and suppress the implicit edge.
+  inferred edge to `**`. Explicit declarations always win and
+  suppress the implicit edge.
 - `references_file` — text contains a Markdown link, `@file` reference,
   or repository-relative path. Each such target also becomes a `file`
   node, with `props.exists` recording whether the target resolves.

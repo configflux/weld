@@ -30,6 +30,10 @@ _EDGE_WEIGHTS = {
     "calls": 3.0,
     "invokes": 3.0,
     "implements": 3.0,
+    # ADR 0057 Wave 2: header/source pairing as graph edge. Treated as
+    # a strong coupling -- editing a header almost always reaches the
+    # paired implementation.
+    "implemented_by": 3.0,
     "exposes": 3.0,
     "accepts": 2.5,
     "responds_with": 2.5,

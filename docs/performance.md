@@ -147,9 +147,7 @@ shape.
 
 The 50 s `wd init` and 26 s `wd query` cold numbers above were
 profiled with `cProfile` to confirm where wall time actually goes.
-Findings are captured in
-[ADR 0027](adrs/0027-init-and-query-cold-path-on-large-repos.md);
-the short version is that the *original* mental model -- "init walks
+The short version is that the *original* mental model -- "init walks
 the tree" and "query parses the JSON" -- is not where the time is.
 
 For `wd init` (50 s wall):

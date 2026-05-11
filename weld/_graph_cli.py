@@ -118,6 +118,25 @@ def ensure_graph_exists(root: Path, retry_cmd: str) -> None:
     sys.exit(1)
 
 
+def _run_graph_index(args) -> None:  # type: ignore[no-untyped-def]
+    """Handle ``wd graph index --rebuild`` (ADR 0058)."""
+    if not getattr(args, "rebuild", False):
+        sys.stderr.write(
+            "wd graph index: pass --rebuild to force a sqlite sidecar rebuild "
+            "from the canonical graph.json (ADR 0058).\n",
+        )
+        sys.exit(2)
+    graph_path = Path(args.root) / ".weld" / "graph.json"
+    if not graph_path.is_file():
+        sys.stderr.write(
+            f"wd graph index: {graph_path} not found; run `wd discover` first.\n",
+        )
+        sys.exit(1)
+    from weld._sqlite_writer import build_sidecar_from_graph_path
+    target = build_sidecar_from_graph_path(graph_path)
+    _out({"sidecar": str(target), "source_json": str(graph_path), "status": "rebuilt"})
+
+
 def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C901
     parser = build_parser(prog=prog)
     args = parser.parse_args(argv)
@@ -142,10 +161,24 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
             else:
                 _emit(args, fg.path(args.from_id, args.to_id), render_path)
             return
+    if cmd == "index":
+        _run_graph_index(args)
+        return
     if cmd in _READ_COMMANDS:
         # Single-repo read path: surface a friendly first-run message when
         # the graph has not been built yet (tracked issue).
         ensure_graph_exists(args.root, _retry_hint(cmd, args))
+    # ADR 0051: auto-refresh stale graphs before serving. ``find`` is
+    # included even though it reads the file-index (not the graph)
+    # because the same incremental discovery pass that refreshes the
+    # graph also rewrites the file-index sidecar.
+    if cmd in _READ_COMMANDS or cmd == "find":
+        from weld._auto_refresh import auto_refresh_if_stale
+        auto_refresh_if_stale(
+            args.root,
+            no_refresh=getattr(args, "no_refresh", False),
+            json_output=getattr(args, "as_json", False),
+        )
     g = Graph(args.root)
     g.load()
     mutates = False
@@ -242,6 +275,24 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
                 errs, source=str(graph_path),
             ))
             sys.exit(1)
+    elif cmd == "migrate":
+        # ADR 0050: --add-confidence backfills missing edge.confidence
+        # props by classifying each edge's source_strategy against the
+        # static defaults map. Future migrations land here as
+        # additional --flag options on the same subcommand.
+        if not getattr(args, "add_confidence", False):
+            sys.stderr.write(
+                "wd migrate: pass --add-confidence (ADR 0050) to "
+                "backfill missing edge confidence props.\n",
+            )
+            sys.exit(2)
+        from weld._graph_migrate import backfill_confidence
+        data = g.dump()
+        report = backfill_confidence(data)
+        # backfill_confidence mutates `data` in place; the in-memory
+        # graph holds the same dict reference, so save() persists it.
+        g.save(touch_git_sha=True)
+        _out(report.to_dict())
     elif cmd == "validate-fragment":
         from weld._validate_diagnostics import format_validation_report
         from weld.contract import validate_fragment

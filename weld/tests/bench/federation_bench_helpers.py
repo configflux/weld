@@ -138,9 +138,15 @@ def write_workspaces(root: Path, children: list[ChildEntry]) -> None:
 
 
 def setup_synthetic_workspace(
-    base: Path, n_children: int = 5,
+    base: Path, n_children: int = 5, *, write_sidecars: bool = False,
 ) -> tuple[Path, list[str]]:
-    """Create a workspace root with *n_children* deterministic child repos."""
+    """Create a workspace root with *n_children* deterministic child repos.
+
+    When *write_sidecars* is True, each child also gets a fresh sqlite
+    sidecar (``graph.db``) so :meth:`FederatedGraph._load_child` will
+    take the ADR 0058 lazy path. Used by the federation memory-peak
+    benchmark to compare JSON-load vs sqlite-load profiles.
+    """
     child_names: list[str] = []
     child_entries: list[ChildEntry] = []
 
@@ -150,11 +156,29 @@ def setup_synthetic_workspace(
         init_repo(child_dir)
         graph = generate_child_graph(idx)
         write_graph(child_dir, graph)
+        if write_sidecars:
+            _write_sidecar(child_dir, graph)
         child_names.append(name)
         child_entries.append(ChildEntry(name=name, path=name))
 
     write_workspaces(base, child_entries)
     return base, child_names
+
+
+def _write_sidecar(repo_root: Path, payload: dict) -> None:
+    """Write a fresh ``graph.db`` next to the child's ``graph.json``.
+
+    Imports are scoped inside the function so ordinary benchmark runs
+    that do not exercise the sidecar do not pay for the sqlite writer
+    module import.
+    """
+    from weld._sqlite_writer import build_sidecar_for_bytes
+
+    weld_dir = repo_root / ".weld"
+    graph_json = weld_dir / "graph.json"
+    body = graph_json.read_bytes()
+    db_path = weld_dir / "graph.db"
+    build_sidecar_for_bytes(payload, body, db_path, generated_at="bench")
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "configflux-weld"
-version = "0.17.2"
+version = "0.18.0"
 description = "Local codebase and agent graph for AI coding workflows"
 readme = "README.md"
 license = "Apache-2.0"
@@ -31,6 +31,12 @@ anthropic = ["anthropic"]
 openai = ["openai"]
 ollama = ["ollama"]
 llm = ["anthropic", "openai", "ollama"]
+# ADR 0057 Wave 3: optional libclang-driven C++ semantic layer
+# (macro expansion, template instantiations, cross-TU call
+# resolution). Heavy dep (~200MB of LLVM); installation is opt-in.
+# The strategy stays dormant unless this extra is installed, a
+# compile_commands.json is present, and WELD_CPP_LIBCLANG=1 is set.
+cpp-libclang = ["libclang>=14.0.0"]
 
 [tool.setuptools]
 # The pyproject.toml lives inside the weld/ package directory itself.
@@ -39,6 +45,7 @@ llm = ["anthropic", "openai", "ollama"]
 packages = [
     "weld",
     "weld.bench",
+    "weld.bench.adapters",
     "weld.bench_tasks",
     "weld.cross_repo",
     "weld.demos",
@@ -50,6 +57,7 @@ packages = [
 [tool.setuptools.package-dir]
 "weld" = "."
 "weld.bench" = "bench"
+"weld.bench.adapters" = "bench/adapters"
 "weld.bench_tasks" = "bench_tasks"
 "weld.cross_repo" = "cross_repo"
 "weld.demos" = "demos"

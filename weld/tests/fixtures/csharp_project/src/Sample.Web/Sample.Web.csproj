@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>Sample.Web</RootNamespace>
+    <AssemblyName>Sample.Web</AssemblyName>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sample.Dal\Sample.Dal.csproj" />
+  </ItemGroup>
+  <!-- ADR 0056 Wave 3: custom MSBuild target used by the
+       csharp_msbuild_targets fixture test. ``GenerateClientCode`` runs
+       before ``Build`` and after ``Restore`` so the integration test
+       can assert ordering edges in both directions. -->
+  <Target Name="GenerateClientCode" BeforeTargets="Build" AfterTargets="Restore">
+    <Message Text="Generating OpenAPI client code" Importance="high" />
+    <ItemGroup>
+      <GeneratedFile Include="generated\Client.cs" />
+    </ItemGroup>
+  </Target>
+</Project>

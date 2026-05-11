@@ -79,11 +79,188 @@ py_test(
     tags = ["no-sandbox"],
 )
 
+# ADR 0058 memory-peak probe: split from the benchmark test so each
+# file stays under the project line-count cap.
+py_test(
+    name = "weld_federation_memory_probe_test",
+    srcs = ["weld_federation_memory_probe_test.py"],
+    deps = [
+        ":federation_bench_helpers",
+        "//weld:runtime",
+        "//weld:workspace",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+# ADR 0058 Option B: lazy per-query inverted-index over a 30-child
+# federation. Measures RSS and latency vs the JSON-only baseline.
+py_test(
+    name = "weld_federation_query_test",
+    srcs = ["weld_federation_query_test.py"],
+    deps = [
+        ":federation_bench_helpers",
+        "//weld:runtime",
+        "//weld:workspace",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
 py_test(
     name = "synthetic_large_repo_test",
     srcs = ["synthetic_large_repo_test.py"],
     deps = [
         "//weld/bench:synthetic_large_repo",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_test",
+    srcs = ["weld_public_bench_test.py"],
+    data = [
+        "//weld/bench:public_corpus_manifest",
+        "//weld/bench:public_corpus_smoke_fixture",
+    ],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_setup_test",
+    srcs = ["weld_public_bench_setup_test.py"],
+    data = [
+        "//weld/bench:public_corpus_smoke_fixture",
+    ],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_skipped_test",
+    srcs = ["weld_public_bench_skipped_test.py"],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_adapters_test",
+    srcs = ["weld_public_bench_adapters_test.py"],
+    data = [
+        "//weld/bench:public_corpus_smoke_fixture",
+    ],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_cli_test",
+    srcs = ["weld_public_bench_cli_test.py"],
+    data = [
+        "//weld/bench:public_corpus_manifest",
+        "//weld/bench:public_corpus_smoke_fixture",
+    ],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_libclang_setup_test",
+    srcs = ["weld_public_bench_libclang_setup_test.py"],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_libclang_materialize_test",
+    srcs = ["weld_public_bench_libclang_materialize_test.py"],
+    data = [
+        "//weld/bench:public_corpus_manifest",
+    ],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_libclang_adapter_test",
+    srcs = ["weld_public_bench_libclang_adapter_test.py"],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_weld_adapter_test",
+    srcs = ["weld_public_bench_weld_adapter_test.py"],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_libclang_report_test",
+    srcs = ["weld_public_bench_libclang_report_test.py"],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+    local = True,
+    tags = ["no-sandbox"],
+)
+
+py_test(
+    name = "weld_public_bench_libclang_integration_test",
+    srcs = ["weld_public_bench_libclang_integration_test.py"],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
     ],
     local = True,
     tags = ["no-sandbox"],

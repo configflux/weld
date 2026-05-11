@@ -3,6 +3,63 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## Unreleased
+
+## v0.18.0 - 2026-05-11
+
+### Added
+
+- `wd review` JSON-first triage CLI for speculative edges. Subcommands
+  `list / show / accept / reject / reset / status` operate on a stable
+  16-hex edge id minted from
+  `sha1(from + "\x00" + to + "\x00" + type + "\x00" + source_strategy)`.
+  Accepted edges promote `speculative -> definite` in place; rejected
+  edges are dropped at the next `wd discover` via the post-process
+  contract, with a ghost-emit warning when a strategy keeps re-emitting
+  a rejected edge. Bulk `--pattern` operations are gated by `--yes` and
+  bounded against ReDoS (regex length cap, nested-quantifier reject,
+  match-length clamp). State lives at `.weld/review-state.json` and is
+  gitignored by default.
+- MCP server: 14 graph-backed tools (`weld_query`, `weld_find`,
+  `weld_context`, `weld_path`, `weld_brief`, `weld_stale`,
+  `weld_callers`, `weld_references`, `weld_export`, `weld_trace`,
+  `weld_impact`, `weld_enrich`, `weld_diff`, `weld_review`). The new
+  `weld_review` tool exposes `op=list / show / accept / reject` for
+  agent-driven triage of the speculative-edge backlog.
+  <!-- verify: file=weld/mcp_helpers.py grep=build_review_tool -->
+- `wd bench --public` produces a committable real-corpus benchmark
+  report against user-supplied codebases. A libclang variant adapter
+  joins the default tree-sitter path so C++ semantic coverage can be
+  compared head-to-head when a `compile_commands.json` is available;
+  when libclang or its prerequisites are missing, the adapter reports
+  `unavailable` instead of producing misleading zero scores.
+
+### Changed
+
+- README "Supported languages" table and C++ subsection now explicitly
+  label C++ (and ROS2, which inherits the C++ caveat) as **Tier 2
+  (preview), not Tier 1**. The substance was already documented as
+  "ships and runs, quality not yet measured at scale"; the change makes
+  the tier label unambiguous for readers skimming the table. The same
+  README section was reorganised to put the multi-language install path
+  up front instead of buried.
+  <!-- verify: file=README.md grep="Tier 2 (preview)" -->
+- `FederatedGraph.query` now builds a per-query inverted index lazily,
+  so cold-cache queries on large federations stop paying full-graph
+  tokenization cost up front. Ranking and result semantics are
+  unchanged; the change is observable only as faster first-query
+  latency on large federations.
+  <!-- verify: file=weld/federation.py grep="lazy per-query inverted index" -->
+
+### Fixed
+
+- `weld` public-benchmark adapter now reports `unavailable` (instead of
+  silently scoring zero) when the `[tree-sitter]` extra is not
+  installed. Prior runs that lacked the extra recorded misleadingly low
+  F1 numbers; the adapter is now honest about the missing capability,
+  and the published benchmark numbers have been refreshed with a real
+  libclang run against `nlohmann/json`.
+
 ## v0.17.2 - 2026-05-07
 
 ### Fixed
@@ -551,11 +608,12 @@ All notable user-facing changes to this project are recorded here.
 - `scripts/create-monorepo-demo.sh` and `scripts/create-polyrepo-demo.sh`
   build deterministic demo workspaces in a tempdir without manual nested
   `git init`. Fail gracefully when Git identity is missing.
-- MCP server: 13 graph-backed tools (`weld_query`, `weld_find`,
+- MCP server: 14 graph-backed tools (`weld_query`, `weld_find`,
   `weld_context`, `weld_path`, `weld_brief`, `weld_stale`, `weld_callers`,
   `weld_references`, `weld_export`, `weld_trace`, `weld_impact`,
-  `weld_enrich`, `weld_diff`) return an actionable error payload when
-  neither `.weld/graph.json` nor `.weld/workspaces.yaml` is present.
+  `weld_enrich`, `weld_diff`, `weld_review`) return an actionable error
+  payload when neither `.weld/graph.json` nor `.weld/workspaces.yaml` is
+  present.
 - Installed-wheel MCP smoke test (`weld_mcp_install_smoke_test`) builds
   the wheel, installs it, and asserts `python -m weld.mcp_server --help`
   works from the installed copy. Catches packaging regressions like the

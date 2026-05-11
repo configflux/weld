@@ -1,28 +1,37 @@
-"""Federated workspace query/context/path wrapper."""
+"""Federated workspace query/context/path wrapper.
+
+ADR 0058 (sqlite sidecar storage) rewires ``_load_child`` to return a
+:class:`SqliteBackedGraph` when a child's sidecar is fresh. Read paths
+(``get_node``, ``_exact_context``, ``_adjacent``, ``path``, ``query``)
+all run against the lazy sqlite handle when available. Option B added
+the lazy per-query inverted index so ``query`` no longer forces JSON;
+stale/missing sidecars still fall back through
+:meth:`_load_child_for_query`.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import sys
 from collections import deque
 from pathlib import Path
 
+from weld._sqlite_reader import SqliteBackedGraph
+from weld.federation_child_loader import (
+    child_edges_for as _child_edges_for,
+    child_local_context as _child_local_context,
+    load_child as _load_child_impl,
+    load_child_for_query as _load_child_for_query_impl,
+)
 from weld.federation_support import (
     ChildGraphCache,
-    CorruptChild,
     DEFAULT_CACHE_MAXSIZE,
     LoadedChild,
-    MissingChild,
-    UninitializedChild,
     edge_key,
-    load_graph_bytes,
     prefix_node_id,
     render_display_id,
     sorted_edges,
     split_prefixed_id,
 )
-from weld.graph import CHILD_SCHEMA_VERSION, Graph, SchemaVersionError
+from weld.graph import Graph
 from weld.graph_context import context_with_fallback as _context_with_fallback
 from weld.workspace import ChildEntry, UNIT_SEPARATOR
 from weld.workspace_state import load_workspace_config
@@ -51,13 +60,36 @@ class FederatedGraph:
         # Sentinel cache for non-graph results (missing/uninitialized/corrupt).
         # These are cheap and not evicted; they do not hold parsed graph data.
         self._sentinel_cache: dict[str, LoadedChild] = {}
+        # ADR 0058: per-name sqlite-handle cache so ``_load_child``
+        # does not reopen the sidecar on every call. The cache shares
+        # the ``_root_graph`` TOCTOU window (one MCP/CLI invocation).
+        self._sqlite_cache: dict[str, SqliteBackedGraph] = {}
+
+    def close(self) -> None:
+        """Close every cached sqlite child handle. Idempotent."""
+        for handle in self._sqlite_cache.values():
+            handle.close()
+        self._sqlite_cache.clear()
+
+    def __enter__(self) -> FederatedGraph:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
 
     def children_status(self) -> dict[str, dict[str, object]]:
-        """Return the current status of every registered child repo."""
+        """Return the current status of every registered child repo.
+
+        A child is "present" whenever ``_load_child`` returns any
+        readable handle -- either a JSON-backed :class:`Graph` or a
+        sqlite-backed :class:`SqliteBackedGraph` (ADR 0058). The
+        sentinel types (``MissingChild`` / ``UninitializedChild`` /
+        ``CorruptChild``) carry their own ``status`` field.
+        """
         status: dict[str, dict[str, object]] = {}
         for name in sorted(self._children):
             loaded = self._load_child(name)
-            if isinstance(loaded, Graph):
+            if isinstance(loaded, (Graph, SqliteBackedGraph)):
                 entry = self._children[name]
                 status[name] = {
                     "status": "present",
@@ -78,22 +110,38 @@ class FederatedGraph:
         return status
 
     def query(self, term: str, limit: int = 20) -> dict:
-        """Fan out tokenized search across the root graph and present children."""
+        """Fan out tokenized search across root + present children.
+
+        Sqlite-fresh children run :meth:`SqliteBackedGraph.query`
+        (lazy per-query inverted index, ADR 0058 Option B); stale or
+        missing sidecars fall back to the JSON-backed
+        :class:`Graph` via :meth:`_load_child_for_query`.
+        """
         matches: list[dict] = []
         for match in self._root_graph.query(term, limit=limit).get("matches", []):
             matches.append(self._decorate_node(match))
             if len(matches) >= limit:
                 return self._query_payload(term, matches)
         for name in sorted(self._children):
-            child = self._load_child(name)
-            if not isinstance(child, Graph):
-                continue
-            child_matches = child.query(term, limit=limit).get("matches", [])
+            child_matches = self._child_query_matches(name, term, limit)
             for match in child_matches:
                 matches.append(self._prefix_node(name, match))
                 if len(matches) >= limit:
                     return self._query_payload(term, matches)
         return self._query_payload(term, matches)
+
+    def _child_query_matches(
+        self, name: str, term: str, limit: int,
+    ) -> list[dict]:
+        """Return query matches for one child, sqlite path when possible."""
+        child = self._load_child(name)
+        if isinstance(child, SqliteBackedGraph):
+            return list(child.query(term, limit=limit).get("matches", []))
+        if not isinstance(child, Graph):
+            child = self._load_child_for_query(name)
+            if not isinstance(child, Graph):
+                return []
+        return list(child.query(term, limit=limit).get("matches", []))
 
     def _exact_context(self, canonical_id: str) -> dict | None:
         node = self.get_node(canonical_id)
@@ -105,12 +153,12 @@ class FederatedGraph:
         if parts is not None:
             child_name, local_id = parts
             child = self._load_child(child_name)
-            if isinstance(child, Graph):
-                child_context = child.context(local_id)
-                for neighbor in child_context.get("neighbors", []):
+            if isinstance(child, (Graph, SqliteBackedGraph)):
+                local_neighbors, local_edges = _child_local_context(child, local_id)
+                for neighbor in local_neighbors:
                     prefixed = self._prefix_node(child_name, neighbor)
                     neighbors.setdefault(prefixed["id"], prefixed)
-                for edge in child_context.get("edges", []):
+                for edge in local_edges:
                     prefixed_edge = self._prefix_edge(child_name, edge)
                     edges.setdefault(edge_key(prefixed_edge), prefixed_edge)
         for edge in self._root_edges_for(canonical_id):
@@ -187,7 +235,12 @@ class FederatedGraph:
         return self._root_graph.dump()
 
     def get_node(self, node_id: str) -> dict | None:
-        """Return a root node or prefixed child node with display metadata."""
+        """Return a root node or prefixed child node with display metadata.
+
+        Works against both JSON-backed and sqlite-backed child handles
+        (:class:`SqliteBackedGraph`) -- both expose ``get_node`` with
+        the same shape.
+        """
         canonical_id = self._canonicalize_node_id(node_id)
         parts = split_prefixed_id(canonical_id)
         if parts is None:
@@ -198,7 +251,7 @@ class FederatedGraph:
 
         child_name, local_id = parts
         child = self._load_child(child_name)
-        if not isinstance(child, Graph):
+        if not isinstance(child, (Graph, SqliteBackedGraph)):
             return None
         node = child.get_node(local_id)
         if node is None:
@@ -242,10 +295,10 @@ class FederatedGraph:
 
         child_name, local_id = parts
         child = self._load_child(child_name)
-        if not isinstance(child, Graph):
+        if not isinstance(child, (Graph, SqliteBackedGraph)):
             return [adjacent[key] for key in sorted(adjacent)]
 
-        for edge in child.dump().get("edges", []):
+        for edge in _child_edges_for(child, local_id):
             if edge["from"] == local_id:
                 other_local = edge["to"]
             elif edge["to"] == local_id:
@@ -264,88 +317,36 @@ class FederatedGraph:
         return [adjacent[key] for key in sorted(adjacent)]
 
     def _load_child(self, name: str) -> LoadedChild:
-        # Fast path: sentinel (missing/uninit/corrupt) results are cheap.
-        sentinel = self._sentinel_cache.get(name)
-        if sentinel is not None:
-            return sentinel
+        """Return a child handle, preferring the lazy sqlite path (ADR 0058).
 
-        entry = self._children[name]
-        child_root = self._root / entry.path
-        graph_path = child_root / ".weld" / "graph.json"
-        graph_rel = self._graph_rel_path(entry)
+        Body lives in :mod:`weld.federation_child_loader`; this method
+        is the federation-shaped seam tests monkey-patch.
+        """
+        return _load_child_impl(
+            name=name,
+            entry=self._children[name],
+            workspace_root=self._root,
+            sentinel_cache=self._sentinel_cache,
+            child_cache=self._child_cache,
+            sqlite_cache=self._sqlite_cache,
+            read_bytes=self._read_graph_bytes,
+        )
 
-        if not child_root.is_dir() or not (child_root / ".git").exists():
-            loaded: LoadedChild = MissingChild(
-                name=name,
-                path=entry.path,
-                graph_path=graph_rel,
-                remote=entry.remote,
-            )
-            self._sentinel_cache[name] = loaded
-            return loaded
+    def _load_child_for_query(self, name: str) -> LoadedChild:
+        """JSON-backed :class:`Graph` fallback for :meth:`query`.
 
-        if not graph_path.is_file():
-            loaded = UninitializedChild(
-                name=name,
-                path=entry.path,
-                graph_path=graph_rel,
-                remote=entry.remote,
-            )
-            self._sentinel_cache[name] = loaded
-            return loaded
-
-        # Read raw bytes and compute sha256 for cache lookup.
-        try:
-            raw = self._read_graph_bytes(graph_path)
-        except OSError as exc:
-            loaded = CorruptChild(
-                name=name,
-                path=entry.path,
-                graph_path=graph_rel,
-                remote=entry.remote,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-            self._sentinel_cache[name] = loaded
-            return loaded
-
-        digest = hashlib.sha256(raw).hexdigest()
-
-        # LRU cache lookup keyed by (name, sha256). On hit the
-        # expensive JSON parse + Graph construction is skipped.
-        cached_graph = self._child_cache.get(name, digest)
-        if cached_graph is not None:
-            return cached_graph
-
-        # Cache miss: parse JSON and build the Graph object.
-        try:
-            data = load_graph_bytes(
-                raw,
-                graph_path=graph_path,
-                max_supported_schema_version=CHILD_SCHEMA_VERSION,
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError, SchemaVersionError, ValueError) as exc:
-            loaded = CorruptChild(
-                name=name,
-                path=entry.path,
-                graph_path=graph_rel,
-                remote=entry.remote,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-            self._sentinel_cache[name] = loaded
-            return loaded
-
-        observed = self._graph_digest(graph_path)
-        if observed is not None and observed != digest:
-            print(
-                f"[weld] warning: child graph changed during load: {graph_path}",
-                file=sys.stderr,
-            )
-
-        graph = Graph(child_root)
-        graph._data = data
-        graph._build_inverted_index()
-        self._child_cache.put(name, digest, graph)
-        return graph
+        Used when the sidecar is missing/stale so the alias index and
+        OR-fallback path are available. Sqlite-backed children run
+        ``SqliteBackedGraph.query`` instead (ADR 0058 Option B).
+        """
+        return _load_child_for_query_impl(
+            name=name,
+            entry=self._children[name],
+            workspace_root=self._root,
+            sentinel_cache=self._sentinel_cache,
+            child_cache=self._child_cache,
+            read_bytes=self._read_graph_bytes,
+        )
 
     def _canonicalize_node_id(self, node_id: str) -> str:
         if UNIT_SEPARATOR in node_id or "::" not in node_id:
@@ -391,10 +392,5 @@ class FederatedGraph:
         return (Path(entry.path) / ".weld" / "graph.json").as_posix()
 
     def _read_graph_bytes(self, graph_path: Path) -> bytes:
+        """Read JSON bytes for *graph_path* (test seam for TOCTOU/cache patches)."""
         return graph_path.read_bytes()
-
-    def _graph_digest(self, graph_path: Path) -> str | None:
-        try:
-            return hashlib.sha256(self._read_graph_bytes(graph_path)).hexdigest()
-        except OSError:
-            return None

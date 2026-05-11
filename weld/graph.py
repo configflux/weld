@@ -26,29 +26,15 @@ from weld.query_state import build_query_state as _build_query_state
 from weld.serializer import dumps_graph as _dumps_graph
 from weld.workspace_state import atomic_write_text
 
-# Re-export schema symbols for backward compatibility -- many test files
-# import these directly from weld.graph.
-__all__ = [
-    "CHILD_SCHEMA_VERSION",
-    "ROOT_FEDERATED_SCHEMA_VERSION",
-    "SchemaVersionError",
-    "Graph",
-    "load_graph_file",
-    "main",
-]
+# Re-export schema symbols for backward compatibility -- some tests import directly from weld.graph.
+__all__ = ["CHILD_SCHEMA_VERSION", "ROOT_FEDERATED_SCHEMA_VERSION", "SchemaVersionError", "Graph", "load_graph_file", "main"]
 
 # Backward-compat alias kept private; used only by internal callers.
 _has_repo_nodes = __import__("weld._graph_schema", fromlist=["has_repo_nodes"]).has_repo_nodes
 
 
 def _schema_version_for(nodes: dict[str, dict]) -> int:
-    """Return the schema version for internal graph writers.
-
-    ``Graph.save`` and the discovery post-processing writer intentionally
-    share this private compatibility wrapper so both stamp
-    ``meta.schema_version`` through the same schema helper without exposing
-    it as part of ``weld.graph``'s public API.
-    """
+    """Internal alias: ``Graph.save`` and discover share the schema helper without re-exporting it."""
     return _graph_schema_version_for(nodes)
 
 
@@ -90,6 +76,17 @@ class Graph:
 
         load_query_state_for_graph(self)
 
+    @classmethod
+    def open(cls, root: Path):  # type: ignore[no-untyped-def]
+        """Return a sqlite-backed view if fresh, else a JSON-backed Graph (ADR 0058)."""
+        from weld._sqlite_reader import open_sidecar_if_fresh
+        backed = open_sidecar_if_fresh(Path(root) / ".weld" / "graph.json")
+        if backed is not None:
+            return backed
+        instance = cls(Path(root))
+        instance.load()
+        return instance
+
     def save(self, *, touch_git_sha: bool = False) -> None:
         """Atomically persist the graph (ADR 0011 ss8, ADR 0012 ss3).
 
@@ -117,6 +114,10 @@ class Graph:
     def add_edge(self, from_id: str, to_id: str, edge_type: str, props: dict) -> dict:
         edge = {"from": from_id, "to": to_id, "type": edge_type, "props": props}
         if edge not in self._data["edges"]:  # avoid exact duplicates
+            # ADR 0050: warn (during the one-minor migration window) on
+            # missing/invalid confidence at the first append site only.
+            from weld._confidence_warn import warn_edge_confidence
+            warn_edge_confidence(edge)
             self._data["edges"].append(edge)
             self._build_inverted_index()
         return edge

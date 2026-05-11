@@ -51,6 +51,11 @@ from weld._mcp_guard import (  # noqa: E402
     graph_present as _graph_present,
     missing_graph_payload as _missing_graph_payload,
 )
+from weld.tests._pip_wheel_hardening import hermetic_pip_wheel  # noqa: E402
+from weld.tests._source_tree_copy import (  # noqa: E402
+    copy_weld_source,
+    wheel_build_allowlist,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -247,21 +252,6 @@ def _weld_source_root() -> Path:
     return _REPO_ROOT / "weld"
 
 
-def _copy_weld_source(src: Path, dest: Path) -> None:
-    """Copy the package tree to keep wheel-build side effects off source."""
-    shutil.copytree(
-        src,
-        dest,
-        ignore=shutil.ignore_patterns(
-            "__pycache__",
-            "*.pyc",
-            "*.egg-info",
-            "build",
-            "dist",
-        ),
-    )
-
-
 class WheelInstallSmokeTest(unittest.TestCase):
     """Build a wheel from ``weld/`` and import the MCP server from it.
 
@@ -307,7 +297,14 @@ class WheelInstallSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="weld-mcp-wheel-") as tmp:
             tmp_path = Path(tmp)
             package_src = tmp_path / "weld-src"
-            _copy_weld_source(weld_root, package_src)
+            # Allowlist via the shared helper: every top-level child of
+            # weld_root **except** the heavy ``tests/`` subtree and
+            # ``__pycache__``. This keeps the per-test copy under ~5 MB
+            # so ~30 concurrent Bazel tests do not thrash disk.
+            copy_weld_source(
+                weld_root, package_src,
+                allowlist=wheel_build_allowlist(weld_root),
+            )
             dist_dir = tmp_path / "dist"
             dist_dir.mkdir()
 
@@ -315,12 +312,15 @@ class WheelInstallSmokeTest(unittest.TestCase):
             # ``--no-deps`` keeps it offline; ``--no-build-isolation`` is
             # intentionally NOT passed because the smoke must mirror what
             # users actually do (``pip install configflux-weld``). The copy
-            # prevents backend side effects from rewriting the checkout.
-            self._run([
-                sys.executable, "-m", "pip", "wheel",
-                "--quiet", "--no-deps", str(package_src),
-                "-w", str(dist_dir),
-            ], "build wheel")
+            # prevents backend side effects; ``hermetic_pip_wheel`` adds
+            # cache isolation + a read-only perimeter on live __init__.py.
+            with hermetic_pip_wheel(test_tmpdir=tmp_path,
+                                    protect=[weld_root / "__init__.py"]) as pip_env:
+                self._run([
+                    sys.executable, "-m", "pip", "wheel",
+                    "--quiet", "--no-deps", str(package_src),
+                    "-w", str(dist_dir),
+                ], "build wheel", extra_env=pip_env)
             self.assertEqual(
                 (package_src / "__init__.py").read_text(encoding="utf-8"),
                 source_init_text,
@@ -337,13 +337,14 @@ class WheelInstallSmokeTest(unittest.TestCase):
                 f"expected exactly one wheel, got {[w.name for w in wheels]}",
             )
 
-            # 2. Install into an isolated prefix.
+            # 2. Install into an isolated prefix (cache isolation only).
             prefix = tmp_path / "prefix"
-            self._run([
-                sys.executable, "-m", "pip", "install",
-                "--quiet", "--no-deps", "--target", str(prefix),
-                str(wheels[0]),
-            ], "install wheel")
+            with hermetic_pip_wheel(test_tmpdir=tmp_path) as install_env:
+                self._run([
+                    sys.executable, "-m", "pip", "install",
+                    "--quiet", "--no-deps", "--target", str(prefix),
+                    str(wheels[0]),
+                ], "install wheel", extra_env=install_env)
             self.assertTrue(
                 (prefix / "weld" / "mcp_server.py").is_file(),
                 "installed wheel does not expose weld/mcp_server.py "
@@ -380,9 +381,12 @@ class WheelInstallSmokeTest(unittest.TestCase):
             )
 
     @staticmethod
-    def _run(cmd: list[str], label: str) -> None:
-        """Run *cmd* and surface stderr on failure (no silent skips)."""
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    def _run(cmd: list[str], label: str, *, extra_env: dict[str, str] | None = None) -> None:
+        """Run *cmd*, merging *extra_env* onto :data:`os.environ`; surface stderr on failure."""
+        env = {**os.environ, **extra_env} if extra_env is not None else None
+        proc = subprocess.run(
+            cmd, env=env, capture_output=True, text=True, check=False,
+        )
         if proc.returncode != 0:
             raise AssertionError(
                 f"{label} failed (rc={proc.returncode})\n"

@@ -60,6 +60,7 @@ _CLI_COMMANDS: Final[frozenset[str]] = frozenset(
         "callers",
         "references",
         "enrich",
+        "review",
         "export",
         "viz",
         "watch",
@@ -89,6 +90,9 @@ _CLI_COMMANDS: Final[frozenset[str]] = frozenset(
         "telemetry-clear",
         "telemetry-disable",
         "telemetry-enable",
+        # ADR 0051: auto-refresh side-effect inside read commands logs
+        # under its own command name so the metric is searchable.
+        "auto-refresh",
         # Framework / sentinel names.
         "help",
         "version",
@@ -121,6 +125,7 @@ _MCP_TOOLS_FALLBACK: Final[frozenset[str]] = frozenset(
         "weld_trace",
         "weld_impact",
         "weld_enrich",
+        "weld_review",
     }
 )
 
@@ -217,6 +222,7 @@ CLI_FLAGS: Final[frozenset[str]] = frozenset(
         "--no-enrich",
         "--no-mcp",
         "--no-open",
+        "--no-refresh",
         "--no-telemetry",
         "--no-watchdog",
         "--no-write",

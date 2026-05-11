@@ -8,11 +8,9 @@ this you should be able to drop a Python file in
 `.weld/strategies/` and have `wd impact`, `wd query`, and the
 capability matrix all light up for your new framework.
 
-The higher-level design rationale lives in ADR 0043 (blast-radius
-extensions, parent), ADR 0044 (Bazel `srcs`/`deps` edges), ADR 0045
-(Dockerfile / compose edges), ADR 0046 (multi-language test peers),
-and ADR 0047 (deterministic fixture suite). This document is the
-practical "how" companion to those decisions.
+This document covers the practical "how": writing a strategy that
+extends discovery to a new language, framework, or build system, and
+the contract its outputs must satisfy.
 
 ---
 
@@ -26,7 +24,7 @@ maps a glob (or explicit file list) to a *node type* and a
 bundled implementation; the loader at
 `weld/_discover_strategies.py` resolves names in that order, prints
 a stable warning when shadowing is in effect, and refuses
-project-local code entirely under `--safe` mode (ADR 0024).
+project-local code entirely under `--safe` mode.
 
 Each strategy returns a `StrategyResult(nodes, edges, discovered_from)`
 which the discovery driver merges, dedupes, and runs through

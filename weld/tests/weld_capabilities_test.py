@@ -340,7 +340,12 @@ class ImpactEnvelopeIntegrationTest(unittest.TestCase):
 
 
 class DetectMissingTest(unittest.TestCase):
-    def test_csproj_and_pom_detected(self) -> None:
+    def test_pom_detected_when_csproj_supported(self) -> None:
+        # Post-ADR-0056 Wave 1: ``.csproj`` is owned by ``csharp_project``
+        # so ``dotnet`` no longer appears in missing. ``pom.xml`` remains
+        # uncovered until a future ADR adds Maven support. The supported
+        # framework path is still asserted (python never appears in
+        # missing).
         root = _make_repo(
             {},
             extra_files={
@@ -350,7 +355,7 @@ class DetectMissingTest(unittest.TestCase):
             },
         )
         missing = detect_missing(root)
-        self.assertIn("dotnet", missing)
+        self.assertNotIn("dotnet", missing)
         self.assertIn("maven", missing)
         # python is supported -> never appears in missing list.
         self.assertNotIn("python", missing)

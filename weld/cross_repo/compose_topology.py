@@ -176,6 +176,12 @@ class ComposeTopologyResolver(CrossRepoResolver):
                         to_id=f"{to_child}{UNIT_SEPARATOR}repo:{to_child}",
                         type="depends_on",
                         props={
+                            # ADR 0050: parsed YAML config is a
+                            # parseable, deterministic source. The
+                            # `depends_on` keyword is an explicit
+                            # operator declaration, not a heuristic.
+                            "source_strategy": "compose_topology",
+                            "confidence": "definite",
                             "from_service": svc_name,
                             "to_service": dep_name,
                             "source_file": source_file,

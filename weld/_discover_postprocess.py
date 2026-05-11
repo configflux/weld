@@ -25,12 +25,21 @@ def post_process(
     root: Path,
     discovered_from: list[str],
 ) -> dict:
-    """Run post-processing and build the final graph dict."""
+    """Run post-processing and build the final graph dict.
+
+    ADR 0055: after edges are deduplicated, apply the review-state file
+    so rejected edges drop and accepted edges keep their promoted
+    ``definite`` confidence even if the strategy emitted them as
+    ``speculative`` again. The import is local so this hot path does
+    not pay the cost when no review-state has been written.
+    """
     _resolve_fk_edges(edges, context)
     _detect_agent_invocations(nodes, edges, context)
     _apply_topology_overlay(nodes, edges, config, root)
     close_graph(nodes, edges)
     _clean_and_dedup_edges(nodes, edges)
+    from weld._review import apply_review_state as _apply_review_state
+    edges[:] = _apply_review_state(root, edges)
     unique_from = _dedup_discovered_from(discovered_from)
 
     meta: dict = {

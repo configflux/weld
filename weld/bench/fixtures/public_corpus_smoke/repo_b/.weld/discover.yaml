@@ -1,0 +1,8 @@
+# Minimal discover.yaml for the smoke-corpus repo_b fixture.
+sources:
+  - glob: "src/*.py"
+    type: file
+    strategy: python_module
+  - glob: "src/*.py"
+    type: symbol
+    strategy: python_callgraph

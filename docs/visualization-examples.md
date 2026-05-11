@@ -161,6 +161,30 @@ flowchart LR
 plus `--node` / `--depth` to extract a subgraph centered on a specific
 node.
 
+### `wd export --format=wiki` (agent-readable markdown)
+
+`wd export --format=wiki --output=<dir>` writes a directory tree of
+markdown wikilinks instead of a single visualization string. The
+layout is:
+
+```
+<output-dir>/
+  index.md
+  by-type/<type>.md
+  by-community/<community-id>.md
+  nodes/<safe-id>.md
+  .id-map.json
+```
+
+Each `nodes/<safe-id>.md` carries YAML frontmatter (`id`, `type`,
+`origin`, `confidence`) plus outgoing and incoming edges rendered as
+`[[node-id]]` wikilinks with inline confidence labels (e.g.
+`calls -> [[symbol:foo]] _(definite, source: python_ast)_`). The output
+is deterministic (alphabetical files, sorted edges, byte-identical
+re-export) and incremental (only changed nodes are rewritten on a second
+run). The format targets agent hosts that cannot run MCP -- any tool that
+can read files can navigate the graph by following wikilinks.
+
 ---
 
 ## Polyrepo workspace and `repo:` nodes
@@ -445,8 +469,7 @@ non-viz surfaces (`wd query`, `wd context`, MCP) continue to return the
 hidden nodes — `wd query "print"` still surfaces the stdlib `print` node
 even when "Hide standard library" is ticked. See the README's
 [Filtering noise in `wd viz`](../README.md#filtering-noise-in-wd-viz)
-section for the full taxonomy and [ADR 0042](adrs/0042-graph-node-origin.md)
-for the rationale.
+section for the full taxonomy and rationale.
 
 ---
 
@@ -495,7 +518,7 @@ The full MCP install story (including the `[mcp]` extra) is covered in
 
 ## Reproducing locally
 
-Snippets on this page were captured against `wd 0.17.2` from a Linux
+Snippets on this page were captured against `wd 0.18.0` from a Linux
 host. To reproduce them on your own machine:
 
 ```bash

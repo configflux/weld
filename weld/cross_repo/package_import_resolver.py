@@ -115,6 +115,20 @@ class PackageImportResolver(CrossRepoResolver):
                                 to_id=f"{target_child}{UNIT_SEPARATOR}{target_node_id}",
                                 type="depends_on",
                                 props={
+                                    # ADR 0050: matching is by name
+                                    # alone -- the importing module
+                                    # writes ``imports_from: ["foo"]``
+                                    # and a sibling repo declares a
+                                    # ``package`` whose ``name`` is
+                                    # ``"foo"``. There is no method
+                                    # signature, no version, no
+                                    # path-based disambiguation.
+                                    # Ambiguous package names will
+                                    # over-include, so the edge is
+                                    # `speculative` and lands in the
+                                    # ADR 0055 review queue.
+                                    "source_strategy": "package_import_resolver",
+                                    "confidence": "speculative",
                                     "import_name": imp_name,
                                     "source_child": child_name,
                                 },

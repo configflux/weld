@@ -1,0 +1,196 @@
+# Public benchmark corpus manifest -- SHA-pinned (ADR 0059).
+#
+# Five repositories chosen for breadth of language and pattern, fixed by SHA
+# so reruns are reproducible. Updating this file is an ADR amendment, not a
+# quiet refresh.
+#
+# Schema:
+#   schema_version: int                 -- bumped when the YAML shape changes
+#   corpus_id:      str                 -- short label for the corpus
+#   description:    str                 -- human-readable purpose
+#   repos:                              -- list of repository entries
+#     - id:        str                  -- short stable id used in report rows
+#       language:  str                  -- primary language
+#       source:                         -- how to acquire the repo
+#         kind:    git                  -- only "git" is supported in production
+#         url:     str                  -- clone URL
+#         sha:     str                  -- pinned commit SHA (40 hex chars)
+#       run:                            -- optional setup commands (bounded)
+#         - cmd:   str                  -- single shell command
+#           timeout_s: int              -- subprocess timeout
+#       tasks:                          -- list of benchmark tasks for the repo
+#         - id:        str              -- stable per-repo task id
+#           family:    str              -- navigation|dependency|callgraph|impact|cross_repo
+#           prompt:    str              -- natural-language question
+#           term:      str              -- search token
+#           symbol:    str (optional)   -- bare symbol for callgraph
+#           answer_files: list[str]     -- repo-relative answer-key paths
+#
+# Each family has 5-10 tasks per repo. The full corpus targets ~150 tasks.
+# Tasks below are placeholders showing the schema; the production set is
+# filled in iteratively (ADR 0059 mandates a published methodology first,
+# the numbers second). DO NOT run this corpus from the gate; manual only.
+schema_version: 1
+corpus_id: public-v0
+description: Public benchmark corpus for wd bench --public (ADR 0059).
+repos:
+  - id: flask
+    language: python
+    source:
+      kind: git
+      url: https://github.com/pallets/flask
+      # Pinned to 3.0.3 release (commit sha at time of ADR draft).
+      sha: "bc098406af9537aacc436cb2ea777fbc9ff4c5aa"
+    tasks:
+      - id: flask-nav-01
+        family: navigation
+        prompt: Where is the Flask application class defined?
+        term: Flask
+        symbol: Flask
+        answer_files:
+          - src/flask/app.py
+      - id: flask-dep-01
+        family: dependency
+        prompt: Where is the Blueprint class defined?
+        term: Blueprint
+        symbol: Blueprint
+        answer_files:
+          - src/flask/sansio/blueprints.py
+      - id: flask-cg-01
+        family: callgraph
+        prompt: Who references the url_for helper?
+        term: url_for
+        symbol: url_for
+        answer_files:
+          - src/flask/helpers.py
+      - id: flask-impact-01
+        family: impact
+        prompt: What test files exercise Flask basics?
+        term: test_basic
+        symbol: test_basic
+        answer_files:
+          - tests/test_basic.py
+      - id: flask-xrepo-01
+        family: cross_repo
+        prompt: Where is Werkzeug consumed (single-repo proxy for cross-repo)?
+        term: werkzeug
+        symbol: werkzeug
+        answer_files:
+          - src/flask/app.py
+          - src/flask/wrappers.py
+  - id: eshop
+    language: csharp
+    source:
+      kind: git
+      url: https://github.com/dotnet/eShop
+      # Pinned to an eShop release sha at time of ADR draft.
+      # NOTE: This SHA is a stand-in; a real eShop sha will be pinned
+      # when the C# corpus pass lands. The runner skips this
+      # repo and emits SKIPPED rows in the report (ADR 0059 honest
+      # losing). DO NOT change this without an ADR amendment.
+      sha: "7d9f29c1b0a6f8e0c4a5b9d2e3f4a5b6c7d8e9f0"
+      placeholder: true
+    tasks:
+      - id: eshop-nav-01
+        family: navigation
+        prompt: Where is the Catalog API entry point defined?
+        term: CatalogApi
+        symbol: CatalogApi
+        answer_files:
+          - src/Catalog.API/Program.cs
+  - id: nlohmann_json
+    language: cpp
+    source:
+      kind: git
+      url: https://github.com/nlohmann/json
+      # Pinned to v3.11.3 release sha at time of ADR draft.
+      sha: "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+    # Post-clone setup gated on cmake. Produces compile_commands.json
+    # which the libclang variant adapter consumes (the C++ best-in-class
+    # methodology). When cmake is missing on PATH the setup is recorded
+    # as setup_unavailable and the libclang adapter renders SKIPPED for
+    # the row -- the tree-sitter weld adapter still runs in that case.
+    setup:
+      requires_binary: cmake
+      cmd:
+        - cmake
+        - -B
+        - build
+        - -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        - .
+      produces: build/compile_commands.json
+      timeout_s: 300
+    tasks:
+      - id: njson-nav-01
+        family: navigation
+        prompt: Where is the json class defined?
+        term: basic_json
+        symbol: basic_json
+        answer_files:
+          - single_include/nlohmann/json.hpp
+      - id: njson-dep-01
+        family: dependency
+        prompt: Where is the parser implementation header?
+        term: parser
+        symbol: parser
+        answer_files:
+          - include/nlohmann/detail/input/parser.hpp
+      - id: njson-cg-01
+        family: callgraph
+        prompt: Who references json_pointer (the JSON-Pointer class)?
+        term: json_pointer
+        symbol: json_pointer
+        answer_files:
+          - include/nlohmann/json.hpp
+          - include/nlohmann/detail/json_pointer.hpp
+      - id: njson-impact-01
+        family: impact
+        prompt: Which unit tests exercise basic deserialization?
+        term: unit-deserialization
+        symbol: unit-deserialization
+        answer_files:
+          - tests/src/unit-deserialization.cpp
+      - id: njson-xrepo-01
+        family: cross_repo
+        prompt: Where is the CMakeLists root that exports nlohmann_json?
+        term: CMakeLists
+        symbol: CMakeLists
+        answer_files:
+          - CMakeLists.txt
+  - id: polyrepo_fixture
+    language: polyrepo
+    source:
+      kind: git
+      # Polyrepo fixture maintained alongside this manifest; SHA updated
+      # together with any manifest amendment. The fixture repo itself
+      # isn't published yet -- the runner emits SKIPPED rows for now.
+      url: https://github.com/anthropic-ai-tools/weld-polyrepo-fixture
+      sha: "ffffffffffffffffffffffffffffffffffffffff"
+      placeholder: true
+    tasks:
+      - id: poly-xrepo-01
+        family: cross_repo
+        prompt: Where is the OrderService consumed across child repos?
+        term: OrderService
+        symbol: OrderService
+        answer_files:
+          - services/api/main.py
+          - services/worker/events.py
+  - id: ros2_sample
+    language: cpp
+    source:
+      kind: git
+      url: https://github.com/ros2/examples
+      # Pinned to humble release sha at time of ADR draft. This is a
+      # placeholder until a real ros2/examples sha is pinned; the
+      # runner emits SKIPPED rows (ADR 0059 honest losing).
+      sha: "abcabcabcabcabcabcabcabcabcabcabcabcabca"
+      placeholder: true
+    tasks:
+      - id: ros2-nav-01
+        family: navigation
+        prompt: Where is the talker node defined?
+        term: talker
+        symbol: Talker
+        answer_files:
+          - rclcpp/topics/minimal_publisher/lambda.cpp

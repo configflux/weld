@@ -1,0 +1,13 @@
+[requires]
+fmt/9.1.0
+spdlog/1.11.0
+
+[build_requires]
+cmake/3.27.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[options]
+fmt:shared=False

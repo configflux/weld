@@ -102,9 +102,17 @@ class Override:
 
         The returned edge merges user-supplied props with a ``source``
         marker so downstream consumers can identify manual overrides.
+
+        Per ADR 0050 the edge defaults to ``confidence="definite"``
+        because the user has explicitly declared it in the override
+        file -- the strongest possible statement of intent. A user who
+        wants to mark the edge as inferred or speculative may set the
+        prop explicitly in the YAML; the explicit value is preserved.
         """
         merged = dict(self.props)
         merged.setdefault("source", "manual_override")
+        merged.setdefault("source_strategy", "manual_override")
+        merged.setdefault("confidence", "definite")
         return CrossRepoEdge(
             from_id=self.from_id,
             to_id=self.to_id,

@@ -28,6 +28,12 @@
   },
   "capabilities": {
     "frameworks": {
+      "aspnetcore": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "bazel": {
         "deps_edges": false,
         "nodes_emitted": false,
@@ -46,7 +52,19 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "cmake": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "compose": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "conan": {
         "deps_edges": false,
         "nodes_emitted": false,
         "srcs_edges": false,
@@ -58,7 +76,37 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "cpp_buildsystem": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "cpp_libclang": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "csharp_test": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "dockerfile": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "dotnet": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "efcore": {
         "deps_edges": false,
         "nodes_emitted": false,
         "srcs_edges": false,
@@ -112,6 +160,12 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "msbuild": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "npm": {
         "deps_edges": false,
         "nodes_emitted": false,
@@ -155,6 +209,12 @@
         "test_edges": false
       },
       "terraform": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "vcpkg": {
         "deps_edges": false,
         "nodes_emitted": false,
         "srcs_edges": false,

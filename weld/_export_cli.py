@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 
 def run_export(argv: list[str]) -> int:
     """Parse export subcommand args and run the export."""
+    from weld._auto_refresh import auto_refresh_if_stale
     from weld.export import export
 
     parser = argparse.ArgumentParser(prog="wd export")
@@ -25,8 +27,12 @@ def run_export(argv: list[str]) -> int:
         "--format",
         "-f",
         default="mermaid",
-        choices=("mermaid", "dot", "d2"),
-        help="Output format (default: mermaid)",
+        choices=("mermaid", "dot", "d2", "wiki"),
+        help=(
+            "Output format. ``mermaid``/``dot``/``d2`` stream a single "
+            "diagram to stdout. ``wiki`` (ADR 0053) writes a directory "
+            "tree of markdown wikilinks to ``--output``."
+        ),
     )
     parser.add_argument(
         "node",
@@ -49,6 +55,32 @@ def run_export(argv: list[str]) -> int:
         default=1,
         help="BFS depth for subgraph extraction (default: 1)",
     )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("."),
+        help="Project root containing .weld/graph.json",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=None,
+        help=(
+            "Output directory for multi-file formats (required for "
+            "``--format=wiki``). Ignored by string-output formats."
+        ),
+    )
+    parser.add_argument(
+        "--no-refresh",
+        dest="no_refresh",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip the auto-refresh that runs when the graph is stale "
+            "(ADR 0051). A warning is emitted to stderr."
+        ),
+    )
     args = parser.parse_args(argv)
     node_id = args.node
     if args.node_flag is not None:
@@ -59,6 +91,25 @@ def run_export(argv: list[str]) -> int:
             "pass <node> as a positional argument instead "
             "(e.g. 'wd export entity:Store').\n"
         )
-    output = export(args.format, node_id=node_id, depth=args.depth)
+    # Multi-file formats require ``--output``; surface a friendly error
+    # rather than letting ``export()`` raise a bare ValueError.
+    if args.format == "wiki" and args.output is None:
+        parser.error("--format=wiki requires --output=<dir>")
+    # ADR 0051: auto-refresh stale graphs before exporting. Diagram
+    # output is canonical artifact -- a stale graph would otherwise emit
+    # a stale diagram with no warning. ``json_output=True`` keeps the
+    # banner suppressed since export streams structured text to stdout.
+    auto_refresh_if_stale(
+        args.root,
+        no_refresh=args.no_refresh,
+        json_output=True,
+    )
+    output = export(
+        args.format,
+        node_id=node_id,
+        depth=args.depth,
+        root=args.root,
+        output=args.output,
+    )
     sys.stdout.write(output)
     return 0

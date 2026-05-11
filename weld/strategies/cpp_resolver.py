@@ -36,12 +36,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld.strategies._cpp_header_pairing import emit_header_source_pairs
 from weld.strategies._cpp_origin import (
     classify_layer2_origin,
     upgrade_origin,
 )
 from weld.strategies._cpp_system_include import resolve_system_include
 from weld.strategies._helpers import should_skip
+
+__all__ = (
+    "CPP_HEADER_EXTS",
+    "CPP_SEARCH_DIRS",
+    "augment_state_with_headers",
+    "emit_header_source_pairs",
+    "match_callee",
+    "resolve_cpp_include",
+    "resolve_includes_pass",
+)
 
 CPP_HEADER_EXTS: frozenset[str] = frozenset(
     {".h", ".hh", ".hpp", ".hxx", ".ipp", ".tpp", ".inc"}

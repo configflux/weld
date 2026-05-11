@@ -1,0 +1,58 @@
+# Smoke-corpus manifest for `wd bench --public` integration tests.
+#
+# Unlike the production public corpus (weld/bench/public_corpus.yaml), this
+# manifest points at local fixture directories. Used in CI to verify the
+# methodology works end-to-end without cloning real repos. Production runs
+# use the SHA-pinned manifest in weld/bench/public_corpus.yaml.
+schema_version: 1
+corpus_id: smoke
+description: Small smoke corpus for testing wd bench --public methodology.
+repos:
+  - id: repo_a
+    language: python
+    source:
+      kind: local
+      path: repo_a
+    tasks:
+      - id: rA-nav-01
+        family: navigation
+        prompt: Where is Store defined?
+        term: Store
+        symbol: Store
+        answer_files:
+          - src/store.py
+      - id: rA-cg-01
+        family: callgraph
+        prompt: Who calls make_store?
+        term: make_store
+        symbol: make_store
+        answer_files:
+          - src/use_store.py
+      - id: rA-dep-01
+        family: dependency
+        prompt: What does use_store import?
+        term: store
+        symbol: Store
+        answer_files:
+          - src/store.py
+  - id: repo_b
+    language: python
+    source:
+      kind: local
+      path: repo_b
+    tasks:
+      - id: rB-nav-01
+        family: navigation
+        prompt: Where is Cart defined?
+        term: Cart
+        symbol: Cart
+        answer_files:
+          - src/cart.py
+      - id: rB-impact-01
+        family: impact
+        prompt: What runs if Cart changes?
+        term: Cart
+        symbol: Cart
+        answer_files:
+          - src/cart.py
+          - src/use_cart.py

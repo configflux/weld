@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+from weld.strategies._cpp_symbol_records import extract_symbol_records
+
 _MAIN_DEFINITION_RE = re.compile(
     r"\b(?:int|auto)\s+(?:[A-Za-z_][A-Za-z0-9_:]*\s+)*"
     r"(?:w?WinMain|main)\s*\([^;{]*\)[^{;]*\{",
@@ -22,10 +24,36 @@ def enrich_file_node(
     source_text: str,
     source_strategy: str,
 ) -> None:
-    """Add C++ startup entrypoint and runtime host nodes."""
+    """Add C++ startup entrypoint, runtime host nodes, and ADR 0057
+    Wave 2 symbol records (forward-decl vs definition + template
+    metadata).
+    """
     rel_path = str(node_props.get("file") or "")
+    _stamp_symbol_records(node_props, symbols, source_text)
     if is_startup_source(rel_path, source_text, symbols):
         _add_startup_nodes(nodes, edges, rel_path, source_text, source_strategy)
+
+
+def _stamp_symbol_records(
+    node_props: dict,
+    symbols: dict[str, list[str]],
+    source_text: str,
+) -> None:
+    """Stamp ``props.symbol_records`` with structured per-export info.
+
+    Drops records whose ``kind`` is None (the classifier could not
+    decide). A non-empty list is the only signal the consumer needs;
+    the empty list is omitted so callers can use ``"symbol_records" in
+    node_props`` as a presence check.
+    """
+    exports = list(symbols.get("exports", []))
+    if not exports:
+        return
+    classes = list(symbols.get("classes", []))
+    records = extract_symbol_records(source_text, exports, classes)
+    classified = [r for r in records if r.get("kind") is not None]
+    if classified:
+        node_props["symbol_records"] = classified
 
 
 def is_startup_source(

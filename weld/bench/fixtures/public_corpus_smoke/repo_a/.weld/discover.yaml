@@ -1,0 +1,13 @@
+# Minimal discover.yaml for the smoke-corpus repo_a fixture.
+#
+# This shapes the graph just enough that the weld adapter has something to
+# retrieve from. The smoke corpus does not exercise the full discovery
+# matrix -- the production public corpus pulls real repos and runs the
+# full strategy set.
+sources:
+  - glob: "src/*.py"
+    type: file
+    strategy: python_module
+  - glob: "src/*.py"
+    type: symbol
+    strategy: python_callgraph

@@ -269,7 +269,14 @@ class ServiceGraphResolver(CrossRepoResolver):
                     to_id=_namespaced(server_child, server_nid),
                     type="cross_repo:calls",
                     props={
+                        # ADR 0050: the resolver pairs three
+                        # disambiguating pieces of evidence -- host
+                        # equals child name, HTTP method matches
+                        # exactly, path matches exactly. The
+                        # static-truth policy from ADR 0018 makes that
+                        # a `definite` declaration, not a guess.
                         "source_strategy": "service_graph",
+                        "confidence": "definite",
                         "method": method,
                         "path": path,
                         "host": host,

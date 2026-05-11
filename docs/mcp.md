@@ -53,7 +53,7 @@ without it.
 
 ## Exposed tools
 
-The server registers 13 tools. The list is defined in
+The server registers 14 tools. The list is defined in
 `weld/_mcp_tools.py::build_tools` and is stable for test pinning. Each tool
 has a JSON Schema `inputSchema` describing its parameters; the schemas below
 summarise the required fields.
@@ -73,6 +73,7 @@ summarise the required fields.
 | `weld_impact` | `target` | Reverse-dependency blast radius for a node id or file path. |
 | `weld_enrich` | -- | LLM-assisted semantic enrichment for a node or the full graph. See the [trust model](#trust-model) before enabling. |
 | `weld_diff` | -- | Diff between previous and current discovery runs: added, removed, modified nodes and edges. |
+| `weld_review` | `op` | Triage speculative edges. `op=list` returns pending edges; `op=show` returns one edge; `op=accept` promotes `speculative` -> `definite`; `op=reject` records a drop for the next discover. Mirrors `wd review`. |
 
 In a polyrepo workspace (root with `.weld/workspaces.yaml`), tools that
 operate on the graph run against a `FederatedGraph` that spans child repos.
@@ -140,7 +141,7 @@ the writer refuses to clobber an existing file whose content differs;
 either pass `--merge` (preserves sibling servers, e.g. `context7`) or
 `--force` (overwrites, with the previous content saved as
 `<file>.bak`). `--dry-run` reports what would change without touching the
-disk. See ADR 0023 for the detail.
+disk.
 
 Unknown client names exit non-zero with a diagnostic listing the three
 supported names.

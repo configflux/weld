@@ -4,6 +4,12 @@ Each format is a pure function that takes graph data (nodes dict and edges
 list) and returns a string. The ``export()`` dispatcher loads the graph,
 optionally extracts a subgraph, and delegates to the requested serializer.
 
+Per ADR 0053 the dispatcher also supports the multi-file ``wiki`` format,
+which writes a directory tree of markdown wikilinks rather than returning a
+string. Multi-file exporters implement the :class:`MultiFileExporter` protocol
+and are invoked via the dedicated ``output`` argument; string formats are
+unaffected.
+
 This module has no external dependencies beyond the weld runtime.
 """
 
@@ -11,9 +17,33 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from weld.graph import Graph
+
+
+# ---------------------------------------------------------------------------
+# Multi-file exporter protocol (ADR 0053)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class MultiFileExporter(Protocol):
+    """Contract for export formats that write a directory tree.
+
+    Multi-file exporters do not return a string. They take an *output*
+    directory and write any number of files beneath it. Implementations
+    must be deterministic: re-running against an unchanged graph should
+    produce byte-identical output (ADR 0053).
+    """
+
+    def write(self, output: Path) -> None:
+        """Render the full export to *output*.
+
+        Implementations create the directory if it does not exist and
+        are responsible for any per-file atomicity guarantees.
+        """
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +254,20 @@ _FORMATS: dict[str, Any] = {
     "dot": to_dot,
     "d2": to_d2,
 }
+#: Multi-file format names (ADR 0053). Each entry maps to a factory that
+#: takes a loaded :class:`Graph` and returns a :class:`MultiFileExporter`.
+_MULTI_FILE_FORMATS: dict[str, Any] = {
+    "wiki": None,  # populated lazily to avoid import cycles
+}
+
+
+def _wiki_exporter_factory(graph: Graph) -> "MultiFileExporter":
+    from weld._wiki_export import WikiExporter
+
+    return WikiExporter(graph)
+
+
+_MULTI_FILE_FORMATS["wiki"] = _wiki_exporter_factory
 
 
 def export(
@@ -232,35 +276,55 @@ def export(
     node_id: str | None = None,
     depth: int = 1,
     root: str | Path = ".",
+    output: str | Path | None = None,
 ) -> str:
     """Export the graph (or a subgraph) to the requested format.
 
     Parameters
     ----------
     fmt : str
-        Output format: ``mermaid``, ``dot``, or ``d2``.
+        Output format. String formats: ``mermaid``, ``dot``, ``d2``.
+        Multi-file formats: ``wiki`` (writes a directory tree, see
+        ADR 0053).
     node_id : str, optional
-        Center node for subgraph extraction. If ``None``, exports the
-        full graph.
+        Center node for subgraph extraction. Ignored for multi-file
+        formats, which always export the full graph.
     depth : int
         BFS depth for subgraph extraction (default 1). Ignored when
         *node_id* is ``None``.
     root : str or Path
         Project root containing ``.weld/graph.json``.
+    output : str or Path, optional
+        Target directory for multi-file formats. Required for ``wiki``.
 
     Returns
     -------
     str
-        The serialized diagram string.
+        The serialized diagram string. For multi-file formats this is
+        the empty string; the artefacts live under *output*.
 
     Raises
     ------
     ValueError
-        If *fmt* is not a recognized format.
+        If *fmt* is not a recognized format, or if a multi-file format
+        is requested without *output*.
     """
+    if fmt in _MULTI_FILE_FORMATS:
+        if output is None:
+            raise ValueError(
+                f"format {fmt!r} requires --output=<dir>; multi-file exporters "
+                "write to a directory rather than stdout."
+            )
+        g = Graph(Path(root))
+        g.load()
+        exporter = _MULTI_FILE_FORMATS[fmt](g)
+        exporter.write(Path(output))
+        return ""
+
     if fmt not in _FORMATS:
         raise ValueError(
-            f"unknown export format: {fmt!r} (available: {', '.join(sorted(_FORMATS))})"
+            f"unknown export format: {fmt!r} (available: "
+            f"{', '.join(sorted(list(_FORMATS) + list(_MULTI_FILE_FORMATS)))})"
         )
 
     g = Graph(Path(root))

@@ -55,7 +55,7 @@ Core commands:
   prime          Check setup status and suggest next steps
   doctor         Diagnostic checks: config, graph, staleness, strategies, tree-sitter
   security       Trust-posture summary (alias for `wd doctor --security`, JSON via --json)
-  bootstrap      Write onboarding assets (wd bootstrap claude|codex|copilot)
+  bootstrap      Write onboarding assets (wd bootstrap claude|codex|copilot|cursor|aider|gemini-cli|copilot-cli)
   bench          Run Weld benchmarks (token cost, first-context quality, or --compare agent tasks)
   demo           Materialize a Weld demo workspace (monorepo or polyrepo)
 
@@ -71,9 +71,10 @@ Retrieval commands:
   callers        Direct (and optionally transitive) callers of a symbol
   references     Callers + textual file-index references for a symbol name
   enrich         LLM-assisted semantic enrichment
+  review         Triage speculative edges (list / show / accept / reject / status)
 
 Visualization commands:
-  export         Export graph to Mermaid, DOT, or D2 format
+  export         Export graph to Mermaid, DOT, D2, or wiki markdown
   viz            Serve a local read-only browser graph explorer
 
 Live commands:
@@ -327,6 +328,12 @@ def _dispatch(argv: list[str] | None) -> int:
         from weld import enrich as enrich_mod
 
         return enrich_mod.main(rest)
+
+    if subcmd == "review":
+        # ADR 0055: ambiguous-edge review queue dispatcher.
+        from weld._review_cli import main as review_main
+
+        return review_main(rest)
 
     if subcmd == "diff":
         from weld import diff as diff_mod

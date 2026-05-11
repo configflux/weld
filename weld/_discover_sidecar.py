@@ -43,6 +43,34 @@ def persist_query_state_sidecar(weld_dir: Path, graph: dict) -> None:
         )
 
 
+def persist_sqlite_sidecar(weld_dir: Path, graph: dict) -> None:
+    """Write the .weld/graph.db sqlite sidecar for the freshly-built graph (ADR 0058).
+
+    The canonical JSON is the single source of truth (ADR 0011); this
+    sidecar is a derived index that lets federation reads avoid
+    loading every child's JSON. Hashed against the same canonical
+    bytes the writer emits to ``graph.json``, so the reader's
+    freshness check is exact.
+
+    *weld_dir* is the directory that holds (or will hold) ``graph.json``
+    and ``graph.db``. The reader's freshness contract pairs them by
+    that exact filename; callers using ``wd discover --output
+    custom.json`` are expected to ensure *weld_dir* is the same
+    directory as the JSON output (so the SHA basis matches).
+    """
+    try:
+        from weld._sqlite_writer import safe_build_sidecar_for_bytes, sidecar_path_for
+
+        target = sidecar_path_for(weld_dir / "graph.json")
+        graph_bytes = _dumps_graph(graph).encode("utf-8")
+        safe_build_sidecar_for_bytes(graph, graph_bytes, target)
+    except Exception as exc:  # noqa: BLE001 -- sidecar is best-effort.
+        print(
+            f"[weld] notice: skipped sqlite sidecar write: {exc}",
+            file=sys.stderr,
+        )
+
+
 def persist_file_index(root: Path) -> None:
     """Refresh the keyword-to-file index alongside the graph.
 

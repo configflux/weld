@@ -44,6 +44,12 @@ VALID_NODE_TYPES = frozenset([
     # exclusively by the root discovery branch. Presence of any ``repo:*``
     # node triggers ``meta.schema_version = 2`` on save (ADR 0012 ss4).
     "repo",
+    # ADR 0057 Wave 3 (optional libclang semantic layer): ``macro``
+    # nodes represent preprocessor definitions; ``template_definition``
+    # nodes represent class/function templates the libclang index sees.
+    # Both are minted only by the ``cpp_libclang`` strategy and stay
+    # absent when the optional extra is not installed.
+    "macro", "template_definition",
 ])
 VALID_EDGE_TYPES = frozenset([
     "contains", "depends_on", "produces", "consumes", "implements", "documents", "relates_to",
@@ -51,6 +57,11 @@ VALID_EDGE_TYPES = frozenset([
     "represents", "feeds_into", "enforces", "verifies", "exposes", "governs",
     # Function-level call edge; symbol -> symbol. See ADR 0004.
     "calls",
+    # C++ header/source pairing (ADR 0057 Wave 2): ``file:<header>``
+    # ``--implemented_by-->`` ``file:<source>`` when a ``.h``/``.hpp``/
+    # ``.hxx`` finds its peer ``.cpp``/``.cc``/``.cxx``/``.c++``. Definite
+    # for stem-match; ``inferred`` for one-cpp-in-dir fallback.
+    "implemented_by",
     # Governance and provenance vocabulary (ADR 0016, tracked project).
     # Labels cover ownership (``owned_by``), bidirectional gating
     # (``gates`` / ``gated_by``), temporal replacement (``supersedes``),
@@ -66,6 +77,14 @@ VALID_EDGE_TYPES = frozenset([
     "restricts_tool", "triggers_on_event", "overrides", "duplicates",
     "conflicts_with", "implements_workflow", "part_of_platform",
     "generated_from",
+    # ADR 0057 Wave 3 (optional libclang semantic layer):
+    # ``file --defines_macro--> macro`` (a TU defines a preprocessor
+    # macro), ``macro --expands_to--> symbol`` (an expansion target
+    # libclang resolves), ``template_definition --instantiated_by-->
+    # file`` (an instantiation site for a template). All three carry
+    # ``confidence: definite`` per ADR 0050 because libclang is the
+    # ground-truth side of the precedence rule.
+    "defines_macro", "expands_to", "instantiated_by",
 ])
 
 # -- Value vocabularies ----------------------------------------------------

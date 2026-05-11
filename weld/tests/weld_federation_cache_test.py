@@ -231,7 +231,10 @@ class FederatedGraphCacheTest(unittest.TestCase):
                 parse_count += 1
                 return original_load(raw, **kwargs)
 
-            with patch("weld.federation.load_graph_bytes", side_effect=counting_parse):
+            with patch(
+                "weld.federation_child_loader.load_graph_bytes",
+                side_effect=counting_parse,
+            ):
                 # Second load: sha256 matches -> cache hit -> no parse
                 child_again = graph._load_child("child-0")
 

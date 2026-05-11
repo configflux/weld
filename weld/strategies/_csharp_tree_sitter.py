@@ -11,6 +11,10 @@ from weld.strategies._csharp_origin import (
     load_package_references,
     load_project_namespace_roots,
 )
+from weld.strategies._csharp_partial_classes import (
+    finalise,
+    record_partial_classes,
+)
 
 _SAFE_PACKAGE_RE = re.compile(r"[^0-9A-Za-z_.-]+")
 _VISIBILITY_RE = re.compile(r"\b(public|private|protected|internal)\b")
@@ -25,13 +29,23 @@ _STARTUP_MARKERS = (
 )
 
 
-def build_caches(root: Path, language: str) -> dict[str, frozenset[str]] | None:
-    """Pre-compute C# project metadata used for import-origin tagging."""
+def build_caches(root: Path, language: str) -> dict | None:
+    """Pre-compute C# project metadata used for import-origin tagging.
+
+    The returned dict also seeds a mutable ``partial_class_state``
+    accumulator used by :func:`enrich_file_node` to track partial-class
+    declarations across files. The downstream :func:`finalise` pass
+    (re-exported from :mod:`weld.strategies._csharp_partial_classes`)
+    walks the accumulator after every file has been visited and emits
+    one merged ``symbol:csharp:<ns>.<TypeName>`` node per
+    ``(namespace, class)`` key (ADR 0056 Wave 3).
+    """
     if language != "csharp":
         return None
     return {
         "package_references": load_package_references(root),
         "project_namespace_roots": load_project_namespace_roots(root),
+        "partial_class_state": {},
     }
 
 
@@ -46,6 +60,7 @@ def enrich_file_node(
     *,
     package_references: frozenset[str] | None = None,
     project_namespace_roots: frozenset[str] | None = None,
+    partial_class_state: dict | None = None,
 ) -> None:
     """Add C#-specific metadata and import dependency nodes."""
     rel_path = str(node_props.get("file") or "")
@@ -58,6 +73,19 @@ def enrich_file_node(
         node_props["types"] = symbols["classes"]
     if symbols.get("imports"):
         node_props["imports_from"] = symbols["imports"]
+
+    # Wave 3: track partial-class declarations for the cross-file merge
+    # pass. The state dict is shared across all files in the discovery
+    # run; :func:`finalise` (re-exported from
+    # :mod:`weld.strategies._csharp_partial_classes`) consumes it after
+    # the loop.
+    if partial_class_state is not None:
+        record_partial_classes(
+            partial_class_state,
+            file_node_id=file_node_id,
+            rel_path=rel_path,
+            source_text=source_text,
+        )
 
     for query_key, prop_key in (
         ("attributes", "attributes"),
@@ -333,3 +361,15 @@ def _visibility(line: str) -> str | None:
     if "protected" in matches and "internal" in matches:
         return "protected internal"
     return matches[0]
+
+
+# ``finalise`` and ``record_partial_classes`` are re-exported from
+# :mod:`weld.strategies._csharp_partial_classes` (see the imports
+# above) so the dispatcher in :mod:`weld.strategies.tree_sitter` can
+# keep its existing call shape (``_csharp_tree_sitter.finalise(...)``).
+__all__ = [
+    "build_caches",
+    "enrich_file_node",
+    "finalise",
+    "is_startup_source",
+]
