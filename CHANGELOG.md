@@ -5,6 +5,21 @@ All notable user-facing changes to this project are recorded here.
 
 ## Unreleased
 
+## v0.18.2 - 2026-05-11
+
+### Fixed
+
+- Public CI on the v0.18.1 tag stayed red on two surfaces. (1) The
+  doc-validation test that reads `docs/determinism-audit-T1a.md`
+  (a file v0.18.0 excluded from the publish set) now skips gracefully
+  when the file is absent rather than raising `FileNotFoundError`.
+  (2) The public-surface audit grew a per-pattern allowlist so the
+  enrichment provider precedence chain in `weld/_first_run_enrich.py`
+  and `weld/_first_run_render.py` can keep its provider env-var-name
+  literals (part of the public-API contract for first-run enrichment)
+  without being treated as embedded credentials.
+  <!-- verify: file=tools/public_surface_audit.py grep=ENV_VAR_NAME_ALLOWLIST -->
+
 ## v0.18.1 - 2026-05-11
 
 ### Fixed

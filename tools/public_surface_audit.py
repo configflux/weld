@@ -131,6 +131,22 @@ def _patterns() -> list[tuple[str, re.Pattern[str]]]:
     ]
 
 
+# Files allowed to reference env-var NAMES (not secrets). The first-run
+# enrichment policy publishes a deterministic provider precedence chain
+# whose env vars are part of the public API; the strings appear here as
+# literal env-var names, not embedded credentials.
+ENV_VAR_NAME_ALLOWLIST: dict[str, frozenset[str]] = {
+    "OpenAI API key variable": frozenset({
+        "weld/_first_run_enrich.py",
+        "weld/_first_run_render.py",
+    }),
+    "Anthropic API key variable": frozenset({
+        "weld/_first_run_enrich.py",
+        "weld/_first_run_render.py",
+    }),
+}
+
+
 def audit_paths(root: Path, rel_paths: list[str]) -> list[str]:
     """Return audit findings for publish-visible text files."""
     findings: list[str] = []
@@ -149,8 +165,11 @@ def audit_paths(root: Path, rel_paths: list[str]) -> list[str]:
         except OSError:
             continue
         for label, pattern in patterns:
-            if pattern.search(text):
-                findings.append(f"{rel_path}: {label}")
+            if not pattern.search(text):
+                continue
+            if rel_path in ENV_VAR_NAME_ALLOWLIST.get(label, frozenset()):
+                continue
+            findings.append(f"{rel_path}: {label}")
     return findings
 
 

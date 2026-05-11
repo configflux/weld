@@ -383,9 +383,10 @@ class DeterminismAuditDocTest(unittest.TestCase):
     """The audit doc must distinguish historical findings from current status."""
 
     def setUp(self) -> None:
-        self.text = (
-            _repo_root() / "docs" / "determinism-audit-T1a.md"
-        ).read_text("utf-8")
+        path = _repo_root() / "docs" / "determinism-audit-T1a.md"
+        if not path.exists():
+            self.skipTest("docs/determinism-audit-T1a.md is not in the publish set")
+        self.text = path.read_text("utf-8")
 
     def test_current_status_table_present(self) -> None:
         self.assertIn("## 1. Current status", self.text)
