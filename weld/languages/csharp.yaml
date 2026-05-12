@@ -9,6 +9,11 @@
 #     best-effort visibility metadata from the surrounding declaration line.
 #   - ``attributes`` captures attribute names such as ApiController and HttpGet.
 #   - ``namespaces`` captures both block-scoped and file-scoped namespaces.
+#   - ``bases`` captures every type listed in a ``base_list`` (class
+#     inheritance / interface implementation). The C# enricher walks
+#     the source text with a regex to pair each captured base back to
+#     its derived declaration and to split interface vs class bases by
+#     the C# ``^I[A-Z]`` naming convention.
 
 language: csharp
 grammar_package: tree_sitter_c_sharp
@@ -22,3 +27,4 @@ queries:
   attributes: "(attribute name: (_) @name)"
   namespaces: "(namespace_declaration name: (_) @name) (file_scoped_namespace_declaration name: (_) @name)"
   calls: "(invocation_expression function: (identifier) @name) (invocation_expression function: (member_access_expression name: (identifier) @name))"
+  bases: "(base_list (identifier) @name) (base_list (qualified_name) @name) (base_list (generic_name (identifier) @name))"

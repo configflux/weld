@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from weld._init_classify import Classification, classify_files
+from weld._init_csharp import detect_csharp_artifacts
 from weld._init_framework_scan import (
     _MAX_FILES_PER_LANG,
     iter_framework_scan_targets,
@@ -22,7 +23,12 @@ from weld.init_detect_constants import (
 )
 from weld.repo_boundary import iter_repo_files
 
-__all__ = ["_MAX_FILES_PER_LANG"]  # re-exported for tests
+# ``detect_csharp_artifacts`` is the C# init detector documented by ADR
+# 0056 wiring (see ``weld._init_csharp``); the heavy lifting lives in
+# that module so this file stays under its line-count cap, but the name
+# is re-exported here so callers and tests find every ``wd init``
+# detector behind a single import.
+__all__ = ["_MAX_FILES_PER_LANG", "detect_csharp_artifacts"]  # re-exported for tests
 
 # ---------------------------------------------------------------------------
 # Constants

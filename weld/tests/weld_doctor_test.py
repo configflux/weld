@@ -135,7 +135,7 @@ class DoctorTreeSitterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _setup_dir(root, n_sources=1, yaml_strategies=["tree_sitter"])
-            with patch("weld.doctor._check_tree_sitter_language", return_value=True):
+            with patch("weld._doctor_optional._check_tree_sitter_language", return_value=True):
                 results = doctor(root)
             ts_ok = [r for r in results if ("tree-sitter" in r.message.lower() or "tree_sitter" in r.message.lower()) and r.level == "ok"]
             self.assertTrue(ts_ok)
@@ -144,7 +144,7 @@ class DoctorTreeSitterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _setup_dir(root, n_sources=1, yaml_strategies=["tree_sitter"])
-            with patch("weld.doctor._check_tree_sitter_language", return_value=False):
+            with patch("weld._doctor_optional._check_tree_sitter_language", return_value=False):
                 results = doctor(root)
             ts_warn = [r for r in results if ("tree-sitter" in r.message.lower() or "tree_sitter" in r.message.lower()) and r.level == "warn"]
             self.assertTrue(ts_warn)

@@ -13,7 +13,7 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.18.2 -->
+<!-- evaluator-note: latest=v0.19.0 -->
 > **Evaluators: start with v0.14.0.** v0.14.0 lands deterministic
 > multi-language graph closure, two new discovery strategies
 > (`concept_from_bd`, `test_peer`), module-level Python constants in
@@ -330,7 +330,7 @@ pip install "configflux-weld[tree-sitter]"
 | TypeScript / JS | exports, classes, imports | `tree-sitter-typescript` | Ships, used in production by the configflux-weld self-graph. |
 | Go | exports, types, imports | `tree-sitter-go` | Ships, light dogfooding. |
 | Rust | exports, types, imports | `tree-sitter-rust` | Ships, light dogfooding. |
-| C# | types, methods, properties, attributes, namespaces, using dependencies | `tree-sitter-c-sharp` | Tier-2 "best-in-class" effort completed; csproj/sln parsers ship as separate strategies. |
+| C# | types, methods, properties, attributes, namespaces, using dependencies, best-effort call graph | `tree-sitter-c-sharp` | Tier-2 "best-in-class" effort completed; csproj/sln parsers ship as separate strategies. |
 | C++ | exports, classes, imports, best-effort call graph | `tree-sitter-cpp` | **Tier 2 (preview) — not Tier 1.** Ships and runs; real-world quality unverified at scale. See the C++ subsection below. |
 | Java | classes, methods, annotations, imports, package dependencies | `tree-sitter-java` | Ships, no dogfooding evidence. |
 | ROS2 | packages, nodes, topics, services, actions, parameters | (reuses Python + C++) | Tier 2 (preview) — inherits the C++ caveat. |
@@ -917,7 +917,7 @@ same "(412)" hint next to its own toggles.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.18.2`.
+terminal snippets captured against `wd 0.19.0`.
 
 ## Install
 

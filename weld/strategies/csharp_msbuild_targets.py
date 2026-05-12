@@ -47,8 +47,10 @@ local-name handling below strips it transparently.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+from weld.glob_match import _glob_pattern_to_regex
 from weld.strategies._helpers import (
     StrategyResult,
     filter_glob_results,
@@ -132,10 +134,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 def _matched_files(root: Path, pattern: str | None) -> list[Path]:
     """Return MSBuild project / props / targets files under *root*.
 
-    When *pattern* is provided the caller's glob is honoured verbatim;
-    the special MSBuild brace-glob (``**/*.{csproj,props,targets}``) is
-    expanded manually because :meth:`Path.glob` does not support brace
-    expansion. When *pattern* is missing the defaults union is used.
+    When *pattern* is provided the caller's glob is honoured but matched
+    case-insensitively (MSBuild file semantics are case-insensitive, so
+    ``Directory.Build.props`` and ``Directory.build.props`` are the same
+    file to MSBuild and the strategy follows suit). The special MSBuild
+    brace-glob (``**/*.{csproj,props,targets}``) is expanded manually
+    because :meth:`Path.glob` does not support brace expansion. When
+    *pattern* is missing the defaults union is used.
     """
     if pattern:
         return _expand_brace_glob(root, pattern)
@@ -156,11 +161,17 @@ def _matched_files(root: Path, pattern: str | None) -> list[Path]:
 def _expand_brace_glob(root: Path, pattern: str) -> list[Path]:
     """Expand a brace alternation like ``**/*.{csproj,props,targets}``.
 
-    Most patterns do not need brace handling; we keep ``Path.glob``'s
-    behaviour for everything else.
+    Each option is dispatched through :func:`_glob_case_insensitive` so
+    MSBuild's case-insensitive file semantics survive into the strategy:
+    real-world C# repos ship lowercase ``Directory.build.props`` /
+    ``Directory.build.targets`` even when discover.yaml uses the
+    PascalCase spelling. ``Path.glob`` cannot be used directly because
+    it inherits the filesystem's case sensitivity (case-sensitive on
+    Linux), and the ``case_sensitive`` keyword is Python 3.12+ while
+    this project targets 3.10+.
     """
     if "{" not in pattern or "}" not in pattern:
-        return sorted(root.glob(pattern))
+        return _glob_case_insensitive(root, pattern)
     brace_start = pattern.index("{")
     brace_end = pattern.index("}", brace_start)
     prefix = pattern[:brace_start]
@@ -171,7 +182,33 @@ def _expand_brace_glob(root: Path, pattern: str) -> list[Path]:
         option = option.strip()
         if not option:
             continue
-        matched.extend(root.glob(f"{prefix}{option}{suffix}"))
+        matched.extend(_glob_case_insensitive(root, f"{prefix}{option}{suffix}"))
+    return sorted(set(matched))
+
+
+def _glob_case_insensitive(root: Path, pattern: str) -> list[Path]:
+    """Match *pattern* under *root* using a case-insensitive regex.
+
+    Reuses :func:`weld.glob_match._glob_pattern_to_regex` so ``**``,
+    ``*``, ``?`` and ``[...]`` semantics line up with the rest of the
+    discovery code (notably :func:`weld.glob_match.walk_glob`). The
+    only delta is :data:`re.IGNORECASE`: MSBuild file semantics are
+    case-insensitive, so literal letters in the glob accept either
+    casing. This is what lets ``**/Directory.Build.*`` pick up a file
+    on disk named ``Directory.build.props``.
+    """
+    base_regex = _glob_pattern_to_regex(pattern)
+    regex = re.compile(base_regex.pattern, re.IGNORECASE)
+    matched: list[Path] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if regex.match(rel):
+            matched.append(path)
     return sorted(set(matched))
 
 

@@ -343,5 +343,57 @@ class TreeSitter025ApiTest(unittest.TestCase):
 
         self.assertEqual(result["exports"], ["my_function"])
 
+class LoadTsLanguageFunctionAliasTest(unittest.TestCase):
+    """load_ts_language must handle grammars with language-specific fn names.
+
+    Regression: tree_sitter_typescript exposes language_typescript() not
+    language(), so load_ts_language raised ImportError for TypeScript files.
+    """
+
+    def test_typescript_uses_language_typescript_fn(self) -> None:
+        """load_ts_language('typescript') must call language_typescript()."""
+        from weld.strategies._ts_parse import load_ts_language
+        import sys
+
+        fake_capsule = object()
+        fake_mod = mock.MagicMock(spec=[])
+        fake_mod.language_typescript = mock.MagicMock(return_value=fake_capsule)
+
+        original = sys.modules.get("tree_sitter_typescript")
+        sys.modules["tree_sitter_typescript"] = fake_mod
+        try:
+            result = load_ts_language("typescript")
+        finally:
+            if original is not None:
+                sys.modules["tree_sitter_typescript"] = original
+            else:
+                sys.modules.pop("tree_sitter_typescript", None)
+
+        self.assertIs(result, fake_capsule)
+        fake_mod.language_typescript.assert_called_once()
+
+    def test_generic_language_fn_still_works(self) -> None:
+        """load_ts_language falls back to language() for standard grammars."""
+        from weld.strategies._ts_parse import load_ts_language
+        import sys
+
+        fake_capsule = object()
+        fake_mod = mock.MagicMock(spec=[])
+        fake_mod.language = mock.MagicMock(return_value=fake_capsule)
+
+        original = sys.modules.get("tree_sitter_go")
+        sys.modules["tree_sitter_go"] = fake_mod
+        try:
+            result = load_ts_language("go")
+        finally:
+            if original is not None:
+                sys.modules["tree_sitter_go"] = original
+            else:
+                sys.modules.pop("tree_sitter_go", None)
+
+        self.assertIs(result, fake_capsule)
+        fake_mod.language.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

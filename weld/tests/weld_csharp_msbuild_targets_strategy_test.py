@@ -262,6 +262,30 @@ class CsharpMsbuildTargetsExtractTest(unittest.TestCase):
             target_id = "build-target://Directory.Build:SharedPrep"
             self.assertIn(target_id, result.nodes)
 
+    def test_user_supplied_glob_matches_case_insensitively(self) -> None:
+        # MSBuild file semantics are case-insensitive: the PascalCase
+        # glob ``**/Directory.Build.*`` must match the canonical filename
+        # and real-world lowercase variants like ``Directory.build.props``.
+        cases = [
+            ("Directory.build.props", "LowercasePrep"),
+            ("Directory.Build.props", "PascalPrep"),
+        ]
+        for filename, name in cases:
+            with self.subTest(filename=filename), \
+                    tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                self._write(
+                    root / filename,
+                    f"<Project><Target Name=\"{name}\""
+                    " BeforeTargets=\"Build\" /></Project>",
+                )
+                result = extract(
+                    root, {"glob": "**/Directory.Build.*"}, {},
+                )
+                stem = filename.rsplit(".", 1)[0]
+                target_id = f"build-target://{stem}:{name}"
+                self.assertIn(target_id, result.nodes)
+
     def test_no_targets_yields_no_nodes(self) -> None:
         # A project with PropertyGroup/ItemGroup but no <Target>
         # declarations contributes nothing to the build-target graph.

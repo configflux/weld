@@ -23,6 +23,7 @@ py_library(
         "_cpp_symbol_records.py",
         "_cpp_system_include.py",
         "_cpp_tree_sitter.py",
+        "_csharp_inheritance.py",
         "_csharp_origin.py",
         "_csharp_partial_classes.py",
         "_csharp_routes_helpers.py",

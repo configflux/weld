@@ -52,6 +52,33 @@ from weld.workspace_state import (WorkspaceLock, WorkspaceLockedError,
 from weld.strategies._helpers import filter_glob_results
 
 
+def _drain_context_warnings(context: dict) -> None:
+    """Print unique strategy warnings to stderr, one line each.
+
+    Strategies append diagnostic messages to ``context["_warnings"]``
+    when they degrade gracefully (e.g. tree-sitter installed but the
+    per-language grammar package missing). Without an explicit drain at
+    the end of discovery, those entries die with the in-memory context
+    and the user sees a silently-successful ``wd discover`` with zero
+    nodes for the affected language.
+
+    Output uses the existing ``[weld] warning:`` prefix established by
+    the unsafe-mode strategy warnings so operators can grep for either
+    source uniformly. Deduplication is by full message text to keep the
+    output bounded when a strategy emits the same line per matched file.
+    """
+    raw = context.get("_warnings", [])
+    if not raw:
+        return
+    seen: set[str] = set()
+    for msg in raw:
+        text = str(msg)
+        if text in seen:
+            continue
+        seen.add(text)
+        print(f"[weld] warning: {text}", file=sys.stderr)
+
+
 def _discover_single_repo(
     root: Path,
     *,
@@ -137,6 +164,7 @@ def _discover_single_repo(
         if with_sqlite:
             _persist_sqlite_sidecar(root / ".weld", graph)
         _persist_file_index(root)
+        _drain_context_warnings(context)
         return graph
 
     # --- Incremental path ---
@@ -199,6 +227,7 @@ def _discover_single_repo(
     if with_sqlite:
         _persist_sqlite_sidecar(root / ".weld", graph)
     _persist_file_index(root)
+    _drain_context_warnings(context)
     return graph
 
 

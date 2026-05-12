@@ -6,13 +6,17 @@ from pathlib import Path
 import re
 
 from weld._node_ids import package_id as _canonical_package_id
+from weld.strategies._csharp_inheritance import (
+    finalise as _finalise_inheritance,
+    record_base_pairs,
+)
 from weld.strategies._csharp_origin import (
     classify_using_import,
     load_package_references,
     load_project_namespace_roots,
 )
 from weld.strategies._csharp_partial_classes import (
-    finalise,
+    finalise as _finalise_partial_classes,
     record_partial_classes,
 )
 
@@ -30,15 +34,11 @@ _STARTUP_MARKERS = (
 
 
 def build_caches(root: Path, language: str) -> dict | None:
-    """Pre-compute C# project metadata used for import-origin tagging.
+    """Pre-compute C# project metadata + seed cross-file accumulators.
 
-    The returned dict also seeds a mutable ``partial_class_state``
-    accumulator used by :func:`enrich_file_node` to track partial-class
-    declarations across files. The downstream :func:`finalise` pass
-    (re-exported from :mod:`weld.strategies._csharp_partial_classes`)
-    walks the accumulator after every file has been visited and emits
-    one merged ``symbol:csharp:<ns>.<TypeName>`` node per
-    ``(namespace, class)`` key (ADR 0056 Wave 3).
+    Mints the ``partial_class_state`` and ``inheritance_records``
+    state dicts/lists consumed by :func:`finalise` (ADR 0056 Wave 3
+    and base-list extension respectively).
     """
     if language != "csharp":
         return None
@@ -46,6 +46,7 @@ def build_caches(root: Path, language: str) -> dict | None:
         "package_references": load_package_references(root),
         "project_namespace_roots": load_project_namespace_roots(root),
         "partial_class_state": {},
+        "inheritance_records": [],
     }
 
 
@@ -61,6 +62,7 @@ def enrich_file_node(
     package_references: frozenset[str] | None = None,
     project_namespace_roots: frozenset[str] | None = None,
     partial_class_state: dict | None = None,
+    inheritance_records: list | None = None,
 ) -> None:
     """Add C#-specific metadata and import dependency nodes."""
     rel_path = str(node_props.get("file") or "")
@@ -87,8 +89,19 @@ def enrich_file_node(
             source_text=source_text,
         )
 
+    # ADR 0056 base-list extension: record (derived_class, base_name)
+    # pairs for the inheritance post-pass. See
+    # :mod:`_csharp_inheritance.finalise`.
+    if inheritance_records is not None:
+        record_base_pairs(
+            inheritance_records,
+            file_node_id=file_node_id,
+            source_text=source_text,
+        )
+
     for query_key, prop_key in (
         ("attributes", "attributes"),
+        ("bases", "bases"),
         ("methods", "methods"),
         ("namespaces", "namespaces"),
         ("properties", "properties"),
@@ -363,10 +376,21 @@ def _visibility(line: str) -> str | None:
     return matches[0]
 
 
-# ``finalise`` and ``record_partial_classes`` are re-exported from
-# :mod:`weld.strategies._csharp_partial_classes` (see the imports
-# above) so the dispatcher in :mod:`weld.strategies.tree_sitter` can
-# keep its existing call shape (``_csharp_tree_sitter.finalise(...)``).
+def finalise(
+    nodes: dict[str, dict],
+    edges: list[dict],
+    enricher_caches: dict | None,
+    source_strategy: str,
+) -> None:
+    """Run every C# post-pass once after the file loop completes.
+
+    Composes the Wave 3 partial-class merger and the base-list
+    inheritance/implementation edge emitter.
+    """
+    _finalise_partial_classes(nodes, edges, enricher_caches, source_strategy)
+    _finalise_inheritance(nodes, edges, enricher_caches, source_strategy)
+
+
 __all__ = [
     "build_caches",
     "enrich_file_node",

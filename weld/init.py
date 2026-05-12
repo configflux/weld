@@ -9,6 +9,7 @@ from pathlib import Path
 
 from weld._gitignore_writer import write_weld_gitignore
 from weld._init_classify import classify_files
+from weld._init_csharp import csharp_source_entries, detect_csharp_artifacts
 from weld._init_ros2 import ros2_source_entries
 from weld.init_workspace import init_workspace as _init_workspace
 from weld.init_workspace import maybe_bootstrap_polyrepo as _maybe_bootstrap_polyrepo
@@ -52,20 +53,22 @@ _YAML_HEADER = """\
 #   python_module     — AST: top-level classes and functions
 #   python_callgraph  — AST: function-level symbols + calls edges (ADR 0004)
 #   tree_sitter       — Tree-sitter AST: exports, types, imports (Go, Rust, TS, C#)
+#   csharp_solution        — XML: .sln contains -> .csproj
+#   csharp_project         — XML: .csproj ProjectReference, Directory.Build.*
+#   csharp_msbuild_targets — XML: <Target> BeforeTargets/AfterTargets ordering
+#   csharp_test_framework  — Attribute parse: xUnit / NUnit / MSTest markers
+#   csharp_aspnet_routes   — Attribute parse: ASP.NET Core controllers + routes
+#   csharp_efcore          — Attribute parse: DbContext / DbSet entities
 """
 # Tree-sitter-backed languages: name → tuple of file extensions.
 # A language may map to multiple extensions (C++ covers .cpp/.cc/.h/...).
 # Languages in ``_TREE_SITTER_EMIT_CALLS`` also emit function-level call
 # graph nodes via the per-source ``emit_calls`` flag.
 _TREE_SITTER_LANGUAGES: dict[str, tuple[str, ...]] = {
-    "csharp": (".cs",),
-    "go": (".go",),
-    "rust": (".rs",),
-    "typescript": (".ts",),
-    "cpp": (".c", ".cc", ".cpp", ".cxx",
-            ".h", ".hpp", ".hh", ".hxx", ".ipp", ".tpp"),
+    "csharp": (".cs",), "go": (".go",), "rust": (".rs",), "typescript": (".ts",),
+    "cpp": (".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".ipp", ".tpp"),
 }
-_TREE_SITTER_EMIT_CALLS: frozenset[str] = frozenset({"cpp"})
+_TREE_SITTER_EMIT_CALLS: frozenset[str] = frozenset({"cpp", "csharp"})
 
 def _source_entry(
     glob: str, node_type: str, strategy: str,
@@ -105,33 +108,26 @@ def _find_matching_glob(globs: list[str], keywords: tuple[str, ...]) -> str | No
     return None
 
 def _add_framework_sources(
-    sources: list[str],
-    framework_names: set[str],
-    python_globs: list[str],
+    sources: list[str], framework_names: set[str], python_globs: list[str],
 ) -> None:
     """Append framework-specific source entries."""
-    if "SQLAlchemy" in framework_names:
-        matched = _find_matching_glob(
-            python_globs, ("domain", "model", "entities", "libs"),
-        )
-        sources.append(_source_entry(
-            matched or python_globs[0] if python_globs else "**/*.py",
-            "entity", "sqlalchemy",
-            comment="SQLAlchemy domain models" if matched
-            else "SQLAlchemy models (adjust glob to match your model directory)",
-        ))
-
-    if "FastAPI" in framework_names:
-        matched = _find_matching_glob(
-            python_globs, ("router", "route", "api", "services"),
-        )
-        sources.append(_source_entry(
-            matched or python_globs[0] if python_globs else "**/*.py",
-            "route", "fastapi",
-            comment="FastAPI routes" if matched
-            else "FastAPI routes (adjust glob to match your router directory)",
-        ))
-
+    fallback = python_globs[0] if python_globs else "**/*.py"
+    for fw, kw, node_type, strategy, label, hint in (
+        ("SQLAlchemy",
+         ("domain", "model", "entities", "libs"),
+         "entity", "sqlalchemy", "SQLAlchemy domain models",
+         "model directory"),
+        ("FastAPI",
+         ("router", "route", "api", "services"),
+         "route", "fastapi", "FastAPI routes",
+         "router directory"),
+    ):
+        if fw in framework_names:
+            matched = _find_matching_glob(python_globs, kw)
+            sources.append(_source_entry(
+                matched or fallback, node_type, strategy,
+                comment=label if matched else f"{label} (adjust glob to match your {hint})",
+            ))
     if "Pydantic" in framework_names:
         matched = _find_matching_glob(
             python_globs, ("contract", "schema", "dto", "libs"),
@@ -169,6 +165,7 @@ def generate_yaml(
     claude_agents: list[str], claude_commands: list[str],
     doc_dirs: list[str], python_globs: list[str], root_configs: list[str],
     ros2_pkg_roots: list[str] | None = None,
+    csharp_flags: dict[str, bool] | None = None,
 ) -> str:
     """Generate the discover.yaml content using template strings.
 
@@ -222,6 +219,10 @@ def generate_yaml(
                 comment=f"{label} sources ({ext})",
                 extra=extras,
             ))
+    # --- C# strategy stack (helpers in weld/_init_csharp.py) ---
+    if csharp_flags:
+        buckets["code"].extend(csharp_source_entries(csharp_flags))
+
     # --- ROS2 (; helpers in weld/_init_ros2.py) ---
     if ros2_pkg_roots:
         buckets["code"].extend(ros2_source_entries(ros2_pkg_roots))
@@ -322,18 +323,15 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
     classified = classify_files(root, files)
     detected = detect_all_from_classified(classified)
     structure = detected["structure"]
-    dockerfiles = detected["dockerfiles"]
-    compose_files = detected["compose_files"]
+    dockerfiles, compose_files = detected["dockerfiles"], detected["compose_files"]
     ci_files = detected["ci_files"]
-    claude_agents = detected["claude_agents"]
-    claude_commands = detected["claude_commands"]
-    doc_dirs = detected["doc_dirs"]
+    claude_agents, claude_commands = detected["claude_agents"], detected["claude_commands"]
+    doc_dirs, root_configs = detected["doc_dirs"], detected["root_configs"]
     python_globs = detected["python_globs"] if "python" in languages else []
-    root_configs = detected["root_configs"]
     ros2_pkg_roots = detect_ros2(root, files)
+    csharp_flags = detect_csharp_artifacts(files) if "csharp" in languages else None
 
-    print("Detecting project structure...", file=sys.stderr)
-    print(f"  Structure: {structure}", file=sys.stderr)
+    print(f"Detecting project structure...\n  Structure: {structure}", file=sys.stderr)
     print("Scanning for Dockerfiles...", file=sys.stderr)
     for df in dockerfiles:
         print(f"  Found {df}", file=sys.stderr)
@@ -359,7 +357,7 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
         ci_files=ci_files, claude_agents=claude_agents,
         claude_commands=claude_commands, doc_dirs=doc_dirs,
         python_globs=python_globs, root_configs=root_configs,
-        ros2_pkg_roots=ros2_pkg_roots,
+        ros2_pkg_roots=ros2_pkg_roots, csharp_flags=csharp_flags,
     )
 
     output.parent.mkdir(parents=True, exist_ok=True)

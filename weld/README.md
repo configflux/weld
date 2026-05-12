@@ -66,6 +66,16 @@ Use `wd graph communities --write` to derive `.weld/graph-communities.json`,
 `.weld/graph-community-report.md`, and `.weld/graph-community-index.md` from
 the current graph. The command is read-only with respect to `.weld/graph.json`.
 
+`wd init` auto-detects per-language project shape and wires the matching
+strategies into `discover.yaml` out of the box. For C# / .NET, when a repo
+contains `.sln`, `.csproj`, or `Directory.Build.props` / `.targets`, the
+generated config wires the solution and project graph (`ProjectReference`,
+shared MSBuild properties), MSBuild targets with `BeforeTargets` /
+`AfterTargets` ordering, and -- when the corresponding packages are
+referenced -- ASP.NET Core controllers / routes, EF Core `DbContext` and
+entities, and xUnit / NUnit / MSTest test-framework markers. No manual
+edits to `discover.yaml` are required for the standard .NET layout.
+
 The full five-minute tutorial is in the public repository:
 
 https://github.com/configflux/weld/blob/main/docs/tutorial-5-minutes.md

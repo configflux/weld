@@ -124,6 +124,72 @@ class CanonicalIdUniquenessTest(unittest.TestCase):
         b = [v.to_dict() for v in check_canonical_id_uniqueness(nodes)]
         self.assertEqual(a, b)
 
+    def test_passes_for_url_scheme_ids_with_same_type(self) -> None:
+        """``scheme://name`` IDs with the same ``node.type`` must NOT collide.
+
+        Regression: ``csproj://ShareX`` and ``solution://ShareX`` both
+        carry ``type='build-target'`` and the old ``_id_segments`` split
+        on the first ``:`` folded the URL scheme away, leaving both IDs
+        sharing the same canonical base (``build-target:sharex``). The
+        URL scheme MUST survive canonicalization so distinct schemes do
+        not collide.
+        """
+        from weld._graph_closure_invariants import (
+            check_canonical_id_uniqueness,
+        )
+
+        nodes = {
+            "csproj://ShareX": {
+                "type": "build-target",
+                "label": "ShareX",
+                "props": {"aliases": []},
+            },
+            "solution://ShareX": {
+                "type": "build-target",
+                "label": "ShareX",
+                "props": {"aliases": []},
+            },
+            "csproj://ShareX.ImageEditor": {
+                "type": "build-target",
+                "label": "ShareX.ImageEditor",
+                "props": {"aliases": []},
+            },
+            "solution://ShareX.ImageEditor": {
+                "type": "build-target",
+                "label": "ShareX.ImageEditor",
+                "props": {"aliases": []},
+            },
+        }
+        violations = list(check_canonical_id_uniqueness(nodes))
+        self.assertEqual(violations, [])
+
+    def test_violates_when_two_url_scheme_ids_share_scheme(self) -> None:
+        """Two ``scheme://name`` IDs with the same scheme + slug-equal name
+        must still violate; the URL-scheme survival path only adds
+        scheme-discrimination, it does not weaken intra-scheme detection.
+        """
+        from weld._graph_closure_invariants import (
+            check_canonical_id_uniqueness,
+        )
+
+        nodes = {
+            "csproj://Share-X": {
+                "type": "build-target",
+                "label": "Share-X",
+                "props": {"aliases": []},
+            },
+            "csproj://share--x": {
+                "type": "build-target",
+                "label": "share--x",
+                "props": {"aliases": []},
+            },
+        }
+        violations = list(check_canonical_id_uniqueness(nodes))
+        # Both slug to ``share-x`` under the same ``csproj`` scheme.
+        self.assertEqual(len(violations), 2)
+        for v in violations:
+            self.assertEqual(v.rule, "canonical-id-uniqueness")
+
 
 # ---------------------------------------------------------------------------
 # Rule 2: file-anchor-symmetry

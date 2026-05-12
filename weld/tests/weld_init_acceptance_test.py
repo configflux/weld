@@ -169,6 +169,15 @@ class InitStrategyDetectionTest(unittest.TestCase):
             "csharp_project should produce a tree_sitter csharp source",
         )
         self.assertTrue(any(s.get("glob") == "**/*.cs" for s in csharp_sources))
+        # ``wd init`` must enable call-graph emission for C# tree-sitter
+        # entries the same way it does for C++ (ADR 0056 stack). Without
+        # ``emit_calls: true``, the C# pipeline produces zero ``calls``
+        # edges and only partial-class symbol coverage.
+        for src in csharp_sources:
+            self.assertTrue(
+                src.get("emit_calls") in (True, "true"),
+                f"csharp tree_sitter source missing emit_calls: {src}",
+            )
 
     def test_legacy_detects_python_but_not_frameworks(self) -> None:
         _, data = _init_fixture("legacy_onboarding")

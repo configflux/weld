@@ -116,6 +116,7 @@ py_library(
         "_agent_graph_strict.py",
         "_agent_graph_unused_skill.py",
         "_init_classify.py",
+        "_init_csharp.py",
         "_init_framework_scan.py",
         "_init_go_imports.py",
         "_init_ros2.py",

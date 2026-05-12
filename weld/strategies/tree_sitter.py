@@ -211,6 +211,11 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         )
         return StrategyResult(nodes, edges, discovered_from)
 
+    # Per-language grammar availability probe (see ``_ts_parse``).
+    if not _ts_parse.grammar_available(language):
+        _ts_parse.append_missing_grammar_warning(language, context)
+        return StrategyResult(nodes, edges, discovered_from)
+
     # Load query patterns for this language
     try:
         queries = load_language_queries(language)
@@ -256,23 +261,15 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         # Parse symbols using tree-sitter
         symbols = _parse_file_symbols(fpath, language, queries)
         runtime_startup = (
-            (
-                language == "csharp"
-                and _csharp_tree_sitter.is_startup_source(rel_path, source_text, symbols)
-            )
-            or (
-                language == "cpp"
-                and _cpp_tree_sitter.is_startup_source(rel_path, source_text, symbols)
-            )
+            (language == "csharp" and _csharp_tree_sitter.is_startup_source(rel_path, source_text, symbols))
+            or (language == "cpp" and _cpp_tree_sitter.is_startup_source(rel_path, source_text, symbols))
         )
 
         # Optional: also emit function-level call graph nodes/edges.
         # Gated on the per-source ``emit_calls`` flag so existing
         # ``tree_sitter`` source entries do not change behaviour.
         if emit_calls:
-            cg_nodes, cg_edges = _extract_call_edges(
-                fpath, rel_path, language, queries
-            )
+            cg_nodes, cg_edges = _extract_call_edges(fpath, rel_path, language, queries)
             nodes.update(cg_nodes)
             edges.extend(cg_edges)
 
@@ -287,9 +284,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "imports": list(symbols.get("imports", [])),
                     "exports_set": set(symbols.get("exports", [])),
                     "classes_set": set(symbols.get("classes", [])),
-                    "file_caller_id": (
-                        f"symbol:{language}:{module_path}:<file>"
-                    ),
+                    "file_caller_id": f"symbol:{language}:{module_path}:<file>",
                 }
             )
 

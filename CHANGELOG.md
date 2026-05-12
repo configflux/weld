@@ -5,6 +5,50 @@ All notable user-facing changes to this project are recorded here.
 
 ## Unreleased
 
+## v0.19.0 - 2026-05-12
+
+### Added
+
+- C# discovery now auto-wires its full strategy stack on `wd init` when
+  matching artifacts are present: solution/project parsing, MSBuild
+  target extraction, test-framework detection (xUnit / NUnit / MSTest),
+  ASP.NET route extraction, and EF Core entity/relationship surfacing.
+  Polyglot repos that previously needed manual `.weld/discover.yaml`
+  edits to opt C# in now light up out of the box.
+  <!-- verify: file=weld/init.py grep=csharp -->
+- C# inheritance edges (`inherits` and `implements`) are now extracted
+  from the `base_list` syntax node, so class hierarchies and interface
+  contracts show up in graph queries and visualizations rather than
+  being silently dropped during discovery.
+  <!-- verify: file=weld/strategies/_csharp_inheritance.py -->
+- Per-method call graphs are now on by default for C# tree-sitter
+  discovery (`emit_calls: true`). `wd query` and downstream tooling
+  see method-level edges automatically without a config override.
+  <!-- verify: file=weld/init.py grep=emit_calls -->
+
+### Fixed
+
+- Per-grammar tree-sitter warnings now surface to stderr end-to-end.
+  When a grammar is missing or fails to load, discovery emits a clear
+  warning rather than silently no-op-ing — previously a misconfigured
+  grammar could drop entire languages from the graph with no signal.
+  <!-- verify: file=weld/strategies/_ts_parse.py grep=append_missing_grammar_warning -->
+- The `csharp_msbuild_targets` glob now matches case-insensitively,
+  so `*.csproj`, `*.CSPROJ`, and other case variants found in Windows-
+  authored repos are no longer missed during discovery.
+  <!-- verify: file=weld/strategies/csharp_msbuild_targets.py grep=case-insensitive -->
+- Canonical-id-uniqueness rule now preserves the URL scheme when
+  comparing IDs, so `csproj://X` and `solution://X` are no longer
+  collapsed into a spurious uniqueness violation. The previous behavior
+  could mask real graph nodes during cross-repo federation.
+  <!-- verify: file=weld/_graph_closure_invariants.py grep=_url_scheme -->
+- `load_ts_language` now handles both the legacy `language()` export
+  and the newer `language_typescript()` / `language_tsx()` function
+  names introduced in `tree-sitter-typescript >= 0.23`. Prior installs
+  on newer grammar versions would fail with `AttributeError` at TS
+  discovery time.
+  <!-- verify: file=weld/strategies/_ts_parse.py grep=language_typescript -->
+
 ## v0.18.2 - 2026-05-11
 
 ### Fixed

@@ -79,6 +79,11 @@ def _id_segments(node_id: str) -> tuple[str, str | None, str]:
     treat segment 2 as the platform and join everything after it as the
     name so IDs with embedded colons round-trip into a stable canonical
     base.
+
+    Note: URL-style IDs (``scheme://name``) are NOT special-cased here
+    -- this helper just does the raw colon split. ``_canonical_base``
+    is responsible for recognising the URL form via :func:`_url_scheme`
+    and composing the canonical slug accordingly.
     """
     parts = node_id.split(":", 2)
     if len(parts) == 1:
@@ -89,6 +94,28 @@ def _id_segments(node_id: str) -> tuple[str, str | None, str]:
     return type_, platform, rest
 
 
+def _url_scheme(node_id: str) -> str | None:
+    """Return the URL scheme of *node_id* iff it matches ``scheme://...``.
+
+    Used by :func:`_canonical_base` to discriminate between IDs that
+    share a ``node.type`` (e.g. ``build-target``) but differ in the URL
+    scheme that names them (``csproj://`` vs ``solution://``). Returns
+    ``None`` for non-URL IDs so the legacy colon-segmented path is
+    unaffected.
+    """
+    sep = "://"
+    idx = node_id.find(sep)
+    if idx <= 0:
+        return None
+    scheme = node_id[:idx]
+    # The scheme must be a single colon-free token; otherwise the ID
+    # is not URL-shaped (``foo:bar://baz`` is two colon segments, the
+    # second of which happens to contain ``//``).
+    if ":" in scheme:
+        return None
+    return scheme
+
+
 def _canonical_base(node_id: str, node: Mapping) -> str:
     """Return the canonical slug used to compare two nodes for collision.
 
@@ -96,7 +123,18 @@ def _canonical_base(node_id: str, node: Mapping) -> str:
     via :func:`weld._node_ids.canonical_slug` so two IDs that differ
     only in slug-irrelevant punctuation (the ``architecture--decision``
     vs ``architecture-decision`` case) collapse to the same key.
+
+    URL-style IDs (``scheme://name``) compose under the URL scheme
+    rather than ``node.type`` so the scheme survives canonicalization.
+    This prevents the ``csproj://X`` vs ``solution://X`` collision when
+    both nodes share ``type='build-target'``: the slugs become
+    ``csproj:x`` and ``solution:x``, which are distinct.
     """
+    scheme = _url_scheme(node_id)
+    if scheme is not None:
+        name = node_id[len(scheme) + len("://"):]
+        composed = f"{scheme}:{name}"
+        return canonical_slug(composed)
     node_type = str(node.get("type") or _id_segments(node_id)[0])
     _, platform, name = _id_segments(node_id)
     if platform is None:
