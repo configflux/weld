@@ -13,7 +13,7 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.19.0 -->
+<!-- evaluator-note: latest=v0.19.1 -->
 > **Evaluators: start with v0.14.0.** v0.14.0 lands deterministic
 > multi-language graph closure, two new discovery strategies
 > (`concept_from_bd`, `test_peer`), module-level Python constants in
@@ -917,7 +917,7 @@ same "(412)" hint next to its own toggles.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.19.0`.
+terminal snippets captured against `wd 0.19.1`.
 
 ## Install
 

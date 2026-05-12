@@ -2,21 +2,23 @@
 
 When the base ``tree-sitter`` package is installed but a per-language
 grammar (e.g. ``tree_sitter_c_sharp``) is missing, the tree-sitter
-strategy short-circuits and appends a structured warning to
-``context["_warnings"]``. Discovery must surface that warning to stderr
-at the end of the run -- otherwise the user sees ``wd discover`` succeed
-with zero nodes for that language and no signal as to why.
+strategy catches the ``ImportError`` raised by ``load_ts_language`` on
+the first file, appends a structured warning to
+``context["_warnings"]``, and breaks. Discovery must surface that
+warning to stderr at the end of the run -- otherwise the user sees
+``wd discover`` succeed with zero nodes for that language and no signal
+as to why.
 
 These tests run discovery against a minimal repo that configures a
-single tree-sitter source for C#, patches ``importlib.util.find_spec``
-to report the C# grammar absent, and asserts that exactly one explicit
-WARN line is printed to stderr naming the missing grammar and the
-install command.
+single tree-sitter source for C#, patches the strategy's
+``_parse_file_symbols`` re-export to raise ``ImportError`` (simulating
+the missing grammar), and asserts that exactly one explicit
+``[weld] warning:`` line is printed to stderr naming the missing
+grammar and the install command.
 """
 
 from __future__ import annotations
 
-import importlib.util as importlib_util
 import io
 import sys
 import tempfile
@@ -49,17 +51,12 @@ def _make_csharp_repo(root: Path) -> None:
     )
 
 
-def _fake_find_spec_factory(*missing_modules: str):
-    """Return a ``find_spec`` replacement that reports the named modules absent."""
-    real_find_spec = importlib_util.find_spec
-    missing = frozenset(missing_modules)
-
-    def _fake(name: str, package: object = None):
-        if name in missing:
-            return None
-        return real_find_spec(name, package)
-
-    return _fake
+def _missing_grammar_import_error(*_args, **_kwargs):
+    """Replacement for ``_parse_file_symbols`` that simulates a missing grammar."""
+    raise ImportError(
+        "tree-sitter grammar for 'csharp' not installed: "
+        "pip install tree-sitter-c-sharp"
+    )
 
 
 class DiscoverDrainsGrammarWarningTest(unittest.TestCase):
@@ -74,8 +71,8 @@ class DiscoverDrainsGrammarWarningTest(unittest.TestCase):
             with mock.patch(
                 "weld.strategies.tree_sitter.TREE_SITTER_AVAILABLE", True,
             ), mock.patch(
-                "weld.strategies._ts_parse._importlib_util.find_spec",
-                side_effect=_fake_find_spec_factory("tree_sitter_c_sharp"),
+                "weld.strategies._ts_parse.parse_file_symbols",
+                side_effect=_missing_grammar_import_error,
             ), redirect_stderr(err), redirect_stdout(out):
                 rc = discover_mod.main([
                     str(root),
@@ -122,14 +119,18 @@ class DiscoverDrainsGrammarWarningTest(unittest.TestCase):
             (root / "Sample.cs").write_text(
                 "namespace N { public class C {} }\n", encoding="utf-8",
             )
+            (root / "src").mkdir()
+            (root / "src" / "Other.cs").write_text(
+                "namespace N { public class D {} }\n", encoding="utf-8",
+            )
 
             err = io.StringIO()
             out = io.StringIO()
             with mock.patch(
                 "weld.strategies.tree_sitter.TREE_SITTER_AVAILABLE", True,
             ), mock.patch(
-                "weld.strategies._ts_parse._importlib_util.find_spec",
-                side_effect=_fake_find_spec_factory("tree_sitter_c_sharp"),
+                "weld.strategies._ts_parse.parse_file_symbols",
+                side_effect=_missing_grammar_import_error,
             ), redirect_stderr(err), redirect_stdout(out):
                 rc = discover_mod.main([
                     str(root),

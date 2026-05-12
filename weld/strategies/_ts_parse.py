@@ -7,7 +7,7 @@ and symbol extraction from a single source file.
 
 from __future__ import annotations
 
-import importlib.util as _importlib_util
+import importlib
 from pathlib import Path
 
 _GRAMMAR_MODULE_ALIASES: dict[str, str] = {
@@ -41,16 +41,24 @@ def grammar_package_name(language: str) -> str:
 def grammar_available(language: str) -> bool:
     """Probe whether the per-language tree-sitter grammar is importable.
 
-    Returns ``True`` when ``importlib.util.find_spec(grammar_module)``
-    yields a non-``None`` spec. A missing grammar manifests as an
-    ``ImportError`` deep inside :func:`load_ts_language`, which today
-    is caught silently per-file -- so callers must probe BEFORE the
-    file loop to avoid the silent-no-op failure mode.
+    Uses an actual ``importlib.import_module`` attempt rather than
+    ``find_spec`` so the probe agrees with what :func:`load_ts_language`
+    will actually see at parse time. In Bazel's hermetic runfiles
+    environment ``find_spec`` may return ``None`` for modules that are
+    nevertheless importable (or vice-versa); ``import_module`` mirrors
+    the production import semantics exactly.
+
+    Kept as a public helper for callers that want a cheap up-front
+    check, but the strategy itself now detects missing grammars lazily
+    via the :class:`ImportError` raised by :func:`load_ts_language` on
+    the first parsed file, so all environments converge on the same
+    behaviour.
     """
     module_name = grammar_module_name(language)
     try:
-        return _importlib_util.find_spec(module_name) is not None
-    except (ImportError, ModuleNotFoundError, ValueError):
+        importlib.import_module(module_name)
+        return True
+    except (ImportError, ModuleNotFoundError):
         return False
 
 
@@ -87,8 +95,6 @@ def load_ts_language(language: str) -> object:
     The grammar packages follow the naming convention
     ``tree_sitter_{language}``.
     """
-    import importlib
-
     module_name = grammar_module_name(language)
     try:
         mod = importlib.import_module(module_name)

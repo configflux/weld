@@ -211,11 +211,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         )
         return StrategyResult(nodes, edges, discovered_from)
 
-    # Per-language grammar availability probe (see ``_ts_parse``).
-    if not _ts_parse.grammar_available(language):
-        _ts_parse.append_missing_grammar_warning(language, context)
-        return StrategyResult(nodes, edges, discovered_from)
-
     # Load query patterns for this language
     try:
         queries = load_language_queries(language)
@@ -258,8 +253,16 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
         rel_path = str(fpath.relative_to(root))
 
-        # Parse symbols using tree-sitter
-        symbols = _parse_file_symbols(fpath, language, queries)
+        # Parse symbols. A missing per-language grammar surfaces as an
+        # ImportError from ``load_ts_language``; detecting it lazily
+        # here keeps behaviour identical in normal Python envs and in
+        # Bazel's hermetic sandbox. First failure emits one dedup'd
+        # warning and we break -- subsequent files would fail the same.
+        try:
+            symbols = _parse_file_symbols(fpath, language, queries)
+        except ImportError:
+            _ts_parse.append_missing_grammar_warning(language, context)
+            break
         runtime_startup = (
             (language == "csharp" and _csharp_tree_sitter.is_startup_source(rel_path, source_text, symbols))
             or (language == "cpp" and _cpp_tree_sitter.is_startup_source(rel_path, source_text, symbols))

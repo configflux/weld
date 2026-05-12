@@ -5,6 +5,20 @@ All notable user-facing changes to this project are recorded here.
 
 ## Unreleased
 
+## v0.19.1 - 2026-05-12
+
+### Fixed
+
+- Tree-sitter discovery no longer fails to load per-language grammars in
+  hermetic build sandboxes. The previous probe used a top-level
+  `find_spec` check that could short-circuit before the grammar
+  packages were actually importable on the sandboxed Python path; the
+  probe now defers to a real import attempt and only marks a grammar
+  unavailable when the import itself raises. End users on a normal
+  `pip install` saw no functional change in v0.19.0 — this patch
+  exists to unblock automated test runs in hermetic environments.
+  <!-- verify: file=weld/strategies/tree_sitter.py -->
+
 ## v0.19.0 - 2026-05-12
 
 ### Added
