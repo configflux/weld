@@ -252,13 +252,18 @@ class EnsureGraphBootstrapsConfigTest(unittest.TestCase):
         nodes = payload.get("nodes") or {}
         return len(nodes)
 
+    @unittest.skipUnless(
+        weld_adapter._is_tree_sitter_available(),
+        "tree-sitter not installed; cpp node extraction cannot run",
+    )
     def test_fresh_cpp_tempdir_yields_nonempty_graph(self) -> None:
         # The exact bug class: a fresh tempdir with cpp source files but
         # no .weld/ tree. Before the fix, _ensure_graph called discover()
         # with sources=[] and the resulting graph had 0 nodes. After the
         # fix, the bootstrap step generates a discover.yaml whose
         # tree-sitter cpp glob picks up the file and mints at least one
-        # file node.
+        # file node. Skipped when tree-sitter is genuinely absent: the
+        # cpp strategy depends on tree_sitter_cpp grammar.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "include").mkdir()
