@@ -10,6 +10,14 @@
   <ItemGroup>
     <ProjectReference Include="..\Sample.Dal\Sample.Dal.csproj" />
   </ItemGroup>
+  <!-- ADR 0056 addendum (2026-05-15): explicit <Compile Include> pointing
+       at a source file outside the project directory. The implicit SDK
+       glob only sees files under src/Sample.Web; this directive pulls in
+       the fixture-root _generated/ClientStub.cs so the resolver's
+       "explicit Include outside the directory" branch is exercised. -->
+  <ItemGroup>
+    <Compile Include="..\..\_generated\ClientStub.cs" />
+  </ItemGroup>
   <!-- ADR 0056 Wave 3: custom MSBuild target used by the
        csharp_msbuild_targets fixture test. ``GenerateClientCode`` runs
        before ``Build`` and after ``Restore`` so the integration test

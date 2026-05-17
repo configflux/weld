@@ -145,5 +145,36 @@ class PythonRootLevelDiscoveryTest(unittest.TestCase):
             )
 
 
+class PythonTestPeerScaffoldingTest(unittest.TestCase):
+    """Python test-directory globs must scaffold both ``python_module``
+    and ``test_peer`` (ADR 0046). Without the ``test_peer`` pair,
+    framework_strategies criterion 3 sees zero pytest output even on
+    a corpus that imports pytest."""
+
+    def test_python_tests_glob_pairs_python_module_and_test_peer(
+        self,
+    ) -> None:
+        yaml_text = generate_yaml(
+            languages={"python": 5}, frameworks=[],
+            dockerfiles=[], compose_files=[], ci_files=[],
+            claude_agents=[], claude_commands=[],
+            doc_dirs=[], python_globs=["tests/**/*.py"], root_configs=[],
+        )
+        data = parse_yaml(yaml_text)
+        sources = data.get("sources", [])
+        test_glob_sources = [
+            s for s in sources if s.get("glob") == "tests/**/*.py"
+        ]
+        strategies = {s.get("strategy") for s in test_glob_sources}
+        self.assertIn(
+            "python_module", strategies,
+            f"missing python_module on tests glob: {sources}",
+        )
+        self.assertIn(
+            "test_peer", strategies,
+            f"missing test_peer on tests glob: {sources}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

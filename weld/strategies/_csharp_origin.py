@@ -38,18 +38,50 @@ def load_package_references(root: Path) -> frozenset[str]:
 def load_project_namespace_roots(root: Path) -> frozenset[str]:
     """Return namespace roots inferred from SDK project metadata."""
     roots: set[str] = set()
-    for project_file in _iter_project_files(root):
-        roots.add(_namespace_from_project_name(project_file.stem))
-        project = _parse_xml(project_file)
-        if project is None:
-            continue
-        for elem in project.iter():
-            local = _local_name(elem.tag)
-            if local not in {"AssemblyName", "RootNamespace"}:
-                continue
-            if elem.text and elem.text.strip():
-                roots.add(elem.text.strip())
+    for project_roots in load_project_namespace_roots_by_project(root).values():
+        roots.update(project_roots)
     return frozenset(root_name for root_name in roots if root_name)
+
+
+def load_project_namespace_roots_by_project(
+    root: Path,
+) -> dict[Path, frozenset[str]]:
+    """Return per-project namespace roots inferred from SDK project metadata.
+
+    The companion :func:`load_project_namespace_roots` flattens every
+    project's roots into a single workspace-wide frozenset for the
+    classifier in :func:`classify_using_import`. The producer side
+    (``csharp_package``) needs the same metadata but partitioned per
+    project file so it can anchor a ``package:csharp:<root>`` node on
+    the ``.cs`` files that actually live under that project's directory
+    -- otherwise the strategy would either lose the project boundary
+    (anchor every project's root on every ``.cs`` file in the workspace)
+    or fall back to declaring undanchored package nodes that violate the
+    ADR 0060 file-anchor invariant.
+
+    Returned dict is keyed by the absolute project file path and sorted
+    by that path so callers get a deterministic iteration order. The
+    project-file-stem fallback (mirroring
+    :func:`_namespace_from_project_name`) is included so projects that
+    declare neither ``<RootNamespace>`` nor ``<AssemblyName>`` still
+    contribute a producer name.
+    """
+    per_project: dict[Path, frozenset[str]] = {}
+    for project_file in _iter_project_files(root):
+        project_roots: set[str] = set()
+        project_roots.add(_namespace_from_project_name(project_file.stem))
+        project = _parse_xml(project_file)
+        if project is not None:
+            for elem in project.iter():
+                local = _local_name(elem.tag)
+                if local not in {"AssemblyName", "RootNamespace"}:
+                    continue
+                if elem.text and elem.text.strip():
+                    project_roots.add(elem.text.strip())
+        cleaned = frozenset(r for r in project_roots if r)
+        if cleaned:
+            per_project[project_file] = cleaned
+    return per_project
 
 
 def classify_using_import(
@@ -121,4 +153,5 @@ __all__ = [
     "classify_using_import",
     "load_package_references",
     "load_project_namespace_roots",
+    "load_project_namespace_roots_by_project",
 ]

@@ -6,4 +6,12 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
   </ItemGroup>
+  <!-- ADR 0056 addendum (2026-05-15): explicit <Compile Remove> excludes a
+       file from the implicit SDK glob. Excluded.cs lives next to the
+       project file but the resolver must subtract it from the owned set,
+       so no csproj://Sample.Dal -> contains -> file:src/Sample.Dal/Excluded
+       edge is emitted. -->
+  <ItemGroup>
+    <Compile Remove="Excluded.cs" />
+  </ItemGroup>
 </Project>

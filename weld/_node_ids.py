@@ -82,6 +82,71 @@ def canonical_slug(value: str) -> str:
     return trimmed or _EMPTY_SENTINEL
 
 
+#: Permit upper- and lower-case ASCII alphanumerics, dot, colon,
+#: underscore, and dash. Used by :func:`canonical_slug_case_sensitive`
+#: so case-sensitive symbol IDs (notably C# members like ``SIZE`` vs
+#: ``Size`` on the same class) survive the canonical-base collapse the
+#: ``canonical-id-uniqueness`` lint rule applies. Mirrors
+#: :data:`_ALLOWED_RE` but keeps both cases.
+_ALLOWED_RE_CASE_SENSITIVE = re.compile(r"[^A-Za-z0-9._:-]+")
+
+
+def canonical_slug_case_sensitive(value: str) -> str:
+    """Return a deterministic, total, case-preserving slug for *value*.
+
+    Mirrors :func:`canonical_slug` but does NOT lowercase. The
+    punctuation-collapse and dash-coalesce rules are otherwise
+    identical, so two IDs that differ only in slug-irrelevant
+    punctuation still slug to the same string.
+
+    This helper has two callers:
+
+    1. **``file:*`` ID minting** (see :func:`file_id`). File paths on
+       POSIX filesystems (Linux, macOS) are case-sensitive; lowercasing
+       them would collapse ``Foo.cs`` and ``foo.cs`` into the same
+       node, silently dropping graph state. This is the file-id
+       complement of the package-id case decision (ADR 0060 + commit
+       02b2c3e): packages collapse case because language namespaces
+       are case-INSENSITIVE; paths do not. See vjxi.6.
+    2. **The ``canonical-id-uniqueness`` lint rule** in
+       :mod:`weld._graph_closure_invariants`. ``symbol:*`` IDs must
+       preserve case at the collision-detection step because most
+       source languages (notably C#, Java, C++) treat ``SIZE``
+       (constant) and ``Size`` (property) as legitimately distinct
+       identifiers and the underlying minter
+       (``_ts_call_graph.extract_call_edges`` and the C# helpers in
+       ``weld/strategies/_csharp_*``) preserves source casing when
+       constructing symbol node IDs. Folding case here would create
+       false-positive duplicates for case-distinct C# / Java / C++
+       members on the same enclosing type.
+
+    Symbol nodes already preserve case at construction time, so they
+    do not call this helper directly. ``skill:*``, ``package:*``,
+    ``agent:*``, ``topic:*``, ``entity:*``, and ``build-target:*``
+    IDs continue to use :func:`canonical_slug` (case-folded).
+
+    Examples
+    --------
+    >>> canonical_slug_case_sensitive("SIZE")
+    'SIZE'
+    >>> canonical_slug_case_sensitive("Size")
+    'Size'
+    >>> canonical_slug_case_sensitive("ShareX.HelpersLib")
+    'ShareX.HelpersLib'
+    >>> canonical_slug_case_sensitive("Foo--Bar")
+    'Foo-Bar'
+    >>> canonical_slug_case_sensitive("---")
+    'unknown'
+    """
+    if not isinstance(value, str):  # pragma: no cover - defensive total guard
+        value = str(value)
+    stripped = value.strip()
+    collapsed = _ALLOWED_RE_CASE_SENSITIVE.sub("-", stripped)
+    coalesced = _MULTI_DASH_RE.sub("-", collapsed)
+    trimmed = coalesced.strip("-")
+    return trimmed or _EMPTY_SENTINEL
+
+
 def file_id(rel_path: Union[str, PurePosixPath]) -> str:
     """Return the canonical ``file:`` ID for a repo-relative path.
 
@@ -90,6 +155,17 @@ def file_id(rel_path: Union[str, PurePosixPath]) -> str:
     final extension so the result is order-independent across operating
     systems, and the *full* path (not the bare stem) is used so two
     files with the same stem in different directories cannot collide.
+
+    **Case preservation**: file IDs preserve the on-disk case of the
+    path. POSIX filesystems (Linux, macOS dev environments and CI
+    runners) are case-sensitive, so ``Foo.cs`` and ``foo.cs`` are
+    distinct files and must mint distinct IDs. This is the file-id
+    complement of the package-id case decision (ADR 0060 + commit
+    02b2c3e): ``package:csharp:*`` IDs collapse case because C#
+    namespaces are case-INSENSITIVE, but file paths are case-SENSITIVE
+    on the filesystems weld actually runs on. Lowercasing file IDs
+    would silently collapse case-variant paths in polyrepo workspaces
+    (ADR 0064 criterion 5), dropping nodes and edges. See vjxi.6.
 
     Examples
     --------
@@ -102,13 +178,16 @@ def file_id(rel_path: Union[str, PurePosixPath]) -> str:
     >>> file_id("docs/adrs/0041-graph-closure-determinism.md")
     'file:docs/adrs/0041-graph-closure-determinism'
     >>> file_id("README")
-    'file:readme'
+    'file:README'
+    >>> file_id("ShareX.HelpersLib/CLI/CliCommand.cs")
+    'file:ShareX.HelpersLib/CLI/CliCommand'
 
     Path-traversal safety: the result is *only* a graph node ID — it
     is never used to open a file on disk. ``..`` segments are
-    permitted by :func:`canonical_slug` (dot is a legal slug character
-    so dotted package names round-trip), but the ``file:`` prefix
-    namespaces the result so it cannot escape into another ID class.
+    permitted by :func:`canonical_slug_case_sensitive` (dot is a
+    legal slug character so dotted package names round-trip), but the
+    ``file:`` prefix namespaces the result so it cannot escape into
+    another ID class.
 
     >>> file_id("../etc/passwd")
     'file:../etc/passwd'
@@ -129,14 +208,16 @@ def file_id(rel_path: Union[str, PurePosixPath]) -> str:
         without_ext = posix[: -len(pp.suffix)]
     else:
         without_ext = posix
-    # Apply the canonical-slug rule per path segment so each segment is
-    # individually safe (no slashes-collapse-to-dash for the separator
-    # itself; just the chars *within* a segment). Empty segments
-    # (consecutive slashes, leading slash) are dropped.
+    # Apply the case-preserving slug rule per path segment so each
+    # segment is individually safe (no slashes-collapse-to-dash for
+    # the separator itself; just the chars *within* a segment). Case
+    # is preserved because POSIX filesystems are case-sensitive (see
+    # the case-preservation note in the docstring above). Empty
+    # segments (consecutive slashes, leading slash) are dropped.
     segments = [seg for seg in without_ext.split("/") if seg]
     if not segments:
         return "file:" + _EMPTY_SENTINEL
-    cleaned = "/".join(canonical_slug(seg) for seg in segments)
+    cleaned = "/".join(canonical_slug_case_sensitive(seg) for seg in segments)
     return f"file:{cleaned}"
 
 
@@ -208,6 +289,7 @@ def entity_id(
 
 __all__ = [
     "canonical_slug",
+    "canonical_slug_case_sensitive",
     "file_id",
     "package_id",
     "entity_id",

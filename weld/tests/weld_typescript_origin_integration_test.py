@@ -99,7 +99,7 @@ class TypescriptImportOriginIntegrationTest(unittest.TestCase):
     def _run_extract(self, root: Path) -> dict[str, dict]:
         from weld.strategies import tree_sitter as ts_strategy
 
-        def fake_parse(file_path, language, queries):  # noqa: ARG001
+        def fake_parse(file_path, language, queries, **_kw):  # noqa: ARG001
             return _symbols_for(file_path)
 
         with mock.patch.object(

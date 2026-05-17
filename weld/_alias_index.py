@@ -36,7 +36,7 @@ from an older release that lacked the population-side guard, or from
 an attacker who hand-edited ``graph.json``) cannot fool the resolver
 into routing queries for canonical ID ``X`` to some other node ``Y``.
 
-The guard is *silent* (warning + skip) at lookup time rather than
+The guard is non-fatal (warning + skip) at lookup time rather than
 fatal, because:
 
 1. The canonical-id table is the source of truth and remains intact.
@@ -47,7 +47,8 @@ fatal, because:
 
 A poisoned alias that targets a *missing* canonical (no shadow) is
 allowed -- it just becomes another alias that resolves to whatever
-the alias index recorded first; the *first* writer wins. This
+the alias index recorded first; the *first* writer wins, and duplicate
+claim diagnostics are summarized at debug level after the pass. This
 matches the discover-time order-independence guarantee in ADR 0041
 because the alias list per node is sorted-deduped at write time.
 """
@@ -71,15 +72,15 @@ def build_alias_index(nodes: Mapping[str, dict]) -> dict[str, str]:
     Skipped (with a warning) when the alias would shadow a canonical
     node id that already exists in ``nodes`` -- the canonical wins
     unconditionally. Also skipped when two different canonical nodes
-    both claim the same alias; first writer wins (stable across
-    discovery runs because the merged ``aliases`` list is sorted at
-    write time).
+    both claim the same alias; first writer wins and duplicate
+    diagnostics are debug-summarized once per index build.
 
     The function is total: malformed ``aliases`` entries (non-str,
     None, missing ``props``) are tolerated and skipped silently --
     a sidecar build must never fail because of one corrupt node.
     """
     index: dict[str, str] = {}
+    duplicate_claims = 0
     for canonical_id, node in nodes.items():
         if not isinstance(node, dict):
             continue
@@ -106,13 +107,15 @@ def build_alias_index(nodes: Mapping[str, dict]) -> dict[str, str]:
                 continue
             existing = index.get(alias)
             if existing is not None and existing != canonical_id:
-                _LOG.warning(
-                    "alias %r already mapped to canonical %r; ignoring "
-                    "duplicate claim from %r",
-                    alias, existing, canonical_id,
-                )
+                duplicate_claims += 1
                 continue
             index[alias] = canonical_id
+    if duplicate_claims:
+        _LOG.debug(
+            "suppressed %d duplicate alias collision warning(s); "
+            "first canonical claim wins",
+            duplicate_claims,
+        )
     return index
 
 

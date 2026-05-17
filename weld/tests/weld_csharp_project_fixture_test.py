@@ -159,6 +159,63 @@ class CsharpProjectFixtureTest(unittest.TestCase):
             confidence = edge["props"]["confidence"]
             self.assertIn(confidence, CONFIDENCE_VALUES)
 
+    def test_every_project_owns_at_least_one_cs_file(self) -> None:
+        # ADR 0056 addendum (2026-05-15): every csproj must emit at
+        # least one ``contains`` edge to a ``file:`` node so build
+        # targets are no longer disconnected from the source they
+        # compile. Mirrors the ShareX corpus regression assertion.
+        result = csharp_project_extract(self.root, {"glob": "**/*.csproj"}, {})
+        per_project_files: dict[str, int] = {}
+        for edge in result.edges:
+            if edge["type"] != "contains":
+                continue
+            if not edge["to"].startswith("file:"):
+                continue
+            per_project_files[edge["from"]] = (
+                per_project_files.get(edge["from"], 0) + 1
+            )
+        for nid in (
+            "csproj://Sample.Web",
+            "csproj://Sample.Dal",
+            "csproj://Sample.Tests",
+        ):
+            self.assertGreaterEqual(
+                per_project_files.get(nid, 0), 1,
+                f"{nid} must own at least one .cs file",
+            )
+
+    def test_explicit_include_outside_directory_is_owned_by_web(self) -> None:
+        # Sample.Web declares an explicit ``<Compile Include>`` pointing
+        # at ``_generated/ClientStub.cs`` outside the project directory.
+        # The resolver must pull that file into the Web project.
+        result = csharp_project_extract(self.root, {"glob": "**/*.csproj"}, {})
+        contains_pairs = {
+            (edge["from"], edge["to"])
+            for edge in result.edges
+            if edge["type"] == "contains"
+        }
+        self.assertIn(
+            ("csproj://Sample.Web", "file:_generated/ClientStub"),
+            contains_pairs,
+            "Sample.Web should own the explicitly included generated stub",
+        )
+
+    def test_explicit_remove_keeps_excluded_file_unowned(self) -> None:
+        # Sample.Dal declares ``<Compile Remove="Excluded.cs"/>`` so
+        # the resolver must drop Excluded.cs from Sample.Dal's set.
+        # No other csproj covers the directory, so the file should not
+        # appear as the ``to`` of any contains edge.
+        result = csharp_project_extract(self.root, {"glob": "**/*.csproj"}, {})
+        contains_targets = {
+            edge["to"]
+            for edge in result.edges
+            if edge["type"] == "contains"
+        }
+        self.assertNotIn(
+            "file:src/Sample.Dal/Excluded", contains_targets,
+            "Excluded.cs must NOT receive a contains edge",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -190,6 +190,48 @@ class CanonicalIdUniquenessTest(unittest.TestCase):
         for v in violations:
             self.assertEqual(v.rule, "canonical-id-uniqueness")
 
+    # ``symbol:*`` IDs must be compared case-sensitively. Source
+    # languages like C# / Java / C++ treat ``SIZE`` (const) and ``Size``
+    # (property) as distinct; the case-folding policy that fits skill /
+    # package / architecture-decision IDs is wrong for symbol IDs and
+    # would surface a large false-positive class on real C# codebases.
+    # Punctuation collapse (``--`` -> ``-``) still applies so real
+    # duplicates that differ only in dash runs are still caught.
+    def _symbol_nodes(self, *ids: str) -> dict:
+        return {
+            sid: {"type": "symbol", "label": sid.rsplit(":", 1)[-1],
+                  "props": {"aliases": []}}
+            for sid in ids
+        }
+
+    def test_passes_for_case_different_csharp_symbols(self) -> None:
+        from weld._graph_closure_invariants import check_canonical_id_uniqueness
+        nodes = self._symbol_nodes(
+            "symbol:csharp:ShareX.HelpersLib.Native.NativeStructs:SIZE",
+            "symbol:csharp:ShareX.HelpersLib.Native.NativeStructs:Size",
+        )
+        self.assertEqual(list(check_canonical_id_uniqueness(nodes)), [])
+
+    def test_passes_for_case_different_python_symbols(self) -> None:
+        # Policy applies to every ``symbol:*`` ID, not just C#.
+        from weld._graph_closure_invariants import check_canonical_id_uniqueness
+        nodes = self._symbol_nodes(
+            "symbol:py:weld.foo:Bar", "symbol:py:weld.foo:bar",
+        )
+        self.assertEqual(list(check_canonical_id_uniqueness(nodes)), [])
+
+    def test_violates_for_csharp_symbols_with_punctuation_collision(self) -> None:
+        from weld._graph_closure_invariants import check_canonical_id_uniqueness
+        nodes = self._symbol_nodes(
+            "symbol:csharp:ShareX.Foo:Bar-Baz",
+            "symbol:csharp:ShareX.Foo:Bar--Baz",
+        )
+        violations = list(check_canonical_id_uniqueness(nodes))
+        # Both slug to ``Bar-Baz`` (case preserved, dash run collapsed).
+        self.assertEqual(len(violations), 2)
+        for v in violations:
+            self.assertEqual(v.rule, "canonical-id-uniqueness")
+
 
 # ---------------------------------------------------------------------------
 # Rule 2: file-anchor-symmetry

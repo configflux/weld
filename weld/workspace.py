@@ -44,12 +44,12 @@ DEFAULT_EXCLUDE_PATHS: tuple[str, ...] = (".worktrees", "vendor")
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 UNIT_SEPARATOR = "\x1f"
 
-# Cross-repo resolver names accepted by the validator. This list grows as new
-# resolvers land; unknown names are rejected at load time so typos in
-# ``workspaces.yaml`` fail loudly rather than silently skipping a resolver.
+# Cross-repo resolver names accepted by the validator. Unknown names are
+# rejected at load time so typos in ``workspaces.yaml`` fail loudly.
 KNOWN_CROSS_REPO_STRATEGIES: frozenset[str] = frozenset({
-    "grpc_service_binding",
     "compose_topology",
+    "grpc_service_binding",
+    "package_import_resolver",
     "service_graph",
 })
 

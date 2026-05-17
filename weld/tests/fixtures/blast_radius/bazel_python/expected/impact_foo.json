@@ -118,6 +118,12 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "flask": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "github_workflow": {
         "deps_edges": false,
         "nodes_emitted": false,
@@ -321,6 +327,7 @@
         "confidence": "definite",
         "file": "foo_test.py",
         "kind": "test",
+        "origin": "project",
         "roles": [
           "test"
         ],

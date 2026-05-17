@@ -85,15 +85,19 @@ VALID_EDGE_TYPES = frozenset([
     # ``confidence: definite`` per ADR 0050 because libclang is the
     # ground-truth side of the precedence rule.
     "defines_macro", "expands_to", "instantiated_by",
-    # Class/interface inheritance (ADR 0056 base-list extension):
-    # ``file:<derived> --inherits--> file:<base>`` when the C# enricher
-    # extracts a non-interface base from a ``base_list``. Companion edge
-    # to ``implements`` (interface bases). Both carry ``confidence:
+    # Class/interface inheritance (ADR 0056 base-list extension, ADR 0064
+    # criterion 2): ``symbol:csharp:<module_path>:<derived> --inherits-->
+    # symbol:csharp:<ns>.<base>`` (or ``file:<base>`` when the base
+    # resolves to a project file) when the C# enricher extracts a
+    # non-interface base from a ``base_list``. Companion edge to
+    # ``implements`` (interface bases). Both carry ``confidence:
     # inferred`` because the interface/class distinction is a
     # naming-convention heuristic (``^I[A-Z]``); deeper resolution
     # would require Roslyn-grade type analysis. ADR 0050 confidence
-    # placement applies. ``implements`` is already in the vocabulary
-    # so only ``inherits`` is added here.
+    # placement applies. Edges originate at the class-level promoted
+    # symbol node so per-class context surfaces inheritance neighbours
+    # in multi-class files. ``implements`` is already in the
+    # vocabulary so only ``inherits`` is added here.
     "inherits",
 ])
 
@@ -106,9 +110,11 @@ AUTHORITY_VALUES: frozenset[str] = frozenset(
 CONFIDENCE_VALUES: frozenset[str] = frozenset(
     ["definite", "inferred", "speculative"]
 )
-#: implementation | test | config | doc | build | migration | fixture | script
+#: implementation | entrypoint | test | config | doc | build | migration | fixture | script
+#: ``entrypoint`` is the file-anchor-symmetry exemption marker per ADR 0041
+#: Layer 3: ``file:*`` nodes that carry it bypass the inbound-edge requirement.
 ROLE_VALUES: frozenset[str] = frozenset(
-    ["implementation", "test", "config", "doc", "build",
+    ["implementation", "entrypoint", "test", "config", "doc", "build",
      "migration", "fixture", "script"]
 )
 #: adr | policy | runbook | guide | gate | verification

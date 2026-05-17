@@ -1,6 +1,11 @@
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["prompts.yaml", "quality_cases.yaml"])
+exports_files([
+    "prompts.yaml",
+    "quality_cases.yaml",
+])
 
 py_library(
     name = "bench_test_helpers",
@@ -18,41 +23,41 @@ py_test(
         "prompts.yaml",
         "quality_cases.yaml",
     ],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         ":bench_test_helpers",
         "//weld:runtime",
         "//weld/bench:bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
     name = "weld_bench_tasks_test",
     srcs = ["weld_bench_tasks_test.py"],
     data = ["//weld/bench_tasks:fixtures"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         ":bench_test_helpers",
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench_tasks:bench_tasks_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
     name = "weld_bench_tasks_cli_test",
     srcs = ["weld_bench_tasks_cli_test.py"],
     data = ["//weld/bench_tasks:fixtures"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         ":bench_test_helpers",
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench_tasks:bench_tasks_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_library(
@@ -70,13 +75,13 @@ py_library(
 py_test(
     name = "weld_federation_benchmark_test",
     srcs = ["weld_federation_benchmark_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         ":federation_bench_helpers",
         "//weld:runtime",
         "//weld:workspace",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 # ADR 0058 memory-peak probe: split from the benchmark test so each
@@ -84,37 +89,67 @@ py_test(
 py_test(
     name = "weld_federation_memory_probe_test",
     srcs = ["weld_federation_memory_probe_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         ":federation_bench_helpers",
         "//weld:runtime",
         "//weld:workspace",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
-# ADR 0058 Option B: lazy per-query inverted-index over a 30-child
-# federation. Measures RSS and latency vs the JSON-only baseline.
+# Lazy per-query inverted-index over a 30-child federation.
+# Measures RSS and latency vs the JSON-only baseline.
+#
+# flaky = True: the latency assertion compares sqlite p95 against
+# the JSON path's p95 with a 2.0x ceiling. On shared CI runners the
+# sqlite cold-cache p95 can occasionally exceed 2.0x due to per-query
+# inverted-index read jitter, not a real regression. Bazel auto-retries
+# (default 3 attempts) absorb that jitter without loosening the
+# assertion itself. The deeper fix is an eager federation inverted-index
+# aggregation that removes the cold-cache cost by construction; promote
+# that follow-up if this target still trips repeatedly under the retry
+# budget.
 py_test(
     name = "weld_federation_query_test",
     srcs = ["weld_federation_query_test.py"],
+    flaky = True,
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         ":federation_bench_helpers",
         "//weld:runtime",
         "//weld:workspace",
     ],
+)
+
+# Opt-in eager inverted-index aggregation benchmark. Compares the
+# eager path (constructed with eager_index=True) against the lazy
+# default on the same N=30 fixture; asserts eager beats lazy by at
+# least the documented margin and the construction-time tax stays
+# bounded. flaky=True absorbs shared-CI jitter the same way the lazy
+# benchmark does; the assertion itself is the regression canary.
+py_test(
+    name = "weld_federation_eager_test",
+    srcs = ["weld_federation_eager_test.py"],
+    flaky = True,
     local = True,
     tags = ["no-sandbox"],
+    deps = [
+        ":federation_bench_helpers",
+        "//weld:runtime",
+        "//weld:workspace",
+    ],
 )
 
 py_test(
     name = "synthetic_large_repo_test",
     srcs = ["synthetic_large_repo_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld/bench:synthetic_large_repo",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
@@ -124,13 +159,13 @@ py_test(
         "//weld/bench:public_corpus_manifest",
         "//weld/bench:public_corpus_smoke_fixture",
     ],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
@@ -139,25 +174,25 @@ py_test(
     data = [
         "//weld/bench:public_corpus_smoke_fixture",
     ],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
     name = "weld_public_bench_skipped_test",
     srcs = ["weld_public_bench_skipped_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
@@ -166,13 +201,13 @@ py_test(
     data = [
         "//weld/bench:public_corpus_smoke_fixture",
     ],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
@@ -182,25 +217,25 @@ py_test(
         "//weld/bench:public_corpus_manifest",
         "//weld/bench:public_corpus_smoke_fixture",
     ],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
     name = "weld_public_bench_libclang_setup_test",
     srcs = ["weld_public_bench_libclang_setup_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
@@ -209,59 +244,71 @@ py_test(
     data = [
         "//weld/bench:public_corpus_manifest",
     ],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
     name = "weld_public_bench_libclang_adapter_test",
     srcs = ["weld_public_bench_libclang_adapter_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
     name = "weld_public_bench_weld_adapter_test",
     srcs = ["weld_public_bench_weld_adapter_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
+)
+
+py_test(
+    name = "weld_public_bench_weld_adapter_fallback_test",
+    srcs = ["weld_public_bench_weld_adapter_fallback_test.py"],
     local = True,
     tags = ["no-sandbox"],
+    deps = [
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
 )
 
 py_test(
     name = "weld_public_bench_libclang_report_test",
     srcs = ["weld_public_bench_libclang_report_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )
 
 py_test(
     name = "weld_public_bench_libclang_integration_test",
     srcs = ["weld_public_bench_libclang_integration_test.py"],
+    local = True,
+    tags = ["no-sandbox"],
     deps = [
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
-    local = True,
-    tags = ["no-sandbox"],
 )

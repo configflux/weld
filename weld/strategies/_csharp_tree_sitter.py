@@ -20,6 +20,9 @@ from weld.strategies._csharp_partial_classes import (
     record_partial_classes,
 )
 
+#: Per-decl-kind buckets unioned into the file ``types`` prop
+#: (ADR 0064 § 1). Order is deterministic so the union is stable.
+_TYPE_BUCKETS = ("classes", "interfaces", "structs", "records")
 _SAFE_PACKAGE_RE = re.compile(r"[^0-9A-Za-z_.-]+")
 _VISIBILITY_RE = re.compile(r"\b(public|private|protected|internal)\b")
 _STARTUP_MARKERS = (
@@ -66,13 +69,16 @@ def enrich_file_node(
 ) -> None:
     """Add C#-specific metadata and import dependency nodes."""
     rel_path = str(node_props.get("file") or "")
-    for key in ("exports", "classes", "imports"):
+    for key in (*_TYPE_BUCKETS, "exports", "imports"):
         if key in symbols:
             symbols[key] = _dedupe(symbols[key])
     if symbols.get("exports"):
         node_props["exports"] = symbols["exports"]
-    if symbols.get("classes"):
-        node_props["types"] = symbols["classes"]
+    # ADR 0064 § 1: union per-decl-kind buckets into ``types`` so
+    # _csharp_inheritance resolves non-class bases via their declaring file.
+    types = _dedupe([n for k in _TYPE_BUCKETS for n in symbols.get(k, [])])
+    if types:
+        node_props["types"] = types
     if symbols.get("imports"):
         node_props["imports_from"] = symbols["imports"]
 
@@ -89,26 +95,22 @@ def enrich_file_node(
             source_text=source_text,
         )
 
-    # ADR 0056 base-list extension: record (derived_class, base_name)
-    # pairs for the inheritance post-pass. See
-    # :mod:`_csharp_inheritance.finalise`.
+    # ADR 0056 + ADR 0064 § 2: record base pairs + rel_path (per-file
+    # class symbol id) + imports (external-base FQN normaliser, one
+    # canonical node per resolved FQN).
     if inheritance_records is not None:
         record_base_pairs(
             inheritance_records,
             file_node_id=file_node_id,
             source_text=source_text,
+            rel_path=rel_path,
+            imports=symbols.get("imports", []),
         )
 
-    for query_key, prop_key in (
-        ("attributes", "attributes"),
-        ("bases", "bases"),
-        ("methods", "methods"),
-        ("namespaces", "namespaces"),
-        ("properties", "properties"),
-    ):
-        values = _dedupe(symbols.get(query_key, []))
+    for key in ("attributes", "bases", "methods", "namespaces", "properties"):
+        values = _dedupe(symbols.get(key, []))
         if values:
-            node_props[prop_key] = values
+            node_props[key] = values
 
     method_visibility = _visibility_map(
         source_text,
@@ -135,13 +137,17 @@ def enrich_file_node(
         project_namespace_roots=project_namespace_roots,
     )
     if is_startup_source(rel_path, source_text, symbols):
+        # ADR 0041 Layer 3: tag the file anchor "entrypoint" so the
+        # built-in file-anchor-symmetry allow-list exempts it. Top-level
+        # statement Program.cs has no namespace, so csharp_package skips
+        # it and never emits an inbound 'contains' edge to anchor it.
+        roles = node_props.get("roles") or []
+        if "entrypoint" not in roles:
+            node_props["roles"] = roles + ["entrypoint"]
         _add_startup_nodes(
-            nodes,
-            edges,
-            rel_path,
+            nodes, edges, rel_path,
             node_props.get("imports_from", []),
-            source_text,
-            source_strategy,
+            source_text, source_strategy,
         )
 
 
@@ -180,10 +186,7 @@ def _add_startup_nodes(
                 "authority": "derived",
                 "confidence": "inferred",
                 "roles": ["implementation"],
-                "description": (
-                    "C#/.NET runtime startup entrypoint for application "
-                    "execution flow."
-                ),
+                "description": "C#/.NET runtime startup entrypoint for application execution flow.",
             },
         },
     )
@@ -201,9 +204,7 @@ def _add_startup_nodes(
                 "authority": "derived",
                 "confidence": "inferred",
                 "roles": ["implementation"],
-                "description": (
-                    "C#/.NET runtime host boundary that starts the application."
-                ),
+                "description": "C#/.NET runtime host boundary that starts the application.",
             },
         },
     )

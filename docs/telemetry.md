@@ -47,7 +47,7 @@ JSONL, one event per line. Example:
 {
   "schema_version": 1,
   "ts": "2026-04-28T14:03:11Z",
-  "weld_version": "0.12.1",
+  "weld_version": "0.19.1",
   "surface": "cli",
   "command": "discover",
   "outcome": "ok",

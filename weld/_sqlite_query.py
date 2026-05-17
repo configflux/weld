@@ -46,6 +46,12 @@ from weld._sqlite_index import (
     read_node_frequencies,
     read_token_rows_for_token,
 )
+from weld.ranking import (
+    authority_score,
+    confidence_score,
+    exact_symbol_match_rank,
+    resolution_penalty,
+)
 from weld.synonyms import expand_token_groups
 
 __all__ = [
@@ -136,10 +142,19 @@ def query_sqlite_backed(
             conn=conn,
         )
 
-    scored = sorted(
-        matched,
-        key=lambda item: (-bm25_scores.get(item[0], 0.0), item[0]),
-    )
+    def _score_key(item: tuple[str, dict]) -> tuple[int, int, float, int, int, str]:
+        node_id, node = item
+        node_with_id = {"id": node_id, **node}
+        return (
+            resolution_penalty(node_with_id),
+            exact_symbol_match_rank(node_with_id, token_groups),
+            -bm25_scores.get(node_id, 0.0),
+            authority_score(node_with_id),
+            confidence_score(node_with_id),
+            node_id,
+        )
+
+    scored = sorted(matched, key=_score_key)
     matches = [{"id": nid, **node} for nid, node in scored[:limit]]
     return {
         "query": term,
@@ -195,15 +210,19 @@ def _match_token_groups(
     label_l = node.get("label", "").lower()
     props = node.get("props") or {}
     file_l = (props.get("file") or "").lower()
+    qualname_l = str(props.get("qualname") or "").lower()
     exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
     constants_l = [c.lower() for c in props.get("constants", []) if isinstance(c, str)]
+    headings_l = [h.lower() for h in props.get("headings", []) if isinstance(h, str)]
     desc_l = (props.get("description") or "").lower()
     hits = 0
     for group in token_groups:
         if any(
             t in nid_l or t in label_l or t in file_l or t in desc_l
+            or t in qualname_l
             or any(t in e for e in exports_l)
             or any(t in c for c in constants_l)
+            or any(t in h for h in headings_l)
             for t in group
         ):
             hits += 1

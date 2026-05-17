@@ -1,11 +1,20 @@
-"""Cross-repo resolver: detect Python package imports across repo boundaries.
+"""Cross-repo resolver: detect package imports across repo boundaries.
 
-This resolver scans each child graph for ``python_module`` nodes that carry
-an ``imports_from`` list and matches those import names against ``package``
-nodes declared in sibling children. When a match is found, the resolver
-emits a ``depends_on`` edge from the importing module to the target package,
-namespaced with the child name and the ASCII Unit Separator per the
-federation ID convention.
+This resolver scans each child graph for *package consumer* nodes -- nodes
+that carry an ``imports_from`` list -- and matches those import names
+against *package producer* nodes (``type="package"``) declared in sibling
+children. When a match is found, the resolver emits a ``depends_on`` edge
+from the importing consumer to the target package, namespaced with the
+child name and the ASCII Unit Separator per the federation ID convention.
+
+The resolver is language-neutral. A consumer is any node whose ``type``
+is in :data:`_CONSUMER_TYPES` and whose props carry a non-empty
+``imports_from`` list. Both ``python_module`` (writes ``type="file"`` --
+see weld/strategies/python_module.py) and the shared tree-sitter C#
+strategy (weld/strategies/_csharp_tree_sitter.py, ``imports_from``
+populated from ``using`` directives) produce this shape, so no
+per-language branching is required. The legacy ``"python_module"`` type
+is retained in the allowlist so historical fixtures still resolve.
 
 The resolver skips imports that resolve within the same child (no
 self-edges) and silently ignores imports that match no sibling package.
@@ -20,9 +29,22 @@ from weld.cross_repo.base import (
     CrossRepoEdge,
     CrossRepoResolver,
     ResolverContext,
+    _iter_nodes,
     register_resolver,
 )
 from weld.workspace import UNIT_SEPARATOR
+
+#: Node ``type`` values that legitimately carry an ``imports_from`` list.
+#: ``"file"`` is the real production form for both Python (set at
+#: weld/strategies/python_module.py:238) and C# (set by the shared
+#: tree-sitter strategy in weld/strategies/tree_sitter.py:351 with
+#: ``imports_from`` populated by
+#: weld/strategies/_csharp_tree_sitter.py:83). ``"python_module"`` is
+#: retained for legacy/test fixtures that predate the rename to
+#: ``"file"``. Adding a new language is a no-op here unless that
+#: language emits a fundamentally different node ``type``: extend this
+#: tuple rather than branching per language.
+_CONSUMER_TYPES: frozenset[str] = frozenset({"file", "python_module"})
 
 
 def _build_package_index(
@@ -31,29 +53,30 @@ def _build_package_index(
     """Build a mapping from package name to (child_name, node_id) pairs.
 
     Scans every child graph for nodes whose ``type`` is ``"package"`` and
-    whose ``name`` field is a non-empty string. The result maps each
-    package name to the list of (child, node-id) pairs that declare it.
-    Multiple children may declare the same package name; the resolver
-    emits an edge to each one.
+    whose ``props.name`` field is a non-empty string. The result maps
+    each package name to the list of (child, node-id) pairs that
+    declare it. Multiple children may declare the same package name;
+    the resolver emits an edge to each one.
 
-    Returns a plain dict so iteration order is insertion-stable. Entries
-    are sorted by (child_name, node_id) for determinism.
+    The node values follow the production :class:`weld.graph.Graph`
+    contract (``{type, label, props}``); the ``name`` lookup goes
+    through ``props``, mirroring the access pattern in
+    :mod:`weld.cross_repo.grpc_service_binding`. Returns a plain dict so
+    iteration order is insertion-stable. Entries are sorted by
+    (child_name, node_id) for determinism.
     """
     index: dict[str, list[tuple[str, str]]] = {}
     for child_name in sorted(context.children):
         graph = context.children[child_name]
-        nodes = getattr(graph, "nodes", None)
-        if nodes is None:
-            continue
-        for node in nodes:
+        for node_id, node in _iter_nodes(graph):
             if not isinstance(node, dict):
                 continue
             if node.get("type") != "package":
                 continue
-            pkg_name = node.get("name")
+            props = node.get("props") or {}
+            pkg_name = props.get("name")
             if not pkg_name or not isinstance(pkg_name, str):
                 continue
-            node_id = node.get("id", "")
             if not node_id:
                 continue
             index.setdefault(pkg_name, []).append((child_name, str(node_id)))
@@ -64,12 +87,19 @@ def _build_package_index(
 class PackageImportResolver(CrossRepoResolver):
     """Match ``imports_from`` entries against sibling package declarations.
 
-    For each ``python_module`` node in each child, the resolver iterates
-    over its ``imports_from`` list and looks up each entry in the package
-    index built from all children. Matches against the same child are
-    skipped (intra-repo imports are not cross-repo edges). Each match
-    produces a ``depends_on`` edge with props ``import_name`` and
-    ``source_child``.
+    For each *package consumer* node in each child -- a node whose
+    ``type`` is in :data:`_CONSUMER_TYPES` and that carries a non-empty
+    ``imports_from`` list -- the resolver iterates over the imports and
+    looks each entry up in the package index built from all children.
+    Matches against the same child are skipped (intra-repo imports are
+    not cross-repo edges). Each cross-child match produces a
+    ``depends_on`` edge with props ``import_name`` and ``source_child``.
+
+    The consumer detection is language-neutral: any tree-sitter or
+    AST-backed strategy that emits a file node with ``imports_from``
+    (Python ``python_module``, the shared tree-sitter strategy for C#
+    ``using`` directives, and future languages that follow the same
+    file-anchor convention) participates without a per-language branch.
     """
 
     name = "package_import_resolver"
@@ -84,18 +114,27 @@ class PackageImportResolver(CrossRepoResolver):
 
         for child_name in sorted(context.children):
             graph = context.children[child_name]
-            nodes = getattr(graph, "nodes", None)
-            if nodes is None:
-                continue
-            for node in nodes:
+            for node_id, node in _iter_nodes(graph):
                 if not isinstance(node, dict):
                     continue
-                if node.get("type") != "python_module":
+                # Language-neutral consumer detection: accept file/module
+                # node shapes that legitimately carry an ``imports_from``
+                # list. ``function``/``symbol``/etc nodes are skipped
+                # even if they happen to carry that field -- the
+                # ``imports_from`` contract is anchored at the file
+                # level by every strategy in the family.
+                if node.get("type") not in _CONSUMER_TYPES:
                     continue
-                imports_from = node.get("imports_from")
+                # The production :class:`weld.graph.Graph` shape stores
+                # ``imports_from`` under ``props`` (set by
+                # weld/strategies/python_module.py:238 and
+                # weld/strategies/_csharp_tree_sitter.py:83). The
+                # resolver previously read it at the top level, which
+                # silently produced zero edges against the real Graph.
+                props = node.get("props") or {}
+                imports_from = props.get("imports_from")
                 if not imports_from or not isinstance(imports_from, list):
                     continue
-                node_id = node.get("id", "")
                 if not node_id:
                     continue
 

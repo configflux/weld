@@ -210,7 +210,9 @@ class CppExtractWithMockedTreeSitterTest(unittest.TestCase):
         """When ``emit_calls: true`` is set, the call-graph helper runs."""
         from weld.strategies import tree_sitter
 
-        def fake_extract(file_path, rel_path, language, queries):
+        def fake_extract(file_path, rel_path, language, queries, **_kwargs):
+            # ``**_kwargs`` accepts ``cache=`` threaded through by the
+            # strategy (hot path 2 elimination); kept signature-compatible.
             module = "src.foo"
             return (
                 {

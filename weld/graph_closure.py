@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import PurePosixPath
+
+from weld._graph_closure_package_origin import origin_for_synthesised_package
+from weld._node_ids import package_id as _canonical_package_id
 
 _STRATEGY = "graph_closure"
 _UNRESOLVED_PREFIX = "symbol:unresolved:"
@@ -34,7 +36,6 @@ _CONTAINED_TYPES = frozenset([
     "symbol", "rpc", "channel", "ros_node", "ros_topic",
     "ros_service", "ros_action", "ros_parameter", "ros_interface",
 ])
-_SAFE_ID_RE = re.compile(r"[^0-9A-Za-z_.:/-]+")
 
 
 def close_graph(nodes: dict[str, dict], edges: list[dict]) -> None:
@@ -258,8 +259,24 @@ def _ensure_file_anchor(
 
 
 def _ensure_package_node(nodes: dict[str, dict], name: str, language: str) -> str:
+    # ADR 0041 Layer 1: route through the canonical ``package_id`` helper
+    # so this closure-side minter agrees with every strategy-side minter
+    # (e.g. ``weld.strategies._csharp_tree_sitter._package_node_id``,
+    # ``weld.strategies.csharp_package``, ``weld.strategies._java_tree_sitter``)
+    # on the lowercased canonical-slug form. A previous local case-preserving
+    # slug here would, for a C# namespace ``System.Foo``, mint
+    # ``package:csharp:System.Foo`` while the tree-sitter strategy already
+    # emitted the canonical ``package:csharp:system.foo`` -- two distinct
+    # nodes for the same namespace. C# namespaces are case-INSENSITIVE (the
+    # BCL treats ``System`` and ``system`` as the same namespace), so this
+    # collapse is the intended behaviour. This is the package-id complement
+    # of the symbol-id case decision: ``symbol:*`` IDs deliberately preserve
+    # case because most languages (notably C#, Java, C++) treat ``SIZE``
+    # (constant) and ``Size`` (property) as legitimately distinct *members*
+    # of the same enclosing type.
     base_lang = _base_language(language)
-    node_id = f"package:{base_lang}:{_slug(name)}"
+    node_id = _canonical_package_id(base_lang, name)
+    origin = origin_for_synthesised_package(name, base_lang)  # ADR 0042
     nodes.setdefault(node_id, {
         "type": "package",
         "label": name,
@@ -270,6 +287,7 @@ def _ensure_package_node(nodes: dict[str, dict], name: str, language: str) -> st
             "source_strategy": _STRATEGY,
             "authority": "external",
             "confidence": "inferred",
+            "origin": origin,
         },
     })
     return node_id
@@ -376,11 +394,6 @@ def _raw_callee(target_id: str, target_node: dict | None) -> str:
     if isinstance(props, dict) and isinstance(props.get("qualname"), str):
         return str(props["qualname"]).rsplit(".", 1)[-1]
     return target_id.rsplit(":", 1)[-1]
-
-
-def _slug(value: str) -> str:
-    cleaned = _SAFE_ID_RE.sub("_", value.strip()).strip("._:/-")
-    return cleaned or "unknown"
 
 
 def _add_edge(edges: list[dict], src: str, dst: str, edge_type: str, props: dict) -> None:

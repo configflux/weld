@@ -93,6 +93,15 @@
     {
       "from": "file:app/lib_test",
       "props": {
+        "confidence": "inferred",
+        "source_strategy": "test_peer"
+      },
+      "to": "file:app/lib",
+      "type": "tests"
+    },
+    {
+      "from": "file:app/lib_test",
+      "props": {
         "confidence": "definite",
         "source_strategy": "graph_closure"
       },
@@ -165,6 +174,22 @@
       },
       "to": "dockerfile:Dockerfile",
       "type": "depends_on"
+    },
+    {
+      "from": "symbol:py:app.lib_test:GreetTest",
+      "props": {
+        "confidence": "speculative",
+        "provenance": {
+          "file": "app/lib_test.py",
+          "line": 7
+        },
+        "raw": "TestCase",
+        "resolution": "unresolved",
+        "resolved": false,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:unresolved:TestCase",
+      "type": "inherits"
     },
     {
       "from": "symbol:py:app.lib_test:GreetTest.test_greet",
@@ -386,6 +411,7 @@
         "confidence": "definite",
         "file": "app/lib_test.py",
         "kind": "test",
+        "origin": "project",
         "roles": [
           "test"
         ],
@@ -476,6 +502,7 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "app/lib.py",
+        "kind": "function",
         "language": "python",
         "line": 4,
         "module": "app.lib",
@@ -494,6 +521,7 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "app/lib_test.py",
+        "kind": "class",
         "language": "python",
         "line": 7,
         "module": "app.lib_test",
@@ -512,6 +540,7 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "app/lib_test.py",
+        "kind": "method",
         "language": "python",
         "line": 8,
         "module": "app.lib_test",
@@ -530,11 +559,30 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "app/main.py",
+        "kind": "function",
         "language": "python",
         "line": 5,
         "module": "app.main",
         "origin": "project",
         "qualname": "run",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "python_callgraph"
+      },
+      "type": "symbol"
+    },
+    "symbol:unresolved:TestCase": {
+      "label": "TestCase",
+      "props": {
+        "authority": "derived",
+        "confidence": "speculative",
+        "language": "python",
+        "module": "",
+        "origin": "unresolved",
+        "qualname": "TestCase",
+        "resolution": "unresolved",
+        "resolved": false,
         "roles": [
           "implementation"
         ],

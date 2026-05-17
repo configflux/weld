@@ -1,8 +1,9 @@
 """Load-time inverted index for fast wd query candidate lookup.
 
 Builds a token-to-node-IDs mapping from node ID, label, props.file,
-props.exports, and props.description so that ``Graph.query()`` can narrow
-candidates in O(1) per token instead of scanning every node linearly.
+props.exports, props.qualname, props.constants, props.description, and
+props.headings so that ``Graph.query()`` can narrow candidates in O(1)
+per token instead of scanning every node linearly.
 
 The index is a plain ``dict[str, set[str]]`` — no external files or
 databases.  It is built once at graph load time and kept in sync by
@@ -25,14 +26,19 @@ def _split_field(value: str) -> list[str]:
 def node_tokens(nid: str, node: dict) -> list[str]:
     """Extract lowercased tokens from a node for indexing.
 
-    Sources: node ID, label, props.file, props.exports, props.constants,
-    props.description.
+    Sources: node ID, label, props.file, props.exports, props.qualname,
+    props.constants, props.description, props.headings.
 
     ``props.constants`` carries module-level Python constants
     (``UPPER_CASE`` / ``_UPPER_CASE``) emitted by the ``python_module``
     strategy. Indexing them here is what makes ``wd query <CONSTANT>``
     return the file node that owns the constant. The constant slice is
     upstream-bounded by ``weld.file_index`` to keep the index small.
+
+    ``props.headings`` carries H2/H3 heading text emitted by the
+    ``markdown`` strategy so the inverted index can narrow candidates
+    by heading content for multi-token doc queries (e.g. ``wd query
+    "language support"`` matching ``## Language support``).
     """
     tokens: list[str] = _split_field(nid)
 
@@ -50,6 +56,10 @@ def node_tokens(nid: str, node: dict) -> list[str]:
         if isinstance(exp, str):
             tokens.append(exp.lower())
 
+    qualname_val = props.get("qualname") or ""
+    if qualname_val:
+        tokens.extend(_split_field(str(qualname_val)))
+
     for const in props.get("constants", []):
         if isinstance(const, str):
             tokens.extend(_split_field(const))
@@ -57,6 +67,10 @@ def node_tokens(nid: str, node: dict) -> list[str]:
     desc_val = props.get("description") or ""
     if desc_val:
         tokens.extend(_split_field(desc_val))
+
+    for heading in props.get("headings", []):
+        if isinstance(heading, str) and heading:
+            tokens.extend(_split_field(heading))
 
     return tokens
 

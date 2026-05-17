@@ -80,10 +80,11 @@ _RESOLVERS_BY_SUFFIX: dict[str, tuple[_TestPredicate, _PeerResolver]] = {
 def _legacy_test_node_id(rel_path: Path) -> str:
     """Pre-ADR-0041 file-id shape for Python tests; recorded under aliases.
 
-    Only emitted for ``*_test.py`` modules to preserve compatibility
-    with sidecar caches and MCP transcripts that captured the legacy
-    ``file:tests/<stem>`` shape. Other languages were never indexed
-    under that prefix and therefore do not need an alias.
+    Emitted for every Python test module (``*_test.py`` and pytest's
+    ``test_*.py``) to preserve compatibility with sidecar caches and
+    MCP transcripts that captured the legacy ``file:tests/<stem>``
+    shape. Other languages were never indexed under that prefix and
+    therefore do not need an alias.
     """
     return f"file:tests/{rel_path.stem}"
 
@@ -98,13 +99,15 @@ def _test_node_id(rel_path: Path) -> str:
 
 
 def _peer_node_id(rel_path: Path) -> str | None:
-    """Return the *first* candidate peer node id for a Python ``*_test.py``.
+    """Return the *first* candidate peer node id for a Python test file.
 
     Provenance-only helper retained for backward compatibility with the
     pre-multi-language unit tests in
-    ``weld_test_peer_strategy_test.py``. New callers should use the
-    per-language ``resolve_peer`` helpers, which require a real on-disk
-    match before returning a peer id.
+    ``weld_test_peer_strategy_test.py``. Recognises both ``*_test.py``
+    (Bazel / Go-style) and ``test_*.py`` (pytest default) inputs via
+    :func:`_test_peer_python.first_candidate_peer_id`. New callers
+    should use the per-language ``resolve_peer`` helpers, which
+    require a real on-disk match before returning a peer id.
     """
     return _test_peer_python.first_candidate_peer_id(rel_path)
 
@@ -150,6 +153,13 @@ def _build_node(rel: Path) -> tuple[str, dict]:
     Python test modules carry the legacy ``file:tests/<stem>`` alias
     for one minor version (ADR 0041 migration). Other languages were
     never indexed under that prefix.
+
+    Per ADR 0042, every emitted file node carries ``props.origin``.
+    The strategy only ever sees files that matched a configured test
+    glob under the project root (excludes prune ``node_modules`` /
+    nested-repo / cache trees during the walk), so every match is
+    unambiguously project code -- the strategy never has the signals
+    needed to mint a stdlib or external test file node.
     """
     nid = _test_node_id(rel)
     node_props: dict = {
@@ -159,6 +169,7 @@ def _build_node(rel: Path) -> tuple[str, dict]:
         "source_strategy": "test_peer",
         "authority": "derived",
         "confidence": "definite",
+        "origin": "project",
     }
     if rel.suffix == ".py":
         legacy_nid = _legacy_test_node_id(rel)

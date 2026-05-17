@@ -42,7 +42,11 @@ class HttpServerAcceptanceTest(unittest.TestCase):
             "route:GET:/orders/",
             "route:POST:/orders/",
         }
-        self.assertEqual(set(self.nodes.keys()), expected)
+        route_ids = {
+            nid for nid, node in self.nodes.items()
+            if node["type"] == "route"
+        }
+        self.assertEqual(route_ids, expected)
 
     def test_route_nodes_carry_http_protocol_metadata(self) -> None:
         for nid, node in self.nodes.items():

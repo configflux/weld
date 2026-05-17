@@ -75,7 +75,18 @@ def _simple_root() -> TemporaryDirectory:
 
 class VizAdapterTest(unittest.TestCase):
     def test_normalize_graph_data_enforces_caps(self) -> None:
-        nodes = {f"file:{i}": {"type": "file", "label": str(i), "props": {}} for i in range(5)}
+        # After the Phase-7 cleanup the default overview filter hides
+        # ``unresolved`` nodes, so the file fixtures carry an explicit
+        # ``origin=project`` tag to survive the filter before the
+        # max-nodes cap is checked.
+        nodes = {
+            f"file:{i}": {
+                "type": "file",
+                "label": str(i),
+                "props": {"origin": "project"},
+            }
+            for i in range(5)
+        }
         payload = normalize_graph_data({"nodes": nodes, "edges": []}, max_nodes=2)
         self.assertEqual(len(payload["elements"]["nodes"]), 2)
         self.assertTrue(payload["truncated"]["nodes"])
@@ -174,8 +185,16 @@ class VizApiTest(unittest.TestCase):
             root = Path(tmp)
             child = root / "repo-a"
             _init_repo(child)
+            # After the Phase-7 cleanup the default overview filter
+            # hides ``unresolved`` nodes (i.e. nodes without
+            # props.origin), so the child-graph fixture carries an
+            # explicit origin tag.
             _write_graph(child, _graph_payload({
-                "file:src/a.py": {"type": "file", "label": "alpha", "props": {"file": "src/a.py"}},
+                "file:src/a.py": {
+                    "type": "file",
+                    "label": "alpha",
+                    "props": {"file": "src/a.py", "origin": "project"},
+                },
             }))
             _write_graph(root, _graph_payload({
                 "repo:repo-a": {"type": "repo", "label": "repo-a", "props": {"path": "repo-a"}},

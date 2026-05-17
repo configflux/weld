@@ -147,13 +147,18 @@ def _count_groups_hit(token_groups: list[list[str]], nid: str, node: dict) -> in
 
     Unlike :meth:`Graph._match_token_groups`, this does NOT short-circuit on
     a missing group -- it counts partial hits so OR-fallback callers can
-    rank by ``num_groups_hit_desc``.
+    rank by ``num_groups_hit_desc``. The match surface tracks
+    :meth:`Graph._match_token_groups` (incl. ``props.headings`` for doc
+    nodes) so the OR fallback never undercounts a node that strict-AND
+    would have hit.
     """
     nid_l = nid.lower()
     label_l = node.get("label", "").lower()
     props = node.get("props") or {}
     file_l = (props.get("file") or "").lower()
+    qualname_l = str(props.get("qualname") or "").lower()
     exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
+    headings_l = [h.lower() for h in props.get("headings", []) if isinstance(h, str)]
     desc_l = (props.get("description") or "").lower()
     hits = 0
     for group in token_groups:
@@ -161,8 +166,10 @@ def _count_groups_hit(token_groups: list[list[str]], nid: str, node: dict) -> in
             t in nid_l
             or t in label_l
             or t in file_l
+            or t in qualname_l
             or t in desc_l
             or any(t in e for e in exports_l)
+            or any(t in h for h in headings_l)
             for t in group
         ):
             hits += 1

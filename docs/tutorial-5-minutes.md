@@ -296,10 +296,10 @@ corrupt children are handled.
 - **Point it at your own repo.** `wd init` in your repo root writes a
   starter `.weld/discover.yaml`. Tune the source globs, re-run
   `wd discover`, and you have the same graph over your codebase.
-- **Unlock cross-package edges.** Install the tree-sitter extra
-  (`pip install 'configflux-weld[tree-sitter]'`) so `typescript_exports`,
-  `python_imports`, and the other parser-backed strategies emit `imports`
-  edges between files and packages.
+- **Unlock cross-language edges.** Install the tree-sitter extra
+  (`pip install 'configflux-weld[tree-sitter]'`) so the parser-backed
+  strategies emit `imports` edges across more languages (TypeScript,
+  JavaScript, Go, Rust, Java, C#, C++).
 - **Go deeper.** The [README](../README.md) covers strategies, polyrepo
   workspace rules, enrichment, MCP tools, and the agent-graph workflow.
 

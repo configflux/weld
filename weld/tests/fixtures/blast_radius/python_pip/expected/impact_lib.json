@@ -124,6 +124,12 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "flask": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "github_workflow": {
         "deps_edges": false,
         "nodes_emitted": false,
@@ -335,6 +341,7 @@
         "confidence": "definite",
         "file": "src/tests/lib_test.py",
         "kind": "test",
+        "origin": "project",
         "roles": [
           "test"
         ],
@@ -361,6 +368,7 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "src/main.py",
+        "kind": "function",
         "language": "python",
         "line": 5,
         "module": "src.main",
@@ -381,6 +389,7 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "src/tests/lib_test.py",
+        "kind": "function",
         "language": "python",
         "line": 5,
         "module": "src.tests.lib_test",
@@ -401,6 +410,7 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "src/tests/lib_test.py",
+        "kind": "function",
         "language": "python",
         "line": 9,
         "module": "src.tests.lib_test",

@@ -47,7 +47,7 @@ class PartialClassMergingTest(unittest.TestCase):
                 ),
             }
 
-            def _fake_parse(file_path: Path, language: str, queries) -> dict:
+            def _fake_parse(file_path: Path, language: str, queries, **_kw) -> dict:
                 return payloads.get(file_path.name, {"exports": []})
 
             with mock.patch.object(tree_sitter, "TREE_SITTER_AVAILABLE", True), \
@@ -83,7 +83,7 @@ class PartialClassMergingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = make_partial_tree(td)
 
-            def _fake_parse(file_path: Path, language: str, queries) -> dict:
+            def _fake_parse(file_path: Path, language: str, queries, **_kw) -> dict:
                 return stub_symbol_payload(classes=["Foo"], methods=["X"])
 
             with mock.patch.object(tree_sitter, "TREE_SITTER_AVAILABLE", True), \
@@ -153,9 +153,8 @@ class PartialClassMergingTest(unittest.TestCase):
         )
 
     def test_non_partial_class_does_not_emit_symbol(self) -> None:
-        # A regular (non-``partial``) class declaration is not promoted
-        # to a symbol node: that promotion is the responsibility of the
-        # Wave 2 framework-aware strategies (EF Core, controllers).
+        # A regular class is promoted as a definition symbol, but it must
+        # not be treated as a merged partial-class symbol.
         from weld.strategies import tree_sitter
 
         with tempfile.TemporaryDirectory() as td:
@@ -185,9 +184,10 @@ class PartialClassMergingTest(unittest.TestCase):
                     {},
                 )
 
-        # No partial declaration -> no symbol node from this pass.
         symbol_ids = [
-            nid for nid in result.nodes if nid.startswith("symbol:csharp:")
+            nid for nid, node in result.nodes.items()
+            if nid.startswith("symbol:csharp:")
+            and node.get("props", {}).get("kind") == "partial_class"
         ]
         self.assertEqual(symbol_ids, [])
 
@@ -224,7 +224,9 @@ class PartialClassMergingTest(unittest.TestCase):
                 )
 
         symbol_ids = sorted(
-            nid for nid in result.nodes if nid.startswith("symbol:csharp:")
+            nid for nid, node in result.nodes.items()
+            if nid.startswith("symbol:csharp:")
+            and node.get("props", {}).get("kind") == "partial_class"
         )
         # Only the real partial class -- the commented one was a
         # phantom that the comment stripper kills before the regex
@@ -268,7 +270,7 @@ class PartialClassMergingTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            def _fake_parse(file_path: Path, language: str, queries) -> dict:
+            def _fake_parse(file_path: Path, language: str, queries, **_kw) -> dict:
                 return stub_symbol_payload(classes=["Foo"], methods=["X"])
 
             with mock.patch.object(tree_sitter, "TREE_SITTER_AVAILABLE", True), \

@@ -156,6 +156,28 @@ def _collect_files(obj: object) -> list[str]:
     return out
 
 
+def _ensure_discover_config(repo_root: Path) -> None:
+    """Bootstrap ``.weld/discover.yaml`` when it is absent.
+
+    In-process equivalent of ``wd init``: calls :func:`weld.init.init`
+    so :func:`weld.discover.discover` gets a populated source list
+    instead of defaulting to ``sources=[]`` (which would mint zero
+    nodes -- the F1=0.00 root cause for the C++ public-bench corpus,
+    where fresh nlohmann/json clones have no ``.weld/`` tree).
+
+    No-ops when ``discover.yaml`` already exists. Writes only to
+    ``repo_root/.weld/discover.yaml`` -- unlike ``wd init``'s
+    ``main()`` we skip workspace bootstrap and ``.gitignore`` writes
+    (CLI-only concerns, irrelevant for the bench tempdir).
+    """
+    config_path = repo_root / ".weld" / "discover.yaml"
+    if config_path.exists():
+        return
+    from weld.init import init as _init
+
+    _init(repo_root, config_path, force=False)
+
+
 def _ensure_graph(repo_root: Path) -> bool:
     """Best-effort: build a graph for ``repo_root`` if none exists.
 
@@ -163,10 +185,11 @@ def _ensure_graph(repo_root: Path) -> bool:
     or pre-existing). Returns False on any failure -- the adapter then
     reports ``status="degraded"``.
 
-    Discovery returns the in-memory graph; for non-federated single-repo
-    roots the public-facing CLI (``weld.discover.main``) writes the JSON
-    to disk. Here we replicate that write so the in-process adapter
-    doesn't need to shell out to a subprocess.
+    Bootstraps ``.weld/discover.yaml`` first via
+    :func:`_ensure_discover_config` so :func:`weld.discover.discover`
+    has globs to iterate; otherwise the empty-config default
+    (``sources=[]``) would mint zero nodes and every bench row would
+    score F1=0.00 on a fresh clone.
     """
     graph_path = repo_root / _GRAPH_REL
     if graph_path.exists():
@@ -176,6 +199,7 @@ def _ensure_graph(repo_root: Path) -> bool:
         from weld.workspace_state import atomic_write_text
 
         graph_path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_discover_config(repo_root)
         graph = _discover(
             repo_root,
             safe=True,
@@ -188,28 +212,121 @@ def _ensure_graph(repo_root: Path) -> bool:
         return False
 
 
-def _run_query(task: PublicTask, repo_root: Path) -> object:
-    """Dispatch to brief / references / query depending on the family."""
-    from weld.brief import brief as _brief
+# When the graph result already supplies at least this many file-level
+# hits (counted via ``_collect_files``), the adapter does NOT augment
+# with ``file_index`` results. Below the threshold the file_index hits
+# are merged in so a sparse / empty graph still returns the answer file.
+#
+# Rationale: ``file_index`` is a substring/keyword index; precision is
+# low and recall is high (it ranks any file that *mentions* the term,
+# not just the file that *is* the implementation). When the graph
+# already returns the answer file, augmenting would dilute precision
+# without improving recall. Three matches is a small but meaningful
+# signal that the graph was actually populated for this term.
+_FILE_INDEX_FALLBACK_THRESHOLD = 3
+
+# Hard cap on how many file-index hits we merge in. The bench scoring
+# uses set-of-files precision/recall, so a long tail of low-signal
+# substring matches only drives precision down. Twenty matches is the
+# same upper bound the existing query / brief envelopes use.
+_FILE_INDEX_FALLBACK_LIMIT = 20
+
+
+def _augment_with_file_index(
+    result: object,
+    repo_root: Path,
+    term: str,
+) -> object:
+    """Merge ``file_index`` hits for *term* into *result* when sparse.
+
+    Looks at how many file paths the graph result already mentions (via
+    :func:`_collect_files`) and, when that count is below
+    :data:`_FILE_INDEX_FALLBACK_THRESHOLD`, threads ``file_index`` hits
+    onto a top-level ``files`` key in the envelope. ``_collect_files``
+    walks every dict for ``"files": [...]`` lists and harvests the
+    contained ``path`` entries, so the bench picks up the augmentation
+    without any further plumbing.
+
+    Returns *result* unchanged when:
+
+      - The graph already supplies ``>= _FILE_INDEX_FALLBACK_THRESHOLD``
+        file-level hits (precision-preservation -- see threshold doc).
+      - ``file-index.json`` is absent (FileNotFoundError swallowed).
+      - The result is not a dict (defensive -- the family branches all
+        return dicts today, but we never want a future branch to crash
+        the bench through this helper).
+    """
+    if not isinstance(result, dict):
+        return result
+    existing_files = _collect_files(result)
+    if len(existing_files) >= _FILE_INDEX_FALLBACK_THRESHOLD:
+        return result
     from weld.file_index import find_files as _find_files
     from weld.file_index import load_file_index as _load_file_index
+    try:
+        index = _load_file_index(repo_root)
+    except FileNotFoundError:
+        return result
+    if not index:
+        return result
+    extra = _find_files(
+        index, term, limit=_FILE_INDEX_FALLBACK_LIMIT,
+    ).get("files", [])
+    if not extra:
+        return result
+    # Merge into the envelope's top-level ``files`` key. ``_collect_files``
+    # will harvest both the augmentation here and any per-node ``files``
+    # buckets the graph branch already produced; deduplication happens at
+    # the harvester (``seen`` set).
+    merged: list = list(result.get("files") or [])
+    seen_paths: set[str] = {
+        m.get("path") for m in merged
+        if isinstance(m, dict) and isinstance(m.get("path"), str)
+    }
+    for hit in extra:
+        path = hit.get("path") if isinstance(hit, dict) else None
+        if isinstance(path, str) and path and path not in seen_paths:
+            seen_paths.add(path)
+            merged.append(hit)
+    result["files"] = merged
+    return result
+
+
+def _run_query(task: PublicTask, repo_root: Path) -> object:
+    """Dispatch to brief / references / query depending on the family.
+
+    Every family augments its result with ``file_index`` hits when the
+    graph supplies fewer than :data:`_FILE_INDEX_FALLBACK_THRESHOLD`
+    file-level hits. This was originally only wired for ``callgraph``;
+    without it, dependency / impact / cross_repo tasks scored F1=0.00
+    against the public C++ corpus whenever the graph was empty or BM25
+    buried the answer file.
+
+    The augmentation term mirrors the family's primary lookup key:
+
+      - ``callgraph`` uses ``task.symbol`` (the function/method name)
+        because the bench prompt for callgraph queries names the symbol,
+        not a generic term.
+      - All other families use ``task.term`` (the prompt's salient
+        keyword), matching what ``g.query`` / ``brief`` already
+        retrieved against.
+    """
+    from weld.brief import brief as _brief
     from weld.graph import Graph as _Graph
 
     g = _Graph(repo_root)
     g.load()
     if task.family == "navigation":
-        return _brief(g, task.term, limit=20)
+        result: object = _brief(g, task.term, limit=20)
+        return _augment_with_file_index(result, repo_root, task.term)
     if task.family == "callgraph" and task.symbol:
         refs = g.references(task.symbol)
-        try:
-            index = _load_file_index(repo_root)
-            refs["files"] = _find_files(
-                index, task.symbol,
-            ).get("files", [])
-        except FileNotFoundError:
-            refs.setdefault("files", [])
-        return refs
-    return g.query(task.term, limit=20)
+        # Symbol is the load-bearing lookup key for callgraph -- preserve
+        # the existing fallback term so behavior on populated graphs is
+        # bit-identical to pre-fix runs.
+        return _augment_with_file_index(refs, repo_root, task.symbol)
+    result = g.query(task.term, limit=20)
+    return _augment_with_file_index(result, repo_root, task.term)
 
 
 def run(task: PublicTask, repo_root: Path) -> AdapterResult:

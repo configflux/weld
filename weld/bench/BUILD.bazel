@@ -1,3 +1,5 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
@@ -72,13 +74,13 @@ py_library(
 py_binary(
     name = "bench",
     srcs = ["__main__.py"],
-    main = "__main__.py",
     data = [
         ":public_corpus_manifest",
         ":public_corpus_smoke_fixture",
         "//weld/bench_tasks:fixtures",
         "//weld/tests:bench_prompts",
     ],
+    main = "__main__.py",
     deps = [
         ":public_bench_lib",
         "//weld:runtime",

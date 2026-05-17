@@ -318,11 +318,22 @@ class JavaOriginPomMetadataTest(unittest.TestCase):
         self.assertIn("io.netty", meta["dependency_groupids"])
 
 
-class JavaOriginLegacyFallbackTest(unittest.TestCase):
-    """Existing graphs without ``props.origin`` still work via classify_node."""
+class JavaOriginMissingTagTest(unittest.TestCase):
+    """Java package nodes that arrive without ``props.origin``.
 
-    def test_classify_node_falls_back_for_legacy_package(self) -> None:
-        """A package node with no ``origin`` field still classifies."""
+    Phase 7 of the origin-taxonomy plan removed the transitional
+    legacy-graph derivation in ``classify_node``. A Java package node
+    that reaches the classifier without an explicit origin tag (e.g.
+    a graph snapshot emitted by a pre-ADR-0042 strategy version, or a
+    hand-crafted fixture) now resolves to ``"unresolved"`` so the gap
+    surfaces in viz / brief / ranking instead of being silently masked
+    as ``"project"``. The Java strategy itself always stamps origin
+    via :func:`weld.strategies._java_origin.classify_java_node`; this
+    test pins the contract for foreign / legacy inputs.
+    """
+
+    def test_classify_node_returns_unresolved_for_legacy_package(self) -> None:
+        """A package node with no ``origin`` field is unresolved."""
         from weld._graph_origin import classify_node
 
         legacy_node = {
@@ -334,11 +345,7 @@ class JavaOriginLegacyFallbackTest(unittest.TestCase):
                 "authority": "derived",
             },
         }
-        # No incoming edges, ``authority="derived"`` -> falls back to
-        # ``project`` per the legacy derivation rule. The contract
-        # guarantees only that ``classify_node`` is total; the exact
-        # fallback value is what the legacy tests already pin.
-        self.assertEqual(classify_node(legacy_node), "project")
+        self.assertEqual(classify_node(legacy_node), "unresolved")
 
 
 if __name__ == "__main__":

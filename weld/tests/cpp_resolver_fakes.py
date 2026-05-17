@@ -5,8 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def fake_parse(file_path, language, queries):  # noqa: ANN001, ARG001
-    """Return hand-rolled symbol/import lists keyed by filename."""
+def fake_parse(file_path, language, queries, **_kwargs):  # noqa: ANN001, ANN003, ARG001
+    """Return hand-rolled symbol/import lists keyed by filename.
+
+    ``**_kwargs`` absorbs forward-compatible kwargs (e.g. ``cache``)
+    that production callers may add to ``_parse_file_symbols``.
+    """
     name = Path(file_path).name
     if name == "foo.h":
         return {
@@ -47,7 +51,7 @@ def fake_parse(file_path, language, queries):  # noqa: ANN001, ARG001
     return {"exports": [], "classes": [], "imports": []}
 
 
-def fake_call_edges(file_path, rel_path, language, queries):  # noqa: ANN001, ARG001
+def fake_call_edges(file_path, rel_path, language, queries, **_kwargs):  # noqa: ANN001, ANN003, ARG001
     """Emit unresolved call sentinels that exercise layer-2 resolution."""
     from weld.strategies.tree_sitter import _ts_module_from_path
 

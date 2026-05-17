@@ -110,7 +110,9 @@ class Ros2PackageStrategyTest(unittest.TestCase):
         targets = {e["to"] for e in contains}
         # ADR 0041: ``file:`` IDs use rel-posix-path-without-ext.
         self.assertIn("file:src/demo_pkg/package", targets)
-        self.assertIn("file:src/demo_pkg/cmakelists", targets)
+        # File IDs preserve on-disk case (vjxi.6). CMakeLists.txt mints
+        # ``file:src/demo_pkg/CMakeLists`` (not ``cmakelists``).
+        self.assertIn("file:src/demo_pkg/CMakeLists", targets)
 
     def test_fragment_validates_clean(self) -> None:
         result = self._run()

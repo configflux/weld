@@ -76,6 +76,10 @@ referenced -- ASP.NET Core controllers / routes, EF Core `DbContext` and
 entities, and xUnit / NUnit / MSTest test-framework markers. No manual
 edits to `discover.yaml` are required for the standard .NET layout.
 
+When tree-sitter is available, exact identifier queries prefer definition
+`symbol:` nodes for non-preview languages before falling back to owning files
+or package-level matches.
+
 The full five-minute tutorial is in the public repository:
 
 https://github.com/configflux/weld/blob/main/docs/tutorial-5-minutes.md
@@ -100,9 +104,62 @@ Agent Graph discovery is static and repo-bound. It reads known customization
 files and does not execute project code. After discovery, `wd agents viz`
 opens a local read-only browser explorer for `.weld/agent-graph.json`.
 
-Platform coverage is tracked in the support matrix:
+AI client platform coverage (Claude Code, Codex, Cursor, Copilot, Gemini,
+OpenCode, generic MCP) is tracked in the AI client support matrix:
 
 https://github.com/configflux/weld/blob/main/docs/platform-support.md
+
+For programming-language coverage, see the next section.
+
+## Language support
+
+Weld's only built-in extractor is for Python. **Every other language listed
+below depends on the `[tree-sitter]` optional extra.** Without it, the
+tree-sitter strategies silently no-op on ImportError and the graph will
+contain zero nodes for those languages — by design, so weld still runs in a
+minimal environment. Install the extra to actually use multi-language support:
+
+```bash
+uv tool install "configflux-weld[tree-sitter]"
+# or
+pip install "configflux-weld[tree-sitter]"
+```
+
+**Status ladder.** Every language is classified on a single ladder:
+**Tier 1** (passes the binding tier-check harness criteria on the
+pinned corpora; description-coverage is measured and reported as an
+advisory signal rather than a gate, because enrichment quality reflects
+LLM provider output rather than weld discovery) → **Tier 2** (ships and
+is usable; fails one or more binding criteria with disclosed gaps) →
+**Preview** (ships with documented correctness issues; not for production
+use) → **Experimental** (opt-in extra, off by default) → **Not
+supported**. Languages move tiers only via tier-check harness output, not
+by editorial claim. C#, Python, Java, and C++ are currently the Tier 1
+languages; other languages remain at Tier 2 pending per-language harness
+runs.
+
+| Language | Extraction surface | Grammar package | Status |
+|---|---|---|---|
+| Python | modules, classes, functions, imports, call graph | built-in (no extra) | **Tier 1** |
+| TypeScript | exports, classes, imports | `tree-sitter-typescript` | Tier 2 |
+| JavaScript | exports, classes, imports | `tree-sitter-javascript` | Tier 2 |
+| Go | exports, types, imports | `tree-sitter-go` | Tier 2 |
+| Rust | exports, types, imports | `tree-sitter-rust` | Tier 2 |
+| C# | types, methods, properties, attributes, namespaces, using dependencies, best-effort call graph | `tree-sitter-c-sharp` | **Tier 1** |
+| C++ | classes, structs, namespaces, functions, methods, inherits edges, includes, CMake build targets, best-effort call graph | `tree-sitter-cpp` | **Tier 1** |
+| Java | classes, interfaces, methods, fields, constructors, annotations, imports, inherits / implements edges | `tree-sitter-java` | **Tier 1** |
+
+**Frameworks** (reuse a language's extractor; status inherits from the host
+language):
+
+| Framework | Host language | Extraction surface | Status |
+|---|---|---|---|
+| ROS2 | C++ / Python | packages, nodes, topics, services, actions, parameters | Preview |
+
+For the full per-language status discussion (including the C++ Tier-1
+detail notes and the optional libclang path), see:
+
+https://github.com/configflux/weld/blob/main/README.md#supported-languages
 
 ## MCP
 

@@ -216,19 +216,25 @@ class PackageImportResolverConfidenceTest(unittest.TestCase):
         )
 
         # Source child has a python_module that imports 'shared_lib'.
+        # Production :class:`weld.graph.Graph` stores ``imports_from`` under
+        # ``props`` (see weld/strategies/python_module.py:238); the resolver
+        # reads through ``_data['nodes']`` keyed by id and then drills into
+        # ``props``, matching the access pattern in
+        # :mod:`weld.cross_repo.grpc_service_binding`.
         source_nodes = {
             "module:source/main.py": {
                 "type": "python_module",
-                "id": "module:source/main.py",
-                "imports_from": ["shared_lib"],
+                "label": "source/main.py",
+                "props": {"imports_from": ["shared_lib"]},
             },
         }
-        # Target child declares a package named 'shared_lib'.
+        # Target child declares a package named 'shared_lib'. ``name``
+        # also lives under ``props`` for the same reason as above.
         target_nodes = {
             "package:shared_lib": {
                 "type": "package",
-                "id": "package:shared_lib",
-                "name": "shared_lib",
+                "label": "shared_lib",
+                "props": {"name": "shared_lib"},
             },
         }
         children = {

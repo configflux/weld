@@ -37,7 +37,11 @@ class TreeSitterCallgraphTest(unittest.TestCase):
     def test_emit_calls_invokes_callgraph_extractor(self) -> None:
         """When ``emit_calls: true`` is set, the helper must run."""
 
-        def fake_extract(file_path, rel_path, language, queries):
+        def fake_extract(file_path, rel_path, language, queries, *, cache=None):
+            # ``cache`` is the per-discover parse cache threaded through by
+            # the strategy (hot path 2 elimination). The contract under
+            # test is the call shape, not cache mechanics, so we only
+            # accept the kwarg to remain signature-compatible.
             module = "index"
             return (
                 {

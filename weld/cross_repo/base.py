@@ -35,7 +35,7 @@ import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from weld.workspace import UNIT_SEPARATOR
 
@@ -50,6 +50,24 @@ __all__ = [
     "resolver_names",
     "run_resolvers",
 ]
+
+
+def _iter_nodes(graph: object) -> Iterable[tuple[str, dict]]:
+    """Yield ``(node_id, node)`` pairs from a child :class:`weld.graph.Graph`.
+
+    Centralises the defensive ``getattr(graph, '_data', {}).get('nodes', {})``
+    access shared by concrete resolvers. Production stores nodes at
+    ``_data['nodes']`` keyed by id, each value shaped ``{type, label,
+    props}`` (weld/graph.py:49). Objects without ``_data`` and graphs
+    whose ``_data['nodes']`` is not a dict both degrade to ``[]`` so
+    callers iterate zero pairs rather than raising. Returned in
+    dict-insertion order; callers needing determinism must sort.
+    Underscore-prefixed: internal coordination point, not in ``__all__``.
+    """
+    nodes = getattr(graph, "_data", {}).get("nodes", {})
+    if not isinstance(nodes, dict):
+        return []
+    return list(nodes.items())
 
 
 # ---------------------------------------------------------------------------

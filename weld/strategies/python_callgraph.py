@@ -25,9 +25,10 @@ import ast
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld.strategies._python_callgraph_visitor import _CallGraphVisitor
+from weld.strategies._python_inherits import emit_inherits_edges
 from weld.strategies._python_origin import (
     is_builtin_name,
-    is_stdlib_module,
     make_resolved_target_node,
     make_sentinel_node,
     module_from_symbol_id,
@@ -135,131 +136,6 @@ def _build_import_table(tree: ast.Module) -> dict[str, tuple[str, str]]:
     return table
 
 # ---------------------------------------------------------------------------
-# Per-module symbol + call walker
-# ---------------------------------------------------------------------------
-
-class _CallGraphVisitor(ast.NodeVisitor):
-    """Collect symbol definitions and call sites within a single module.
-
-    Builds two side-effects on the orchestrator: ``symbols`` (qualname ->
-    metadata) and ``calls`` (qualname-of-caller -> list of resolved
-    target ids). Nesting is tracked via a qualname stack so methods get
-    ``ClassName.method`` and closures get ``outer.inner``.
-    """
-
-    def __init__(self, module_path: str, import_table: dict[str, tuple[str, str]]) -> None:
-        self.module_path = module_path
-        self.import_table = import_table
-        # qualname -> {"line": int, "name": str}
-        self.symbols: dict[str, dict] = {}
-        # caller-qualname -> list of (target_id, resolved, raw, line, resolution)
-        self.calls: dict[str, list[tuple[str, bool, str, int, str]]] = {}
-        self._qual_stack: list[str] = []
-
-    # -- helpers ---------------------------------------------------------
-
-    def _current_qual(self) -> str:
-        return ".".join(self._qual_stack)
-
-    def _record_symbol(self, name: str, lineno: int) -> str:
-        self._qual_stack.append(name)
-        qual = self._current_qual()
-        if qual not in self.symbols:
-            self.symbols[qual] = {"name": name, "line": lineno}
-        return qual
-
-    def _resolve_call(self, node: ast.Call) -> tuple[str, bool, str, str]:
-        """Best-effort resolution of a call target to a symbol id.
-
-        Returns ``(target_id, resolved, raw, resolution)``. ``resolved``
-        is True for same-module / import-table hits and False for the
-        unresolved sentinel form.
-        """
-        func = node.func
-        # Bare name: foo()
-        if isinstance(func, ast.Name):
-            name = func.id
-            # 1. same-module top-level def
-            if name in self.symbols:
-                return _symbol_id(self.module_path, name), True, name, "local"
-            # 2. imported name (from foo.bar import name [as alias])
-            if name in self.import_table:
-                module, attr = self.import_table[name]
-                if attr:
-                    resolution = "stdlib" if is_stdlib_module(module) else "import"
-                    return _symbol_id(module, attr), True, name, resolution
-                # bare module alias used as a callable -- treat as
-                # unresolved (we have no idea what the module's __call__
-                # surface is)
-                return _unresolved_id(name), False, name, _unresolved_resolution(name)
-            return _unresolved_id(name), False, name, _unresolved_resolution(name)
-
-        # Attribute call: a.b() or a.b.c()
-        if isinstance(func, ast.Attribute):
-            attr = func.attr
-            # x.y() where x is an imported module / module alias
-            value = func.value
-            if isinstance(value, ast.Name) and value.id in self.import_table:
-                module, _ = self.import_table[value.id]
-                resolution = "stdlib" if is_stdlib_module(module) else "import"
-                return _symbol_id(module, attr), True, attr, resolution
-            # self.foo() / cls.foo() / arbitrary chains: not resolved.
-            return _unresolved_id(attr), False, attr, _unresolved_resolution(attr)
-
-        # Subscript / lambda / etc -- nothing useful to record.
-        return _unresolved_id("<dynamic>"), False, "<dynamic>", "dynamic"
-
-    # -- visit hooks -----------------------------------------------------
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-        self._record_symbol(node.name, node.lineno)
-        for child in node.body:
-            self.visit(child)
-        self._qual_stack.pop()
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        self._visit_function(node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        self._visit_function(node)
-
-    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        qual = self._record_symbol(node.name, node.lineno)
-        # Walk the body for Call nodes; nested functions / classes are
-        # handled by recursive visit_*.
-        for child in node.body:
-            for sub in ast.walk(child):
-                if isinstance(sub, ast.Call):
-                    target_id, resolved, raw, resolution = self._resolve_call(sub)
-                    self.calls.setdefault(qual, []).append(
-                        (target_id, resolved, raw, sub.lineno, resolution)
-                    )
-        # Now descend into nested defs/classes (visit them as ordinary
-        # children so their qualnames stack on top of this one).
-        for child in node.body:
-            for sub in ast.iter_child_nodes(child):
-                pass
-        for child in node.body:
-            if isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            ):
-                self.visit(child)
-            else:
-                # Recurse into compound statements to find nested defs.
-                for sub in ast.walk(child):
-                    if isinstance(
-                        sub,
-                        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                    ) and sub is not child:
-                        # Skip -- we don't track deeply nested closures
-                        # inside if/for blocks beyond the top of the body.
-                        # The shallow walk above already covered direct
-                        # nesting; deeper analysis is out of scope per
-                        # ADR 0004.
-                        pass
-        self._qual_stack.pop()
-
-# ---------------------------------------------------------------------------
 # Strategy entry point
 # ---------------------------------------------------------------------------
 
@@ -322,6 +198,15 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "module": module_path,
                     "qualname": qual,
                     "line": meta["line"],
+                    # ADR 0064 criterion 1: ``kind`` drawn from the
+                    # python vocabulary (``class``/``function``/
+                    # ``method``) declared in
+                    # ``tools.tier_check_kinds._PYTHON_CANONICAL_KIND``.
+                    # Without this the bundled fixture's symbols all
+                    # report ``kind=None`` and criterion 6
+                    # (description_coverage) cannot find any meaningful
+                    # symbols to score.
+                    "kind": meta["kind"],
                     "language": "python",
                     "source_strategy": "python_callgraph",
                     "authority": "derived",
@@ -330,6 +215,20 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "origin": "project",
                 },
             }
+
+        # Emit one inherits edge per declared base for every class.
+        # ADR 0064 criterion 2 requires the edge to originate at the
+        # *class symbol* (not the file node); resolution + emission is
+        # delegated to ``_python_inherits.emit_inherits_edges`` to keep
+        # this module under the line-count cap.
+        emit_inherits_edges(
+            visitor=visitor,
+            module_path=module_path,
+            rel_path=rel_path,
+            project_modules=project_modules,
+            nodes=nodes,
+            edges=edges,
+        )
 
         # Emit one calls edge per call site (deduplicated within a caller).
         for caller_qual, targets in visitor.calls.items():

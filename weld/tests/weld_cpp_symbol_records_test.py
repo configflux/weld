@@ -162,6 +162,53 @@ class ExtractSymbolRecordsTest(unittest.TestCase):
         self.assertEqual(records[0]["kind"], "definition")
         self.assertEqual(records[1]["kind"], "declaration")
 
+    def test_comment_with_macro_call_does_not_catastrophically_backtrack(
+        self,
+    ) -> None:
+        """Regression: ``// ... TEST() ...`` text must not blow up the regex.
+
+        Before bd bou8 the cv-qualifier tail in the function regex used
+        ``(?:\\s*[A-Za-z_]\\w*)*`` -- two consecutive identifiers
+        separated by zero or more whitespace let the engine explore
+        2^N permutations of how to split a run of words into
+        identifiers, and a trailing ``\\s*\\{`` that ultimately fails to
+        match produced catastrophic backtracking on otherwise-trivial
+        comment text. The fix tightens the inner quantifier to require
+        at least one whitespace character between identifiers; this
+        test pins the fast-fail behaviour so a future refactor that
+        loosens the spacing requirement again gets a regression trace.
+
+        The wall-clock guard is intentionally generous (2 seconds): the
+        unfixed version took ~1.4 seconds on a single ~70-char input
+        and the catastrophic trace explodes exponentially with longer
+        inputs. A passing run completes in microseconds.
+        """
+        import time
+
+        from weld.strategies._cpp_symbol_records import extract_symbol_records
+
+        # The exact comment pattern lifted from the bundled cpp tier1
+        # gtest fixture (bd bou8) -- ``// gtest TEST() macro form so a
+        # future cpp framework`` -- triggers the regex path that
+        # previously exploded.
+        src = textwrap.dedent("""\
+            // Uses the gtest TEST() macro form so a future cpp framework-strategy
+            // (criterion 3) for GoogleTest has a real fixture to detect.
+
+            TEST(CircleTest, AreaUsesPi) {
+                EXPECT_GT(area(), 3.14);
+            }
+        """)
+        t0 = time.time()
+        records = extract_symbol_records(src, ["TEST"] * 4)
+        elapsed = time.time() - t0
+        self.assertEqual(len(records), 4)
+        self.assertLess(
+            elapsed, 2.0,
+            f"extract_symbol_records took {elapsed:.2f}s on a small "
+            "input; catastrophic backtracking has returned",
+        )
+
 
 class EnrichFileNodeStampsSymbolRecordsTest(unittest.TestCase):
     """``_cpp_tree_sitter.enrich_file_node`` stamps the records prop."""

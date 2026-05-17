@@ -120,9 +120,18 @@ class HideOriginsAdapterTest(unittest.TestCase):
 
     def test_legacy_overview_still_hides_unresolved_by_default(self) -> None:
         # No hide_origins, no node_types -> legacy default of hiding
-        # unresolved sentinels in the overview slice.
+        # unresolved sentinels in the overview slice. After the Phase-7
+        # cleanup the adapter routes nodes without ``props.origin`` to
+        # ``unresolved``, so the project-side entity must carry an
+        # explicit ``origin`` tag to survive the default hide-set. The
+        # unresolved sentinel (``symbol:unresolved:*`` with no origin)
+        # classifies to ``unresolved`` and is dropped, exactly as before.
         nodes = {
-            "entity:Store": {"type": "entity", "label": "Store", "props": {}},
+            "entity:Store": {
+                "type": "entity",
+                "label": "Store",
+                "props": {"origin": "project"},
+            },
             "symbol:unresolved:append": {
                 "type": "symbol", "label": "append",
                 "props": {"resolved": False},

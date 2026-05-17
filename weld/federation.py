@@ -1,12 +1,10 @@
 """Federated workspace query/context/path wrapper.
 
-ADR 0058 (sqlite sidecar storage) rewires ``_load_child`` to return a
-:class:`SqliteBackedGraph` when a child's sidecar is fresh. Read paths
-(``get_node``, ``_exact_context``, ``_adjacent``, ``path``, ``query``)
-all run against the lazy sqlite handle when available. Option B added
-the lazy per-query inverted index so ``query`` no longer forces JSON;
-stale/missing sidecars still fall back through
-:meth:`_load_child_for_query`.
+ADR 0058 rewires ``_load_child`` to a :class:`SqliteBackedGraph` when
+the child's sidecar is fresh; read paths run against it. Option B
+added the lazy per-query inverted index. ADR 0063 adds an opt-in
+eager aggregation (``WELD_FEDERATION_EAGER`` / ``eager_index=True``).
+Stale/missing sidecars fall back via :meth:`_load_child_for_query`.
 """
 
 from __future__ import annotations
@@ -14,6 +12,12 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 
+from weld._federation_eager_index import (
+    EagerFederationIndex,
+    build_eager_index_for,
+    resolve_eager_flag,
+)
+from weld._federation_query import query_federated as _query_federated
 from weld._sqlite_reader import SqliteBackedGraph
 from weld.federation_child_loader import (
     child_edges_for as _child_edges_for,
@@ -44,6 +48,7 @@ class FederatedGraph:
         workspace_root: Path,
         *,
         cache_maxsize: int = DEFAULT_CACHE_MAXSIZE,
+        eager_index: bool | None = None,
     ) -> None:
         self._root = Path(workspace_root)
         config = load_workspace_config(self._root)
@@ -57,13 +62,18 @@ class FederatedGraph:
         self._root_graph.load()
         self._root_edges: list[dict] = list(self._root_graph.dump().get("edges", []))
         self._child_cache = ChildGraphCache(maxsize=cache_maxsize)
-        # Sentinel cache for non-graph results (missing/uninitialized/corrupt).
-        # These are cheap and not evicted; they do not hold parsed graph data.
+        # Sentinel cache (missing/uninitialized/corrupt); cheap, no eviction.
         self._sentinel_cache: dict[str, LoadedChild] = {}
-        # ADR 0058: per-name sqlite-handle cache so ``_load_child``
-        # does not reopen the sidecar on every call. The cache shares
-        # the ``_root_graph`` TOCTOU window (one MCP/CLI invocation).
+        # ADR 0058: per-name sqlite-handle cache; shares the
+        # ``_root_graph`` TOCTOU window (one MCP/CLI invocation).
         self._sqlite_cache: dict[str, SqliteBackedGraph] = {}
+        # ADR 0063: opt-in eager inverted-index aggregation. Kwarg wins;
+        # otherwise consult ``WELD_FEDERATION_EAGER`` (1/true/yes/on).
+        self.eager_index_active: bool = resolve_eager_flag(eager_index)
+        self._eager_index: EagerFederationIndex = (
+            build_eager_index_for(self) if self.eager_index_active
+            else EagerFederationIndex.empty()
+        )
 
     def close(self) -> None:
         """Close every cached sqlite child handle. Idempotent."""
@@ -117,18 +127,7 @@ class FederatedGraph:
         missing sidecars fall back to the JSON-backed
         :class:`Graph` via :meth:`_load_child_for_query`.
         """
-        matches: list[dict] = []
-        for match in self._root_graph.query(term, limit=limit).get("matches", []):
-            matches.append(self._decorate_node(match))
-            if len(matches) >= limit:
-                return self._query_payload(term, matches)
-        for name in sorted(self._children):
-            child_matches = self._child_query_matches(name, term, limit)
-            for match in child_matches:
-                matches.append(self._prefix_node(name, match))
-                if len(matches) >= limit:
-                    return self._query_payload(term, matches)
-        return self._query_payload(term, matches)
+        return _query_federated(self, term, limit)
 
     def _child_query_matches(
         self, name: str, term: str, limit: int,
@@ -136,6 +135,11 @@ class FederatedGraph:
         """Return query matches for one child, sqlite path when possible."""
         child = self._load_child(name)
         if isinstance(child, SqliteBackedGraph):
+            # ADR 0063: eager path when flag is on and child was covered.
+            if self.eager_index_active and name in self._eager_index.eager_children:
+                return self._eager_index.query_child_matches(
+                    child, name, term, limit=limit,
+                )
             return list(child.query(term, limit=limit).get("matches", []))
         if not isinstance(child, Graph):
             child = self._load_child_for_query(name)

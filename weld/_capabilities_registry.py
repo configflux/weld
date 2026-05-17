@@ -14,12 +14,8 @@ from dataclasses import dataclass, field
 # Allowed evidence tags. Languages and frameworks share the same registry
 # vocabulary; per-output filtering happens in
 # :func:`weld.capabilities.compute_capabilities`.
-LANGUAGE_EVIDENCE: frozenset[str] = frozenset(
-    ["file", "module", "imports", "symbols", "calls", "tests"],
-)
-FRAMEWORK_EVIDENCE: frozenset[str] = frozenset(
-    ["nodes_emitted", "srcs_edges", "deps_edges", "test_edges"],
-)
+LANGUAGE_EVIDENCE: frozenset[str] = frozenset(["file", "module", "imports", "symbols", "calls", "tests"])
+FRAMEWORK_EVIDENCE: frozenset[str] = frozenset(["nodes_emitted", "srcs_edges", "deps_edges", "test_edges"])
 
 
 @dataclass(frozen=True)
@@ -246,6 +242,7 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
     "grpc_proto_parser": _fw("proto", ("nodes_emitted",), (".proto",)),
     "grpc_bindings": _fw("proto", ("nodes_emitted",), (".py",)),
     "fastapi": _fw("fastapi", ("nodes_emitted",), (".py",)),
+    "flask": _fw("flask", ("nodes_emitted",), (".py",)),
     "pydantic": _fw("pydantic", ("nodes_emitted",), (".py",)),
     "sqlalchemy": _fw("sqlalchemy", ("nodes_emitted",), (".py",)),
     "http_client": _fw("http_client", ("nodes_emitted",), (".py",)),
@@ -346,6 +343,7 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
         ("nodes_emitted", "deps_edges"),
         exts=(".csproj", ".props", ".targets"),
     ),
+    "csharp_package": _lang("csharp", ("module",), (".cs",)),  # ADR 0060
 }
 
 

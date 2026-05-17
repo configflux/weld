@@ -203,16 +203,28 @@ class DetectCsharpArtifactsOnFixtureTest(unittest.TestCase):
 class CsharpSourceEntriesTest(unittest.TestCase):
     """Source-entry generator gates strategies on the flag dict."""
 
-    def test_no_entries_when_no_flags_fire(self) -> None:
+    def test_only_csharp_package_when_no_other_flags_fire(self) -> None:
+        """ADR 0060: ``csharp_package`` always fires when the function is
+        invoked (i.e. ``.cs`` files were detected in the workspace), even
+        if no .sln / .csproj / framework markers are present. The
+        Layer 3 ``file-anchor-symmetry`` violation exists regardless of
+        project structure, so the namespace anchor must always be wired."""
         flags = {k: False for k in _EXPECTED_FLAG_KEYS}
-        self.assertEqual(csharp_source_entries(flags), [])
+        entries = csharp_source_entries(flags)
+        joined = "\n".join(entries)
+        self.assertIn("strategy: csharp_package", joined)
+        self.assertNotIn("strategy: csharp_solution", joined)
+        self.assertNotIn("strategy: csharp_project", joined)
+        self.assertNotIn("strategy: csharp_msbuild_targets", joined)
 
-    def test_sln_flag_emits_only_csharp_solution(self) -> None:
+    def test_sln_flag_emits_csharp_solution_and_package(self) -> None:
         flags = {k: False for k in _EXPECTED_FLAG_KEYS}
         flags["has_sln"] = True
         entries = csharp_source_entries(flags)
         joined = "\n".join(entries)
         self.assertIn("strategy: csharp_solution", joined)
+        # ADR 0060: csharp_package always fires regardless of other flags.
+        self.assertIn("strategy: csharp_package", joined)
         self.assertNotIn("strategy: csharp_project", joined)
         self.assertNotIn("strategy: csharp_msbuild_targets", joined)
 
@@ -241,7 +253,7 @@ class CsharpSourceEntriesTest(unittest.TestCase):
         joined = "\n".join(csharp_source_entries(flags))
         self.assertIn("strategy: csharp_test_framework", joined)
 
-    def test_full_flag_set_emits_all_six_strategies_in_order(self) -> None:
+    def test_full_flag_set_emits_all_strategies_in_order(self) -> None:
         flags = {k: True for k in _EXPECTED_FLAG_KEYS}
         joined = "\n".join(csharp_source_entries(flags))
         order = [
@@ -251,6 +263,9 @@ class CsharpSourceEntriesTest(unittest.TestCase):
             "csharp_test_framework",
             "csharp_aspnet_routes",
             "csharp_efcore",
+            # ADR 0060: csharp_package emitted last so the namespace
+            # anchor follows the framework- and project-specific entries.
+            "csharp_package",
         ]
         positions = [joined.find(f"strategy: {s}") for s in order]
         for s, pos in zip(order, positions):
@@ -265,6 +280,10 @@ class CsharpSourceEntriesTest(unittest.TestCase):
 _CSHARP_WAVES = (
     "csharp_solution", "csharp_project", "csharp_msbuild_targets",
     "csharp_test_framework", "csharp_aspnet_routes", "csharp_efcore",
+    # ADR 0060: csharp_package is wired alongside the Wave 1-3 stack
+    # whenever .cs files exist. Acceptance suite must verify it appears
+    # in C# fixtures and does not leak into non-C# fixtures.
+    "csharp_package",
 )
 
 

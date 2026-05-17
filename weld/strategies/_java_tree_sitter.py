@@ -6,6 +6,10 @@ from pathlib import Path
 import re
 
 from weld._node_ids import package_id as _canonical_package_id
+from weld.strategies._java_inherits import (
+    emit_inheritance_edges,
+    record_inheritance,
+)
 from weld.strategies._java_origin import (
     classify_import_package,
     load_pom_metadata,
@@ -15,17 +19,24 @@ _SAFE_PACKAGE_RE = re.compile(r"[^0-9A-Za-z_.-]+")
 _VISIBILITY_RE = re.compile(r"\b(public|private|protected)\b")
 
 
-def build_caches(root: Path, language: str) -> dict[str, frozenset[str]] | None:
+def build_caches(root: Path, language: str) -> dict | None:
     """Pre-compute Java project metadata used for import-origin tagging.
 
     Returned mapping is splatted as kwargs into :func:`enrich_file_node`
     so the per-file path is constant time. ``None`` is returned for any
     non-Java language so the caller can treat the result uniformly with
     the other per-language cache builders.
+
+    Seeds the ``inheritance_records`` accumulator consumed by
+    :func:`finalise` (ADR 0064 criterion 2 -- emit ``inherits`` /
+    ``implements`` edges originating at the class symbol, not the file
+    node).
     """
     if language != "java":
         return None
-    return load_pom_metadata(root)
+    caches = dict(load_pom_metadata(root))
+    caches["inheritance_records"] = []
+    return caches
 
 
 def enrich_file_node(
@@ -39,6 +50,7 @@ def enrich_file_node(
     *,
     project_groupids: frozenset[str] | None = None,
     dependency_groupids: frozenset[str] | None = None,
+    inheritance_records: list | None = None,
 ) -> None:
     """Add Java-specific metadata and import dependency nodes."""
     for key in ("exports", "classes", "imports"):
@@ -74,6 +86,41 @@ def enrich_file_node(
         project_groupids=project_groupids,
         dependency_groupids=dependency_groupids,
     )
+
+    # ADR 0064 criterion 2: stage ``extends`` / ``implements`` pairs so
+    # :func:`finalise` can resolve them against the project-wide class
+    # index after every file has been visited. The accumulator is the
+    # ``inheritance_records`` list seeded in :func:`build_caches`.
+    if inheritance_records is not None:
+        rel_path = str(node_props.get("file") or "")
+        record_inheritance(
+            inheritance_records,
+            rel_path=rel_path,
+            source_text=source_text,
+        )
+
+
+def finalise(
+    nodes: dict[str, dict],
+    edges: list[dict],
+    enricher_caches: dict | None,
+    source_strategy: str,
+) -> None:
+    """Run Java post-pass after the tree-sitter file loop completes.
+
+    Resolves every staged ``(derived, base, edge_type)`` record against
+    the project-wide class index and emits one ``inherits`` or
+    ``implements`` edge per record, originating at the derived-class
+    symbol node (ADR 0064 criterion 2). External / unresolved bases
+    land on ``symbol:unresolved:<short>`` sentinels minted lazily so the
+    graph stays referentially closed.
+    """
+    if not enricher_caches:
+        return
+    records = enricher_caches.get("inheritance_records") or []
+    if not records:
+        return
+    emit_inheritance_edges(nodes, edges, records, source_strategy)
 
 
 def _add_import_dependencies(

@@ -80,11 +80,16 @@ def render_context(payload: Mapping[str, Any]) -> str:
         return _header(f"context: error - {payload['error']}") + "\n"
     node = payload.get("node") or {}
     lines: list[str] = []
+    # Canonical id drives neighbor/edge grouping (it must match the raw
+    # ``from``/``to`` values on edges). The header uses display_id so the
+    # invisible UNIT_SEPARATOR (federation prefix glue) does not show up
+    # in user output.
     nid = str(node.get("id") or node.get("label") or "")
-    lines.append(_header(f"context: {nid}"))
+    nid_display = _node_display_id(node) or nid
+    lines.append(_header(f"context: {nid_display}"))
     lines.append(f"  type:  {node.get('type', '')}")
     label = node.get("label")
-    if label and label != nid:
+    if label and label != nid_display:
         lines.append(f"  label: {label}")
     desc = ((node.get("props") or {}).get("description") or "").strip()
     if desc:
@@ -123,16 +128,16 @@ def render_path(payload: Mapping[str, Any]) -> str:
         reason = payload.get("reason") or "no path found"
         lines.append(f"  {reason}")
         return _join(lines)
-    chain_ids = [str(n.get("id") or n.get("label") or "") for n in nodes]
+    chain_ids = [_node_display_id(n) for n in nodes]
     lines.append(f"  {' -> '.join(chain_ids)}")
     edges = list(payload.get("edges") or [])
     if edges:
         lines.append(f"  edges ({len(edges)}):")
         for edge in edges:
             etype = edge.get("type", "")
-            lines.append(
-                f"    {edge.get('from', '')} --[{etype}]--> {edge.get('to', '')}"
-            )
+            src = str(edge.get("from_display") or edge.get("from", ""))
+            dst = str(edge.get("to_display") or edge.get("to", ""))
+            lines.append(f"    {src} --[{etype}]--> {dst}")
     return _join(lines)
 
 
@@ -262,8 +267,27 @@ def _short(value: str, limit: int) -> str:
     return flat[: max(limit - 3, 0)] + "..."
 
 
+def _node_display_id(node: Mapping[str, Any]) -> str:
+    """Pick the user-facing ID for a node payload.
+
+    Federation decorates every node with ``display_id`` (``child::id``),
+    using the printable ``::`` form instead of the canonical ``\\x1f``
+    UNIT_SEPARATOR that joins child name and child-local id internally.
+    The canonical ``id`` field stays machine-readable for splitters and
+    sqlite consumers; text rendering prefers the printable form so users
+    do not see (or copy-paste) the invisible control character.
+
+    Non-federated payloads never carry ``display_id``; we fall back to
+    ``id`` and then ``label`` so single-repo output is unchanged.
+    """
+    display = node.get("display_id")
+    if display:
+        return str(display)
+    return str(node.get("id") or node.get("label") or "")
+
+
 def _match_block(idx: int, match: Mapping[str, Any]) -> list[str]:
-    nid = str(match.get("id") or match.get("label") or "")
+    nid = _node_display_id(match)
     ntype = str(match.get("type") or "")
     label = match.get("label")
     out = [f"    {idx}. {nid}  [type: {ntype or 'unknown'}]"]
@@ -279,7 +303,7 @@ def _match_block(idx: int, match: Mapping[str, Any]) -> list[str]:
 
 
 def _node_one_line(node: Mapping[str, Any]) -> str:
-    nid = str(node.get("id") or node.get("label") or "")
+    nid = _node_display_id(node)
     ntype = node.get("type") or ""
     if ntype:
         return f"{nid}  [type: {ntype}]"

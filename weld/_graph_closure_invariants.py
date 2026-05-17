@@ -26,7 +26,7 @@ import fnmatch
 from typing import TYPE_CHECKING, Iterable, Iterator, Mapping, Sequence
 
 from weld._graph_strategy_pair import check_strategy_pair_consistency
-from weld._node_ids import canonical_slug
+from weld._node_ids import canonical_slug, canonical_slug_case_sensitive
 
 if TYPE_CHECKING:
     from weld.arch_lint import Violation
@@ -129,6 +129,16 @@ def _canonical_base(node_id: str, node: Mapping) -> str:
     This prevents the ``csproj://X`` vs ``solution://X`` collision when
     both nodes share ``type='build-target'``: the slugs become
     ``csproj:x`` and ``solution:x``, which are distinct.
+
+    ``symbol:*`` IDs use the case-preserving slug
+    (:func:`weld._node_ids.canonical_slug_case_sensitive`) so two
+    legitimately-distinct case-different members of the same class
+    (e.g. C# ``SIZE`` constant vs ``Size`` property) do not collide.
+    Source-language symbol identifiers are case-sensitive in C#, Java,
+    C++, and the case-folding policy that fits skill / package /
+    architecture-decision IDs is wrong here. URL schemes and non-symbol
+    types still casefold so collision detection for those classes is
+    unchanged.
     """
     scheme = _url_scheme(node_id)
     if scheme is not None:
@@ -141,6 +151,8 @@ def _canonical_base(node_id: str, node: Mapping) -> str:
         composed = f"{node_type}:{name}"
     else:
         composed = f"{node_type}:{platform}:{name}"
+    if node_type == "symbol":
+        return canonical_slug_case_sensitive(composed)
     return canonical_slug(composed)
 
 

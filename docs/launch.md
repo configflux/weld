@@ -194,8 +194,9 @@ marketing copy.
   and re-run `wd discover` after large changes. There is no background
   watcher today.
 - **Bundled languages are finite.** Python, TypeScript/JS, Go, Rust, C#,
-  C++, and ROS2 ship as built-in strategies. Anything else needs a custom
-  strategy in `.weld/strategies/` (see `examples/02-custom-strategy`).
+  C++, and Java ship as built-in strategies, with ROS2 as a framework on
+  top of C++/Python. Anything else needs a custom strategy in
+  `.weld/strategies/` (see `examples/02-custom-strategy`).
 - **Semantic enrichment is opt-in and LLM-bounded.** `wd enrich` adds
   human-readable descriptions to nodes, but only as far as the configured
   provider can. The `--safe` flag refuses any network or LLM call so

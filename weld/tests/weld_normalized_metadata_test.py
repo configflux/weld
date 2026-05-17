@@ -99,12 +99,22 @@ class FastapiMetadataTest(unittest.TestCase):
             """))
             result = extract(root, {"glob": "routers/*.py"}, {})
             self.assertTrue(result.nodes)
+            saw_route = False
             for nid, node in result.nodes.items():
                 _assert_valid_source_strategy(self, node["props"], "fastapi")
                 _assert_valid_metadata_values(self, node["props"], "fastapi")
-                self.assertEqual(node["props"]["authority"], "canonical")
                 self.assertEqual(node["props"]["confidence"], "definite")
                 self.assertIn("implementation", node["props"]["roles"])
+                if node["type"] == "route":
+                    # Route nodes are the strategy's canonical product.
+                    self.assertEqual(node["props"]["authority"], "canonical")
+                    saw_route = True
+                else:
+                    # Handler symbol placeholders are derived authority
+                    # so python_callgraph (canonical) can win the
+                    # ``nodes.update`` merge in :func:`weld.discover._run`.
+                    self.assertEqual(node["props"]["authority"], "derived")
+            self.assertTrue(saw_route)
 
 class PydanticMetadataTest(unittest.TestCase):
     def test_contract_has_source_strategy(self) -> None:

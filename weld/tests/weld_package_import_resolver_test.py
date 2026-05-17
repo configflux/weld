@@ -17,20 +17,52 @@ from weld.cross_repo.base import (
     run_resolvers,
 )
 
-import weld.cross_repo.package_import_resolver  # noqa: F401 -- registration side effect
+# `weld.cross_repo`'s package __init__ imports package_import_resolver for
+# its registration side effect. The test_package_init_imports_resolver
+# test below guards that contract.
+import weld.cross_repo  # noqa: F401 -- registration via package __init__
 
 SEP = "\x1f"
 
 
 class _G:
-    """Minimal graph stand-in with a nodes property."""
+    """Minimal :class:`weld.graph.Graph` stand-in.
+
+    Mirrors the real Graph shape: nodes live at ``_data['nodes']`` as a
+    dict keyed by node id, with each value shaped
+    ``{type, label, props}``. The resolver reads through
+    ``getattr(graph, '_data', {}).get('nodes', {})`` (matching the
+    pattern in :mod:`weld.cross_repo.grpc_service_binding`), so the
+    stub must expose ``_data`` to satisfy that contract.
+
+    The earlier version of this stub exposed a top-level ``.nodes``
+    property returning a flat list of dicts with ``id``/``name``/
+    ``imports_from`` at the top level. That shape never matched
+    production discovery, so every test passed while real federated
+    discover emitted zero edges (bd b1k8).
+    """
 
     def __init__(self, nodes: list[dict]) -> None:
-        self._nodes = nodes
-
-    @property
-    def nodes(self) -> list[dict]:
-        return list(self._nodes)
+        # Accept the legacy list-of-dicts authoring shape used in this
+        # test module, but project it into the real Graph storage shape
+        # so the resolver sees what production actually writes.
+        store: dict[str, dict] = {}
+        for node in nodes:
+            node_id = node["id"]
+            inner_props = node.get("props") or {}
+            # Lift the legacy top-level ``name``/``imports_from`` into
+            # ``props`` if they are not already there. Tests can pass
+            # either shape; the storage layer always normalises to the
+            # real Graph contract.
+            for key in ("name", "imports_from"):
+                if key in node and key not in inner_props:
+                    inner_props[key] = node[key]
+            store[node_id] = {
+                "type": node.get("type", ""),
+                "label": node.get("label", node_id),
+                "props": inner_props,
+            }
+        self._data = {"meta": {}, "nodes": store, "edges": []}
 
 
 def _ctx(children: dict[str, tuple[_G, bytes]], strategies: list[str] | None = None):
@@ -64,6 +96,20 @@ class RegistrationTests(unittest.TestCase):
 
     def test_retrievable(self) -> None:
         self.assertEqual(get_resolver("package_import_resolver").name, "package_import_resolver")
+
+    def test_package_init_imports_resolver(self) -> None:
+        # bd j6yr: `weld.cross_repo`'s __init__ must import this resolver
+        # for the registration side effect so workspaces.yaml entries that
+        # name it resolve without callers importing the module explicitly.
+        import weld.cross_repo as cr
+        self.assertIn("package_import_resolver", cr.resolver_names())
+
+    def test_workspace_validator_accepts_strategy(self) -> None:
+        # bd j6yr: `package_import_resolver` must be in the workspace
+        # validator's KNOWN_CROSS_REPO_STRATEGIES allowlist so the C#
+        # polyrepo fixture can declare it.
+        from weld.workspace import KNOWN_CROSS_REPO_STRATEGIES
+        self.assertIn("package_import_resolver", KNOWN_CROSS_REPO_STRATEGIES)
 
 
 class BasicMatchTests(unittest.TestCase):

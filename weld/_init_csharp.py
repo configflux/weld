@@ -153,11 +153,18 @@ def csharp_source_entries(flags: dict[str, bool]) -> list[str]:
          test-framework attributes live in .cs files)
       5. ``csharp_aspnet_routes``   when ``has_aspnet`` (conditional)
       6. ``csharp_efcore``          when ``has_efcore`` (conditional)
+      7. ``csharp_package``         always when any C# is present
+         (ADR 0060: anchors C# files under their namespace so the
+         tree-sitter ``emit_calls`` symbols satisfy ADR 0041 § Layer 3
+         ``file-anchor-symmetry``)
 
     Strategies 1-3 are XML-parsed and always definite. Strategy 4 needs
     a hint that test projects exist so we do not wire it on a pure
     library .NET repo (its scan is bounded but irrelevant noise).
     Strategies 5-6 are framework-aware; gating keeps the YAML focused.
+    Strategy 7 fires whenever any C# project / .cs surface is detected;
+    the strategy itself is a no-op on files that declare no namespace,
+    so over-emitting the source entry is safe.
     """
     entries: list[str] = []
 
@@ -190,5 +197,13 @@ def csharp_source_entries(flags: dict[str, bool]) -> list[str]:
             "**/*.cs", "entity", "csharp_efcore",
             comment="EF Core DbContext and entities",
         ))
+    # ADR 0060: anchor every C# file under its declared namespace so
+    # tree-sitter emit_calls symbols satisfy file-anchor-symmetry. Fire
+    # whenever any C# surface is detected (sln, csproj, or unmanaged
+    # .cs files via the ``has_csproj`` ladder upstream).
+    entries.append(_entry(
+        "**/*.cs", "file", "csharp_package",
+        comment="C# namespace -> file anchors (ADR 0060)",
+    ))
 
     return entries

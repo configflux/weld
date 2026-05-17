@@ -64,7 +64,10 @@ class DetectFrameworksCorrectnessTest(unittest.TestCase):
         self.assertEqual(len(detected), 1)
         framework, strategy, rel = detected[0]
         self.assertEqual(framework, "Flask")
-        self.assertEqual(strategy, "python_module")
+        # Flask now has a dedicated strategy (bd 778o); see
+        # ``weld/strategies/flask.py`` and the entry in
+        # :data:`weld.init_detect.FRAMEWORK_PATTERNS`.
+        self.assertEqual(strategy, "flask")
         self.assertEqual(rel, "service.py")
 
     def test_detects_gin_via_canonical_go_import_path(self) -> None:

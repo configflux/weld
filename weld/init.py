@@ -9,6 +9,7 @@ from pathlib import Path
 
 from weld._gitignore_writer import write_weld_gitignore
 from weld._init_classify import classify_files
+from weld._init_cpp import cpp_buildsystem_source_entries, detect_cpp_buildsystem
 from weld._init_csharp import csharp_source_entries, detect_csharp_artifacts
 from weld._init_ros2 import ros2_source_entries
 from weld.init_workspace import init_workspace as _init_workspace
@@ -40,6 +41,7 @@ _YAML_HEADER = """\
 # Available strategies:
 #   sqlalchemy      — AST: SQLAlchemy Base subclasses, FKs, columns, StrEnum
 #   fastapi         — AST: APIRouter + @router decorators
+#   flask           — AST: Flask/Blueprint + @app.route/@bp.route decorators
 #   pydantic        — AST: BaseModel subclasses, fields, docstrings
 #   worker_stage    — AST: __init__.py __all__ exports in stage subdirs
 #   dockerfile      — Line parse: FROM base image
@@ -52,21 +54,22 @@ _YAML_HEADER = """\
 #   config_file     — Static config file node
 #   python_module     — AST: top-level classes and functions
 #   python_callgraph  — AST: function-level symbols + calls edges (ADR 0004)
-#   tree_sitter       — Tree-sitter AST: exports, types, imports (Go, Rust, TS, C#)
+#   tree_sitter       — Tree-sitter AST: exports, types, imports (Go, Rust, TS, C#, Java, C/C++)
 #   csharp_solution        — XML: .sln contains -> .csproj
 #   csharp_project         — XML: .csproj ProjectReference, Directory.Build.*
 #   csharp_msbuild_targets — XML: <Target> BeforeTargets/AfterTargets ordering
 #   csharp_test_framework  — Attribute parse: xUnit / NUnit / MSTest markers
 #   csharp_aspnet_routes   — Attribute parse: ASP.NET Core controllers + routes
 #   csharp_efcore          — Attribute parse: DbContext / DbSet entities
+#   cpp_buildsystem_detector — Build-system root probe (CMakeLists, BUILD, meson)
 """
-# Tree-sitter-backed languages: name → tuple of file extensions.
-# A language may map to multiple extensions (C++ covers .cpp/.cc/.h/...).
-# Languages in ``_TREE_SITTER_EMIT_CALLS`` also emit function-level call
-# graph nodes via the per-source ``emit_calls`` flag.
+# Tree-sitter-backed languages: name -> tuple of file extensions (C++ covers
+# .cpp/.cc/.h/...). Languages in ``_TREE_SITTER_EMIT_CALLS`` also emit
+# function-level call graph nodes via the per-source ``emit_calls`` flag.
 _TREE_SITTER_LANGUAGES: dict[str, tuple[str, ...]] = {
     "csharp": (".cs",), "go": (".go",), "rust": (".rs",), "typescript": (".ts",),
     "cpp": (".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".ipp", ".tpp"),
+    "java": (".java",),
 }
 _TREE_SITTER_EMIT_CALLS: frozenset[str] = frozenset({"cpp", "csharp"})
 
@@ -74,69 +77,66 @@ def _source_entry(
     glob: str, node_type: str, strategy: str,
     *, comment: str = "", extra: dict[str, str] | None = None,
 ) -> str:
-    """Generate a single source entry as YAML text."""
-    lines: list[str] = []
-    if comment:
-        lines.append(f"\n  # --- {comment} ---")
-    lines.append(f'  - glob: "{glob}"')
-    lines.append(f"    type: {node_type}")
-    lines.append(f"    strategy: {strategy}")
+    lines = [f"\n  # --- {comment} ---"] if comment else []
+    lines += [f'  - glob: "{glob}"', f"    type: {node_type}", f"    strategy: {strategy}"]
     if extra:
-        for k, v in extra.items():
-            lines.append(f"    {k}: {v}")
+        lines += [f"    {k}: {v}" for k, v in extra.items()]
     return "\n".join(lines)
 
 def _files_entry(
-    file_list: list[str], node_type: str, strategy: str,
-    *, comment: str = "",
+    file_list: list[str], node_type: str, strategy: str, *, comment: str = "",
 ) -> str:
-    """Generate a source entry using files: instead of glob:."""
-    lines: list[str] = []
-    if comment:
-        lines.append(f"\n  # --- {comment} ---")
+    lines = [f"\n  # --- {comment} ---"] if comment else []
     inner = ", ".join(f'"{f}"' for f in file_list)
-    lines.append(f"  - files: [{inner}]")
-    lines.append(f"    type: {node_type}")
-    lines.append(f"    strategy: {strategy}")
+    lines += [f"  - files: [{inner}]", f"    type: {node_type}", f"    strategy: {strategy}"]
     return "\n".join(lines)
 
-def _find_matching_glob(globs: list[str], keywords: tuple[str, ...]) -> str | None:
-    """Find the first glob pattern that contains any of the keywords."""
-    for g in globs:
-        if any(k in g.lower() for k in keywords):
-            return g
-    return None
+def _glob_matches_path(glob: str, path: str) -> bool:
+    """``find_python_glob_roots`` emits 3 shapes: ``*.py``,
+    ``<dir>/*.py``, ``<top>/**/*.py`` (bd et6o)."""
+    if not path.endswith(".py"):
+        return False
+    if glob == "*.py":
+        return "/" not in path
+    if "/**/*.py" in glob:
+        return path.startswith(glob.split("/**/*.py", 1)[0] + "/")
+    dirpart = glob[:-len("/*.py")] if glob.endswith("/*.py") else ""
+    rest = path.removeprefix(dirpart + "/") if dirpart else ""
+    return bool(rest) and rest != path and "/" not in rest
+
+def _find_matching_glob(
+    globs: list[str], keywords: tuple[str, ...], path: str = "",
+) -> str | None:
+    """Pick a python_glob: prefer one covering detection *path* (bd et6o),
+    else fall back to the first glob matching a *keyword*."""
+    hit = next((g for g in globs if path and _glob_matches_path(g, path)), None)
+    return hit or next(
+        (g for g in globs if any(k in g.lower() for k in keywords)), None)
 
 def _add_framework_sources(
-    sources: list[str], framework_names: set[str], python_globs: list[str],
+    sources: list[str], frameworks: list[tuple[str, str, str]],
+    python_globs: list[str],
 ) -> None:
     """Append framework-specific source entries."""
+    fw_to_path = {fw: path for fw, _strategy, path in frameworks}
     fallback = python_globs[0] if python_globs else "**/*.py"
     for fw, kw, node_type, strategy, label, hint in (
-        ("SQLAlchemy",
-         ("domain", "model", "entities", "libs"),
-         "entity", "sqlalchemy", "SQLAlchemy domain models",
-         "model directory"),
-        ("FastAPI",
-         ("router", "route", "api", "services"),
-         "route", "fastapi", "FastAPI routes",
-         "router directory"),
+        ("SQLAlchemy", ("domain", "model", "entities", "libs"), "entity", "sqlalchemy", "SQLAlchemy domain models", "model directory"),
+        ("FastAPI", ("router", "route", "api", "services"), "route", "fastapi", "FastAPI routes", "router directory"),
+        ("Flask", ("app", "blueprints", "views", "routes", "api", "flask"), "route", "flask", "Flask routes", "app/blueprints directory"),
     ):
-        if fw in framework_names:
-            matched = _find_matching_glob(python_globs, kw)
+        if fw in fw_to_path:
+            matched = _find_matching_glob(python_globs, kw, fw_to_path[fw])
             sources.append(_source_entry(
                 matched or fallback, node_type, strategy,
                 comment=label if matched else f"{label} (adjust glob to match your {hint})",
             ))
-    if "Pydantic" in framework_names:
-        matched = _find_matching_glob(
-            python_globs, ("contract", "schema", "dto", "libs"),
-        )
+    if "Pydantic" in fw_to_path:
+        matched = _find_matching_glob(python_globs,
+            ("contract", "schema", "dto", "libs"), fw_to_path["Pydantic"])
         if matched:
-            sources.append(_source_entry(
-                matched, "contract", "pydantic",
-                comment="Pydantic contracts/schemas",
-            ))
+            sources.append(_source_entry(matched, "contract", "pydantic",
+                comment="Pydantic contracts/schemas"))
 
 def _section_header(label: str) -> str:
     """Return a YAML comment that marks an artifact-class section."""
@@ -146,8 +146,6 @@ def _make_stub(glob: str, node_type: str, strategy: str) -> list[str]:
     """Build commented-out YAML lines for a stub entry."""
     return [f'  # - glob: "{glob}"', f"  #   type: {node_type}", f"  #   strategy: {strategy}"]
 
-# Artifact classes in display order.  Each tuple:
-#   (class_name, stub_glob, stub_node_type, stub_strategy)
 _ARTIFACT_CLASSES: list[tuple[str, str, str, str]] = [
     ("code",       "src/**/*.py",       "file",   "python_module"),
     ("docs",       "docs/**/*.md",      "doc",    "markdown"),
@@ -166,6 +164,7 @@ def generate_yaml(
     doc_dirs: list[str], python_globs: list[str], root_configs: list[str],
     ros2_pkg_roots: list[str] | None = None,
     csharp_flags: dict[str, bool] | None = None,
+    cpp_bs: list[str] | None = None,
 ) -> str:
     """Generate the discover.yaml content using template strings.
 
@@ -173,39 +172,36 @@ def generate_yaml(
     config leads maintainers toward whole-codebase onboarding instead
     of code-only discovery.
     """
-    # Buckets keyed by artifact class.  Order follows _ARTIFACT_CLASSES.
     buckets: dict[str, list[str]] = {cls: [] for cls, _, _, _ in _ARTIFACT_CLASSES}
-    framework_names = {fw for fw, _, _ in frameworks}
 
     # --- code ---
-    _add_framework_sources(buckets["code"], framework_names, python_globs)
+    _add_framework_sources(buckets["code"], frameworks, python_globs)
 
     if "python" in languages:
+        # python_module / python_callgraph / test_peer emit file/symbol
+        # nodes; framework strategies emit route/entity/contract. They
+        # coexist on the same glob without de-duplication (bd et6o).
         added: set[str] = set()
         for g in python_globs:
-            if g not in added and not any(g in s for s in buckets["code"]):
-                # Heuristic: test directories go into the tests bucket.
-                if "test" in g.lower():
+            if g in added:
+                continue
+            if "test" in g.lower():
+                for strat in ("python_module", "test_peer"):  # ADR 0046
                     buckets["tests"].append(_source_entry(
-                        g, "file", "python_module",
-                        comment=f"Python tests in {g.split('/')[0]}",
-                    ))
-                else:
-                    buckets["code"].append(_source_entry(
-                        g, "file", "python_module",
-                        comment=f"Python modules in {g.split('/')[0]}",
-                    ))
-                    # Pair every non-test python source with a call graph
-                    # extractor entry (ADR 0004). The new entry uses the
-                    # same glob but emits ``symbol`` nodes and ``calls``
-                    # edges instead of file-level metadata.
-                    buckets["code"].append(_source_entry(
-                        g, "symbol", "python_callgraph",
-                        comment=f"Python call graph in {g.split('/')[0]}",
-                    ))
-                added.add(g)
+                        g, "file", strat,
+                        comment=f"Python tests in {g.split('/')[0]} ({strat})"))
+            else:
+                # ADR 0004: pair non-test python source with a callgraph
+                # entry (symbol nodes + calls edges).
+                buckets["code"].append(_source_entry(
+                    g, "file", "python_module",
+                    comment=f"Python modules in {g.split('/')[0]}"))
+                buckets["code"].append(_source_entry(
+                    g, "symbol", "python_callgraph",
+                    comment=f"Python call graph in {g.split('/')[0]}"))
+            added.add(g)
 
-    # --- tree-sitter languages (Go, Rust, TypeScript, C/C++) ---
+    # --- tree-sitter languages (Go, Rust, TypeScript, C/C++, C#, Java) ---
     for lang, exts in _TREE_SITTER_LANGUAGES.items():
         if lang not in languages:
             continue
@@ -273,6 +269,8 @@ def generate_yaml(
             root_configs, "config", "config_file",
             comment="Root configuration files",
         ))
+    if cpp_bs:
+        buckets["build"].extend(cpp_bs)
 
     # --- Assemble sections ---
     sections: list[str] = []
@@ -288,10 +286,6 @@ def generate_yaml(
 
     block = "\n".join(sections) if sections else "  # No sources detected"
     return f"{_YAML_HEADER}\nsources:\n{block}\n"
-
-# ---------------------------------------------------------------------------
-# Orchestration
-# ---------------------------------------------------------------------------
 
 def init(root: Path, output: Path, *, force: bool = False) -> bool:
     """Run project detection and generate discover.yaml.
@@ -330,6 +324,7 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
     python_globs = detected["python_globs"] if "python" in languages else []
     ros2_pkg_roots = detect_ros2(root, files)
     csharp_flags = detect_csharp_artifacts(files) if "csharp" in languages else None
+    cpp_bs = cpp_buildsystem_source_entries(detect_cpp_buildsystem(files, root=root)) if "cpp" in languages else None
 
     print(f"Detecting project structure...\n  Structure: {structure}", file=sys.stderr)
     print("Scanning for Dockerfiles...", file=sys.stderr)
@@ -357,7 +352,7 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
         ci_files=ci_files, claude_agents=claude_agents,
         claude_commands=claude_commands, doc_dirs=doc_dirs,
         python_globs=python_globs, root_configs=root_configs,
-        ros2_pkg_roots=ros2_pkg_roots, csharp_flags=csharp_flags,
+        ros2_pkg_roots=ros2_pkg_roots, csharp_flags=csharp_flags, cpp_bs=cpp_bs,
     )
 
     output.parent.mkdir(parents=True, exist_ok=True)

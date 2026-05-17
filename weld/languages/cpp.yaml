@@ -27,6 +27,15 @@
 #   - The ``calls`` query captures identifier, field_expression, and
 #     qualified_identifier callees. ``qualified_identifier`` is
 #     captured whole so ``Foo::bar()`` stays joined.
+#   - The ``type_uses`` query (ADR 0061) captures USE-site type
+#     identifiers: parameter / return / friend / base-class / template-
+#     argument positions. Surfaces a separate ``type_uses`` prop on the
+#     file node so headers that consume a type rank for it in
+#     ``wd query`` even when they neither define the class nor call
+#     any of its methods. Each shape is captured for the three
+#     identifier-node variants the grammar uses in those positions:
+#     ``type_identifier``, ``template_type`` (via its leading
+#     ``type_identifier``), and ``qualified_identifier``.
 
 language: cpp
 grammar_package: tree_sitter_cpp
@@ -36,3 +45,4 @@ queries:
   classes: "(class_specifier name: (type_identifier) @name) (struct_specifier name: (type_identifier) @name)"
   imports: "(preproc_include path: (string_literal) @name)"
   calls: "(call_expression function: (identifier) @name) (call_expression function: (field_expression field: (field_identifier) @name)) (call_expression function: (qualified_identifier) @name)"
+  type_uses: "(template_type (type_identifier) @name) (parameter_declaration type: (type_identifier) @name) (parameter_declaration type: (template_type (type_identifier) @name)) (parameter_declaration type: (qualified_identifier) @name) (field_declaration type: (type_identifier) @name) (field_declaration type: (template_type (type_identifier) @name)) (declaration type: (type_identifier) @name) (declaration type: (template_type (type_identifier) @name)) (declaration type: (qualified_identifier) @name) (base_class_clause (type_identifier) @name) (base_class_clause (template_type (type_identifier) @name)) (base_class_clause (qualified_identifier) @name) (friend_declaration (type_identifier) @name) (friend_declaration (template_type (type_identifier) @name)) (friend_declaration (qualified_identifier) @name)"

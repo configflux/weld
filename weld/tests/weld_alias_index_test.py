@@ -15,8 +15,9 @@ test file pins the behaviour:
   no-op (defensive; ``ensure_node`` already strips this at write
   time);
 - duplicate claim: when two nodes claim the same alias, the first
-  writer wins and a warning is emitted (deterministic across runs
-  because each node's alias list is sorted at write time);
+  writer wins and duplicate diagnostics are debug-summarized
+  (deterministic across runs because each node's alias list is sorted
+  at write time);
 - malformed input: non-dict nodes, missing ``props``, non-list
   ``aliases``, empty / non-str alias entries are tolerated;
 - missing query: :func:`resolve_id` returns ``None`` for an unknown
@@ -114,24 +115,28 @@ class BuildAliasIndexCollisionGuardTest(unittest.TestCase):
         index = build_alias_index(nodes)
         self.assertEqual(index, {})
 
-    def test_duplicate_claim_first_writer_wins(self) -> None:
+    def test_duplicate_claims_are_summarized_during_index_build(self) -> None:
         # Two nodes both claim the same alias. Iteration order in the
         # nodes dict is insertion order (CPython 3.7+); the first
         # writer (``foo``) wins. The deterministic sort happens upstream
         # in ``ensure_node``; here we only verify that the lookup-side
-        # guard is stable and emits a warning rather than silently
-        # overwriting.
+        # guard is stable and emits one summary rather than one warning
+        # per duplicate.
         nodes = {
             "skill:generic:foo": _node(
                 "skill:generic:foo", "skill:generic:legacy"),
             "skill:generic:bar": _node(
                 "skill:generic:bar", "skill:generic:legacy"),
+            "skill:generic:baz": _node(
+                "skill:generic:baz", "skill:generic:legacy"),
         }
-        with self.assertLogs("weld._alias_index", level="WARNING") as caplog:
+        with self.assertLogs("weld._alias_index", level="DEBUG") as caplog:
             index = build_alias_index(nodes)
         self.assertEqual(
             index["skill:generic:legacy"], "skill:generic:foo")
-        self.assertTrue(any("duplicate claim" in msg for msg in caplog.output))
+        self.assertEqual(len(caplog.output), 1)
+        self.assertTrue(caplog.output[0].startswith("DEBUG"))
+        self.assertIn("suppressed 2 duplicate", caplog.output[0])
 
 
 class BuildAliasIndexMalformedInputTest(unittest.TestCase):

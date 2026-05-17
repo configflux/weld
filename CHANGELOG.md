@@ -3,7 +3,227 @@
 
 All notable user-facing changes to this project are recorded here.
 
-## Unreleased
+## v0.20.0 - 2026-05-17
+
+### Added
+
+- C#, Python, and Java are now Tier 1 in the language-support ladder.
+  Tier 1 means the strategy stack passes a measurable promotion
+  contract — canonical kind vocabulary, class-level edge accuracy,
+  framework strategies, deterministic output across reruns, polyrepo
+  federation participation, enrichment description coverage, gold
+  query F1 against pinned corpora, and a per-corpus performance
+  budget — rather than editorial claim. The new `wd tier-check`
+  surface gates promotion and is run automatically against bundled
+  fixtures on every change. C++ stays at Preview pending a Tier 1
+  baseline snapshot.
+  <!-- verify: file=README.md grep="Tier 1" -->
+- Real bundled fixtures exercise the C#, Python, Java, and C++
+  tree-sitter strategy stacks end-to-end inside the test suite,
+  so language regressions surface locally before they reach
+  downstream consumers. Each fixture ships with gold-query F1
+  expectations checked into version control and verified against
+  the discovered graph on every test run.
+  <!-- verify: file=tools/tier_check.py grep=criterion -->
+- New `flask` strategy joins the Python framework lineup. `wd init`
+  auto-detects Flask projects (root-level `app.py`, `src/flask/**`
+  layouts, or any module exposing a `Flask(__name__)` factory) and
+  wires the strategy automatically. Flask routes, blueprints, and
+  view functions surface as graph nodes so `wd query <route>` and
+  `wd context <handler>` work the same way they already do for
+  FastAPI and Django.
+  <!-- verify: file=weld/strategies/flask.py grep=Flask -->
+- FastAPI handler symbols now expose `exposes` edges from each
+  route-decorated function to its mounted path, closing a parity
+  gap with Django's URL-pattern edges. `wd query` on an HTTP path
+  now resolves to the Python function that handles it without
+  needing a `wd context` second hop.
+  <!-- verify: file=weld/strategies/fastapi.py grep=exposes -->
+- Pytest-style `test_*.py` files are now recognised as test peers
+  alongside the existing `*_test.py` convention. The `test_peer`
+  strategy tags both filename shapes with `props.origin = "test"`
+  and emits `tests` edges from the test file to the module under
+  test for `src/<pkg>/` layouts. Projects that follow the pytest
+  convention get the same `wd query` "show me the tests for X"
+  affordance as projects that use the Bazel-style suffix.
+  <!-- verify: file=weld/strategies/test_peer.py grep=test_ -->
+- `wd init` now auto-detects Java tree-sitter sources and wires
+  the `java_tree_sitter` strategy automatically. Maven and Gradle
+  projects with `src/main/java/**` layouts get the same lights-up
+  behaviour C# and Python projects already have, without a manual
+  `.weld/discover.yaml` edit.
+  <!-- verify: file=weld/strategies/_java_tree_sitter.py grep=class -->
+- `wd init` now auto-wires the canonical C++ singleton config files
+  (`.clang-format`, `.clang-tidy`, `WORKSPACE`, `WORKSPACE.bazel`) when
+  they exist at the repository root, so polyglot repos that include
+  these files light up in `wd query` and `wd context` without a manual
+  `.weld/discover.yaml` edit. Nested copies are intentionally not
+  picked up — singletons at the root reflect repository-wide
+  configuration, while nested ones are diagnostic-only.
+  <!-- verify: file=weld/_init_cpp.py grep=has_clang_format -->
+- C++ navigation queries now boost single-include amalgamation files
+  (`single_include/`, `dist/single_header/`, `amalgamated/`, and
+  `*amalgamation*` paths) so the import-surface header outranks
+  same-score modular peers on single-token searches. Discovery stamps
+  `props.amalgamation = true` at file-node minting time, and
+  `wd query <name>` uses the marker as a coarse tiebreak ahead of the
+  score so libraries like `nlohmann/json` surface their canonical
+  include first. Non-C++ ranking is unchanged.
+  <!-- verify: file=weld/ranking.py grep=is_amalgamation_file_node -->
+- Opt-in eager inverted-index aggregation for polyrepo federation.
+  High-QPS callers (MCP servers, batch evaluators) can now build a
+  single in-memory index across every fresh-sidecar child at
+  construction time and serve queries from memory instead of paying
+  per-query SQLite reads. Enable via `FederatedGraph(root,
+  eager_index=True)` or the `WELD_FEDERATION_EAGER=1` environment
+  variable; the default stays lazy so single-shot CLI queries are
+  unaffected. Match sets are byte-identical to the lazy path.
+  <!-- verify: file=weld/federation.py grep=eager_index -->
+- C++ tree-sitter discovery captures type-USE sites via a new
+  `type_uses` query (template_type heads, parameter and return types,
+  base-class clauses, friend declarations), exposed as a sorted and
+  deduped `type_uses` prop on the C++ file node. Headers that only
+  USE a type (rather than defining it or calling its methods) now
+  rank for it in `wd query <Class>` — closing a gap where
+  `include/nlohmann/json.hpp` did not surface for `json_pointer`.
+  <!-- verify: file=weld/languages/cpp.yaml grep=type_uses -->
+- `wd init` now auto-wires C++ build-system globs
+  (`**/CMakeLists.txt`, `**/BUILD.bazel`, `**/BUILD`, `**/meson.build`)
+  through the `cpp_buildsystem_detector` strategy, plus a root
+  `CMakeLists.txt` singleton via `config_file`. C++ repos get build
+  graph nodes referencing their CMake or Bazel files without an
+  explicit `.weld/discover.yaml` edit.
+  <!-- verify: file=weld/_init_cpp.py grep=cpp_buildsystem_source_entries -->
+- New `csharp_package` strategy walks `.cs` files, mints
+  `package:csharp:<dotted>` nodes from each file's primary namespace
+  (file-scoped or first block-scoped), and emits `contains` edges
+  from package to file. C# graphs now follow the same per-namespace
+  anchoring pattern Python and Java already have, so `wd query` and
+  `wd context` on a C# namespace returns its files. Auto-wired by
+  `wd init` whenever any `.cs` files are detected.
+  <!-- verify: file=weld/strategies/csharp_package.py grep=package:csharp -->
+- Markdown headings inside doc nodes are now indexed so multi-token
+  `wd query` searches resolve to the relevant section of a long
+  document rather than only to the document as a whole. Headings
+  are tokenised on the same vocabulary as filenames and symbols, so
+  queries like `wd query "release smoke"` land on the right
+  subsection of a README or runbook.
+  <!-- verify: file=weld/query_index.py grep=heading -->
+- C# discovery emits `contains` edges from each `.csproj` to its
+  member `.cs` files. Federation producers see the project as the
+  natural anchor for its files, so `wd context <csproj>` returns the
+  expected file set and cross-repo imports resolve through the
+  project node rather than synthesising a fallback container.
+  <!-- verify: file=weld/strategies/csharp_msbuild_targets.py grep=contains -->
+- The `package_import_resolver` cross-repo resolver now recognises
+  C# `using` statements alongside Python `import`/`from`. Polyrepo
+  workspaces that mix .NET services and Python libraries resolve
+  import edges across both languages without separate manual
+  resolver registrations.
+  <!-- verify: file=weld/cross_repo/package_import_resolver.py grep=csharp -->
+- Federation display IDs are now rendered with the child-repo prefix
+  in the CLI so it is obvious which repo a result came from in
+  polyrepo workspaces. Existing JSON output continues to carry the
+  full canonical ID; only the human-readable display form changed.
+  <!-- verify: file=weld/_cli_render.py grep=display_id -->
+
+### Changed
+
+- README "Supported languages" now uses a single tier ladder
+  (Tier 1 / Tier 2 / Preview / Experimental / Not supported)
+  in place of six separate status vocabularies. Tier movement is
+  harness-gated against a measurable contract (kind correctness,
+  class-level edge accuracy, framework strategies, determinism,
+  federation participation, enrichment coverage, query F1, and a
+  performance budget) rather than editorial claim. ROS2 moves to a
+  Frameworks sub-table (host language: C++ / Python). TypeScript
+  and JavaScript split into separate rows.
+  <!-- verify: file=README.md grep="tier-check harness" -->
+- PyPI-facing `weld/README.md` gains a "Language support" section
+  that lifts the tier-ladder paragraph, language table, and
+  frameworks sub-table from the root README, so PyPI readers can
+  answer "does weld support my language?" without leaving the page.
+  The existing "Platform coverage" link is renamed to "AI client
+  platform coverage" so it is unambiguously about AI clients
+  (Claude Code, Codex, Cursor, Copilot, Gemini, OpenCode, generic
+  MCP), not programming languages.
+  <!-- verify: file=weld/README.md grep="Language support" -->
+- Test peer files now carry `props.origin = "test"` and the closure
+  layer extends the same provenance to test-only packages, so
+  `wd query` can filter test code in or out of result sets without
+  reparsing filenames. Production callers that want non-test results
+  only can rely on the prop directly.
+  <!-- verify: file=weld/strategies/test_peer.py grep=origin -->
+- Per-discover parse cache for tree-sitter grammars: the grammar
+  load and parsed tree for each file are now reused across the
+  multiple queries that run during a single discover pass, instead
+  of being rebuilt per query. The cache lives for the duration of
+  one `wd discover` call and is discarded between runs; output is
+  byte-identical to the pre-cache path. Discovery on large C# and
+  C++ repos sees materially less CPU time without behavioural drift.
+  <!-- verify: file=weld/strategies/_ts_parse.py grep=parse_cache -->
+
+### Fixed
+
+- C# external base-class references now resolve to a single
+  canonical FQN node rather than minting one symbol per
+  partial-class declaration. Inheritance chains across files of the
+  same partial class collapse to the expected target instead of
+  scattering across one-off siblings.
+  <!-- verify: file=weld/strategies/_csharp_inheritance.py grep=canonical -->
+- C# package nodes are minted from `.csproj` for federation
+  producers even when no `.cs` file inside the project triggered a
+  namespace mint, so polyrepo workspaces get a consistent package
+  anchor on the child side regardless of which file the federation
+  consumer asks for first.
+  <!-- verify: file=weld/strategies/csharp_msbuild_targets.py grep=csproj -->
+- C# `inherits` and `implements` edges originate at the class
+  symbol node rather than at the file node, so multi-class files
+  no longer collapse distinct inheritance chains together and
+  `wd context symbol:csharp:<class>` returns the correct
+  inheritance neighbours per class.
+  <!-- verify: file=weld/strategies/_csharp_inheritance.py grep="symbol:" -->
+- C# canonical kinds are now singular and suffix-strip-free
+  (`controller` rather than `controllers`, `dbcontext` rather than
+  `dbcontexts`). The tier-check kind vocabulary recognises both
+  the legacy plural and the new singular form during the
+  transition, but newly emitted graphs use the canonical singular
+  consistently.
+  <!-- verify: file=weld/strategies/_csharp_tree_sitter.py grep=kind -->
+- C# top-level statement files (`Program.cs` with no namespace
+  declaration) are now tagged with `entrypoint` role on the file
+  anchor, so the file-anchor-symmetry rule's entrypoint allow-list
+  recognises them and the runtime classification matches the
+  already-emitted `entrypoint:` and `boundary:` runtime nodes.
+  <!-- verify: file=weld/strategies/_csharp_tree_sitter.py grep=entrypoint -->
+- External package IDs minted by graph closure for unresolved
+  imports now route through the canonical `package_id` helper so
+  they agree case-for-case with the strategy-side minters. Mixed-case
+  C# imports (e.g. `System` next to `system`) no longer produce
+  case-variant duplicate `package:csharp:*` nodes; a discovery pass on
+  a real C# repo found around 130 such pairs before this fix. Symbol
+  IDs continue to preserve case because most languages legitimately
+  distinguish members like `SIZE` and `Size`.
+  <!-- verify: file=weld/graph_closure.py grep=_ensure_package_node -->
+- Canonical-id-uniqueness rule preserves case for `symbol:*` IDs,
+  so case-different members on the same enclosing type (`SIZE`
+  constant vs `Size` property in C#, Java, or C++) are no longer
+  collapsed into a spurious uniqueness violation. Package IDs still
+  casefold via `canonical_slug`; the split keeps namespace
+  deduplication honest without losing legitimate member
+  distinctions.
+  <!-- verify: file=weld/_graph_closure_invariants.py grep=canonical_slug_case_sensitive -->
+- File-node IDs preserve case on case-sensitive filesystems, so
+  `Foo.cs` and `foo.cs` (legitimately distinct on Linux) no longer
+  collapse to a single node. Discovery on Linux build hosts now
+  matches the source-tree shape rather than the Windows-case-fold
+  shape the previous implementation imposed.
+  <!-- verify: file=weld/_node_ids.py grep=canonical_slug_case_sensitive -->
+- `wd query` now promotes exact tree-sitter symbol matches above
+  prose mentions, so a query that is a literal symbol name surfaces
+  the symbol node ahead of documentation or other files that merely
+  mention the name in passing.
+  <!-- verify: file=weld/ranking.py grep=exact_symbol_match_rank -->
 
 ## v0.19.1 - 2026-05-12
 

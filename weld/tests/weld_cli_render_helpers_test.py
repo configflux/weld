@@ -62,6 +62,47 @@ class RendererPurityTest(unittest.TestCase):
         })
         self.assertIn("no matches", text)
 
+    def test_render_query_federated_uses_display_id_separator(self) -> None:
+        """Regression: federated matches must render with a visible separator.
+
+        Federation prefixes child-local IDs with a ``\\x1f`` UNIT_SEPARATOR
+        for the canonical ``id`` field and exposes the human-readable form
+        via ``display_id`` (``child::id``). The text renderer must prefer
+        ``display_id`` so the user does not see the invisible control
+        character glue (which renders as e.g. ``sharexsymbol:csharp:..``).
+        """
+        canonical = "sharex\x1fsymbol:csharp:ShareX.Foo"
+        display = "sharex::symbol:csharp:ShareX.Foo"
+        text = render_query({
+            "query": "ShareX",
+            "matches": [{
+                "id": canonical,
+                "display_id": display,
+                "type": "symbol",
+            }],
+            "neighbors": [{
+                "id": canonical,
+                "display_id": display,
+                "type": "symbol",
+            }],
+            "edges": [],
+        })
+        self.assertIn(display, text)
+        self.assertNotIn(canonical, text)
+        # The invisible control char must not appear in user-facing output.
+        self.assertNotIn("\x1f", text)
+
+    def test_render_query_non_federated_unchanged(self) -> None:
+        """Single-repo payloads have no display_id; render must use id."""
+        text = render_query({
+            "query": "alpha",
+            "matches": [{"id": "entity:Foo", "type": "entity"}],
+            "neighbors": [{"id": "entity:Bar", "type": "entity"}],
+            "edges": [],
+        })
+        self.assertIn("entity:Foo", text)
+        self.assertIn("entity:Bar", text)
+
     def test_render_find_is_tabular(self) -> None:
         text = render_find({
             "query": "install",

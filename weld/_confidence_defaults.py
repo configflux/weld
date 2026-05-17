@@ -54,6 +54,8 @@ _DEFINITE_STRATEGIES: tuple[str, ...] = (
     "_java_tree_sitter",
     "_rust_tree_sitter",
 
+    "csharp_package",
+
     # Build-system label parsers.
     "bazel",
     "csharp_project",

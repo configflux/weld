@@ -206,9 +206,10 @@ class EdgeContractTest(unittest.TestCase):
             edge = next(e for e in result.edges if e["type"] == "contains")
             self.assertEqual(edge["from"], "test-suite:Suite.FooTests")
             # ``file_id`` canonicalises path segments via
-            # ``canonical_slug``, which lowercases ASCII identifiers
-            # for case-insensitive ID stability.
-            self.assertEqual(edge["to"], "file:footests")
+            # ``canonical_slug_case_sensitive`` (vjxi.6), preserving the
+            # on-disk case so case-variant files on POSIX filesystems
+            # mint distinct IDs.
+            self.assertEqual(edge["to"], "file:FooTests")
             self.assertEqual(edge["props"]["confidence"], "definite")
             self.assertEqual(edge["props"]["test_framework"], "xunit")
             self.assertEqual(

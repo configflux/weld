@@ -45,18 +45,27 @@ import re
 # definitions like ``void Foo::bar()`` still match when the export is
 # ``Foo::bar`` (we strip the qualifier separately).
 #
-# Tail group ``(?:\([^;{]*\))*`` permits attribute parentheses like
-# ``[[noreturn]]`` between the name and the parameter list; modern code
-# rarely uses it but the cost of allowing it is zero.
+# The cv-qualifier sub-pattern uses ``\s+`` (mandatory whitespace
+# between identifiers) rather than ``\s*`` so the engine cannot split a
+# single word into multiple consecutive identifier matches. With
+# ``\s*`` the alternation ``cpp framework`` could be consumed as
+# ``cpp`` + zero-whitespace + ``framework`` *or* as ``cpp framework``
+# in a single match -- each split produces a different backtracking
+# trace and the engine explores all 2^N permutations when the trailing
+# ``\s*\{`` ultimately fails to match (catastrophic backtracking on
+# comment text like ``// gtest TEST() macro form so a future cpp
+# framework``; bd bou8). ``\s+`` removes the ambiguity at zero cost --
+# real C++ always separates cv-qualifiers from the closing ``)`` and
+# from each other with at least one whitespace character.
 _FUNCTION_DEF_BODY_TAIL = (
     r"\s*\([^;{}]*\)"          # primary parameter list
-    r"(?:\s*[A-Za-z_][A-Za-z0-9_]*)*"  # cv-qualifiers / specifiers
+    r"(?:\s+[A-Za-z_][A-Za-z0-9_]*)*"  # cv-qualifiers / specifiers
     r"(?:\s*=\s*(?:default|delete|0))?"  # = default / = delete / pure virtual
     r"\s*\{"                   # opening brace begins the body
 )
 _FUNCTION_DECL_TAIL = (
     r"\s*\([^;{}]*\)"          # parameter list
-    r"(?:\s*[A-Za-z_][A-Za-z0-9_]*)*"  # cv-qualifiers / specifiers
+    r"(?:\s+[A-Za-z_][A-Za-z0-9_]*)*"  # cv-qualifiers / specifiers
     r"(?:\s*=\s*(?:default|delete|0))?"
     r"\s*;"                    # semicolon ends the declaration
 )

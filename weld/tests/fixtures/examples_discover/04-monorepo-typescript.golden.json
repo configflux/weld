@@ -238,6 +238,11 @@
         "confidence": "definite",
         "doc_kind": "adr",
         "file": "docs/adr/0001-monorepo-layout.md",
+        "headings": [
+          "Consequences",
+          "Context",
+          "Decision"
+        ],
         "roles": [
           "doc"
         ],
@@ -650,12 +655,9 @@
       },
       "type": "file"
     },
-    "file:ui/src/button": {
+    "file:ui/src/Button": {
       "label": "Button",
       "props": {
-        "aliases": [
-          "file:ui/src/Button"
-        ],
         "authority": "derived",
         "confidence": "inferred",
         "exports": [
@@ -672,12 +674,9 @@
       },
       "type": "file"
     },
-    "file:ui/src/card": {
+    "file:ui/src/Card": {
       "label": "Card",
       "props": {
-        "aliases": [
-          "file:ui/src/Card"
-        ],
         "authority": "derived",
         "confidence": "inferred",
         "exports": [
@@ -694,12 +693,9 @@
       },
       "type": "file"
     },
-    "file:web/src/app": {
+    "file:web/src/App": {
       "label": "App",
       "props": {
-        "aliases": [
-          "file:web/src/App"
-        ],
         "authority": "derived",
         "confidence": "inferred",
         "exports": [
@@ -741,6 +737,12 @@
         "confidence": "definite",
         "doc_kind": "guide",
         "file": "docs/architecture.md",
+        "headings": [
+          "Components",
+          "Cross-Cutting Concerns",
+          "Runtime Topology",
+          "Why This Shape"
+        ],
         "roles": [
           "doc"
         ],

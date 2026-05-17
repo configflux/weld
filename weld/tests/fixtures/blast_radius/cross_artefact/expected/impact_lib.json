@@ -9,14 +9,14 @@
       {
         "file": "app/lib_test.py",
         "hop": 1,
-        "id": "symbol:py:app.lib_test:GreetTest.test_greet",
-        "type": "symbol"
+        "id": "file:app/lib_test",
+        "type": "file"
       },
       {
         "file": "app/lib_test.py",
-        "hop": 2,
-        "id": "file:app/lib_test",
-        "type": "file"
+        "hop": 1,
+        "id": "symbol:py:app.lib_test:GreetTest.test_greet",
+        "type": "symbol"
       },
       {
         "file": "app/BUILD.bazel",
@@ -119,6 +119,12 @@
         "test_edges": false
       },
       "fastapi": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "flask": {
         "deps_edges": false,
         "nodes_emitted": false,
         "srcs_edges": false,
@@ -333,6 +339,26 @@
     },
     {
       "hop": 1,
+      "id": "file:app/lib_test",
+      "label": "lib_test",
+      "props": {
+        "aliases": [
+          "file:tests/lib_test"
+        ],
+        "authority": "derived",
+        "confidence": "definite",
+        "file": "app/lib_test.py",
+        "kind": "test",
+        "origin": "project",
+        "roles": [
+          "test"
+        ],
+        "source_strategy": "test_peer"
+      },
+      "type": "file"
+    },
+    {
+      "hop": 1,
       "id": "file:app/main",
       "label": "main",
       "props": {
@@ -377,6 +403,7 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "app/lib_test.py",
+        "kind": "method",
         "language": "python",
         "line": 8,
         "module": "app.lib_test",
@@ -397,6 +424,7 @@
         "authority": "derived",
         "confidence": "definite",
         "file": "app/main.py",
+        "kind": "function",
         "language": "python",
         "line": 5,
         "module": "app.main",
@@ -419,6 +447,15 @@
       },
       "to": "file:app/lib",
       "type": "contains"
+    },
+    {
+      "from": "file:app/lib_test",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "test_peer"
+      },
+      "to": "file:app/lib",
+      "type": "tests"
     },
     {
       "from": "file:app/main",
@@ -520,6 +557,24 @@
       "type": "tests"
     },
     {
+      "from": "pkg:app",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "python_module"
+      },
+      "to": "file:app/lib_test",
+      "type": "contains"
+    },
+    {
+      "from": "test-target://app:lib_test",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "bazel"
+      },
+      "to": "file:app/lib_test",
+      "type": "contains"
+    },
+    {
       "from": "build-target://app:main",
       "props": {
         "confidence": "definite",
@@ -572,24 +627,6 @@
       },
       "to": "dockerfile:Dockerfile",
       "type": "depends_on"
-    },
-    {
-      "from": "pkg:app",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "python_module"
-      },
-      "to": "file:app/lib_test",
-      "type": "contains"
-    },
-    {
-      "from": "test-target://app:lib_test",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "bazel"
-      },
-      "to": "file:app/lib_test",
-      "type": "contains"
     },
     {
       "from": "compose:default",
@@ -648,25 +685,6 @@
         "source_strategy": "dockerfile"
       },
       "type": "dockerfile"
-    },
-    {
-      "hop": 2,
-      "id": "file:app/lib_test",
-      "label": "lib_test",
-      "props": {
-        "aliases": [
-          "file:tests/lib_test"
-        ],
-        "authority": "derived",
-        "confidence": "definite",
-        "file": "app/lib_test.py",
-        "kind": "test",
-        "roles": [
-          "test"
-        ],
-        "source_strategy": "test_peer"
-      },
-      "type": "file"
     },
     {
       "hop": 2,

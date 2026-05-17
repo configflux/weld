@@ -1,40 +1,39 @@
 """C# inheritance / implementation edge emission (ADR 0056 base-list).
 
-Extracted from :mod:`weld.strategies._csharp_tree_sitter` to keep that
-module under the 400-line cap. Three responsibilities:
+Three responsibilities:
 
-1. :func:`extract_base_pairs` -- regex-based scan of a single source
-   file. Returns the list of ``(namespace, derived_class, base_name)``
-   triples declared in the file, one tuple per base entry in every
-   ``class : ...``/``interface : ...``/``struct : ...``/``record : ...``
-   ``base_list``.
+1. :func:`extract_base_pairs` -- regex scan returning
+   ``(namespace, derived, base)`` triples for every base entry in
+   every ``class``/``interface``/``struct``/``record`` ``base_list``.
 
-2. :func:`split_inherits_implements` -- C# naming-convention heuristic.
-   Bases whose final identifier matches ``^I[A-Z]`` are classified as
-   ``implements`` (interface implementation); the rest default to
-   ``inherits`` (class/struct/record inheritance). Per ADR 0050 every
-   emitted edge ships with ``confidence: "inferred"`` because the
-   heuristic is naming-only and cannot distinguish e.g. an
-   I-prefixed concrete class from a real interface.
+2. :func:`split_inherits_implements` -- C# naming-convention heuristic
+   (final identifier matches ``^I[A-Z]`` -> ``implements``; else
+   ``inherits``). Per ADR 0050 every edge ships ``confidence: inferred``.
 
-3. :func:`emit_base_edges` -- walks the extracted pairs and the
-   discovered nodes dict, resolving each base to a project ``file:``
-   id when a same-named class export exists, or minting a placeholder
-   ``symbol:csharp:<namespace>.<base>`` node otherwise. Emits one
-   ``inherits`` or ``implements`` edge per pair.
+3. :func:`emit_base_edges` -- resolves each base to a project ``file:``
+   id when known, else delegates to
+   :mod:`._csharp_inheritance_resolve` to mint a canonical external
+   placeholder (one per resolved FQN).
 
-The helper intentionally does not parse expressions or method bodies.
+Edge ``from`` resolution in :func:`_resolve_from_id`: canonical
+partial-class symbol (ADR 0056 Wave 3 merger), per-file class symbol
+(ADR 0064 criterion 2), or *file_node_id* as a legacy fallback.
+
 Generic-parameter tails (``IList<int>``) and qualified prefixes
 (``System.IDisposable``) are stripped to their final short name for
-both the heuristic and the resolution key, mirroring the behaviour of
-the tree-sitter ``bases`` capture in ``csharp.yaml``.
+both the heuristic and the resolution key.
 """
 
 from __future__ import annotations
 
 import re
 
+from weld.strategies._csharp_inheritance_resolve import (
+    resolve_external_base_target,
+)
+from weld.strategies._csharp_partial_classes import partial_class_symbol_id
 from weld.strategies._csharp_syntax import namespace_at, namespace_spans
+from weld.strategies._ts_call_graph import ts_module_from_path
 
 #: Match the *declaring* construct (``class``/``interface``/``struct``/
 #: ``record``) that opens a ``base_list``. Captures: (1) the declaring
@@ -77,10 +76,7 @@ _INTERFACE_RE = re.compile(r"^I[A-Z]")
 def _strip_comments(source_text: str) -> str:
     """Return *source_text* with line and block comments blanked out."""
     def _blank(match: re.Match) -> str:
-        return "".join(
-            "\n" if ch == "\n" else " "
-            for ch in match.group(0)
-        )
+        return "".join("\n" if ch == "\n" else " " for ch in match.group(0))
     return _COMMENT_RE.sub(_blank, source_text)
 
 
@@ -100,18 +96,23 @@ def record_base_pairs(
     *,
     file_node_id: str,
     source_text: str,
+    rel_path: str = "",
+    imports: list[str] | None = None,
 ) -> None:
     """Append every base pair from *source_text* to *inheritance_records*.
 
-    Per-file shim around :func:`extract_base_pairs`. Each appended
-    record is a ``(file_node_id, namespace, derived_class, base_name)``
-    tuple consumed by :func:`weld.strategies._csharp_tree_sitter.finalise`
-    once every file has been visited so the cross-file project file
-    index is complete.
+    Each record is a
+    ``(file_node_id, rel_path, namespace, derived, base, imports)``
+    tuple consumed by :func:`finalise` after the file loop completes.
+    *rel_path* feeds :func:`_resolve_from_id` (per-file class symbol);
+    *imports* feeds the external-base resolver so it can normalise
+    placeholder ids to one canonical node per resolved FQN.
+    ``None`` *imports* is treated as an empty list.
     """
+    file_imports = list(imports or [])
     for namespace, derived, base in extract_base_pairs(source_text):
         inheritance_records.append(
-            (file_node_id, namespace, derived, base)
+            (file_node_id, rel_path, namespace, derived, base, file_imports)
         )
 
 
@@ -149,9 +150,8 @@ def split_inherits_implements(base_name: str) -> str:
     """Return ``"implements"`` for interface-named bases, else ``"inherits"``.
 
     The decision uses only the final identifier of a dotted name
-    (``System.IDisposable`` -> ``IDisposable`` -> matches ``^I[A-Z]``).
-    The heuristic is naming-convention-based and explicitly marked
-    ``inferred`` on the emitted edge per ADR 0050.
+    (``System.IDisposable`` -> matches ``^I[A-Z]``). The naming-only
+    heuristic ships with ``inferred`` confidence per ADR 0050.
     """
     short = _short_name(base_name)
     return "implements" if _INTERFACE_RE.match(short) else "inherits"
@@ -167,19 +167,26 @@ def emit_base_edges(
     base_name: str,
     source_strategy: str,
     project_file_index: dict[str, str] | None = None,
+    from_id: str | None = None,
+    imports: list[str] | None = None,
+    package_references: frozenset[str] | None = None,
+    project_namespace_roots: frozenset[str] | None = None,
 ) -> None:
     """Emit one ``inherits`` or ``implements`` edge for a base entry.
 
     Resolves the base to a project ``file:`` id when *project_file_index*
-    contains a same-named class symbol (case-sensitive). Otherwise
-    mints a placeholder ``symbol:csharp:<namespace>.<base>`` node so
-    the edge has a stable target the graph linter can attribute back
-    to the C# enricher. Both directions of the target carry
-    ``confidence: inferred`` per ADR 0050.
+    contains a same-named class symbol; otherwise delegates to
+    :func:`._csharp_inheritance_resolve.resolve_external_base_target`,
+    which uses *imports* (file using-directives), *package_references*,
+    and *project_namespace_roots* to mint one canonical placeholder per
+    resolved FQN. Edge ships ADR 0050 ``confidence: inferred``.
 
-    *namespace* / *derived_class* are unused by the edge body itself
-    but kept in the signature so the caller can plug additional
-    debug metadata in without changing the call shape.
+    *from_id* defaults to *file_node_id* for legacy direct callers; the
+    production :func:`finalise` pass picks the class-level symbol id via
+    :func:`_resolve_from_id`. Omitting *imports* /
+    *package_references* / *project_namespace_roots* is supported --
+    the resolver treats it as "no external usings visible" and keeps
+    the legacy consuming-namespace placeholder shape.
     """
     edge_type = split_inherits_implements(base_name)
     target_id = _resolve_base_target(
@@ -187,9 +194,12 @@ def emit_base_edges(
         namespace=namespace,
         base_name=base_name,
         project_file_index=project_file_index,
+        imports=imports,
+        package_references=package_references,
+        project_namespace_roots=project_namespace_roots,
     )
     edges.append({
-        "from": file_node_id,
+        "from": from_id if from_id is not None else file_node_id,
         "to": target_id,
         "type": edge_type,
         "props": {
@@ -207,47 +217,28 @@ def _resolve_base_target(
     namespace: str,
     base_name: str,
     project_file_index: dict[str, str] | None,
+    imports: list[str] | None,
+    package_references: frozenset[str] | None,
+    project_namespace_roots: frozenset[str] | None,
 ) -> str:
     """Return the edge target id for *base_name*.
 
-    Resolution order:
-
-    1. Project file index by short name -- returns the file node id
-       when a class export with the same short name lives in the
-       project tree.
-    2. External placeholder ``symbol:csharp:<qualified>``. When
-       *base_name* is already dotted (``System.IDisposable``) we keep
-       the declared prefix; bare names inherit the file's
-       *namespace* so the placeholder collides with later symbol
-       enrichment that knows its own namespace context.
+    (1) Project file index by short name when the same-named class
+    lives in the project tree. (2) Otherwise delegate to
+    :mod:`._csharp_inheritance_resolve`, which mints the canonical
+    external placeholder node (one per resolved FQN).
     """
     short = _short_name(base_name)
     if project_file_index and short in project_file_index:
         return project_file_index[short]
-    if "." in base_name:
-        target_namespace = base_name.rsplit(".", 1)[0]
-    else:
-        target_namespace = namespace
-    qualified = f"{target_namespace}.{short}" if target_namespace else short
-    target_id = f"symbol:csharp:{qualified}"
-    nodes.setdefault(
-        target_id,
-        {
-            "type": "symbol",
-            "label": short,
-            "props": {
-                "name": short,
-                "namespace": target_namespace,
-                "kind": "base_reference",
-                "language": "csharp",
-                "authority": "derived",
-                "confidence": "inferred",
-                "origin": "external",
-                "roles": ["implementation"],
-            },
-        },
+    return resolve_external_base_target(
+        nodes,
+        namespace=namespace,
+        base_name=base_name,
+        imports=imports,
+        package_references=package_references,
+        project_namespace_roots=project_namespace_roots,
     )
-    return target_id
 
 
 def build_project_file_index(nodes: dict[str, dict]) -> dict[str, str]:
@@ -280,12 +271,11 @@ def finalise(
 ) -> None:
     """Walk ``inheritance_records`` and emit one edge per recorded pair.
 
-    Builds the project file index once from the discovered file nodes,
-    then resolves each ``(file_node_id, namespace, derived, base)``
-    record to an ``inherits`` or ``implements`` edge. A ``None``
-    *enricher_caches* (non-C# language path) is a no-op so the
-    dispatcher in :mod:`weld.strategies._csharp_tree_sitter` can call
-    this unconditionally.
+    Builds the project file index once, then resolves each record to
+    an ``inherits``/``implements`` edge. Edge ``from`` follows the
+    canonical-partial / per-file-symbol / file-node ladder in
+    :func:`_resolve_from_id`. A ``None`` *enricher_caches* (non-C#
+    language path) is a no-op.
     """
     if not enricher_caches:
         return
@@ -293,7 +283,24 @@ def finalise(
     if not records:
         return
     project_file_index = build_project_file_index(nodes)
-    for file_node_id, namespace, derived, base in records:
+    partial_class_state = enricher_caches.get("partial_class_state") or {}
+    package_references = enricher_caches.get("package_references")
+    project_namespace_roots = enricher_caches.get("project_namespace_roots")
+    for record in records:
+        # Tolerate the historical 4- and 5-tuple shapes (no imports, no
+        # rel_path) so legacy tests calling :func:`record_base_pairs`
+        # with older signatures keep producing valid records.
+        file_node_id, rel_path, namespace, derived, base, imports = (
+            _unpack_record(record)
+        )
+        from_id = _resolve_from_id(
+            nodes,
+            partial_class_state=partial_class_state,
+            namespace=namespace,
+            derived=derived,
+            rel_path=rel_path,
+            file_node_id=file_node_id,
+        )
         emit_base_edges(
             nodes,
             edges,
@@ -303,7 +310,74 @@ def finalise(
             base_name=base,
             source_strategy=source_strategy,
             project_file_index=project_file_index,
+            from_id=from_id,
+            imports=imports,
+            package_references=package_references,
+            project_namespace_roots=project_namespace_roots,
         )
+
+
+def _unpack_record(record: tuple) -> tuple:
+    """Normalise legacy 4/5-tuple records to the 6-tuple shape
+    ``(file_node_id, rel_path, namespace, derived, base, imports)``."""
+    if len(record) == 6:
+        return record
+    if len(record) == 5:
+        f, r, n, d, b = record
+        return (f, r, n, d, b, [])
+    f, n, d, b = record
+    return (f, "", n, d, b, [])
+
+
+def _resolve_from_id(
+    nodes: dict[str, dict],
+    *,
+    partial_class_state: dict,
+    namespace: str,
+    derived: str,
+    rel_path: str,
+    file_node_id: str,
+) -> str:
+    """Return the edge ``from`` id for an inheritance/implementation edge.
+
+    Resolution order:
+
+    1. Canonical partial-class symbol
+       (``symbol:csharp:<namespace>.<derived>``) when
+       ``(namespace, derived)`` is a recorded partial-class key AND
+       the merged node exists in *nodes* (the merger runs before this
+       pass per :func:`weld.strategies._csharp_tree_sitter.finalise`).
+       Consumers query inheritance from the canonical id, so partial
+       classes must originate at that node not the per-file alias.
+    2. Per-file class symbol ``symbol:csharp:<module_path>:<derived>``
+       when the discovery loop promoted the class definition
+       (ADR 0064 criterion 2 -- keeps multi-class files unambiguous).
+    3. *file_node_id* fallback for legacy records or unpromoted classes
+       so the graph stays valid.
+    """
+    if (namespace, derived) in partial_class_state:
+        canonical = partial_class_symbol_id(namespace, derived)
+        if canonical in nodes:
+            return canonical
+    derived_symbol_id = _derived_class_symbol_id(rel_path, derived)
+    if derived_symbol_id and derived_symbol_id in nodes:
+        return derived_symbol_id
+    return file_node_id
+
+
+def _derived_class_symbol_id(rel_path: str, derived_class: str) -> str:
+    """Return ``symbol:csharp:<module_path>:<derived_class>`` or ``""``.
+
+    Mirrors :func:`weld.strategies._ts_definitions.promote_definition_symbols`
+    which mints the same id shape for every C# class. Empty *rel_path*
+    returns the empty string so callers know to fall back.
+    """
+    if not rel_path or not derived_class:
+        return ""
+    module_path = ts_module_from_path(rel_path)
+    if not module_path:
+        return ""
+    return f"symbol:csharp:{module_path}:{derived_class}"
 
 
 __all__ = [

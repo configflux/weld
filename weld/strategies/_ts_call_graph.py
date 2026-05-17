@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from weld.strategies._language_origin import origin_for_callgraph_sentinel
-from weld.strategies._ts_parse import load_ts_language
+from weld.strategies._ts_parse import ParseCache, ParseEntry, load_ts_language
 
 
 def ts_module_from_path(rel_path: str) -> str:
@@ -42,8 +42,28 @@ def extract_call_edges(
     rel_path: str,
     language: str,
     queries: dict[str, str],
+    *,
+    cache: ParseCache | None = None,
 ) -> tuple[dict[str, dict], list[dict]]:
     """Run the ``calls`` query and emit symbol nodes + ``calls`` edges.
+
+    Args:
+        file_path: Absolute path to the source file.
+        rel_path: Project-root-relative path used in symbol ids and
+            ``provenance.file``.
+        language: Language name matching a tree-sitter grammar.
+        queries: Dict of query name -> S-expression string (from
+            ``weld/languages/<language>.yaml``).
+        cache: Optional :class:`weld.strategies._ts_parse.ParseCache`
+            populated by an earlier ``parse_file_symbols`` call. When
+            supplied and the cache holds an entry for
+            ``(file_path, mtime, language)``, the cached
+            :class:`tree_sitter.Tree` and source bytes are reused --
+            avoiding a duplicate parse on hot path 2 of the C# discover
+            cProfile baseline. On miss the helper still parses (and
+            stores the entry so a follow-up consumer hits the cache).
+            Omitting ``cache`` preserves the original no-cache
+            behaviour for callers that have not threaded one through.
 
     Returns ``(nodes, edges)``. ``nodes`` and ``edges`` may be empty if
     the language file has no ``calls`` query or the parser fails.
@@ -56,22 +76,28 @@ def extract_call_edges(
         return nodes, edges
 
     try:
-        ts_lang = load_ts_language(language)
-        ts_language_obj = tree_sitter.Language(ts_lang)
-        parser = tree_sitter.Parser(ts_language_obj)
-        source_bytes = file_path.read_bytes()
-        tree = parser.parse(source_bytes)
+        ts_language_obj, tree = _resolve_parse(
+            file_path, language, cache, tree_sitter,
+        )
     except Exception:
         return nodes, edges
 
     module_path = ts_module_from_path(rel_path)
 
-    # Definitions: capture every function/method def name as a symbol node.
-    def_query_str = queries.get("exports", "")
+    # Definitions: capture implementation definitions as symbol nodes.
     definitions: list[str] = []
-    if def_query_str:
+    for query_name in _definition_query_names(language):
+        def_query_str = queries.get(query_name, "")
+        if not def_query_str:
+            continue
         try:
-            dq = tree_sitter.Query(ts_language_obj, def_query_str)
+            if cache is not None:
+                dq = cache.get_or_compile_query(
+                    language, query_name, def_query_str,
+                    ts_language_obj, tree_sitter,
+                )
+            else:
+                dq = tree_sitter.Query(ts_language_obj, def_query_str)
             dc = tree_sitter.QueryCursor(dq)
             for _pi, caps in dc.matches(tree.root_node):
                 for n in caps.get("name", []):
@@ -115,6 +141,13 @@ def extract_call_edges(
         "qualname": "<file>",
         "language": language,
         "scope": "module",
+        # ADR 0064 criterion 2: every symbol carries a documented
+        # ``kind``. The file-level caller is a *synthetic* weld
+        # modelling node (not a real source-code symbol), so its kind
+        # is the synthetic ``"file"`` -- declared in
+        # ``tools/tier_check_kinds._SYNTHETIC_KINDS`` so the
+        # criterion-1 vocabulary tally filters it out.
+        "kind": "file",
         "source_strategy": "tree_sitter",
         "authority": "derived",
         "confidence": "inferred",
@@ -135,7 +168,13 @@ def extract_call_edges(
 
     # Calls
     try:
-        cq = tree_sitter.Query(ts_language_obj, queries["calls"])
+        if cache is not None:
+            cq = cache.get_or_compile_query(
+                language, "calls", queries["calls"],
+                ts_language_obj, tree_sitter,
+            )
+        else:
+            cq = tree_sitter.Query(ts_language_obj, queries["calls"])
         cc = tree_sitter.QueryCursor(cq)
         seen: set[str] = set()
         for _pi, caps in cc.matches(tree.root_node):
@@ -148,6 +187,15 @@ def extract_call_edges(
                 sentinel_props: dict = {
                     "qualname": callee,
                     "language": language,
+                    # ADR 0064 criterion 2: every symbol carries a
+                    # ``kind``. Unresolved call-site sentinels are
+                    # synthetic weld modelling -- they may later be
+                    # rewritten by layer-2 resolvers (C++ headers) or
+                    # the C# inheritance pass. ``"unresolved"`` is
+                    # listed in ``tier_check_kinds._SYNTHETIC_KINDS``
+                    # so it does not count toward the criterion-1
+                    # vocabulary tally.
+                    "kind": "unresolved",
                     "resolved": False,
                     "source_strategy": "tree_sitter",
                     "authority": "derived",
@@ -195,6 +243,50 @@ def extract_call_edges(
     return nodes, edges
 
 
+def _resolve_parse(
+    file_path: Path,
+    language: str,
+    cache: ParseCache | None,
+    tree_sitter_mod,
+):
+    """Return ``(language_obj, tree)`` for ``file_path``, reusing cache.
+
+    Hot path 2 elimination: when ``cache`` is supplied and already holds
+    a :class:`ParseEntry` for ``(file_path, mtime, language)``, return
+    the cached tree directly. Otherwise load the grammar (memoized via
+    ``cache`` when supplied), parse the file, and -- if a cache was
+    supplied -- store the new entry so subsequent callers also hit it.
+    Raises whatever ``tree_sitter`` / ``read_bytes`` raises; the caller
+    swallows in its existing ``except Exception``.
+    """
+    if cache is not None:
+        entry = cache.get_parse(file_path, language)
+        if entry is not None:
+            return entry.language_obj, entry.tree
+        language_obj, parser = cache.get_or_load_language(
+            language, load_ts_language, tree_sitter_mod,
+        )
+        source_bytes = file_path.read_bytes()
+        tree = parser.parse(source_bytes)
+        cache.store_parse(
+            file_path, language,
+            ParseEntry(
+                tree=tree,
+                source_bytes=source_bytes,
+                language_obj=language_obj,
+                parser=parser,
+            ),
+        )
+        return language_obj, tree
+
+    ts_lang = load_ts_language(language)
+    language_obj = tree_sitter_mod.Language(ts_lang)
+    parser = tree_sitter_mod.Parser(language_obj)
+    source_bytes = file_path.read_bytes()
+    tree = parser.parse(source_bytes)
+    return language_obj, tree
+
+
 def _provenance(rel_path: str, node) -> dict:
     """Return deterministic file/line provenance for a captured node."""
     provenance = {"file": rel_path}
@@ -208,3 +300,15 @@ def _provenance(rel_path: str, node) -> dict:
     if row is not None:
         provenance["line"] = int(row) + 1
     return provenance
+
+
+def _definition_query_names(language: str) -> tuple[str, ...]:
+    if language == "csharp":
+        # ADR 0064 § 1: C# type-like declarations are split per
+        # decl-kind in ``weld/languages/csharp.yaml`` so the call-graph
+        # layer must iterate every bucket -- otherwise interface,
+        # struct, and record declarations never mint definition symbols
+        # and ``calls`` edges into them fall back to unresolved
+        # sentinels.
+        return ("classes", "interfaces", "structs", "records", "methods", "properties")
+    return ("exports",)

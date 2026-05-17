@@ -70,12 +70,22 @@ class CSharpInheritanceTreesitterTest(unittest.TestCase):
         implements = [e for e in result.edges if e["type"] == "implements"]
         self.assertEqual(len(inherits), 1, result.edges)
         self.assertEqual(len(implements), 1, result.edges)
-        derived_id = next(
-            nid for nid, n in result.nodes.items()
-            if n["type"] == "file" and n["props"].get("file") == "src/Foo.cs"
-        )
-        self.assertEqual(inherits[0]["from"], derived_id)
-        self.assertEqual(implements[0]["from"], derived_id)
+        # ADR 0064 criterion 2: the edge ``from`` is the class-level
+        # promoted symbol id, not the file node. ``ts_module_from_path``
+        # maps ``src/Foo.cs`` -> ``src.Foo`` and the C# definition
+        # promoter mints ``symbol:csharp:<module_path>:<class>`` (see
+        # :mod:`weld.strategies._ts_definitions`).
+        derived_symbol_id = "symbol:csharp:src.Foo:Foo"
+        self.assertEqual(inherits[0]["from"], derived_symbol_id)
+        self.assertEqual(implements[0]["from"], derived_symbol_id)
+        # The derived symbol node must exist (promoted by the dispatcher
+        # in the same loop iteration that recorded the base pair).
+        self.assertIn(derived_symbol_id, result.nodes)
+        # Regression guard for the file-node-from bug: the source must
+        # not be the file node (multi-class files would otherwise
+        # silently merge unrelated inheritance edges).
+        self.assertFalse(inherits[0]["from"].startswith("file:"))
+        self.assertFalse(implements[0]["from"].startswith("file:"))
         # Heuristic split: Base -> inherits, IFoo -> implements.
         self.assertEqual(inherits[0]["to"], "symbol:csharp:Sample.Base")
         self.assertEqual(implements[0]["to"], "symbol:csharp:Sample.IFoo")
@@ -189,7 +199,7 @@ class CSharpInheritanceTreesitterTest(unittest.TestCase):
                 },
             }
 
-            def parse_side_effect(fpath, language, queries):
+            def parse_side_effect(fpath, language, queries, **_kw):
                 return symbols_by_file[Path(fpath).name]
 
             with mock.patch.object(tree_sitter, "TREE_SITTER_AVAILABLE", True), \
@@ -293,6 +303,87 @@ class CSharpInheritanceTreesitterTest(unittest.TestCase):
         self.assertIn("symbol:csharp:Sample.IBase", implements)
         # Record inheriting a non-interface positional base -> inherits.
         self.assertIn("symbol:csharp:Sample.ValueObject", inherits)
+
+    def test_inheritance_edges_originate_at_class_symbol_not_file(
+        self,
+    ) -> None:
+        """Regression: edge ``from`` must be ``symbol:csharp:*``, not ``file:*``.
+
+        Pins ADR 0064 criterion 2. In a multi-class file the file-level
+        edge cannot distinguish which class inherits from which; the
+        bug surfaced on the ShareX corpus (786 inherits + 90 implements
+        edges, 100% sourced from file nodes -- ``wd context`` returned
+        no inheritance neighbours from the class symbol). The fix
+        wires each emitted edge to the class-level promoted symbol id
+        (``symbol:csharp:<module_path>:<class>``).
+        """
+        from weld.strategies import tree_sitter
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            src = root / "src"
+            src.mkdir()
+            # Multi-class file: two unrelated inheritance chains share
+            # the same file node. The file-node-from bug would make
+            # both chains indistinguishable; symbol-from edges
+            # disambiguate.
+            (src / "Multi.cs").write_text(
+                textwrap.dedent("""\
+                    namespace Sample;
+
+                    public class Alpha : AlphaBase, IAlpha {}
+                    public class Beta : BetaBase, IBeta {}
+                """),
+                encoding="utf-8",
+            )
+            with mock.patch.object(tree_sitter, "TREE_SITTER_AVAILABLE", True), \
+                 mock.patch.object(
+                     tree_sitter,
+                     "_parse_file_symbols",
+                     return_value={
+                         "exports": ["Alpha", "Beta"],
+                         "classes": ["Alpha", "Beta"],
+                         "imports": [],
+                         "namespaces": ["Sample"],
+                     },
+                 ):
+                result = tree_sitter.extract(
+                    root,
+                    {"glob": "**/*.cs", "language": "csharp"},
+                    {},
+                )
+        inherits = [e for e in result.edges if e["type"] == "inherits"]
+        implements = [e for e in result.edges if e["type"] == "implements"]
+
+        # Every inheritance/implementation edge originates at a class
+        # symbol node (regression guard).
+        for edge in inherits + implements:
+            self.assertTrue(
+                edge["from"].startswith("symbol:csharp:"),
+                f"edge from is not a class symbol: {edge!r}",
+            )
+            self.assertFalse(
+                edge["from"].startswith("file:"),
+                f"edge from is a file node, regression of class-edge bug: {edge!r}",
+            )
+
+        # Disambiguation: the two inheritance chains are visibly
+        # separate in the edge graph, keyed on the class symbol id.
+        alpha_id = "symbol:csharp:src.Multi:Alpha"
+        beta_id = "symbol:csharp:src.Multi:Beta"
+        alpha_inherits = {e["to"] for e in inherits if e["from"] == alpha_id}
+        alpha_implements = {e["to"] for e in implements if e["from"] == alpha_id}
+        beta_inherits = {e["to"] for e in inherits if e["from"] == beta_id}
+        beta_implements = {e["to"] for e in implements if e["from"] == beta_id}
+        self.assertEqual(alpha_inherits, {"symbol:csharp:Sample.AlphaBase"})
+        self.assertEqual(alpha_implements, {"symbol:csharp:Sample.IAlpha"})
+        self.assertEqual(beta_inherits, {"symbol:csharp:Sample.BetaBase"})
+        self.assertEqual(beta_implements, {"symbol:csharp:Sample.IBeta"})
+
+        # The class-level symbol nodes exist in the graph so
+        # ``wd context`` returns the neighbours.
+        self.assertIn(alpha_id, result.nodes)
+        self.assertIn(beta_id, result.nodes)
 
 
 if __name__ == "__main__":

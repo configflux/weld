@@ -74,6 +74,9 @@ What job an artifact plays in the repository. Defined in `ROLE_VALUES`.
 Values:
 
 - `implementation` -- production source code
+- `entrypoint` -- application startup file (Program.cs, `__main__.py`,
+  `cli.py`, etc.); exempts `file:*` nodes from the
+  `file-anchor-symmetry` rule per ADR 0041 Layer 3
 - `test` -- test code and test infrastructure
 - `config` -- configuration files
 - `doc` -- documentation

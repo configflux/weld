@@ -63,8 +63,10 @@ class PythonPackageStrategyTest(unittest.TestCase):
 
     def test_package_node_carries_explicit_origin(self) -> None:
         """ADR 0042: every emitted package node must set ``props.origin``
-        directly so the legacy fallback in ``classify_node`` is never
-        reached for a freshly-discovered graph."""
+        directly. The Phase-7 cleanup removed ``classify_node``'s legacy
+        derivation, so a strategy that omits the tag now classifies as
+        ``unresolved`` -- exactly the regression this test guards against.
+        """
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _make_tree(root)

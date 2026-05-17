@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- ADR 0064: minimal SDK-style csproj fixture.
+       Mirrors the shape of dotnet-architecture/eShopOnWeb's
+       src/Web/Web.csproj: no explicit <Compile Include> entries (the
+       SDK glob picks .cs files up implicitly), PackageReferences
+       without Version (Directory.Packages.props CPM model), and the
+       AspNetCore + EFCore frameworks the canonical corpus relies on. -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SdkFixture.WebApp</RootNamespace>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc" Version="2.3.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.0" />
+  </ItemGroup>
+</Project>

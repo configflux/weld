@@ -1,7 +1,9 @@
 """Example and demo test targets."""
 
+load("@rules_python//python:defs.bzl", "py_test")
+
 def examples_tests():
-    native.py_test(
+    py_test(
         name = "weld_examples_test",
         srcs = ["weld_examples_test.py"],
         data = [
@@ -22,7 +24,7 @@ def examples_tests():
         srcs = native.glob(["golden/demo_discover/*.json"]),
     )
 
-    native.py_test(
+    py_test(
         name = "weld_demo_discover_golden_test",
         srcs = ["weld_demo_discover_golden_test.py"],
         data = [

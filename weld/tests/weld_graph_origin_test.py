@@ -1,14 +1,16 @@
 """Unit tests for ``classify_node`` (ADR 0042).
 
-Covers ``weld._graph_origin.classify_node``:
+Covers ``weld._graph_origin.classify_node`` after the Phase-7 removal
+of the transitional legacy-graph derivation:
 
 - Modern path: ``props.origin`` set to each of the four allowed values
-  is returned verbatim; an invalid value falls through.
-- Legacy fallback: every branch of the ADR 0042 pseudocode, in order
-  (sentinel ID prefix, ``props.resolved=False``, ``builtin`` edge,
-  ``stdlib`` edge, ``authority="external"``, default ``project``).
-- Determinism: missing props, ``None`` vs empty edges, multi-edge
-  any-match semantics, and the explicit-field-wins precedence.
+  is returned verbatim.
+- Missing-or-invalid path: when ``props.origin`` is absent or carries a
+  value outside the four-element vocabulary, the function returns
+  ``"unresolved"`` deterministically. This is the safe answer when
+  provenance cannot be established at the graph layer -- it surfaces
+  the gap to downstream consumers (viz, ranking, brief) instead of
+  silently inventing a category.
 - Type-hint sanity: ``ORIGINS`` is exhaustive.
 """
 
@@ -48,13 +50,7 @@ class ClassifyNodeExplicitOriginTest(unittest.TestCase):
             classify_node({"props": {"origin": "unresolved"}}), "unresolved"
         )
 
-    def test_invalid_origin_falls_through_to_derivation(self) -> None:
-        # A malformed origin value must not crash; the derivation path
-        # then classifies the node by other signals.
-        node = {"props": {"origin": "weird", "authority": "external"}}
-        self.assertEqual(classify_node(node), "external")
-
-    def test_explicit_origin_wins_over_legacy_signals(self) -> None:
+    def test_explicit_origin_overrides_other_signals(self) -> None:
         # An unresolved-prefix node that the strategy was confident
         # enough to tag as project keeps the explicit tag.
         node = {
@@ -64,82 +60,55 @@ class ClassifyNodeExplicitOriginTest(unittest.TestCase):
         self.assertEqual(classify_node(node), "project")
 
 
-class ClassifyNodeLegacyFallbackTest(unittest.TestCase):
-    """Legacy graphs without ``props.origin`` derive from existing signals."""
+class ClassifyNodeMissingOrInvalidOriginTest(unittest.TestCase):
+    """Without a valid ``props.origin`` tag the answer is deterministic.
 
-    def test_unresolved_id_prefix(self) -> None:
-        node = {"id": "symbol:unresolved:print", "props": {}}
+    Phase 7 of the origin-taxonomy plan removed the legacy-graph
+    derivation. A node that reaches this function without
+    ``props.origin`` (or with a value outside :data:`ORIGINS`) is the
+    symptom of a strategy that has not yet shipped origin tagging or
+    of a hand-crafted graph snapshot; in both cases the safe answer is
+    ``"unresolved"`` because we cannot establish provenance and must
+    not invent one.
+    """
+
+    def test_missing_origin_returns_unresolved(self) -> None:
+        node = {"id": "symbol:python:foo", "props": {}}
         self.assertEqual(classify_node(node), "unresolved")
 
-    def test_resolved_false_marks_unresolved(self) -> None:
-        node = {"id": "symbol:python:foo", "props": {"resolved": False}}
+    def test_missing_props_dict_returns_unresolved(self) -> None:
+        # No props at all must not crash; the node has no tag, so the
+        # safe answer is unresolved.
+        self.assertEqual(
+            classify_node({"id": "symbol:python:foo"}), "unresolved"
+        )
+
+    def test_invalid_origin_returns_unresolved(self) -> None:
+        # A malformed origin value (typo, drift from a future taxonomy
+        # entry, hand-edited graph) must not crash and must not pass
+        # through. The contract is closed-vocabulary.
+        node = {"props": {"origin": "weird", "authority": "external"}}
         self.assertEqual(classify_node(node), "unresolved")
 
-    def test_incoming_edge_builtin_marks_stdlib(self) -> None:
-        node = {"id": "symbol:python:print", "props": {}}
-        edges = [{"props": {"resolution": "builtin"}}]
-        self.assertEqual(
-            classify_node(node, incoming_edges=edges), "stdlib"
-        )
+    def test_non_string_origin_returns_unresolved(self) -> None:
+        # ``props.origin`` is typed as a string in the schema; an int /
+        # None / dict slipped in by a buggy emitter still falls through
+        # to the deterministic default.
+        for bad in (None, 7, ["project"], {"value": "project"}):
+            with self.subTest(origin=bad):
+                self.assertEqual(
+                    classify_node({"props": {"origin": bad}}), "unresolved"
+                )
 
-    def test_incoming_edge_stdlib_marks_stdlib(self) -> None:
-        node = {"id": "symbol:python:os.path.join", "props": {}}
-        edges = [{"props": {"resolution": "stdlib"}}]
-        self.assertEqual(
-            classify_node(node, incoming_edges=edges), "stdlib"
-        )
-
-    def test_authority_external_marks_external(self) -> None:
+    def test_authority_external_no_origin_returns_unresolved(self) -> None:
+        # Pre-Phase-7 the legacy fallback would have derived this to
+        # "external" from authority. Post-Phase-7 the absence of an
+        # explicit origin tag is the signal, and we no longer guess.
         node = {
             "id": "symbol:python:numpy.array",
             "props": {"authority": "external"},
         }
-        self.assertEqual(classify_node(node), "external")
-
-    def test_bare_project_node_defaults_to_project(self) -> None:
-        node = {
-            "id": "symbol:python:weld.cli.main",
-            "props": {"authority": "canonical"},
-        }
-        self.assertEqual(classify_node(node), "project")
-
-
-class ClassifyNodeEdgeCasesTest(unittest.TestCase):
-    """Determinism on missing fields, ``None`` edges, and multi-edge inputs."""
-
-    def test_missing_props_dict_defaults_to_project(self) -> None:
-        # No props at all must not crash; the node is treated as a
-        # bare project node by the fallback.
-        self.assertEqual(classify_node({"id": "symbol:python:foo"}), "project")
-
-    def test_incoming_edges_none_skips_edge_inspection(self) -> None:
-        # Passing ``None`` (the default) must not iterate edges.
-        node = {"id": "symbol:python:foo", "props": {}}
-        self.assertEqual(classify_node(node, incoming_edges=None), "project")
-
-    def test_incoming_edges_empty_list_behaves_like_none(self) -> None:
-        node = {"id": "symbol:python:foo", "props": {}}
-        self.assertEqual(classify_node(node, incoming_edges=[]), "project")
-
-    def test_any_incoming_builtin_edge_wins(self) -> None:
-        # The first edge is unresolved but a later one is builtin; the
-        # any-match semantics promote the node to stdlib.
-        node = {"id": "symbol:python:print", "props": {}}
-        edges = [
-            {"props": {"resolution": "unresolved"}},
-            {"props": {"resolution": "builtin"}},
-        ]
-        self.assertEqual(
-            classify_node(node, incoming_edges=edges), "stdlib"
-        )
-
-    def test_edge_without_props_is_ignored(self) -> None:
-        # A malformed edge (no ``props`` dict) must not crash.
-        node = {"id": "symbol:python:foo", "props": {}}
-        edges = [{}, {"props": {"resolution": "builtin"}}]
-        self.assertEqual(
-            classify_node(node, incoming_edges=edges), "stdlib"
-        )
+        self.assertEqual(classify_node(node), "unresolved")
 
 
 class OriginsConstantTest(unittest.TestCase):

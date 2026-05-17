@@ -197,25 +197,25 @@ class TestJavaTestPeer(unittest.TestCase, _MultiLangFixture):
             self._tmp.cleanup()
 
     def test_singular_test_suffix(self) -> None:
-        # Note: ``file_id`` canonicalises to lowercase per ADR 0041's
-        # slug rule, so the JVM-style PascalCase stems end up lower in
-        # the graph IDs. The on-disk filenames stay PascalCase.
+        # Note: ``file_id`` preserves on-disk case (vjxi.6), so the
+        # JVM-style PascalCase stems mint case-preserving IDs that
+        # mirror the on-disk filenames.
         root = self._make_tree(["pkg/Foo.java", "pkg/FooTest.java"])
         result = self._run(root, "pkg/*Test.java")
         edges = [
-            e for e in result.edges if e["from"] == "file:pkg/footest"
+            e for e in result.edges if e["from"] == "file:pkg/FooTest"
         ]
         self.assertEqual(len(edges), 1)
-        self.assertEqual(edges[0]["to"], "file:pkg/foo")
+        self.assertEqual(edges[0]["to"], "file:pkg/Foo")
 
     def test_plural_tests_suffix(self) -> None:
         root = self._make_tree(["pkg/Bar.java", "pkg/BarTests.java"])
         result = self._run(root, "pkg/*Tests.java")
         edges = [
-            e for e in result.edges if e["from"] == "file:pkg/bartests"
+            e for e in result.edges if e["from"] == "file:pkg/BarTests"
         ]
         self.assertEqual(len(edges), 1)
-        self.assertEqual(edges[0]["to"], "file:pkg/bar")
+        self.assertEqual(edges[0]["to"], "file:pkg/Bar")
 
     def test_no_edge_when_peer_missing(self) -> None:
         root = self._make_tree(["pkg/OrphanTest.java"])
@@ -239,23 +239,23 @@ class TestCsharpTestPeer(unittest.TestCase, _MultiLangFixture):
             self._tmp.cleanup()
 
     def test_plural_tests_suffix(self) -> None:
-        # See note in TestJavaTestPeer: file IDs are lowercased.
+        # See note in TestJavaTestPeer: file IDs preserve case (vjxi.6).
         root = self._make_tree(["pkg/Foo.cs", "pkg/FooTests.cs"])
         result = self._run(root, "pkg/*Tests.cs")
         edges = [
-            e for e in result.edges if e["from"] == "file:pkg/footests"
+            e for e in result.edges if e["from"] == "file:pkg/FooTests"
         ]
         self.assertEqual(len(edges), 1)
-        self.assertEqual(edges[0]["to"], "file:pkg/foo")
+        self.assertEqual(edges[0]["to"], "file:pkg/Foo")
 
     def test_singular_test_suffix(self) -> None:
         root = self._make_tree(["pkg/Bar.cs", "pkg/BarTest.cs"])
         result = self._run(root, "pkg/*Test.cs")
         edges = [
-            e for e in result.edges if e["from"] == "file:pkg/bartest"
+            e for e in result.edges if e["from"] == "file:pkg/BarTest"
         ]
         self.assertEqual(len(edges), 1)
-        self.assertEqual(edges[0]["to"], "file:pkg/bar")
+        self.assertEqual(edges[0]["to"], "file:pkg/Bar")
 
     def test_no_edge_when_peer_missing(self) -> None:
         root = self._make_tree(["pkg/OrphanTests.cs"])

@@ -56,9 +56,8 @@ def _patched_tree_sitter(
     """Build a mock ``tree_sitter`` module that returns the given captures.
 
     The mock is structured so the first ``QueryCursor`` returns the
-    definition captures (matching the ``exports`` query the call-graph
-    extractor runs first) and the second returns the call captures
-    (the ``calls`` query). This mirrors the real call site in
+    definition captures and the second returns the call captures (the
+    ``calls`` query). This mirrors the real call site in
     ``_ts_call_graph.extract_call_edges``.
     """
     module = mock.MagicMock()
@@ -104,10 +103,8 @@ class CallGraphLanguageOriginTest(unittest.TestCase):
                  mock.patch.object(
                      _ts_call_graph, "load_ts_language", return_value=object(),
                  ):
-                queries = {
-                    "exports": "(_ ) @name",
-                    "calls": "(_ ) @name",
-                }
+                definition_key = "methods" if language == "csharp" else "exports"
+                queries = {definition_key: "(_ ) @name", "calls": "(_ ) @name"}
                 return _ts_call_graph.extract_call_edges(
                     src, "example", language, queries,
                 )

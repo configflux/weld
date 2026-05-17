@@ -97,6 +97,69 @@ def resolution_penalty(node: dict) -> int:
         return 1
     return 0
 
+
+def exact_symbol_match_rank(node: dict, token_groups: list[list[str]]) -> int:
+    """Return 0 for exact symbol label/qualname hits, else 1."""
+    if len(token_groups) != 1 or not token_groups[0]:
+        return 1
+    if node.get("type") != "symbol":
+        return 1
+    query = token_groups[0][0].lower()
+    label = str(node.get("label") or "").lower()
+    props = node.get("props") or {}
+    qualname = str(props.get("qualname") or "").lower()
+    if query and (query == label or query == qualname):
+        return 0
+    if query and _qualified_tail_matches(qualname, query):
+        return 0
+    return 1
+
+
+def is_amalgamation_file_node(node: dict) -> bool:
+    """Return True when *node* is a C++ amalgamation file node.
+
+    Per ADR 0062 the discovery side stamps ``props.amalgamation = True``
+    on file nodes whose path matches a single-include / single-header
+    convention. The ranker uses this signal as a coarse tiebreak so the
+    "import surface" wins against same-score modular peers on
+    single-token navigation queries.
+
+    The check is intentionally narrow:
+
+    * the node's ``type`` MUST be ``"file"`` (we never boost a symbol
+      node, even if a downstream pass mistakenly inherits the marker);
+    * ``props.amalgamation`` must be truthy.
+    """
+    if node.get("type") != "file":
+        return False
+    props = node.get("props") or {}
+    return bool(props.get("amalgamation"))
+
+
+def amalgamation_boost(node: dict, token_groups: list[list[str]]) -> int:
+    """Return 0 for amalgamation files on a single-token query, else 1.
+
+    Per ADR 0062 the boost only fires when:
+
+    * the query is a single-token navigation query (one token group of
+      length 1 -- multi-token queries already provide enough BM25
+      signal that the boost would only swap deterministic ordering);
+    * the node is a C++ amalgamation file node (see
+      :func:`is_amalgamation_file_node`).
+
+    A return value of 0 sorts ahead of 1, so the boost is additive
+    inside the existing tiebreak chain in :func:`rank_query_matches`.
+    """
+    if len(token_groups) != 1 or len(token_groups[0]) != 1:
+        return 1
+    if not is_amalgamation_file_node(node):
+        return 1
+    return 0
+
+
+def _qualified_tail_matches(qualname: str, query: str) -> bool:
+    return any(qualname.endswith(sep + query) for sep in (".", "::", "#"))
+
 def role_boost(node: dict, query_roles: frozenset[str] | None = None) -> int:
     """Return 0 if any of the node's roles match *query_roles*, else 1.
 
@@ -215,7 +278,7 @@ def rank_query_matches(
     }
     weights = active_hybrid_weights(normalized_bm25, semantic_scores, structural)
 
-    def sort_key(item: tuple[str, dict]) -> tuple[int, float, int, int, str]:
+    def sort_key(item: tuple[str, dict]) -> tuple[int, int, int, float, int, int, str]:
         node_id, node = item
         node_with_id = {"id": node_id, **node}
         score = hybrid_score(
@@ -227,6 +290,16 @@ def rank_query_matches(
         )
         return (
             resolution_penalty(node_with_id),
+            exact_symbol_match_rank(node_with_id, token_groups),
+            # ADR 0062: amalgamation boost sits AHEAD of -score so it
+            # survives near-tie BM25 noise (the ``single_include`` path
+            # segment slightly inflates doc length and would otherwise
+            # let a modular peer win by ~0.001 BM25 points). Its blast
+            # radius is narrow: it only fires on (a) ``type=file``
+            # nodes, (b) ``props.amalgamation`` truthy (cpp-only via
+            # discovery), and (c) single-token queries -- so non-cpp
+            # behaviour is unchanged.
+            amalgamation_boost(node_with_id, token_groups),
             -score,
             role_boost(node, query_roles),
             confidence_score(node),

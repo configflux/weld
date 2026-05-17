@@ -115,6 +115,53 @@ def _edge(
         },
     }
 
+def _module_dotted_path(rel_path: str) -> str:
+    """Return the python-style dotted module path for ``rel_path``.
+
+    Mirrors :func:`weld.strategies.python_callgraph._module_dotted_path`
+    so the route-handler symbol ids emitted here match the symbol ids
+    ``python_callgraph`` emits for the same handler functions when both
+    strategies run against the same glob. Sharing the id keeps the
+    dangling-edge sweep happy and lets the canonical python_callgraph
+    node win the ``nodes.update`` race in :func:`weld.discover._run`.
+    """
+    p = Path(rel_path)
+    parts = list(p.parts)
+    if not parts:
+        return ""
+    last = parts[-1]
+    if last == "__init__.py":
+        parts = parts[:-1]
+    else:
+        parts[-1] = Path(last).stem
+    return ".".join(parts)
+
+def _handler_symbol_node(qualname: str, rel_path: str, module_path: str) -> dict:
+    """Build a minimal handler symbol node payload.
+
+    Emitted so the criterion-3 ``symbol:py -> exposes -> route:`` edge
+    survives :func:`weld._discover_postprocess._clean_and_dedup_edges`
+    even when ``python_callgraph`` is not configured for the same glob.
+    On real corpora ``python_callgraph`` overwrites this node with a
+    richer payload (call graph metadata, ``kind``), which is fine: the
+    edge target id is unchanged.
+    """
+    return {
+        "type": "symbol",
+        "label": qualname,
+        "props": {
+            "file": rel_path,
+            "module": module_path,
+            "qualname": qualname,
+            "language": "python",
+            "kind": "function",
+            "source_strategy": "fastapi",
+            "authority": "derived",
+            "confidence": "definite",
+            "roles": ["implementation"],
+        },
+    }
+
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract FastAPI routes and their service/boundary/contract links."""
     nodes: dict[str, dict] = {}
@@ -144,6 +191,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             continue
         router_name = py.stem
         service_id = _owning_service_id(rel_path)
+        module_path = _module_dotted_path(rel_path)
         routes = extract_routes(tree, router_info["var"])
         for route in routes:
             full_path = router_info["prefix"] + route["path"]
@@ -171,6 +219,30 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "declared_in": rel_path,
                 },
             }
+
+            # --- Route-handler symbol exposes route ------------------
+            # Mirror the C# ``csharp_aspnet_routes`` controller -> route
+            # edge: the handler function symbol exposes its declared
+            # route. The id matches the canonical
+            # ``symbol:py:<module-dotted>:<qualname>`` shape that
+            # ``python_callgraph`` emits, so when the two strategies
+            # run against the same glob the canonical node wins the
+            # ``nodes.update`` race and our minimal node is upgraded.
+            # When python_callgraph isn't paired, our minimal node
+            # keeps the edge from being swept by the dangling-edge
+            # post-processor. Tier-check criterion 3 reads this edge
+            # via :func:`tools._tier_check_framework_python.check_fastapi`.
+            if module_path:
+                handler_id = f"symbol:py:{module_path}:{route['function']}"
+                nodes.setdefault(
+                    handler_id,
+                    _handler_symbol_node(
+                        route["function"], rel_path, module_path,
+                    ),
+                )
+                edges.append(
+                    _edge(handler_id, nid, "exposes", confidence="definite")
+                )
 
             # --- Service ownership edge (inferred from file path) ----
             # Discovery post-processing drops edges whose target does not

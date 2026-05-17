@@ -160,6 +160,35 @@ def _parse_sections(text: str) -> list[dict]:
 
     return sections
 
+
+def _collect_heading_texts(text: str) -> list[str]:
+    """Return sorted-deduped H2 and H3 heading texts from *text*.
+
+    Closes the 2026-05-15 ``wd query 'language support'`` dogfood gap:
+    doc nodes carry only filename-derived label and path metadata, so
+    multi-token queries that match section headings (e.g. ``## Language
+    support``) but no node field surface nothing. Emitting headings as a
+    sorted-deduped list lets the inverted index (``query_index.node_tokens``)
+    and the runtime match surface (``Graph._match_token_groups``) tokenize
+    heading words without changing the file index or ranking pipeline.
+
+    H1 is the doc title and is usually a filename restatement -- skipped
+    here so it does not dominate the token list with low-signal words.
+    H2/H3 are the section structure that user queries actually target.
+    """
+    found: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("### "):
+            heading = stripped[4:].strip()
+        elif stripped.startswith("## ") and not stripped.startswith("### "):
+            heading = stripped[3:].strip()
+        else:
+            continue
+        if heading:
+            found.add(heading)
+    return sorted(found)
+
 def _extract_md_link_targets(text: str) -> list[tuple[str, str]]:
     """Return ``(href_without_anchor, anchor_or_empty)`` per markdown link.
 
@@ -197,6 +226,12 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     doc_kind = source.get("doc_kind") or _infer_doc_kind(id_prefix)
     authority = "canonical" if doc_kind in _CANONICAL_KINDS else "derived"
     do_sections = bool(source.get("extract_sections", False))
+    # ``include_readme`` opts the default README.md skip out so a source
+    # entry can deliberately index project READMEs as doc nodes (closes
+    # the 2026-05-15 dogfood gap where root README and ``weld/README.md``
+    # were absent from the graph entirely). Default False preserves the
+    # historical behaviour for ``docs/*.md`` and ``docs/adrs/*.md``.
+    include_readme = bool(source.get("include_readme", False))
 
     parent = (root / pattern).parent
     if not parent.is_dir():
@@ -211,7 +246,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for md in filter_glob_results(
         root, sorted(parent.glob(Path(pattern).name)), excludes=excludes,
     ):
-        if md.name == "README.md":
+        if md.name == "README.md" and not include_readme:
             continue
         if should_skip(md, excludes, root=root):
             continue
@@ -229,22 +264,32 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             label = md.stem.replace("_", " ").title()
         else:
             label = md.stem.replace("-", " ").title()
-        nodes[nid] = {
-            "type": "doc",
-            "label": label,
-            "props": {
-                "file": rel_path,
-                "doc_kind": doc_kind,
-                "source_strategy": "markdown",
-                "authority": authority,
-                "confidence": "definite",
-                "roles": ["doc"],
-            },
-        }
 
         try:
             text = md.read_text(encoding="utf-8")
         except OSError:
+            text = None
+
+        doc_props: dict = {
+            "file": rel_path,
+            "doc_kind": doc_kind,
+            "source_strategy": "markdown",
+            "authority": authority,
+            "confidence": "definite",
+            "roles": ["doc"],
+        }
+        # ``props.headings`` lifts H2/H3 heading text out of the file body
+        # and onto the doc node so the inverted index and runtime match
+        # surface can tokenize them. Closes the 2026-05-15 ``wd query
+        # 'language support'`` gap. Empty headings list is dropped so we
+        # never index empty-string tokens.
+        if text is not None:
+            headings = _collect_heading_texts(text)
+            if headings:
+                doc_props["headings"] = headings
+        nodes[nid] = {"type": "doc", "label": label, "props": doc_props}
+
+        if text is None:
             continue
 
         # -- Inter-doc link extraction --

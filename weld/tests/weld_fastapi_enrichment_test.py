@@ -276,5 +276,69 @@ class FastapiContractLinkTest(unittest.TestCase):
             accepts = [e for e in result.edges if e["type"] == "accepts"]
             self.assertEqual(accepts, [], "primitive params must not emit accepts")
 
+
+class FastapiHandlerSymbolExposesTest(unittest.TestCase):
+    """Each route handler must back the route via an ``exposes`` edge.
+
+    Mirrors the C# ``csharp_aspnet_routes`` strategy's controller -> route
+    edge so the tier-check criterion-3 framework_strategies check can
+    count at least one ``exposes`` edge whose ``source_strategy='fastapi'``
+    and whose ``to`` is a fastapi route node. The edge origin is the
+    handler symbol id python_callgraph would emit for the same function
+    (``symbol:py:<module-dotted>:<handler>``) so the post-processing
+    dangling-edge sweep keeps the edge when python_callgraph also runs.
+    """
+
+    def test_route_handler_symbol_exposes_route(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            routers = root / "routers"
+            routers.mkdir()
+            _write(routers, "items.py", """\
+                from fastapi import APIRouter
+                router = APIRouter(prefix="/items")
+                @router.get("/")
+                def list_items():
+                    return []
+                @router.post("/")
+                def create_item():
+                    return {}
+            """)
+            result = extract(root, {"glob": "routers/*.py"}, {})
+            list_handler = "symbol:py:routers.items:list_items"
+            create_handler = "symbol:py:routers.items:create_item"
+            # Strategy emits the handler symbol nodes so the exposes
+            # edge survives dangling-edge cleanup when python_callgraph
+            # isn't paired with the same glob.
+            self.assertIn(list_handler, result.nodes)
+            self.assertIn(create_handler, result.nodes)
+            self.assertEqual(
+                result.nodes[list_handler]["props"]["source_strategy"],
+                "fastapi",
+            )
+            exposes = [
+                e for e in result.edges
+                if e["type"] == "exposes"
+                and e["from"].startswith("symbol:py:")
+            ]
+            self.assertEqual(len(exposes), 2, result.edges)
+            from_to = {(e["from"], e["to"]) for e in exposes}
+            self.assertIn(
+                (list_handler, "route:GET:/items/"),
+                from_to,
+            )
+            self.assertIn(
+                (create_handler, "route:POST:/items/"),
+                from_to,
+            )
+            for edge in exposes:
+                self.assertEqual(
+                    edge["props"].get("source_strategy"), "fastapi",
+                )
+                self.assertEqual(
+                    edge["props"].get("confidence"), "definite",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

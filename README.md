@@ -13,18 +13,36 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.19.1 -->
-> **Evaluators: start with v0.14.0.** v0.14.0 lands deterministic
-> multi-language graph closure, two new discovery strategies
-> (`concept_from_bd`, `test_peer`), module-level Python constants in
-> `wd find` and `wd query`, and a `copilot-cli` probe in `wd doctor`,
-> on top of the v0.13.2 opt-in gitignore-aware workspace scans, the
-> v0.13.1 C# / C++ startup entrypoint modeling, and the v0.13.0 trace
-> import contract. It is the recommended starting point for
-> cross-language startup modeling, polyrepo workspace bootstrapping,
-> agent graph visualization, local-only telemetry, and the `copilot-cli`
-> enrichment provider. See the [`CHANGELOG.md`](CHANGELOG.md) entries
-> for v0.14.0, v0.13.2, and v0.13.1 for details.
+<!-- evaluator-note: latest=v0.20.0 -->
+> **Evaluators: start with v0.19.1.** v0.19.1 is the current
+> recommended starting point. Headline features added since v0.14.0:
+> a 14-tool MCP server for graph-backed agent context
+> (`weld_query`, `weld_find`, `weld_context`, `weld_path`,
+> `weld_brief`, `weld_stale`, `weld_callers`, `weld_references`,
+> `weld_export`, `weld_trace`, `weld_impact`, `weld_enrich`,
+> `weld_diff`, `weld_review`); `wd impact` blast-radius queries
+> driven by node, file list, working tree, or git diff range, with a
+> stale-graph gate; `wd review` JSON-first triage for speculative
+> edges; an end-to-end C# strategy stack (solution/project parsing,
+> MSBuild targets, test-framework detection, ASP.NET routes, EF Core,
+> inheritance edges, per-method call graphs) that auto-wires on
+> `wd init` when matching artifacts are present; multi-language
+> origin classification, Bazel `srcs` / `deps` edges, Dockerfile and
+> Compose copy edges, and multi-language test-peer edges across
+> Python, Go, TypeScript / JavaScript, Rust, Java, C#, and C++;
+> `wd communities` topic-level navigation of large graphs; opt-in
+> eager inverted-index aggregation for faster cold-cache queries on
+> large federations; a C++ amalgamation-file rank boost so single-file
+> headers (e.g. `nlohmann/json`) surface ahead of incidental mentions;
+> alias-aware lookup that resolves legacy node IDs through one minor
+> version; and human-readable text output by default for the
+> retrieval surface, with `--json` available for tools and the MCP
+> server. ROS2 is labeled Tier 2 (preview) until its own harness pass
+> runs; every other language family (Python, C#, Java, C++) follows
+> the Tier-1 language support contract for entrypoints, modules,
+> call graphs, test peers, and origin classification. See
+> [`CHANGELOG.md`](CHANGELOG.md) for the per-release entries from
+> v0.15.0 onward.
 
 **Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
 walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
@@ -324,38 +342,73 @@ uv tool install "configflux-weld[tree-sitter]"
 pip install "configflux-weld[tree-sitter]"
 ```
 
+**Status ladder.** Every language is classified on a single ladder:
+**Tier 1** (passes the binding tier-check harness criteria on the
+pinned corpora; description-coverage is measured and reported as an
+advisory signal rather than a gate, because enrichment quality reflects
+LLM provider output rather than weld discovery) → **Tier 2** (ships and
+is usable; fails one or more binding criteria with disclosed gaps) →
+**Preview** (ships with documented correctness issues; not for
+production use) → **Experimental** (opt-in extra, off by default) →
+**Not supported**. Languages move tiers only via tier-check harness
+output, not by editorial claim. C#, Python, Java, and C++ are
+currently the Tier 1 languages; the other languages remain at Tier 2
+pending per-language harness runs.
+
 | Language | Extraction surface | Grammar package | Status |
 |---|---|---|---|
-| Python | modules, classes, functions, imports, call graph | built-in (no extra) | Battle-tested. This repo dogfoods it. |
-| TypeScript / JS | exports, classes, imports | `tree-sitter-typescript` | Ships, used in production by the configflux-weld self-graph. |
-| Go | exports, types, imports | `tree-sitter-go` | Ships, light dogfooding. |
-| Rust | exports, types, imports | `tree-sitter-rust` | Ships, light dogfooding. |
-| C# | types, methods, properties, attributes, namespaces, using dependencies, best-effort call graph | `tree-sitter-c-sharp` | Tier-2 "best-in-class" effort completed; csproj/sln parsers ship as separate strategies. |
-| C++ | exports, classes, imports, best-effort call graph | `tree-sitter-cpp` | **Tier 2 (preview) — not Tier 1.** Ships and runs; real-world quality unverified at scale. See the C++ subsection below. |
-| Java | classes, methods, annotations, imports, package dependencies | `tree-sitter-java` | Ships, no dogfooding evidence. |
-| ROS2 | packages, nodes, topics, services, actions, parameters | (reuses Python + C++) | Tier 2 (preview) — inherits the C++ caveat. |
+| Python | modules, classes, functions, imports, call graph | built-in (no extra) | **Tier 1** |
+| TypeScript | exports, classes, imports | `tree-sitter-typescript` | Tier 2 |
+| JavaScript | exports, classes, imports | `tree-sitter-javascript` | Tier 2 |
+| Go | exports, types, imports | `tree-sitter-go` | Tier 2 |
+| Rust | exports, types, imports | `tree-sitter-rust` | Tier 2 |
+| C# | types, methods, properties, attributes, namespaces, using dependencies, best-effort call graph | `tree-sitter-c-sharp` | **Tier 1** |
+| C++ | classes, structs, namespaces, functions, methods, inherits edges, includes, CMake build targets, best-effort call graph | `tree-sitter-cpp` | **Tier 1** |
+| Java | classes, interfaces, methods, fields, constructors, annotations, imports, inherits / implements edges | `tree-sitter-java` | **Tier 1** |
+
+**Frameworks** (reuse a language's extractor; status inherits from the
+host language):
+
+| Framework | Host language | Extraction surface | Status |
+|---|---|---|---|
+| ROS2 | C++ / Python | packages, nodes, topics, services, actions, parameters | Preview |
 
 Discovery also adds deterministic closure edges from files to source-backed
 symbols and from import/include/use declarations to local files or external
 package nodes across every listed language.
 
-### C++ — honest status
+For non-preview tree-sitter languages, exact identifier queries such as
+`wd query GetAsync` prefer first-class definition `symbol:` nodes before
+owning files or package-level fallbacks. File results remain available when
+the graph has no exact symbol candidate.
 
-**Tier: 2 (preview).** Not Tier 1 — extraction works end-to-end, but
-real-world quality is unverified at scale.
+### C++ — Tier 1 details
 
-C++ has two extraction paths, both opt-in, both with caveats worth knowing
-before you rely on them:
+**Status: Tier 1.** The C++ extraction surface passes the binding
+tier-check harness criteria against the pinned C++ corpora
+(`nlohmann/json`, `googletest`, `abseil-cpp`, `Kitware/CMake`,
+`grpc/grpc`); see [docs/bench/tier1-cpp-baseline.md](docs/bench/tier1-cpp-baseline.md)
+for the per-criterion measurement snapshot. Promotion is anchored by
+the bundled fixture contract gate, which exercises a Shape / Circle
+/ Rectangle / Drawable inheritance tree under a real CMake project
+layout.
 
-1. **Tree-sitter** (default once `[tree-sitter]` is installed). Indexes
-   `.hpp`, `.cpp`, `.cc`, `.h`, `.hh`, `.hxx`, `.cxx`, `.ipp`, `.tpp`
-   files into `file:` and `symbol:` nodes. Query patterns live in
+C++ has two extraction paths:
+
+1. **Tree-sitter** (default once `[tree-sitter]` is installed).
+   Indexes `.hpp`, `.cpp`, `.cc`, `.h`, `.hh`, `.hxx`, `.cxx`,
+   `.ipp`, `.tpp` files into `file:` and `symbol:` nodes. Emits
+   `inherits` edges originating at the derived-class symbol (so a
+   `wd context` on a concrete class surfaces its base classes
+   directly, not via the owning file). Query patterns live in
    [weld/languages/cpp.yaml](weld/languages/cpp.yaml). This is the
-   fast path; no compilation database required.
+   fast path; no compilation database required and the path the
+   tier-check harness measures.
 
 2. **libclang** (optional, off by default). Adds macro-expansion,
-   template-instantiation, and cross-translation-unit call edges that
-   tree-sitter cannot resolve from a syntactic walk alone. Requires:
+   template-instantiation, and cross-translation-unit call edges
+   that tree-sitter cannot resolve from a syntactic walk alone.
+   Requires:
    - `pip install "configflux-weld[cpp-libclang]"` (Python bindings)
    - A `compile_commands.json` at the repo root, e.g.
      `cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON .`
@@ -364,15 +417,21 @@ before you rely on them:
    When any prerequisite is missing the libclang strategy silently
    returns no nodes — tree-sitter still runs.
 
-**The unverified part.** The first end-to-end public benchmark run
-against `nlohmann/json` (`docs/bench/PUBLIC-BENCHMARK-0.17.2.md`) was
-done in an environment that did not have the `[tree-sitter]` extra
-installed, so the recorded F1 numbers reflect "feature didn't load,"
-not "feature ran and missed." A real-numbers re-run is open as a
-follow-up. **Treat C++ support as "ships and runs, quality not yet
-measured at scale"** until that follow-up lands. If you adopt C++
-support and measure it against your own corpus, please share the
-numbers — that is the fastest way to close this gap.
+A CMake build-graph strategy (`cpp_cmake`) parses each
+`CMakeLists.txt` and emits `project:`, `build-target:`, and
+`package:` nodes plus `depends_on` edges so internal target
+dependencies (`target_link_libraries`) and `find_package` declarations
+are queryable as first-class graph entries.
+
+**Framework markers.** The C++ framework strategies declare
+`ros2`, `cmake`, `conan`, `gtest`, and `catch2` markers; the
+tier-check harness reports them stub-by-design when a corpus is a
+plain library that does not *consume* a C++ test or robotics
+framework in its public surface. Corpora that do consume them
+(downstream applications, services, ROS2 packages) light up
+criterion 3 directly. If you adopt C++ support and measure it
+against your own corpus, please share the numbers — public
+measurements are the fastest way to keep the harness honest.
 
 To use the built-in semantic enrichment providers:
 
@@ -702,6 +761,24 @@ Resolvers are read-only with respect to child graphs -- they never modify
 a child's `.weld/graph.json`. Output edges are deterministic: identical
 input produces byte-identical edges across runs.
 
+### Performance: opt-in eager query aggregation
+
+For high-QPS query callers (long-lived MCP servers, batch evaluators)
+the federation can pre-aggregate every fresh-sidecar child's
+inverted index into a single in-memory dict at construction time.
+Per-query latency then drops by 40-90% on a 30-child workspace, at
+the cost of ~17 ms construction overhead. Default is off so single-shot
+`wd query` invocations do not pay the tax. Two opt-in knobs:
+
+- Constructor: `FederatedGraph(root, eager_index=True)`.
+- Environment variable: `WELD_FEDERATION_EAGER=1` (truthy values:
+  `1`, `true`, `yes`, `on`; case-insensitive). Lets operators flip
+  eager on without code changes.
+
+Stale or missing-sidecar children keep the existing per-query fallback
+path; the eager index covers only fresh-sidecar children. Match sets
+are byte-identical to the lazy path.
+
 ### Rollback
 
 To disable federation and return to single-repo behavior, delete the
@@ -917,7 +994,7 @@ same "(412)" hint next to its own toggles.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.19.1`.
+terminal snippets captured against `wd 0.20.0`.
 
 ## Install
 

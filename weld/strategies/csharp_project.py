@@ -1,6 +1,6 @@
 """Strategy: C# project file (.csproj) extraction (ADR 0056 Wave 1).
 
-Parses ``.csproj`` files for two graph-shaping facts:
+Parses ``.csproj`` files for three graph-shaping facts:
 
 1. ``<ProjectReference Include="..\\Foo\\Foo.csproj" />`` entries become
    ``csproj://<project> -> depends_on -> csproj://<referenced-project>``
@@ -13,6 +13,15 @@ Parses ``.csproj`` files for two graph-shaping facts:
    ``TargetFramework`` / ``RootNamespace`` / ``AssemblyName`` /
    ``LangVersion`` / ``Nullable`` properties. Properties declared in
    the project file itself win over inherited ones.
+
+3. ``<Compile Include>``/``<Compile Remove>`` directives plus the SDK
+   implicit ``**/*.cs`` glob (under the csproj directory, excluding
+   ``bin/``, ``obj/``, ``.vs/``, ``packages/``) become
+   ``csproj://<project> -> contains -> file:<rel_path>`` edges. The
+   resolution logic lives in :mod:`._csharp_project_files`; see the
+   ADR 0056 addendum (2026-05-15) for the hybrid SDK + explicit-Include
+   strategy. Nested-csproj ownership is resolved here: when projects are
+   co-located, the deepest csproj wins.
 
 The strategy is XML-parsed, so every edge ships with
 ``confidence="definite"`` per ADR 0050. ``PackageReference`` parsing
@@ -33,11 +42,13 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from weld.strategies._csharp_project_files import resolve_owned_files
 from weld.strategies._helpers import (
     StrategyResult,
     filter_glob_results,
     should_skip,
 )
+from weld.strategies._tree_sitter_ids import canonical_file_node_id
 
 #: Properties we surface on project nodes when declared in the csproj
 #: or inherited from ``Directory.Build.props/targets``. Selecting a
@@ -63,7 +74,7 @@ _DIRECTORY_BUILD_FILES: tuple[str, ...] = (
 
 
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
-    """Extract csproj nodes and their ProjectReference edges."""
+    """Extract csproj nodes, ProjectReference, and contains-file edges."""
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
     discovered_from: list[str] = []
@@ -73,6 +84,12 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     matched = _resolve_glob(root, pattern)
     matched = filter_glob_results(root, matched)
+
+    # Two-pass walk so we can resolve nested-csproj ownership: the
+    # deepest csproj that contains a file wins. First pass mints node
+    # state + ProjectReference edges; the per-project owned-file sets
+    # are collected for the second pass.
+    project_specs: list[tuple[Path, str, str, ET.Element | None]] = []
 
     for project_file in matched:
         if not project_file.is_file():
@@ -86,7 +103,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         project_name = project_file.stem
         nid = _csproj_id(project_name)
         inherited = _load_inherited_properties(project_file, root)
-        own_props, references = _parse_project(project_file)
+        own_props, references, project_xml = _parse_project(project_file)
         # Inherited values are the floor; values declared on the csproj
         # itself win. This matches MSBuild's last-write-wins semantics
         # for nested ``PropertyGroup`` declarations.
@@ -121,7 +138,71 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 },
             })
 
+        project_specs.append((project_file, nid, rel_path, project_xml))
+
+    # Second pass: emit ``csproj -> contains -> file`` edges with
+    # nested-csproj tie-breaking. See ADR 0056 addendum (2026-05-15).
+    edges.extend(_emit_contains_file_edges(project_specs, root))
+
     return StrategyResult(nodes, edges, discovered_from)
+
+
+def _emit_contains_file_edges(
+    project_specs: list[tuple[Path, str, str, ET.Element | None]],
+    root: Path,
+) -> list[dict]:
+    """Return sorted ``contains`` edges from each csproj to its owned files.
+
+    The "deepest-csproj-wins" rule guarantees that when projects are
+    co-located (e.g. a Tests/ csproj nested under its parent project)
+    each ``.cs`` file lands on exactly one project, not both. Files
+    owned by a deeper project are subtracted from the shallower one's
+    set before edges are emitted.
+    """
+    # Sort by project-directory depth descending so deeper projects
+    # claim their files first; shallower ones inherit only what is left.
+    depth_sorted = sorted(
+        project_specs,
+        key=lambda spec: len(spec[0].parent.resolve().parts),
+        reverse=True,
+    )
+    claimed_paths: set[Path] = set()
+    per_project_owned: dict[str, list[Path]] = {}
+    for project_file, nid, _rel_path, project_xml in depth_sorted:
+        if project_xml is None:
+            per_project_owned[nid] = []
+            continue
+        owned = resolve_owned_files(project_file, project_xml, root)
+        kept: list[Path] = []
+        for path in owned:
+            resolved = path.resolve()
+            if resolved in claimed_paths:
+                continue
+            claimed_paths.add(resolved)
+            kept.append(path)
+        per_project_owned[nid] = kept
+
+    # Emit edges in the original project-spec order (file-system sort)
+    # rather than depth-sort so the output is stable and predictable.
+    out: list[dict] = []
+    for _project_file, nid, _rel_path, _xml in project_specs:
+        owned = per_project_owned.get(nid, [])
+        for path in owned:
+            try:
+                file_rel = path.resolve().relative_to(root.resolve()).as_posix()
+            except (OSError, ValueError):
+                continue
+            file_id = canonical_file_node_id(file_rel, id_prefix="")
+            out.append({
+                "from": nid,
+                "to": file_id,
+                "type": "contains",
+                "props": {
+                    "source_strategy": "csharp_project",
+                    "confidence": "definite",
+                },
+            })
+    return out
 
 
 def _resolve_glob(root: Path, pattern: str) -> list[Path]:
@@ -151,8 +232,10 @@ def _csproj_id(project_name: str) -> str:
     return f"csproj://{project_name}"
 
 
-def _parse_project(path: Path) -> tuple[dict[str, str], list[str]]:
-    """Return (own_props, project_reference_names) for *path*.
+def _parse_project(
+    path: Path,
+) -> tuple[dict[str, str], list[str], ET.Element | None]:
+    """Return (own_props, project_reference_names, root_xml) for *path*.
 
     Malformed XML is treated as an empty project so a single bad file
     does not crash discovery. ``ProjectReference`` paths are split on
@@ -160,10 +243,14 @@ def _parse_project(path: Path) -> tuple[dict[str, str], list[str]]:
     in .csproj files) and only the stem (basename without extension)
     is returned, so the resulting csproj IDs collide with whatever
     ``.csproj`` file actually defines that project.
+
+    The parsed root XML element is returned alongside the parsed props
+    so the caller can resolve owned ``.cs`` files without re-reading
+    the file from disk (ADR 0056 addendum, 2026-05-15).
     """
     root_elem = _parse_xml(path)
     if root_elem is None:
-        return {}, []
+        return {}, [], None
 
     own_props: dict[str, str] = {}
     references: list[str] = []
@@ -176,7 +263,7 @@ def _parse_project(path: Path) -> tuple[dict[str, str], list[str]]:
             ref_name = _project_name_from_reference(include)
             if ref_name:
                 references.append(ref_name)
-    return own_props, references
+    return own_props, references, root_elem
 
 
 def _project_name_from_reference(include: str) -> str:

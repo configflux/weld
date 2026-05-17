@@ -38,6 +38,7 @@ from weld.cross_repo.base import (
     CrossRepoEdge,
     CrossRepoResolver,
     ResolverContext,
+    _iter_nodes,
     register_resolver,
 )
 from weld.workspace import UNIT_SEPARATOR
@@ -69,8 +70,11 @@ def _extract_service_definitions(
     the lookup matches the lowercased ids minted by ``grpc_proto``.
     """
     service_to_rpcs: dict[str, list[str]] = {}
-    nodes = getattr(graph, "_data", {}).get("nodes", {})
-    for node_id, node in sorted(nodes.items()):
+    # Shared helper centralises the defensive ``_data['nodes']`` read
+    # (see :func:`weld.cross_repo.base._iter_nodes`); sort here to
+    # preserve the deterministic-output guarantee documented in the
+    # module docstring.
+    for node_id, node in sorted(_iter_nodes(graph)):
         if node.get("type") != "rpc":
             continue
         props = node.get("props", {})

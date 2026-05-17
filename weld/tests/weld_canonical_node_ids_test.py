@@ -2,18 +2,10 @@
 
 Covers ``weld._node_ids.canonical_slug``, ``file_id``, ``package_id``,
 and ``entity_id``. Each function must be pure, total, and deterministic.
-The tests deliberately exercise edge cases that previously diverged
-across the three legacy ``_slug`` implementations:
-
-- empty input / whitespace-only input
-- Unicode (must collapse to dashes, not raise)
-- forward and back slashes
-- runs of dashes / multi-dashes
-- leading and trailing dashes
-- NUL bytes and control characters
-- path-traversal sequences (``..``)
-- stem-only collisions across directories
-- multi-dot extensions
+Exercises edge cases that previously diverged across legacy ``_slug``
+implementations: empty/whitespace input, Unicode, slashes, multi-dashes,
+NUL bytes, path traversal, stem-only collisions, and multi-dot
+extensions.
 """
 
 from __future__ import annotations
@@ -26,7 +18,13 @@ _repo_root = str(Path(__file__).resolve().parent.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-from weld._node_ids import canonical_slug, entity_id, file_id, package_id  # noqa: E402
+from weld._node_ids import (  # noqa: E402
+    canonical_slug,
+    canonical_slug_case_sensitive,
+    entity_id,
+    file_id,
+    package_id,
+)
 
 
 class CanonicalSlugTest(unittest.TestCase):
@@ -38,10 +36,8 @@ class CanonicalSlugTest(unittest.TestCase):
 
     def test_keeps_permitted_punctuation(self) -> None:
         # Dot, colon, underscore, dash are all permitted.
-        self.assertEqual(canonical_slug("foo.bar"), "foo.bar")
-        self.assertEqual(canonical_slug("foo:bar"), "foo:bar")
-        self.assertEqual(canonical_slug("foo_bar"), "foo_bar")
-        self.assertEqual(canonical_slug("foo-bar"), "foo-bar")
+        for value in ("foo.bar", "foo:bar", "foo_bar", "foo-bar"):
+            self.assertEqual(canonical_slug(value), value)
 
     def test_collapses_disallowed_chars_to_dash(self) -> None:
         self.assertEqual(canonical_slug("foo/bar"), "foo-bar")
@@ -54,11 +50,9 @@ class CanonicalSlugTest(unittest.TestCase):
         self.assertEqual(canonical_slug("foo----bar"), "foo-bar")
         self.assertEqual(canonical_slug("foo / / bar"), "foo-bar")
 
-    def test_strips_leading_and_trailing_dashes(self) -> None:
+    def test_strips_leading_and_trailing_dashes_and_whitespace(self) -> None:
         self.assertEqual(canonical_slug("---foo---"), "foo")
         self.assertEqual(canonical_slug("/foo/"), "foo")
-
-    def test_strips_whitespace(self) -> None:
         self.assertEqual(canonical_slug("   foo   "), "foo")
         self.assertEqual(canonical_slug("\tfoo\n"), "foo")
 
@@ -104,6 +98,72 @@ class CanonicalSlugTest(unittest.TestCase):
                 self.fail(f"canonical_slug raised on {value!r}: {exc!r}")
 
 
+class CanonicalSlugCaseSensitiveTest(unittest.TestCase):
+    """Coverage for :func:`canonical_slug_case_sensitive`. Mirrors
+    :class:`CanonicalSlugTest` but preserves case so ``symbol:*`` IDs
+    (and post-vjxi.6 ``file:*`` IDs) keep case-distinct identifiers
+    distinct, e.g. C# ``SIZE`` vs ``Size`` and ``Foo.cs`` vs ``foo.cs``.
+    """
+
+    def test_preserves_case(self) -> None:
+        self.assertEqual(canonical_slug_case_sensitive("HelloWorld"), "HelloWorld")
+        self.assertEqual(canonical_slug_case_sensitive("SIZE"), "SIZE")
+        self.assertEqual(canonical_slug_case_sensitive("Size"), "Size")
+        self.assertNotEqual(
+            canonical_slug_case_sensitive("SIZE"),
+            canonical_slug_case_sensitive("Size"),
+        )
+
+    def test_keeps_permitted_punctuation(self) -> None:
+        for value in ("Foo.Bar", "Foo:Bar", "Foo_Bar", "Foo-Bar"):
+            self.assertEqual(canonical_slug_case_sensitive(value), value)
+
+    def test_collapses_disallowed_chars_to_dash(self) -> None:
+        for value in ("Foo/Bar", "Foo Bar", "Foo\\Bar", "Foo@Bar"):
+            self.assertEqual(canonical_slug_case_sensitive(value), "Foo-Bar")
+
+    def test_coalesces_multi_dashes(self) -> None:
+        # Punctuation collapse still happens; only case is preserved.
+        self.assertEqual(canonical_slug_case_sensitive("Foo----Bar"), "Foo-Bar")
+        self.assertEqual(canonical_slug_case_sensitive("Foo--Bar"), "Foo-Bar")
+
+    def test_strips_dashes_and_whitespace(self) -> None:
+        self.assertEqual(canonical_slug_case_sensitive("---Foo---"), "Foo")
+        self.assertEqual(canonical_slug_case_sensitive("   Foo   "), "Foo")
+
+    def test_empty_returns_unknown(self) -> None:
+        for value in ("", "   ", "---", "///"):
+            self.assertEqual(canonical_slug_case_sensitive(value), "unknown")
+
+    def test_unicode_and_nul_collapse(self) -> None:
+        # Unicode collapses regardless of case; NUL byte collapses too.
+        self.assertEqual(canonical_slug_case_sensitive("Café"), "Caf")
+        self.assertEqual(canonical_slug_case_sensitive("Foo\x00Bar"), "Foo-Bar")
+
+    def test_dotted_name_preserved(self) -> None:
+        # C# regression: dotted namespace + case-distinct member.
+        self.assertEqual(
+            canonical_slug_case_sensitive("ShareX.HelpersLib.Native"),
+            "ShareX.HelpersLib.Native",
+        )
+
+    def test_deterministic(self) -> None:
+        for value in ("HelloWorld", "Foo/Bar", "SIZE", "Size", "  spaces  "):
+            self.assertEqual(
+                canonical_slug_case_sensitive(value),
+                canonical_slug_case_sensitive(value),
+            )
+
+    def test_total_never_raises(self) -> None:
+        for value in ("", " ", "\x00", "‮", "X" * 1000, "----", "."):
+            try:
+                canonical_slug_case_sensitive(value)
+            except Exception as exc:  # pragma: no cover - failure path
+                self.fail(
+                    f"canonical_slug_case_sensitive raised on {value!r}: {exc!r}"
+                )
+
+
 class FileIdTest(unittest.TestCase):
     """Edge-case coverage for :func:`file_id`."""
 
@@ -130,7 +190,9 @@ class FileIdTest(unittest.TestCase):
         )
 
     def test_no_extension(self) -> None:
-        self.assertEqual(file_id("README"), "file:readme")
+        # File IDs preserve on-disk case (vjxi.6); see
+        # ``FileIdCasePreservationTest`` below for the full contract.
+        self.assertEqual(file_id("README"), "file:README")
 
     def test_pure_posix_path(self) -> None:
         # PurePosixPath inputs pass through identically to str inputs.
@@ -147,8 +209,7 @@ class FileIdTest(unittest.TestCase):
         )
 
     def test_stem_collision_across_directories(self) -> None:
-        # The two files share a stem but live in different dirs;
-        # canonical IDs MUST differ.
+        # Same stem, different dirs: canonical IDs MUST differ.
         a = file_id("weld/strategies/python_module.py")
         b = file_id("tools/python_module.py")
         self.assertNotEqual(a, b)
@@ -156,20 +217,17 @@ class FileIdTest(unittest.TestCase):
         self.assertEqual(b, "file:tools/python_module")
 
     def test_path_traversal_does_not_escape_namespace(self) -> None:
-        # ``..`` segments are permitted (dot is a legal slug character),
-        # but the result is always namespaced under ``file:``. The ID
+        # ``..`` segments are permitted; the ``file:`` prefix namespaces
+        # the result so it cannot escape into another ID class. The ID
         # is never used to open a file on disk; it is only a graph key.
         result = file_id("../etc/passwd")
         self.assertTrue(result.startswith("file:"))
-        # Confirm the prefix is exactly "file:" (no traversal-induced
-        # prefix mangling).
         self.assertEqual(result.split(":", 1)[0], "file")
         self.assertIn("etc/passwd", result)
 
     def test_nul_byte_collapses(self) -> None:
         # NUL byte in the path collapses; cannot terminate the ID early.
-        result = file_id("foo\x00bar/baz.py")
-        self.assertEqual(result, "file:foo-bar/baz")
+        self.assertEqual(file_id("foo\x00bar/baz.py"), "file:foo-bar/baz")
 
     def test_empty_returns_unknown(self) -> None:
         self.assertEqual(file_id(""), "file:unknown")
@@ -180,21 +238,61 @@ class FileIdTest(unittest.TestCase):
 
     def test_init_module(self) -> None:
         # __init__.py paths keep the directory and the underscore-stem.
-        self.assertEqual(
-            file_id("weld/__init__.py"),
-            "file:weld/__init__",
-        )
+        self.assertEqual(file_id("weld/__init__.py"), "file:weld/__init__")
 
-    def test_leading_slash_dropped(self) -> None:
-        # Leading slash produces an empty first segment that is dropped.
+    def test_leading_and_consecutive_slashes(self) -> None:
+        # Empty segments (from leading slash, double slash) are dropped.
         self.assertEqual(file_id("/weld/x.py"), "file:weld/x")
-
-    def test_consecutive_slashes(self) -> None:
         self.assertEqual(file_id("weld//x.py"), "file:weld/x")
 
     def test_deterministic(self) -> None:
         for value in ("a/b.py", "weld/_node_ids.py", "x"):
             self.assertEqual(file_id(value), file_id(value))
+
+
+class FileIdCasePreservationTest(unittest.TestCase):
+    """File IDs preserve on-disk case (vjxi.6). POSIX filesystems are
+    case-sensitive, so case-variant paths must mint distinct IDs.
+    Complement of ADR 0060: ``package:*`` IDs case-fold (namespaces are
+    case-insensitive); paths do not. Punctuation rules unchanged.
+    """
+
+    def test_preserves_case_in_segments(self) -> None:
+        self.assertEqual(
+            file_id("ShareX.HelpersLib/CLI/CliCommand.cs"),
+            "file:ShareX.HelpersLib/CLI/CliCommand",
+        )
+
+    def test_case_variant_paths_yield_distinct_ids(self) -> None:
+        # Live regression from the 2026-05-15 ShareX dogfood pass:
+        # polyrepo federation (ADR 0064 § 5) must not collapse cases.
+        self.assertNotEqual(file_id("Foo.cs"), file_id("foo.cs"))
+        self.assertEqual(file_id("Foo.cs"), "file:Foo")
+        self.assertEqual(file_id("foo.cs"), "file:foo")
+        a = file_id("ShareX.HelpersLib/CLI/CliCommand.cs")
+        b = file_id("sharex.helperslib/cli/clicommand.cs")
+        self.assertNotEqual(a, b)
+        self.assertEqual(a, "file:ShareX.HelpersLib/CLI/CliCommand")
+        self.assertEqual(b, "file:sharex.helperslib/cli/clicommand")
+
+    def test_capitalised_top_level_files(self) -> None:
+        for path, expected in (
+            ("README.md", "file:README"),
+            ("BUILD", "file:BUILD"),
+            ("Makefile", "file:Makefile"),
+            ("Dockerfile", "file:Dockerfile"),
+            ("CLAUDE.md", "file:CLAUDE"),
+        ):
+            self.assertEqual(file_id(path), expected)
+
+    def test_packages_case_fold_and_unicode_collapse(self) -> None:
+        # Regression guards: file-id fix must not leak into package
+        # case-folding (ADR 0060 + 02b2c3e); unicode still collapses.
+        self.assertEqual(
+            package_id("csharp", "ShareX.HelpersLib"),
+            "package:csharp:sharex.helperslib",
+        )
+        self.assertEqual(file_id("café/foo.py"), "file:caf/foo")
 
 
 class PackageIdTest(unittest.TestCase):

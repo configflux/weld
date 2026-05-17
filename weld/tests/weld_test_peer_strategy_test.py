@@ -131,6 +131,20 @@ class TestExtractEmitsNodes(unittest.TestCase):
         self.assertEqual(props["confidence"], "definite")
         self.assertEqual(props["source_strategy"], "test_peer")
 
+    def test_every_emitted_test_node_tags_origin_project(self) -> None:
+        # ADR 0042: every file node must carry ``props.origin``. The
+        # test_peer strategy only matches files inside the project's
+        # configured test globs (excludes prune third-party trees), so
+        # every emission is unambiguously ``origin="project"``. Asserts
+        # on every node in the result rather than a single sample so a
+        # future regression that drops the tag on, say, the orphan path
+        # cannot slip past this gate.
+        result = self._run()
+        self.assertTrue(result.nodes, "fixture must emit at least one node")
+        for nid, node in result.nodes.items():
+            with self.subTest(node_id=nid):
+                self.assertEqual(node["props"].get("origin"), "project")
+
     def test_node_records_legacy_id_alias(self) -> None:
         # ADR 0041 migration: the previous ``file:tests/<stem>`` shape is
         # preserved on ``aliases`` for one minor version so external
