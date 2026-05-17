@@ -183,18 +183,23 @@ class TreeSitterUnavailableGateTest(unittest.TestCase):
                 )
             self.assertIn(result.status, ("ok", "degraded"))
 
+    @unittest.skipUnless(
+        weld_adapter._is_tree_sitter_available(),
+        "tree-sitter not installed; patched availability cannot stand in for the real module",
+    )
     def test_tree_sitter_present_runs_normally(self) -> None:
         # When tree-sitter IS importable, the adapter does NOT short-
         # circuit -- it goes through ``_ensure_graph`` like before.
+        # Skip when tree-sitter is genuinely absent: patching the probe
+        # to True does not make the underlying module importable, and
+        # downstream discover/file_index paths return ``unavailable``
+        # for an empty tempdir, defeating the assertion.
         with tempfile.TemporaryDirectory() as repo_root:
             with patch.object(
                 weld_adapter, "_is_tree_sitter_available",
                 return_value=True,
             ):
                 result = weld_adapter.run(_task(), Path(repo_root))
-            # We don't assert ``ok`` here because graph build may fail
-            # for various reasons in a temp dir -- the point is that
-            # the gate did NOT mark it ``unavailable``.
             self.assertNotEqual(result.status, "unavailable")
 
     def test_csharp_task_reports_unavailable_when_tree_sitter_missing(self) -> None:
