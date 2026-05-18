@@ -3,6 +3,26 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.20.1 - 2026-05-18
+
+### Fixed
+
+- Test suites that exercise the tree-sitter language bindings now
+  skip cleanly when the optional `tree_sitter` Python module is not
+  installed, instead of failing with `ModuleNotFoundError`. This
+  affects the C++, C#, Java, and federation tier-check gates and the
+  bench adapter's smoke tests. Users who install `configflux-weld`
+  without the `tree-sitter` extra can now run `python -m pytest`
+  against the bundled tests without seeing spurious failures.
+
+### Changed
+
+- Continuous integration now installs `tree_sitter` plus the bundled
+  language grammars before running the test suite, so the tree-sitter
+  smoke coverage actually runs (rather than skipping) in the public
+  CI pipeline. End users see no functional change; the effect is
+  fewer regressions slipping past CI between releases.
+
 ## v0.20.0 - 2026-05-17
 
 ### Added

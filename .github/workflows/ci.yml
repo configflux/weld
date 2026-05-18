@@ -24,6 +24,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install tree-sitter Python bindings
+        # Several bench tests gate on _is_tree_sitter_available() and
+        # skip when the umbrella + grammar packages are absent. Install
+        # them here so the runner exercises the tree-sitter-present
+        # path (vs. silently skipping).
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            tree-sitter \
+            tree-sitter-python \
+            tree-sitter-typescript \
+            tree-sitter-go \
+            tree-sitter-rust \
+            tree-sitter-cpp \
+            tree-sitter-c-sharp \
+            tree-sitter-java
+
       - name: Mount Bazel cache
         uses: actions/cache@v5
         with:

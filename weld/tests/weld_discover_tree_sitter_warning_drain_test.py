@@ -32,6 +32,7 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 from weld import discover as discover_mod  # noqa: E402
+from weld.strategies.tree_sitter import TREE_SITTER_AVAILABLE  # noqa: E402
 
 
 def _make_csharp_repo(root: Path) -> None:
@@ -59,8 +60,18 @@ def _missing_grammar_import_error(*_args, **_kwargs):
     )
 
 
+@unittest.skipUnless(
+    TREE_SITTER_AVAILABLE,
+    "tree-sitter umbrella not importable; cannot exercise per-grammar miss",
+)
 class DiscoverDrainsGrammarWarningTest(unittest.TestCase):
-    """End-to-end: missing C# grammar -> one ``[weld] warning:`` line."""
+    """End-to-end: missing C# grammar -> one ``[weld] warning:`` line.
+
+    Skipped when the tree-sitter umbrella package itself is absent
+    (e.g. hermetic local-gate run): this test simulates the "umbrella
+    present, grammar missing" scenario, which is only meaningful when
+    the umbrella is genuinely importable.
+    """
 
     def test_missing_csharp_grammar_emits_one_warning_to_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

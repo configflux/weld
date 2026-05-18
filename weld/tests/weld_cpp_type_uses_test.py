@@ -29,9 +29,18 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 
+# Import TREE_SITTER_AVAILABLE through weld.strategies so weld/__init__.py
+# runs first and the hermetic blocker (if any) is installed before the
+# probe evaluates. A direct ``try: import tree_sitter`` here would race
+# the WELD_HERMETIC_BLOCK_TREE_SITTER blocker and skip-decide on the
+# pre-blocker state.
+from weld.strategies.tree_sitter import TREE_SITTER_AVAILABLE  # noqa: E402
+
+
 def _grammars_available() -> bool:
+    if not TREE_SITTER_AVAILABLE:
+        return False
     try:
-        import tree_sitter  # noqa: F401
         import tree_sitter_cpp  # noqa: F401
     except Exception:
         return False
