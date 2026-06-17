@@ -36,6 +36,11 @@ from weld._yaml import parse_yaml  # noqa: E402
 _VIZ_GLOB = "weld/viz/*.py"
 _EXPECTED_STRATEGIES = ("python_module", "python_callgraph", "python_package")
 
+# The repo's ``.weld/discover.yaml`` is internal state and is not part of the
+# published source tree, so this config-level regression only applies where
+# the file exists (the internal checkout). Skip cleanly elsewhere.
+_DISCOVER_YAML = _REPO_ROOT / ".weld" / "discover.yaml"
+
 
 def _load_discover_yaml() -> dict:
     """Parse the repo's checked-in ``.weld/discover.yaml``."""
@@ -43,6 +48,10 @@ def _load_discover_yaml() -> dict:
     return parse_yaml(path.read_text(encoding="utf-8"))
 
 
+@unittest.skipUnless(
+    _DISCOVER_YAML.is_file(),
+    "repo .weld/discover.yaml not present (e.g. published source tree)",
+)
 class DiscoverYamlVizGlobsTest(unittest.TestCase):
     """Config-level regression for the weld.viz dogfood gap."""
 

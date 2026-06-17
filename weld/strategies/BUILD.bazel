@@ -140,7 +140,9 @@ py_library(
     ],
     deps = [
         ":helpers",
+        "//weld:capabilities_registry",
         "//weld:glob_match",
+        "//weld:graph_node_registry",
         "//weld:node_ids",
         "//weld:repo_boundary",
         "//weld:yaml",

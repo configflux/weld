@@ -38,6 +38,22 @@ py_library(
     srcs = ["_node_ids.py"],
 )
 
+# Low-level registries imported by leaf strategy modules (weld/strategies/*)
+# as well as by runtime. They are their own micro-libraries so the strategies
+# library can depend on them without a cycle through //weld:runtime.
+py_library(
+    name = "graph_node_registry",
+    srcs = ["_graph_node_registry.py"],
+)
+
+py_library(
+    name = "capabilities_registry",
+    srcs = [
+        "_capabilities_registry.py",
+        "_capabilities_registry_missing.py",
+    ],
+)
+
 py_library(
     name = "git",
     srcs = ["_git.py"],
@@ -96,8 +112,6 @@ py_library(
         "_bootstrap_adapters.py",
         "_bootstrap_hosts.py",
         "_capabilities_cli.py",
-        "_capabilities_registry.py",
-        "_capabilities_registry_missing.py",
         "_cli_render.py",
         "_cli_render_trust.py",
         "_coverage_admission.py",
@@ -146,7 +160,6 @@ py_library(
         "_graph_closure_package_origin.py",
         "_graph_meta_sidecar.py",
         "_graph_migrate.py",
-        "_graph_node_registry.py",
         "_graph_origin.py",
         "_graph_schema.py",
         "_graph_stats.py",
@@ -318,9 +331,11 @@ py_library(
         "//weld/templates",
     ],
     deps = [
+        ":capabilities_registry",
         ":contract",
         ":git",
         ":glob_match",
+        ":graph_node_registry",
         ":repo_boundary",
         ":yaml",
         "//weld/cross_repo",
