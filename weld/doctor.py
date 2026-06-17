@@ -3,7 +3,11 @@
 Each check returns a list of :class:`CheckResult` objects with a level
 (``ok``, ``note``, ``warn``, or ``fail``), a human-readable message, and
 a section name (``Project``, ``Config``, ``Graph``, ``Schema``,
-``Nodes``, ``Edges``, ``Strategies``, ``Optional``, ``MCP``).
+``Nodes``, ``Edges``, ``Trust``, ``Strategies``, ``Optional``, ``MCP``).
+
+The ``Trust`` section warns when a language's unresolved-symbol ratio
+crosses an absolute floor (see :mod:`weld._doctor_trust`); ``wd stats``
+carries the full per-language trust numbers behind it.
 
 The formatted output is grouped by section with a ``Status`` summary
 line at the bottom counting OK, note, warning, and error results. Notes
@@ -44,6 +48,7 @@ from weld._doctor_format import (
 from weld._doctor_optional import check_optional_deps, check_tree_sitter
 from weld._doctor_strategies import check_strategies, check_trust_boundaries
 from weld._doctor_suppressions import handle_ack_flags, load_suppressions
+from weld._doctor_trust import check_language_trust
 from weld._yaml import parse_yaml
 
 
@@ -177,6 +182,10 @@ def _check_trust_boundaries(weld_dir: Path) -> list[CheckResult]:
     return check_trust_boundaries(weld_dir, CheckResult)
 
 
+def _check_language_trust(weld_dir: Path) -> list[CheckResult]:
+    return check_language_trust(weld_dir, CheckResult)
+
+
 def _check_strategies(weld_dir: Path, root: Path) -> list[CheckResult]:
     bundled_dir = Path(__file__).resolve().parent / "strategies"
     return check_strategies(weld_dir, root, bundled_dir, CheckResult)
@@ -220,6 +229,7 @@ def doctor(root: Path) -> list[CheckResult]:
     results.extend(_check_graph_json(weld_dir))
     results.extend(_check_sqlite_sidecar(weld_dir))
     results.extend(_check_staleness(weld_dir, root))
+    results.extend(_check_language_trust(weld_dir))
     results.extend(_check_strategies(weld_dir, root))
     results.extend(_check_trust_boundaries(weld_dir))
     results.extend(check_agent_graph(weld_dir, CheckResult))

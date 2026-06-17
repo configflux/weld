@@ -26,14 +26,10 @@ import contextlib
 import io
 import json
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.init import main as init_main  # noqa: E402
 from weld.init_workspace import init_workspace  # noqa: E402

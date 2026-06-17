@@ -70,9 +70,8 @@ def inspect_child(
     head_sha = _git_stdout(child_root, "rev-parse", "HEAD")
     head_ref = _git_stdout(child_root, "symbolic-ref", "-q", "HEAD")
     is_dirty = bool(_git_stdout(child_root, "status", "--porcelain"))
-    graph_status, graph_sha256, graph_error = _graph_status(
-        child_root / ".weld" / "graph.json",
-    )
+    graph_file = child_root / ".weld" / "graph.json"
+    graph_status, graph_sha256, graph_error, counts = _graph_status(graph_file)
 
     return dict(
         status=graph_status,
@@ -84,6 +83,13 @@ def inspect_child(
         last_seen_utc=seen_at,
         error=graph_error,
         remote=remote,
+        # ADR 0011 §5 self-describing ledger fields (additive, null for
+        # non-present children). graph_mtime_ns lets a status fast-path skip
+        # the SHA recompute; node/edge counts make the ledger printable
+        # without reopening the child graph.
+        graph_mtime_ns=_graph_mtime_ns(graph_file) if graph_status == "present" else None,
+        node_count=counts[0],
+        edge_count=counts[1],
     )
 
 
@@ -103,23 +109,50 @@ def _git_stdout(repo_root: Path, *args: str) -> str | None:
     return output or None
 
 
-def _graph_status(graph_path: Path) -> tuple[str, str | None, str | None]:
+def _graph_mtime_ns(graph_path: Path) -> int | None:
+    """Return the child ``graph.json``'s ``st_mtime_ns``, or ``None``.
+
+    ADR 0011 §5: persisted so a status fast-path can skip recomputing the
+    graph SHA when the file has not been touched since the ledger was built.
+    """
+    try:
+        return graph_path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def _graph_status(
+    graph_path: Path,
+) -> tuple[str, str | None, str | None, tuple[int | None, int | None]]:
+    """Classify the child graph and return ``(status, sha256, error, counts)``.
+
+    ``counts`` is ``(node_count, edge_count)`` for a ``present`` graph and
+    ``(None, None)`` otherwise (ADR 0011 §5 self-describing ledger fields).
+    """
     if not graph_path.is_file():
-        return "uninitialized", None, None
+        return "uninitialized", None, None, (None, None)
 
     try:
         raw = graph_path.read_bytes()
     except OSError as exc:
-        return "corrupt", None, f"{type(exc).__name__}: {exc}"
+        return "corrupt", None, f"{type(exc).__name__}: {exc}", (None, None)
 
     digest = hashlib.sha256(raw).hexdigest()
     try:
         decoded = raw.decode("utf-8")
         payload = json.loads(decoded)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        return "corrupt", digest, f"{type(exc).__name__}: {exc}"
+        return "corrupt", digest, f"{type(exc).__name__}: {exc}", (None, None)
 
     if not isinstance(payload, dict):
-        return "corrupt", digest, "ValueError: top-level graph payload must be a JSON object"
+        return (
+            "corrupt", digest,
+            "ValueError: top-level graph payload must be a JSON object",
+            (None, None),
+        )
 
-    return "present", digest, None
+    nodes = payload.get("nodes")
+    edges = payload.get("edges")
+    node_count = len(nodes) if isinstance(nodes, (dict, list)) else None
+    edge_count = len(edges) if isinstance(edges, (dict, list)) else None
+    return "present", digest, None, (node_count, edge_count)

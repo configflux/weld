@@ -111,12 +111,12 @@ def validate_meta(meta: dict) -> list[ValidationError]:
             f".weld/graph.json` to regenerate.",
             hint=_REGEN_HINT,
         ))
-    if "updated_at" not in meta:
-        errors.append(ValidationError(
-            "meta", "updated_at", "required field missing",
-            hint=_REGEN_HINT,
-        ))
-    elif not isinstance(meta["updated_at"], str):
+    # ADR 0065: ``updated_at`` lives in the ``graph-meta.json`` sidecar, not
+    # in ``graph.json``. Readers overlay it back onto the logical meta, but a
+    # graph validated without its (gitignored) sidecar -- e.g. a fresh
+    # checkout -- legitimately lacks it. So ``updated_at`` is optional here
+    # and only type-checked when present.
+    if "updated_at" in meta and not isinstance(meta["updated_at"], str):
         errors.append(ValidationError(
             "meta", "updated_at", "must be an ISO-8601 string",
             hint=f"found {type(meta['updated_at']).__name__}; {_REGEN_HINT}",

@@ -113,12 +113,17 @@ def _check_staleness(data: dict, root: Path) -> tuple[list[str], list[str]]:
     pointer but it is an informational hint, not a required action.
     """
     from weld._git import is_git_repo
+    from weld._graph_meta_sidecar import merge_sidecar_meta
     from weld._staleness import compute_stale_info
 
     if not is_git_repo(root):
         return [_status("INFO", "Not a git repo — staleness check skipped")], []
 
-    info = compute_stale_info(root / ".weld" / "graph.json", data.get("meta") or {})
+    # ADR 0065: git_sha lives in the graph-meta.json sidecar (legacy
+    # in-graph fallback). Overlay it so the staleness signal is unchanged.
+    graph_path = root / ".weld" / "graph.json"
+    meta = merge_sidecar_meta(data.get("meta") or {}, graph_path)
+    info = compute_stale_info(graph_path, meta)
     source_stale = info.get("source_stale", False)
     sha_behind = info.get("sha_behind", False)
     behind = info.get("commits_behind", -1)

@@ -23,9 +23,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 import weld._git as _git_mod  # noqa: E402
 
@@ -111,11 +108,15 @@ def _make_stale(root: Path) -> str:
 
 
 def _graph_meta_sha(root: Path) -> str | None:
+    # ADR 0065: git_sha lives in the graph-meta.json sidecar (with a legacy
+    # in-graph fallback). ``load_graph_meta`` overlays it, giving the
+    # location-agnostic view every staleness consumer sees.
+    from weld._graph_meta_sidecar import load_graph_meta
+
     p = root / ".weld" / "graph.json"
     if not p.is_file():
         return None
-    data = json.loads(p.read_text(encoding="utf-8"))
-    return data.get("meta", {}).get("git_sha")
+    return load_graph_meta(p).get("git_sha")
 
 
 def _wd(root: Path, args: list[str], *, env: dict | None = None) -> str:

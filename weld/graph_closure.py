@@ -62,19 +62,19 @@ def _path_index(nodes: dict[str, dict]) -> dict[str, str]:
 
 
 def _module_index(nodes: dict[str, dict], path_index: dict[str, str]) -> dict[str, str]:
+    # Iterate both sources sorted by key so ``setdefault`` first-writer-wins is
+    # order-INDEPENDENT. Full vs incremental feed ``close_graph`` node dicts in
+    # different insertion order; a multi-symbol stdlib module (``json`` ->
+    # ``dump``/``dumps``/``loads``) otherwise bound ``index['json']`` to a
+    # different ``symbol:py:json:*`` -> ``import json`` drifted ~705 import edges (bd 89kn).
     index: dict[str, str] = {}
-    for rel_path, node_id in path_index.items():
-        path = PurePosixPath(rel_path)
-        ext = path.suffix.lower()
+    for rel_path, node_id in sorted(path_index.items()):
+        ext = PurePosixPath(rel_path).suffix.lower()
         if ext == ".py":
             _index_python_module(index, rel_path, node_id)
-        elif ext in {".ts", ".tsx", ".js", ".jsx"}:
+        elif ext in _CODE_EXTS:  # every non-.py code ext is path-module indexed
             _index_path_module(index, rel_path, node_id)
-        elif ext in {".go", ".rs", ".java", ".cs"}:
-            _index_path_module(index, rel_path, node_id)
-        elif ext in {".cpp", ".cc", ".cxx", ".c", ".h", ".hh", ".hpp", ".hxx"}:
-            _index_path_module(index, rel_path, node_id)
-    for node_id, node in nodes.items():
+    for node_id, node in sorted(nodes.items()):
         props = node.get("props") or {}
         for key in ("module", "namespace", "namespaces", "packages"):
             values = props.get(key)

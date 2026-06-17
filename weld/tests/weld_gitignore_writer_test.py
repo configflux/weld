@@ -8,14 +8,10 @@ auto-creation.
 
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._gitignore_writer import (  # noqa: E402
     CONFIG_ONLY_GITIGNORE,
@@ -59,6 +55,7 @@ class WriteWeldGitignoreTest(unittest.TestCase):
             "workspace.lock",
             "query_state.bin",
             "graph.json",
+            "graph-meta.json",  # ADR 0065 volatile-meta sidecar
             "agent-graph.json",
             "graph-communities.json",
             "graph-community-report.md",
@@ -85,13 +82,16 @@ class WriteWeldGitignoreTest(unittest.TestCase):
                 f"\n{must_track}\n", "\n" + TRACK_GRAPHS_GITIGNORE,
                 f"track-graphs unexpectedly ignores {must_track}",
             )
-        # Per-machine state is still ignored under track-graphs.
+        # Per-machine state is still ignored under track-graphs. Crucially
+        # the volatile-meta sidecar (ADR 0065) stays ignored even when the
+        # graph itself is tracked -- that split is the whole point.
         for must_ignore in (
             "discovery-state.json",
             "graph-previous.json",
             "workspace-state.json",
             "workspace.lock",
             "query_state.bin",
+            "graph-meta.json",  # ADR 0065 volatile-meta sidecar
             "graph-communities.json",
             "graph-community-report.md",
             "graph-community-index.md",

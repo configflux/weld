@@ -71,6 +71,19 @@ def _write_graph(repo_root: Path, payload: dict | None = None) -> None:
     )
 
 
+def _write_graph_meta_at_head(repo_root: Path) -> None:
+    """Write the ADR 0065 graph-meta sidecar pinning git_sha to HEAD.
+
+    Makes a present child genuinely fresh for the ADR 0066 oracle, which
+    reads the discovered-from SHA from the sidecar (not in-graph meta).
+    """
+    head = _git(repo_root, "rev-parse", "HEAD")
+    (repo_root / ".weld" / "graph-meta.json").write_text(
+        json.dumps({"version": 1, "git_sha": head}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_workspaces(root: Path, children: list[ChildEntry]) -> WorkspaceConfig:
     config = WorkspaceConfig(children=children, cross_repo_strategies=[])
     dump_workspaces_yaml(config, root / ".weld" / "workspaces.yaml")
@@ -334,6 +347,11 @@ class WorkspaceStatusCliTest(unittest.TestCase):
             present = _init_repo(root / "services" / "api")
             _init_repo(root / "services" / "auth")
             _write_graph(present)
+            # ADR 0066: a present child shows ``present`` only when its
+            # discovered-from SHA (read via the sidecar seam) is at HEAD.
+            # Stamp the sidecar at HEAD so this child is genuinely fresh;
+            # without it the oracle reports ``unknown_sha`` -> ``stale``.
+            _write_graph_meta_at_head(present)
             _write_workspaces(
                 root,
                 [

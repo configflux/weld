@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
 
+from weld._cli_render_trust import stats_trust_lines
+
 
 def render_query(payload: Mapping[str, Any]) -> str:
     """Render a ``wd query`` / OR-fallback envelope as sectioned text.
@@ -188,21 +190,31 @@ def render_references(payload: Mapping[str, Any]) -> str:
 
 
 def render_stale(payload: Mapping[str, Any]) -> str:
-    """Render a ``wd stale`` envelope as key:value pairs."""
+    """Render a ``wd stale`` envelope as key:value pairs.
+
+    At a federated root (ADR 0066 §2) the payload carries a ``children``
+    array; the renderer adds a one-line child summary plus one line per
+    stale child (fresh children are counted, not enumerated, so output
+    stays bounded on large workspaces).
+    """
     lines = [_header("stale")]
     keys = (
-        "stale",
-        "source_stale",
-        "sha_behind",
-        "graph_sha",
-        "current_sha",
-        "commits_behind",
-        "reason",
+        "stale", "source_stale", "sha_behind", "graph_sha",
+        "current_sha", "commits_behind", "reason",
     )
     for key in keys:
         if key in payload:
-            value = payload[key]
-            lines.append(f"  {key}: {_format_scalar(value)}")
+            lines.append(f"  {key}: {_format_scalar(payload[key])}")
+    children = payload.get("children")
+    if isinstance(children, list):
+        stale = [c for c in children if isinstance(c, Mapping) and c.get("state") == "stale"]
+        lines.append(f"  children: {len(children)} ({len(stale)} stale)")
+        for child in stale:
+            behind = child.get("commits_behind")
+            suffix = f", {behind} behind" if isinstance(behind, int) and behind > 0 else ""
+            lines.append(
+                f"    {child.get('name')}: stale ({child.get('reason')}{suffix})",
+            )
     return _join(lines)
 
 
@@ -239,6 +251,7 @@ def render_stats(payload: Mapping[str, Any]) -> str:
                 f"    - {entry.get('id', '')}  "
                 f"(type {entry.get('type', '')}, degree {entry.get('degree', 0)})"
             )
+    lines.extend(stats_trust_lines(payload.get("per_language_trust") or {}))
     stale = payload.get("stale") or {}
     if stale:
         is_stale = stale.get("stale") if isinstance(stale, Mapping) else None
@@ -290,13 +303,17 @@ def _match_block(idx: int, match: Mapping[str, Any]) -> list[str]:
     nid = _node_display_id(match)
     ntype = str(match.get("type") or "")
     label = match.get("label")
+    props = match.get("props") or {}
     out = [f"    {idx}. {nid}  [type: {ntype or 'unknown'}]"]
     if label and label != nid:
         out.append(f"       label: {label}")
+    confidence = props.get("confidence")
+    if confidence:
+        out.append(f"       confidence: {confidence}")
     score = match.get("score")
     if score is not None:
         out.append(f"       score: {score}")
-    desc = ((match.get("props") or {}).get("description") or "").strip()
+    desc = (props.get("description") or "").strip()
     if desc:
         out.append(f"       description: {_short(desc, 160)}")
     return out

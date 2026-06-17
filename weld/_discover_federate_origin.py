@@ -43,10 +43,10 @@ import json
 import sys
 from pathlib import Path
 
+from weld._graph_meta_sidecar import write_graph_with_meta
 from weld._workspace_inspect import resolve_child_root
-from weld.serializer import dumps_graph as _dumps_graph
 from weld.workspace import WorkspaceConfig
-from weld.workspace_state import WorkspaceState, atomic_write_text
+from weld.workspace_state import WorkspaceState
 
 #: Languages whose strategies ship per-ADR-0042 origin tagging and
 #: therefore participate in federated cross-child re-tagging. Each
@@ -333,8 +333,14 @@ def retag_federated_origins_on_disk(
         if total == 0:
             continue
         changes[name] = total
-        # Re-serialize through the canonical graph writer so the
+        # Re-serialize through the ADR 0065 paired writer so the
         # on-wire bytes match the rest of the discover path
-        # (deterministic key/edge ordering, single trailing newline).
-        atomic_write_text(graph_path, _dumps_graph(graph_dict))
+        # (deterministic key/edge ordering, single trailing newline)
+        # AND the child stays content-addressable: volatile meta
+        # (updated_at/git_sha) is stripped to the graph-meta.json
+        # sidecar instead of being re-stamped into graph.json. A
+        # legacy child loaded here still carries those keys in-graph;
+        # routing the re-tag write through the paired writer migrates
+        # it to the sidecar in place rather than re-persisting them.
+        write_graph_with_meta(graph_path, graph_dict)
     return changes

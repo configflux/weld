@@ -22,6 +22,7 @@ from weld.init_detect_constants import (
     ROOT_CONFIG_NAMES as _ROOT_CONFIG_NAMES_TUPLE,
 )
 from weld.repo_boundary import iter_repo_files
+from weld.strategies.http_client import _HTTP_LIBRARY_ROOTS
 
 # ``detect_csharp_artifacts`` is the C# init detector documented by ADR
 # 0056 wiring (see ``weld._init_csharp``); the heavy lifting lives in
@@ -87,6 +88,20 @@ FRAMEWORK_PATTERNS: list[tuple[str, str, str]] = [
     # treats any pattern that starts with ``"`` as a substring match
     # against the stripped source line.
     ('"github.com/gin-gonic/gin"', "Gin", "go_module"),
+    # Rust axum (ADR 0071): both patterns carry their own ``::`` / ``;``
+    # terminator so a longer crate (``axum_extra``) is not matched.
+    ("use axum::", "Axum", "rust_module"),
+    ("use axum;", "Axum", "rust_module"),
+]
+
+# Outbound-HTTP-client detection (bd 0ssj). ``HTTPClient`` is a synthetic
+# framework mapped to the ``http_client`` strategy so ``wd init`` wires
+# outbound-call extraction. Triggers come from the strategy's own
+# ``_HTTP_LIBRARY_ROOTS`` so detection and extraction cannot drift.
+FRAMEWORK_PATTERNS += [
+    (f"{kw} {lib}", "HTTPClient", "http_client")
+    for lib in sorted(_HTTP_LIBRARY_ROOTS)
+    for kw in ("from", "import")
 ]
 
 # Bounded-scan helpers (per-language exit and sampling cap) live in
@@ -139,21 +154,12 @@ def _line_has_import(line: str, pattern: str) -> bool:
     from string literals or comments that mention framework names.
     """
     stripped = line.strip()
-    # Go quoted-path patterns (``"github.com/gin-gonic/gin"``) appear inside
-    # ``import "..."`` or a parenthesised ``import (\n\t"..."\n)`` block,
-    # so the line can legitimately start with a double quote.
-    #
-    # For .go files, ``detect_frameworks`` feeds this function via
-    # :func:`weld._init_go_imports.iter_go_import_lines`, which already
-    # strips ``/* ... */`` block comments, backtick raw-string literals,
-    # and lines outside an ``import`` context. That pre-filter is what
-    # rules out the false-positive cases (paths embedded in comments,
-    # raw strings, or stray ``var x = "..."`` assignments). The
-    # substring containment check below is intentional defense-in-depth:
-    # callers that bypass the pre-filter (e.g. unit tests passing a
-    # single line directly) still get a correct answer for the cases the
-    # iterator would have admitted, and the cheap ``//`` / ``#`` guard
-    # keeps single-line comments out either way.
+    # Go quoted-path patterns (``"github.com/gin-gonic/gin"``) appear in
+    # an ``import`` block, so the line can legitimately start with a
+    # double quote. For .go files ``detect_frameworks`` pre-filters lines
+    # via :func:`weld._init_go_imports.iter_go_import_lines` (strips block
+    # comments, raw strings, non-import lines); the substring check below
+    # is defense-in-depth for callers that bypass that pre-filter.
     is_go_quoted = pattern.startswith('"') and pattern.endswith('"')
     if is_go_quoted:
         if stripped.startswith(("#", "//")):
@@ -161,7 +167,9 @@ def _line_has_import(line: str, pattern: str) -> bool:
         return pattern in stripped
     if stripped.startswith(("#", "//", '"', "'", "(", "[")):
         return False
-    if pattern.startswith(("from ", "import ")):
+    if pattern.startswith(("from ", "import ", "use ")):
+        # Python (from/import) and Rust (use) imports are start-of-line
+        # declarations; a prefix match is precise (ADR 0071).
         return stripped.startswith(pattern)
     if "require(" in pattern:
         return (

@@ -22,14 +22,10 @@ This test pins the read/write roundtrip and the atomic-write contract
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._review_state import (  # noqa: E402
     REVIEW_STATE_VERSION,

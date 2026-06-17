@@ -10,14 +10,10 @@ that non-C# fixtures do not get the C# stack wired.
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._init_csharp import (  # noqa: E402
     csharp_source_entries,

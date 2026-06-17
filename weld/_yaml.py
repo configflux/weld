@@ -1,14 +1,19 @@
 """Minimal YAML subset parser for discover.yaml.
 
 Handles the structures used in discover.yaml: mappings, sequences of
-mappings, scalar values, and inline lists.  Does NOT handle the full
-YAML spec -- just enough for our config file.
+mappings, scalar values, inline lists, and multi-line literal (``|``) /
+folded (``>``) block scalars with the standard chomping indicators
+(``|-``, ``|+``, ``>-``, ``>+``).  Does NOT handle the full YAML spec --
+just enough for our config and GitHub Actions workflow files.
 
 Extracted from weld/discover.py so both the orchestrator and
-strategy modules can use it without a pyyaml dependency.
+strategy modules can use it without a pyyaml dependency.  Block-scalar
+expansion lives in the sibling ``_yaml_block_scalar`` module.
 """
 
 from __future__ import annotations
+
+from weld._yaml_block_scalar import consume_block_scalar, is_block_scalar_header
 
 
 def _collect_flow_list(val: str, lines: list[str], start: int) -> tuple[str, int]:
@@ -137,6 +142,9 @@ def _parse_mapping(lines: list[str], start: int, indent: int) -> tuple[dict, int
         key = key.strip().strip('"').strip("'")
         val = val.strip()
         if val and not val.startswith("#"):
+            if is_block_scalar_header(val):
+                result[key], i = consume_block_scalar(val, lines, i + 1, indent)
+                continue
             val, i = _collect_flow_list(val, lines, i + 1)
             result[key] = _parse_scalar(val)
         else:
@@ -175,7 +183,11 @@ def _parse_sequence(lines: list[str], start: int, indent: int) -> tuple[list, in
             k, _, v = item_val.partition(":")
             k = k.strip().strip('"').strip("'")
             v = v.strip()
-            if v:
+            if v and is_block_scalar_header(v):
+                # The key sits after the "- " marker, so its content column is
+                # the bullet indent plus two; the block body must out-indent it.
+                item[k], i = consume_block_scalar(v, lines, i + 1, line_indent + 2)
+            elif v:
                 v, i = _collect_flow_list(v, lines, i + 1)
                 item[k] = _parse_scalar(v)
             else:
@@ -202,7 +214,9 @@ def _parse_sequence(lines: list[str], start: int, indent: int) -> tuple[list, in
                     k2, _, v2 = c2.partition(":")
                     k2 = k2.strip().strip('"').strip("'")
                     v2 = v2.strip()
-                    if v2:
+                    if v2 and is_block_scalar_header(v2):
+                        item[k2], i = consume_block_scalar(v2, lines, i + 1, li2)
+                    elif v2:
                         v2, i = _collect_flow_list(v2, lines, i + 1)
                         item[k2] = _parse_scalar(v2)
                     else:

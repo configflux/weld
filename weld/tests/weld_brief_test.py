@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 
-# Ensure weld package is importable from the repo root
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.brief import (  # noqa: E402
     BRIEF_VERSION,

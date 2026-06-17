@@ -145,6 +145,16 @@ class ValidateEventPositiveTests(unittest.TestCase):
                                   error_kind=cls_name)
                 self.assertIsNotNone(redact.validate_event(event))
 
+    def test_systemexit_category_error_kinds_pass(self) -> None:
+        # The SystemExit-by-code categories emitted by _classify_outcome
+        # are enum-shaped class names and must survive validation.
+        for kind in ("SystemExit", "SystemExitCode1", "SystemExitCode2",
+                     "SystemExitCode127"):
+            with self.subTest(kind=kind):
+                event = _ok_event(outcome="error", exit_code=2,
+                                  error_kind=kind)
+                self.assertIsNotNone(redact.validate_event(event))
+
     def test_numeric_fields_with_long_digit_values_pass(self) -> None:
         # Numeric allowlist exempts schema_version, exit_code, duration_ms.
         event = _ok_event(duration_ms=12345678)

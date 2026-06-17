@@ -12,8 +12,10 @@ Opt-outs (resolved top-wins):
 - ``WELD_AUTO_REFRESH=0`` env var globally opts out (silent; CI).
 - ``--safe`` precedence: refresh still runs, but in safe mode (ADR 0024)
   with banners suppressed.
-- Federated roots (``.weld/workspaces.yaml`` present) are skipped --
-  ADR 0051 scopes auto-refresh to single-repo today.
+- Federated roots (``.weld/workspaces.yaml`` present) delegate to
+  :mod:`weld._auto_refresh_federated` (ADR 0066 part 3): only the
+  stale-or-uninitialized child subset is refreshed, then the root
+  meta-graph is rebuilt. The same opt-outs apply.
 - Missing ``.weld/graph.json``: skipped (the missing-graph guard in
   :mod:`weld._graph_cli` handles first-run guidance).
 
@@ -53,12 +55,21 @@ def _read_graph_meta(graph_path: Path) -> dict | None:
     graph is treated like a missing one -- we cannot make a sensible
     staleness call on it, so the auto-refresh path bails and lets the
     normal load surface a friendly error.
+
+    ADR 0065: the staleness signal depends on ``meta.git_sha``, which now
+    lives in the ``graph-meta.json`` sidecar (with a legacy in-graph
+    fallback). Overlay the sidecar so ``compute_stale_info`` sees the
+    recorded SHA; a graph whose sidecar is absent (fresh checkout) yields
+    no ``git_sha`` and is correctly treated as stale.
     """
     try:
         data = json.loads(graph_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    return data.get("meta") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    from weld._graph_meta_sidecar import merge_sidecar_meta
+    return merge_sidecar_meta(data.get("meta", {}), graph_path)
 
 
 def _is_federated_root(root: Path) -> bool:
@@ -216,10 +227,13 @@ def auto_refresh_if_stale(
 ) -> dict | None:
     """Run incremental discovery when the graph at *root* is stale.
 
-    Returns a dict ``{"refreshed", "incremental", "elapsed_ms",
-    "files_changed"}`` when a refresh ran, or ``None`` when refresh
-    was skipped (already fresh, opt-out, missing graph, or federated
-    root).
+    For a **single repo** returns ``{"refreshed", "incremental",
+    "elapsed_ms", "files_changed"}`` when a refresh ran. For a **federated
+    root** (ADR 0066 part 3) delegates to
+    :func:`weld._auto_refresh_federated.auto_refresh_federated_root`, which
+    refreshes only the stale-or-uninitialized child subset and returns
+    ``{"refreshed_children", "errors"}``. Returns ``None`` when refresh was
+    skipped (already fresh, opt-out, missing graph, or nothing stale).
 
     Errors during the refresh are swallowed: read commands must keep
     serving even when the auto-refresh path itself is broken. The
@@ -232,11 +246,19 @@ def auto_refresh_if_stale(
     if _env_disabled(env_map):
         return None
 
+    # Federated roots (ADR 0066 part 3): delegate to the auto-recurse-on-read
+    # path. Checked before the single-repo graph.json / discover.yaml guards
+    # below -- a workspace root has neither, and the single-repo oracle does
+    # not apply to it (see weld._auto_refresh_federated for the full contract).
+    if _is_federated_root(root):
+        from weld._auto_refresh_federated import auto_refresh_federated_root
+        return auto_refresh_federated_root(
+            root, no_refresh=no_refresh, safe=safe,
+            json_output=json_output, env=env_map, stderr=err,
+        )
+
     graph_path = root / ".weld" / "graph.json"
     if not graph_path.is_file():
-        return None
-
-    if _is_federated_root(root):
         return None
 
     # Skip refresh when there is no discover.yaml: the caller seeded a
@@ -281,8 +303,6 @@ def _do_refresh(
     try:
         from weld.discover import _discover_single_repo
         from weld.discovery_state import load_state
-        from weld.serializer import dumps_graph
-        from weld.workspace_state import atomic_write_text
     except Exception:
         # Discovery module failed to import for whatever reason --
         # better to serve stale than crash the read.
@@ -293,16 +313,28 @@ def _do_refresh(
     pre_hashes = dict(pre_state.files) if pre_state is not None else {}
     incremental = pre_state is not None
     try:
-        graph = _discover_single_repo(
+        # ``write_graph=True``: discovery writes ``.weld/graph.json`` and
+        # its ADR 0065 volatile-meta sidecar in-line, reusing the canonical
+        # bytes it already serialized for the query-state sidecar. That
+        # avoids a second ~900 ms serialization of the graph here
+        # (bd 85tb.2) -- the standalone ``wd discover`` CLI still owns its
+        # own ``--output`` write, so this flag is scoped to auto-refresh.
+        #
+        # ``with_sqlite=False``: the graph.db sqlite sidecar (ADR 0058) is a
+        # federation-scoped, self-healing derived index -- the read that
+        # triggered this refresh (``query`` / ``find`` / ``context`` on a
+        # single repo) is served from graph.json + query_state.bin, never
+        # graph.db. Rebuilding the multi-thousand-row sqlite db on the read
+        # path costs ~1 s for no benefit to that read; a later sqlite-needing
+        # read (federation, ``wd graph index``) detects the stale db via its
+        # source_json_sha and rebuilds it lazily (ADR 0058 freshness gate).
+        # Auto-refresh only fires on single-repo roots (federated roots are
+        # skipped above), so this never starves a federation read of a db it
+        # would have built synchronously.
+        _discover_single_repo(
             root, incremental=incremental, safe=safe,
+            write_graph=True, with_sqlite=False,
         )
-        # ``_discover_single_repo`` builds the graph and updates
-        # discovery-state, but the persisted ``graph.json`` is only
-        # rewritten by the standalone ``wd discover`` CLI. Auto-refresh
-        # is a side-effect inside a read command, so we own the write
-        # here. ``atomic_write_text`` matches ADR 0011 §8 / 0012 §3.
-        graph_path = root / ".weld" / "graph.json"
-        atomic_write_text(graph_path, dumps_graph(graph))
     except Exception:
         # Refresh failed -- keep serving stale and let the user see
         # the failure on the next explicit ``wd discover``.

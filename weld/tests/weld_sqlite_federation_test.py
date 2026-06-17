@@ -19,15 +19,11 @@ Two layers of coverage:
 from __future__ import annotations
 
 import sqlite3
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld import _sqlite_reader as reader  # noqa: E402
 from weld._sqlite_schema import (  # noqa: E402

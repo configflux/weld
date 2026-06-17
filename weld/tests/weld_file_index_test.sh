@@ -367,5 +367,24 @@ if d['files']:
 print('PASS: output format matches spec')
 "
 
+# --- Test 11: find subcommand - space-separated multi-word term ---
+# Regression for the dogfood gap: a multi-word `wd find` used to treat the
+# whole phrase as one literal substring and return nothing. It must now
+# tokenize on whitespace and surface the file whose basename spells out
+# the words (rate_limits.py) at the top.
+echo "--- Test 11: find 'rate limits' (multi-word) returns rate_limits.py first ---"
+out="$(wd_cmd find 'rate limits' --json)"
+echo "${out}" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert d['query'] == 'rate limits', f'query mismatch: {d[\"query\"]}'
+paths = [f['path'] for f in d['files']]
+assert paths, f'multi-word find returned no matches: {d}'
+assert paths[0].endswith('rate_limits.py'), \
+    f'rate_limits.py must rank first for multi-word query; got {paths}'
+
+print('PASS: multi-word find returns rate_limits.py first')
+"
+
 echo ""
 echo "PASS: all weld_file_index tests passed"

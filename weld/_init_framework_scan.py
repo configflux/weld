@@ -24,6 +24,7 @@ from typing import Iterable, Iterator
 _PY_EXTS: frozenset[str] = frozenset({".py"})
 _JS_TS_EXTS: frozenset[str] = frozenset({".js", ".jsx", ".ts", ".tsx"})
 _GO_EXTS: frozenset[str] = frozenset({".go"})
+_RUST_EXTS: frozenset[str] = frozenset({".rs"})
 
 # Maximum files per language family that the bounded scan will yield. One
 # positive hit per framework is sufficient; the cap bounds the worst case
@@ -59,13 +60,18 @@ def _resolve_max_files_per_lang() -> int | None:
     return value
 
 
-# Frameworks per language family.
+# Frameworks per language family. ``HTTPClient`` is the synthetic
+# outbound-HTTP-client framework (bd 0ssj): its import patterns
+# (``import requests`` / ``from httpx`` ...) are Python, so it belongs to
+# the Python family for per-language early-exit and sampling-cap purposes.
 _LANG_FRAMEWORKS: dict[frozenset[str], set[str]] = {
     _PY_EXTS: {
         "FastAPI", "Django", "Flask", "SQLAlchemy", "Pydantic", "Prisma",
+        "HTTPClient",
     },
     _JS_TS_EXTS: {"Express"},
     _GO_EXTS: {"Gin"},
+    _RUST_EXTS: {"Axum"},
 }
 
 
@@ -76,6 +82,8 @@ def _lang_for_ext(ext: str) -> frozenset[str] | None:
         return _JS_TS_EXTS
     if ext in _GO_EXTS:
         return _GO_EXTS
+    if ext in _RUST_EXTS:
+        return _RUST_EXTS
     return None
 
 
@@ -93,6 +101,8 @@ def _patterns_for_ext(
         return [(p, fw, s) for (p, fw, s) in all_patterns if fw == "Express"]
     if ext in _GO_EXTS:
         return [(p, fw, s) for (p, fw, s) in all_patterns if fw == "Gin"]
+    if ext in _RUST_EXTS:
+        return [(p, fw, s) for (p, fw, s) in all_patterns if fw == "Axum"]
     return []
 
 

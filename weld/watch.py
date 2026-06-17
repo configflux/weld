@@ -317,21 +317,25 @@ def _default_enumerate(root: Path) -> list[str]:
 def _default_discover_cb(root: Path) -> Callable[[set[str]], str]:
     """Build the CLI's discovery callback: rediscover + emit diff summary.
 
-    The watch-triggered write path emits ``graph.json`` through the canonical
-    serializer so the determinism contract (ADR 0012 section 3) holds across
-    watch-driven rewrites just as it does for ``wd discover``. The on-disk
-    replacement goes through :func:`weld.workspace_state.atomic_write_text`
-    so a crashed watch callback cannot leave a truncated ``graph.json``
-    behind (matches the federation root-write guarantee in ADR 0011 §8).
+    The watch-triggered write path emits ``graph.json`` through the ADR 0065
+    paired writer :func:`weld._graph_meta_sidecar.write_graph_with_meta`, the
+    same seam ``wd discover`` uses. That keeps two guarantees: the determinism
+    contract (ADR 0012 section 3) holds across watch-driven rewrites, and the
+    volatile meta (``updated_at`` / ``git_sha``) is split out to the
+    gitignored ``graph-meta.json`` sidecar so each watch rewrite leaves a
+    content-addressable, byte-stable ``graph.json`` instead of churning those
+    two fields on every keystroke. The write is atomic (the paired writer uses
+    :func:`weld.workspace_state.atomic_write_text` internally) so a crashed
+    watch callback cannot leave a truncated ``graph.json`` behind (matches the
+    federation root-write guarantee in ADR 0011 §8).
     """
     from weld import diff as diff_mod
     from weld import discover as discover_mod
-    from weld.serializer import dumps_graph as _dumps_graph
-    from weld.workspace_state import atomic_write_text
+    from weld._graph_meta_sidecar import write_graph_with_meta
 
     def _cb(_changed: set[str]) -> str:
         graph = discover_mod.discover(root, incremental=True)
-        atomic_write_text(root / ".weld" / "graph.json", _dumps_graph(graph))
+        write_graph_with_meta(root / ".weld" / "graph.json", graph)
         diff_result = diff_mod.load_and_diff(root)
         return diff_mod.format_human(diff_result)
 

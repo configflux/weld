@@ -134,20 +134,23 @@ is usable; fails one or more binding criteria with disclosed gaps) →
 **Preview** (ships with documented correctness issues; not for production
 use) → **Experimental** (opt-in extra, off by default) → **Not
 supported**. Languages move tiers only via tier-check harness output, not
-by editorial claim. C#, Python, Java, and C++ are currently the Tier 1
-languages; other languages remain at Tier 2 pending per-language harness
-runs.
+by editorial claim. The per-language Status column below is generated from
+the harness baselines, so it always reflects the current verdict; a
+language without a recorded baseline keeps its listed status pending its
+own harness run.
 
+<!-- LANG-TABLE:BEGIN -->
 | Language | Extraction surface | Grammar package | Status |
 |---|---|---|---|
 | Python | modules, classes, functions, imports, call graph | built-in (no extra) | **Tier 1** |
-| TypeScript | exports, classes, imports | `tree-sitter-typescript` | Tier 2 |
+| TypeScript | exports, classes, imports | `tree-sitter-typescript` | **Tier 1** |
 | JavaScript | exports, classes, imports | `tree-sitter-javascript` | Tier 2 |
-| Go | exports, types, imports | `tree-sitter-go` | Tier 2 |
-| Rust | exports, types, imports | `tree-sitter-rust` | Tier 2 |
+| Go | exports, types, imports | `tree-sitter-go` | **Tier 1** |
+| Rust | exports, types, imports | `tree-sitter-rust` | **Tier 1** |
 | C# | types, methods, properties, attributes, namespaces, using dependencies, best-effort call graph | `tree-sitter-c-sharp` | **Tier 1** |
 | C++ | classes, structs, namespaces, functions, methods, inherits edges, includes, CMake build targets, best-effort call graph | `tree-sitter-cpp` | **Tier 1** |
 | Java | classes, interfaces, methods, fields, constructors, annotations, imports, inherits / implements edges | `tree-sitter-java` | **Tier 1** |
+<!-- LANG-TABLE:END -->
 
 **Frameworks** (reuse a language's extractor; status inherits from the host
 language):

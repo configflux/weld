@@ -13,7 +13,7 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.20.1 -->
+<!-- evaluator-note: latest=v0.21.0 -->
 > **Evaluators: start with v0.19.1.** v0.19.1 is the current
 > recommended starting point. Headline features added since v0.14.0:
 > a 14-tool MCP server for graph-backed agent context
@@ -166,10 +166,19 @@ Sample output (`wd query "auth"` — default human form, trimmed):
   matches (1):
     1. symbol:src/auth/handler.py:authenticate  [type: function]
        label: authenticate
+       confidence: definite
        description: Validate a bearer token and return the caller identity.
   neighbors (1):
     - route:/login  [type: route]
 ```
+
+Each match shows its `confidence` (`definite` / `inferred` / `speculative`)
+so an agent can weight strong hits over guesses. By default `wd query` also
+hides unresolved-symbol sentinels (call-graph callees that could not be
+linked to a definition, `origin=unresolved`) — they are noise in the result
+set. Pass `--include-speculative` to bring them back. The `--json` envelope
+applies the same default filter; the MCP `weld_query` tool is unfiltered and
+always carries `confidence` per node.
 
 All `wd` retrieval commands default to human-readable text and accept
 `--json` for the stable JSON envelope. Pass `--json` when
@@ -351,20 +360,23 @@ is usable; fails one or more binding criteria with disclosed gaps) →
 **Preview** (ships with documented correctness issues; not for
 production use) → **Experimental** (opt-in extra, off by default) →
 **Not supported**. Languages move tiers only via tier-check harness
-output, not by editorial claim. C#, Python, Java, and C++ are
-currently the Tier 1 languages; the other languages remain at Tier 2
-pending per-language harness runs.
+output, not by editorial claim. The per-language Status column below is
+generated from the harness baselines, so it always reflects the current
+verdict; a language without a recorded baseline keeps its listed status
+pending its own harness run.
 
+<!-- LANG-TABLE:BEGIN -->
 | Language | Extraction surface | Grammar package | Status |
 |---|---|---|---|
 | Python | modules, classes, functions, imports, call graph | built-in (no extra) | **Tier 1** |
-| TypeScript | exports, classes, imports | `tree-sitter-typescript` | Tier 2 |
+| TypeScript | exports, classes, imports | `tree-sitter-typescript` | **Tier 1** |
 | JavaScript | exports, classes, imports | `tree-sitter-javascript` | Tier 2 |
-| Go | exports, types, imports | `tree-sitter-go` | Tier 2 |
-| Rust | exports, types, imports | `tree-sitter-rust` | Tier 2 |
+| Go | exports, types, imports | `tree-sitter-go` | **Tier 1** |
+| Rust | exports, types, imports | `tree-sitter-rust` | **Tier 1** |
 | C# | types, methods, properties, attributes, namespaces, using dependencies, best-effort call graph | `tree-sitter-c-sharp` | **Tier 1** |
 | C++ | classes, structs, namespaces, functions, methods, inherits edges, includes, CMake build targets, best-effort call graph | `tree-sitter-cpp` | **Tier 1** |
 | Java | classes, interfaces, methods, fields, constructors, annotations, imports, inherits / implements edges | `tree-sitter-java` | **Tier 1** |
+<!-- LANG-TABLE:END -->
 
 **Frameworks** (reuse a language's extractor; status inherits from the
 host language):
@@ -599,6 +611,48 @@ To opt out entirely, just delete `.weld/.gitignore` after init — the
 skip-if-exists guard means it won't be recreated until the next init
 or bootstrap.
 
+### Warm graphs from CI (`wd warm`)
+
+The config-only default keeps generated graphs out of git, which means a
+fresh clone has no graph until the first `wd discover`. On a larger team you
+can hand everyone a warm graph **without committing it** by building it once
+in CI and distributing it as a build artifact. This rides your existing CI
+artifact storage — there is no shared graph server and no hosted index.
+
+Two pieces:
+
+1. **Publish in CI.** The bundled
+   [`graph-artifact.yml`](.github/workflows/graph-artifact.yml) workflow runs
+   `wd discover --safe` on every push to `main` and uploads `graph.json` plus a
+   `graph.json.sha256` integrity tag as an artifact keyed by the commit SHA.
+   The graph is content-addressable, so the SHA identifies the graph content
+   exactly. Adapt the workflow's storage/upload step to wherever your team
+   already keeps build artifacts.
+
+2. **Fetch locally.** `wd warm` finds the nearest-ancestor commit that has a
+   published graph, verifies it against the published hash, lands it as your
+   local `.weld/graph.json`, and refreshes it to your `HEAD`:
+
+   ```bash
+   # Point at the artifact source (a directory, or an https URL template
+   # containing {sha}); or set WELD_WARM_SOURCE once for the whole team.
+   wd warm --source /path/to/artifact-store
+   wd warm --source "https://artifacts.example.com/weld/{sha}/graph.json"
+   ```
+
+   The artifact store is laid out as `<source>/<sha>/graph.json` (and the
+   sibling `graph.json.sha256`). `wd warm` probes `HEAD` and its recent
+   ancestors (`--max-ancestors`, default 50), so a developer a few commits
+   ahead of the last CI build still gets a warm start and only re-discovers the
+   handful of changed files.
+
+**Always-safe fallback.** When no artifact is reachable — nothing published
+yet, the source is unavailable, the integrity check fails, or you are outside a
+git checkout — `wd warm` falls back to a full local `wd discover`. It never
+leaves you worse off than running discover directly, and a tampered or corrupt
+artifact is refused, never used. Pass `--no-fallback` if you want warm to skip
+the local discover and simply report a miss.
+
 ### Custom strategies
 
 Drop a Python file in `.weld/strategies/` to extract repo-specific
@@ -622,18 +676,85 @@ several child git repositories, each owning its own `.weld/` directory. The
 root maintains a meta-graph of cross-repo relationships without duplicating
 child content. Children remain portable and independently publishable.
 
-### Prerequisites
+You do not need to `cd` into each child to keep the workspace usable.
+`wd workspace bootstrap` onboards an entire polyrepo root in one command,
+and `wd discover --recurse` refreshes every child plus the root meta-graph
+in a single pass. This section walks the full lifecycle:
+**bootstrap -> status -> query -> refresh**.
 
-- Each child repo has been initialized with `wd init` and has a
-  `.weld/graph.json`.
-- The workspace root directory contains the child repos as subdirectories
-  (nested git repositories).
+### Lifecycle at a glance
 
-### Setting up a workspace
+| Step | Command | What it does |
+|---|---|---|
+| Onboard | `wd workspace bootstrap` | Init the root, scan and init every nested child, discover each child, build the root meta-graph |
+| Inspect | `wd workspace status` | Show every child's lifecycle state (present / missing / uninitialized / corrupt), the derived `stale` view when a present child has drifted past its graph, and git ref |
+| Query | `wd query <term>` | Search the federated graph from the root; surfaces `repo:<name>` nodes and child-namespaced symbols |
+| Refresh | `wd discover --recurse` (or per-child `wd discover`) | Rebuild child graphs and the root meta-graph; you choose the cadence |
 
-Run `wd init` at the workspace root. When nested git repositories are
-detected, weld automatically scaffolds `.weld/workspaces.yaml` alongside
-the usual `discover.yaml`:
+### Onboarding a workspace (one-shot bootstrap)
+
+Run `wd workspace bootstrap` at the workspace root. It is the fastest way to
+go from "a directory full of git repos" to "a queryable federated graph". In
+a single pass it:
+
+1. Initializes the root (writes `.weld/discover.yaml` and a managed
+   `.weld/.gitignore`) if it is not already a Weld project.
+2. Scans for nested git repositories and writes `.weld/workspaces.yaml`
+   listing each one as a child.
+3. Initializes any child that is not yet a Weld project.
+4. Runs discovery inside every present child (the same cascade as
+   `wd discover --recurse`).
+5. Builds the root meta-graph of `repo:<name>` nodes.
+
+```bash
+cd ~/workspace-root
+wd workspace bootstrap
+```
+
+Example output for a root with three children:
+
+```text
+[weld] recurse: discovering libs-shared-models ...
+[weld] recurse: libs-shared-models done
+[weld] recurse: discovering services-api ...
+[weld] recurse: services-api done
+[weld] recurse: discovering services-auth ...
+[weld] recurse: services-auth done
+Bootstrapped workspace at: 3 child repo(s) discovered
+  * root init: already initialized (no-op)
+  * workspaces.yaml: written
+  * per-child init: all children already initialized
+  * discover: libs-shared-models, services-api, services-auth
+  * present after bootstrap: 3 of 3
+```
+
+Bootstrap is idempotent: re-running it on an already-onboarded root re-scans,
+re-discovers, and rebuilds the meta-graph without clobbering child config.
+Add `--json` for a machine-readable summary with `children_discovered`,
+`children_initialized`, `children_present`, and `errors` keys. Common flags:
+
+```bash
+wd workspace bootstrap --max-depth 2          # limit how deep the scan walks for nested .git
+wd workspace bootstrap --exclude-path vendor  # skip a dir by name/path/glob (repeatable, persisted)
+wd workspace bootstrap --respect-gitignore    # skip scan-only children ignored by Git
+```
+
+`--exclude-path` and `--respect-gitignore` are persisted into
+`workspaces.yaml`, so subsequent bootstraps stay scoped without re-passing
+the flags. Explicit `children` entries you add by hand always win over the
+scan, even when gitignored.
+
+> **Cross-repo edges are opt-in.** Bootstrap writes `cross_repo_strategies: []`
+> -- it discovers structure but does not guess which resolvers apply. To wire
+> calls between children, declare resolvers in `workspaces.yaml` and re-run
+> discovery (see [Cross-repo resolvers](#cross-repo-resolvers)).
+
+### Alternative: manual setup with `wd init`
+
+If you prefer to onboard the root without immediately discovering children,
+run `wd init` at the workspace root instead. When nested git repositories are
+detected, weld scaffolds `.weld/workspaces.yaml` alongside the usual
+`discover.yaml`, but does not init or discover the children for you:
 
 ```bash
 cd ~/workspace-root
@@ -642,7 +763,9 @@ wd init --max-depth 2      # limit scan depth for large directory trees
 ```
 
 The `--max-depth` flag controls how many directory levels deep the scanner
-looks for nested `.git` directories (default: 4).
+looks for nested `.git` directories (default: 4). You then initialize and
+discover each child yourself, or run `wd discover --recurse` at the root to
+cascade discovery into every present child in one pass.
 
 ### workspaces.yaml format
 
@@ -706,6 +829,38 @@ defense-in-depth guard, federated discover refuses to overwrite an existing
 non-empty `graph.json` with a 0-node meta-graph; pass `--allow-empty` to
 intentionally tear the workspace graph down.
 
+### Querying the federated graph
+
+Once discovery has run at the root, query the whole workspace from the root
+directory -- no need to `cd` into a child. Federation query results carry two
+markers worth recognizing:
+
+- A `repo:<name>` node represents each present child.
+- Symbols that belong to a child are namespaced as `<child-name>::<node-id>`,
+  so a single query spans every repo in the workspace.
+
+```bash
+cd ~/workspace-root
+wd query "services-auth"
+```
+
+```text
+# query: services-auth
+  matches (2):
+    1. repo:services-auth  [type: repo]
+       label: services-auth
+       confidence: definite
+    2. services-api::rpc:http:out:POST:http://services-auth:8080/tokens  [type: rpc]
+       label: POST http://services-auth:8080/tokens
+       confidence: definite
+```
+
+When cross-repo resolvers are declared, the same query surface also reaches
+the resolved endpoints in the target child (for example
+`services-auth::route:POST:/tokens`), letting one lookup follow a call from
+the caller's repo into the callee's. The MCP tools `weld_query`,
+`weld_context`, and `weld_path` operate on this same federated graph.
+
 ### Workspace status
 
 Inspect the state of every registered child:
@@ -717,16 +872,132 @@ wd workspace status --json   # raw JSON ledger
 
 Example output:
 
-```
+```text
 Workspace status (3 children)
-Counts: present=2, missing=1, uninitialized=0, corrupt=0
-services-api: present (refs/heads/main a1b2c3d4e5f6)
+Counts: present=1, missing=1, uninitialized=0, corrupt=0, stale=1
+services-api: stale (refs/heads/main a1b2c3d4e5f6)
 services-auth: present dirty (refs/heads/feature-x 7890abcdef01)
 services-worker: missing
 ```
 
 Each child shows its lifecycle status, git branch, HEAD SHA prefix, and
-whether the working tree is dirty.
+whether the working tree is dirty. The status header `Counts:` line tallies
+how many children are in each state. A child is stored in exactly one of four
+lifecycle states, and a `present` child can additionally render as `stale`:
+
+| State | Meaning | Typical fix |
+|---|---|---|
+| `present` | The child directory and a valid `.weld/graph.json` are both on disk. The child participates in federation. | -- |
+| `missing` | The child path declared in `workspaces.yaml` does not exist on disk (not cloned, moved, or renamed). | Clone or restore the child, or remove its entry from `workspaces.yaml`. |
+| `uninitialized` | The child directory exists but has no `.weld/graph.json` yet. | Run `wd discover` inside the child, or `wd discover --recurse` / `wd workspace bootstrap` at the root. |
+| `corrupt` | The child has a `.weld/graph.json` that fails to parse or validate. | Re-run `wd discover` inside the child to regenerate the graph. |
+| `stale` | A *derived* view, not a stored state: a `present` child whose source has moved past the commit its graph was built from (new commits, or its `graph.json` bytes changed since the workspace ledger last recorded them). The child still participates in federation -- its graph is just behind. | Usually nothing: a root read (`wd query` / `context` / `path`) auto-refreshes stale children before serving (see [Refreshing children](#refreshing-children)). To refresh without a read, run `wd discover` inside the child or `wd discover --recurse` at the root. |
+
+`stale` is computed at display time by running the single-repo freshness check
+over each `present` child; it never overwrites a child's stored lifecycle
+status. `missing`, `uninitialized`, and `corrupt` children are never reported
+`stale` (they are not "behind" -- they are absent, bare, or broken). The
+`Counts:` line only includes a `stale=N` column when at least one child is
+stale.
+
+`missing`, `uninitialized`, and `corrupt` children are skipped during
+federated discovery -- they never block the root build. They are recorded in
+the ledger so `wd workspace status` can surface them. The `--json` form emits
+the raw ledger, including each child's `head_ref`, `head_sha`, `is_dirty`,
+`graph_sha256`, and `last_seen_utc`. In `--json`, each `present` child also
+gains a derived `freshness` object -- for example:
+
+```json
+"freshness": {
+  "state": "stale",
+  "stale": true,
+  "reason": "source_changed",
+  "head_sha": "a1b2c3d4e5f6...",
+  "graph_sha": "0f1e2d3c4b5a...",
+  "commits_behind": 1
+}
+```
+
+The child's stored `status` field stays `present`; only `freshness.state` /
+`freshness.stale` reflect the drift. `reason` is one of `fresh`,
+`source_changed` (the child has new commits past its graph), `graph_drift`
+(the child's `graph.json` bytes changed since the ledger recorded them),
+`unknown_sha` (the child's graph carries no discovered-from SHA, treated
+conservatively as behind), or `not a git repo` (a non-git child, never stale).
+
+### Refreshing children
+
+The federated graph is only as fresh as the child graphs underneath it.
+Weld both **detects** child drift and, on read commands, **refreshes** the
+drifted children for you. Two surfaces report drift on demand:
+
+- `wd workspace status` marks any `present` child that has moved past its
+  graph as `stale` (see [Workspace status](#workspace-status)).
+- At the root, `wd stale` runs the same per-child check and folds the result
+  into its own freshness report: it lists a `children:` summary, names each
+  stale child, and sets the top-level `stale` flag to *the root's own
+  staleness OR any child being stale*. So a fresh root with one drifted child
+  still reports `stale: yes`. The `--json` form carries the root's own signals
+  under `root_source_stale` / `root_sha_behind` plus a `children` array (one
+  entry per registered child, each with `name`, `state`, `reason`, and
+  `commits_behind`):
+
+```text
+# stale
+  stale: yes
+  ...
+  children: 3 (1 stale)
+    services-api: stale (source_changed, 1 behind)
+```
+
+**Auto-recurse on root reads.** A root read command (`wd query`, `wd context`,
+`wd path`) auto-refreshes drift before serving: it discovers only the
+*stale-or-uninitialized* children (a one-child edit refreshes one child, not
+the whole workspace), rebuilds the root meta-graph so cross-repo edges
+re-resolve against the fresh child graphs, and then answers — no `cd` into the
+child. This mirrors the single-repo auto-refresh that read commands already
+run when a graph is stale. Fresh children, and `missing` / `corrupt` children,
+are left untouched. One child failing to refresh never breaks the read: the
+failure is isolated and the other children still refresh.
+
+The opt-outs are identical to the single-repo case:
+
+- `WELD_AUTO_REFRESH=0` (or `--no-refresh` on the command) disables the
+  refresh. This is the **CI / batch contract**: a pipeline that builds or
+  commits child graphs independently sets `WELD_AUTO_REFRESH=0` so a root read
+  never rewrites child `graph.json` files or the root meta-graph. Detection
+  still works under the opt-out — `wd workspace status` and `wd stale` report
+  child drift (they are read-only); only the *refresh* is suppressed.
+- `--no-refresh` additionally prints a stderr warning naming the stale
+  children, so you know the answer may lag their current source.
+
+There is no background watcher: refresh is pull-based and happens on the read.
+You can still drive a refresh explicitly when you want to control the cadence
+(for example, to refresh fresh-but-CI-relevant children, or to refresh under
+`WELD_AUTO_REFRESH=0`):
+
+```bash
+# Fast refresh: cascade discovery into every present child + rebuild the
+# root meta-graph in one pass. Best for a deliberate "pick up everything".
+wd discover --recurse --safe --output .weld/graph.json
+
+# Or refresh a single child you just edited, then rebuild only the root:
+(cd services/api && wd discover --safe --output .weld/graph.json)
+wd discover --safe --output .weld/graph.json
+```
+
+After any refresh, `wd workspace status` reflects each child's new `head_sha`
+and dirty flag, so it doubles as a "did my refresh land everywhere" check.
+
+> **Recommended cadence for cross-repo edges.** Some framework details (for
+> example FastAPI route endpoints) are captured more completely by a
+> standalone `wd discover` run *inside the child* than by the root
+> `--recurse` cascade. When you depend on cross-repo edges (see
+> [Cross-repo resolvers](#cross-repo-resolvers)), refresh each affected child
+> in its own directory first, then run a plain `wd discover` at the root to
+> re-run the resolvers. Use `--recurse` (or `wd workspace bootstrap`) for the
+> fast structural refresh of `repo:<name>` nodes when you do not need every
+> endpoint-level edge re-derived.
 
 ### Sentinel files
 
@@ -755,29 +1026,46 @@ repo boundaries. They are declared in the `cross_repo_strategies` list in
 
 | Resolver | Description |
 |---|---|
-| `service_graph` | Matches HTTP client call sites in one repo to API endpoint definitions in another. Emits `invokes` edges with host, port, and path metadata. |
+| `service_graph` | Matches HTTP client call sites in one repo to API endpoint definitions in another. Emits `cross_repo:calls` edges carrying the matched host, port, path, and method. |
 
 Resolvers are read-only with respect to child graphs -- they never modify
 a child's `.weld/graph.json`. Output edges are deterministic: identical
 input produces byte-identical edges across runs.
 
-### Performance: opt-in eager query aggregation
+Resolvers are opt-in. A fresh `wd init` or `wd workspace bootstrap` leaves
+`cross_repo_strategies: []`, so no cross-repo edges are emitted until you
+declare one. To enable the example above:
 
-For high-QPS query callers (long-lived MCP servers, batch evaluators)
-the federation can pre-aggregate every fresh-sidecar child's
-inverted index into a single in-memory dict at construction time.
-Per-query latency then drops by 40-90% on a 30-child workspace, at
-the cost of ~17 ms construction overhead. Default is off so single-shot
-`wd query` invocations do not pay the tax. Two opt-in knobs:
+```bash
+# 1. Add the resolver to .weld/workspaces.yaml:
+#    cross_repo_strategies: [service_graph]
+# 2. Re-run discovery at the root so the resolver gets a chance to match:
+wd discover --safe --output .weld/graph.json
+```
 
-- Constructor: `FederatedGraph(root, eager_index=True)`.
-- Environment variable: `WELD_FEDERATION_EAGER=1` (truthy values:
-  `1`, `true`, `yes`, `on`; case-insensitive). Lets operators flip
-  eager on without code changes.
+`service_graph` matches strictly: the client URL's host must equal a sibling
+child's name, and the client `(method, path)` must equal the server route's
+`(method, path)` exactly -- no trailing-slash or prefix tolerance. A call to
+an external host, or to a child whose endpoint was not captured, simply
+yields no edge rather than a guess.
 
-Stale or missing-sidecar children keep the existing per-query fallback
-path; the eager index covers only fresh-sidecar children. Match sets
-are byte-identical to the lazy path.
+### Performance: eager query aggregation (default-on)
+
+The federation pre-aggregates every fresh-sidecar child's inverted
+index into a single in-memory dict at construction time. Per-query
+latency then drops by 40-90% on a 30-child workspace, at the cost of
+~17 ms construction overhead. This is **on by default** for
+fresh-sidecar children; stale or missing-sidecar children keep the
+existing per-query fallback path, so a workspace with no fresh
+sidecars pays no aggregation tax. Match sets are byte-identical to the
+lazy path.
+
+To turn it off -- for example a single-shot `wd query` that should not
+pay the one-time construction tax -- set `WELD_FEDERATION_EAGER=0`
+(falsy values: `0`, `false`, `no`, `off`; case-insensitive). A truthy
+value (`1`, `true`, `yes`, `on`) forces it on. In code, an explicit
+`FederatedGraph(root, eager_index=...)` argument overrides the
+environment variable in either direction.
 
 ### Rollback
 
@@ -823,8 +1111,8 @@ rm .weld/workspace-state.json
 | `wd workspace bootstrap --track-graphs` | Bootstrap and seed `.weld/.gitignore` in root and every child to track canonical graphs alongside config |
 | `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child; mutually exclusive with `--track-graphs` |
 | `wd build-index` | Regenerate file index |
-| `wd query <term>` | Hybrid-ranked tokenized graph search (strict-AND first; OR fallback when AND yields nothing on multi-word phrases — envelope is tagged with `degraded_match=or_fallback`) |
-| `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`) |
+| `wd query <term>` | Hybrid-ranked tokenized graph search (strict-AND first; OR fallback when AND yields nothing on multi-word phrases — envelope is tagged with `degraded_match=or_fallback`). Shows `confidence` per match and hides `origin=unresolved` sentinels by default; `--include-speculative` restores them |
+| `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`). A single word is a case-insensitive substring match; a multi-word phrase is tokenized on whitespace and ranks files by how many of the words their tokens hit (so `wd find "mcp server"` surfaces `mcp_server.py`) |
 | `wd context <id>` | Node + neighborhood |
 | `wd path <from> <to>` | Shortest path |
 | `wd trace <term>` | Startup/runtime and interaction slice around a term or node |
@@ -871,6 +1159,38 @@ standalone GitHub Copilot CLI binary, so its install hint points at
 [github.com/en/copilot](https://docs.github.com/en/copilot/how-tos/use-copilot-cli)
 rather than a `pip install` line.
 
+### Per-language trust metrics
+
+"Should an agent trust weld's output for language X?" is a number, not a
+vibe. `wd stats --json` carries a `per_language_trust` block keyed by
+language; the human-readable `wd stats` prints the same numbers under a
+`per_language_trust:` heading. For each language with at least one symbol
+it reports:
+
+- **`unresolved_symbol_ratio`** — the share of that language's symbols
+  the origin resolver could not place (`origin=unresolved`). A high ratio
+  means cross-symbol edges and query results in that language are mostly
+  speculative noise.
+- **`edge_resolution_rate`** — the share of that language's `inherits`
+  and `calls` edges whose target resolved to a concrete node. Edges are
+  attributed to the language of their *source* (the calling / subclassing
+  side); a target that resolves to a standard-library or third-party node
+  still counts as resolved because a real node was found.
+- **`description_coverage_pct`** — the share of that language's symbols
+  carrying an enrichment description.
+
+```bash
+wd stats --json | jq '.per_language_trust'
+```
+
+`wd doctor` adds a **`[Trust]`** section built on the same numbers: it
+emits a `[warn]` for any language with enough symbols to be meaningful
+whose `unresolved_symbol_ratio` rises above an absolute floor (currently
+35%). Weld keeps no historical baseline, so the threshold is a fixed
+floor describing a currently-degraded state rather than a regression
+against a previous run; like every other doctor warning it is visible but
+never raises the exit code.
+
 `wd lint` also loads custom edge rules from `.weld/lint-rules.yaml` when
 present:
 
@@ -912,6 +1232,26 @@ The `source` value is free-form (agent name, tool name, `llm`,
 `manual`, strategy id); `confidence` follows the existing vocabulary
 (`definite`, `inferred`, `speculative`). This replaces the 0.3.0-era
 `--source` and `--relation` flags.
+
+## The first-run overview in `wd viz`
+
+When you open `wd viz` with nothing selected, the cold-open view is a **curated
+architecture slice** rather than a raw dump of as many nodes as fit. It shows
+your project's orientation surfaces first — CLI commands, agents, workflows, the
+top-level packages, plus a few of each package's principal files — laid out
+hierarchically (a `dagre` layout) so the structure is legible at a glance. The
+view is bounded well under the node limit, so it is never truncated, and the
+inspector is seeded with the same set of entry points as clickable links so you
+always have a starting point.
+
+This is a presentation default for the unconfigured view only. The moment you
+search, click a node, or pin **Node** types in the sidebar, the curated slice is
+replaced by the full, unfiltered slice for that query — your choice is honored
+verbatim and persists in the URL hash. To see the dense whole-graph view, pin a
+node type (for example `symbol`) or run a search; the sidebar **Limit** then
+controls how many nodes that slice shows. To override the overview's `dagre`
+layout, pick another layout from the toolbar selector — an explicit choice
+always wins and is remembered in the URL.
 
 ## Filtering noise in `wd viz`
 
@@ -978,6 +1318,25 @@ above. Omitting it falls back to the default overview behavior (hide
 `nodes_by_origin` (a per-origin count) so a custom UI can render the
 same "(412)" hint next to its own toggles.
 
+### Reviewing what changed in `wd viz`
+
+The inspector panel carries a "Changes" tab that lists everything that
+moved since the last `wd discover` run. Clicking a row jumps to the
+node and tints it on the canvas (green for added, red for removed,
+amber for modified). If the previous snapshot matches the current one,
+the tab shows a friendly "No changes since last `wd discover`."
+message. The same data is available over HTTP for custom UIs:
+
+```text
+GET /api/diff
+```
+
+The response wraps the stable JSON contract emitted by
+`wd diff --json` (`added_nodes`, `removed_nodes`, `modified_nodes`,
+`added_edges`, `removed_edges`) inside the shared `viz_api_version`
+envelope, so a custom UI can render the same diff without re-running
+the CLI.
+
 ## Examples
 
 - [01-python-fastapi](examples/01-python-fastapi/) — discover a FastAPI
@@ -994,7 +1353,7 @@ same "(412)" hint next to its own toggles.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.20.1`.
+terminal snippets captured against `wd 0.21.0`.
 
 ## Install
 

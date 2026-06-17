@@ -49,9 +49,19 @@ class _CallGraphVisitor(ast.NodeVisitor):
         self,
         module_path: str,
         import_table: dict[str, tuple[str, str]],
+        project_modules: frozenset[str] = frozenset(),
     ) -> None:
         self.module_path = module_path
         self.import_table = import_table
+        # Dotted module paths this run proved to be first-party (ADR 0042
+        # Python rules). Used to disambiguate ``from PARENT import CHILD``
+        # + ``CHILD.attr()``: when ``PARENT.CHILD`` is a known project
+        # module, CHILD is a *submodule* (a namespace-package member)
+        # rather than a value, so the attribute call resolves under
+        # ``PARENT.CHILD``, not the bare parent ``PARENT``. Empty by
+        # default so direct constructions keep the historical bare-parent
+        # behaviour.
+        self.project_modules = project_modules
         # qualname -> {"line": int, "name": str, "kind": str}
         # ``kind`` is one of ``class``, ``function``, ``method`` per the
         # python vocabulary declared in ``tools.tier_check_kinds`` and
@@ -125,7 +135,20 @@ class _CallGraphVisitor(ast.NodeVisitor):
             # x.y() where x is an imported module / module alias
             value = func.value
             if isinstance(value, ast.Name) and value.id in self.import_table:
-                module, _ = self.import_table[value.id]
+                module, imported = self.import_table[value.id]
+                # ``from PARENT import CHILD`` records ``(PARENT, CHILD)``.
+                # CHILD may be a *submodule* (a namespace-package member,
+                # e.g. ``from tools import tier1_corpus``) rather than a
+                # value. When ``PARENT.CHILD`` is a module this run proved
+                # first-party, the attribute call ``CHILD.attr()`` resolves
+                # under the real submodule ``PARENT.CHILD`` -- not the bare
+                # parent ``PARENT``, which would mint a stray
+                # ``symbol:py:PARENT:attr`` duplicate that falls through to
+                # ``origin=external`` (ADR 0042 Python rules).
+                if imported:
+                    submodule = f"{module}.{imported}"
+                    if submodule in self.project_modules:
+                        module = submodule
                 resolution = "stdlib" if is_stdlib_module(module) else "import"
                 return symbol_id(module, attr), True, attr, resolution
             # self.foo() / cls.foo() / arbitrary chains: not resolved.

@@ -243,15 +243,16 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
     "grpc_bindings": _fw("proto", ("nodes_emitted",), (".py",)),
     "fastapi": _fw("fastapi", ("nodes_emitted",), (".py",)),
     "flask": _fw("flask", ("nodes_emitted",), (".py",)),
+    "gin": _fw("gin", ("nodes_emitted",), (".go",)),  # ADR 0071: Go routes
+    "axum": _fw("axum", ("nodes_emitted",), (".rs",)),  # ADR 0071: Rust routes
+    "express": _fw("express", ("nodes_emitted",), (".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx")),  # bd 2jt5.2.15: TS/JS routes
     "pydantic": _fw("pydantic", ("nodes_emitted",), (".py",)),
     "sqlalchemy": _fw("sqlalchemy", ("nodes_emitted",), (".py",)),
     "http_client": _fw("http_client", ("nodes_emitted",), (".py",)),
     "events": _fw("events", ("nodes_emitted",), (".py",)),
     "events_bindings": _fw("events", ("nodes_emitted",), (".py",)),
     "events_callsite": _fw("events", ("nodes_emitted",), (".py",)),
-    "events_config": _fw(
-        "events", ("nodes_emitted",), (".yml", ".yaml", ".toml"),
-    ),
+    "events_config": _fw("events", ("nodes_emitted",), (".yml", ".yaml", ".toml")),
     "boundary_entrypoint": _fw("boundary", ("nodes_emitted",)),
     "runtime_contract": _fw("runtime_contract", ("nodes_emitted",)),
     "worker_stage": _fw("worker", ("nodes_emitted",)),
@@ -300,9 +301,7 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
     # nonetheless so ``wd capabilities`` lists the libclang framework
     # row instead of hiding it.
     "cpp_libclang": _fw(
-        "cpp_libclang",
-        ("nodes_emitted",),
-        basenames=("compile_commands.json",),
+        "cpp_libclang", ("nodes_emitted",), basenames=("compile_commands.json",),
     ),
     "markdown": _fw("markdown", ("nodes_emitted",), (".md",)),
     "firstline_md": _fw("markdown", ("nodes_emitted",), (".md",)),
@@ -311,16 +310,17 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
     "concept_from_bd": _fw(
         "bd", ("nodes_emitted",), basenames=("issues.jsonl",),
     ),
+    # Static web frontend (HTML/CSS/JS) surfaced as queryable ``file``
+    # nodes (element ids / CSS selectors / JS fn names in props.headings).
+    "viz_frontend": _fw(
+        "web_frontend", ("nodes_emitted",), (".html", ".htm", ".css", ".js", ".mjs"),
+    ),
     # ADR 0056 Wave 1: ``.csproj`` and ``.sln`` parsers. Wave 1 covers
     # project + solution graph (ProjectReference, Directory.Build.props,
     # solution-level configurations). Wave 2 / Wave 3 layer framework
     # awareness (routes, EF Core, MSBuild targets) on top.
-    "csharp_project": _fw(
-        "dotnet", ("nodes_emitted", "deps_edges"), (".csproj",),
-    ),
-    "csharp_solution": _fw(
-        "dotnet", ("nodes_emitted",), (".sln",),
-    ),
+    "csharp_project": _fw("dotnet", ("nodes_emitted", "deps_edges"), (".csproj",)),
+    "csharp_solution": _fw("dotnet", ("nodes_emitted",), (".sln",)),
     # ADR 0056 Wave 2: framework-aware extraction over C# source files.
     # Each strategy attributes to a distinct framework so the
     # capability matrix lights up per ecosystem (aspnetcore, efcore,

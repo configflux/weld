@@ -6,9 +6,11 @@ import io
 import json
 import threading
 import unittest
+from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from weld.cli import main as cli_main
@@ -175,6 +177,49 @@ class AgentVizServerTest(unittest.TestCase):
         self.assertNotEqual(exit_code, 0)
         mock_serve.assert_not_called()
         self.assertIn("--allow-remote", stderr.getvalue())
+
+
+class AgentVizExportDisabledTest(unittest.TestCase):
+    """Export is code-graph only; agent viz must not silently emit empty.
+
+    The ``/api/export`` route loads ``.weld/graph.json`` directly via
+    :func:`weld.export.export`. Under ``wd agents viz`` the code graph
+    may not exist and is irrelevant, so the route returns an explicit
+    400 instead of an empty payload. The frontend hides the export
+    menu when ``summary.graph_kind == "agent"`` so the user never
+    sees a path that lies.
+    """
+
+    def _with_agent_server(self, root: Path) -> str:
+        server = make_server(str(root), host="127.0.0.1", port=0, graph_kind="agent")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}"
+
+    def test_export_returns_400_under_agent_mode(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_agent_graph(root)
+            base = self._with_agent_server(root)
+            with self.assertRaises(HTTPError) as cm:
+                urlopen(f"{base}/api/export?format=mermaid", timeout=5)
+        self.assertEqual(cm.exception.code, 400)
+        payload = json.loads(cm.exception.read())
+        # Error mentions agent so the caller knows why this surface is
+        # off and where to look (no silent empty document).
+        self.assertIn("error", payload)
+        self.assertIn("agent", payload["error"].lower())
+
+    def test_app_js_hides_export_menu_when_graph_kind_is_agent(self) -> None:
+        js = files("weld.viz").joinpath("static", "app.js").read_text(encoding="utf-8")
+        # The frontend must consult summary.graph_kind and toggle the
+        # export-wrap visibility off. Both the kind sentinel and the
+        # DOM hook must appear in the same module so the wiring is
+        # discoverable from one search.
+        self.assertIn("graph_kind", js)
+        self.assertIn("export-wrap", js)
 
 
 if __name__ == "__main__":

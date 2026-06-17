@@ -38,6 +38,7 @@ _CLI_COMMANDS: Final[frozenset[str]] = frozenset(
         # Mirror weld.cli._dispatch branches.
         "init",
         "discover",
+        "warm",
         "agents",
         "graph",
         "workspace",

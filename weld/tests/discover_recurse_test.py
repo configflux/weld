@@ -188,6 +188,71 @@ class DiscoverRecurseTest(unittest.TestCase):
             self.assertIn("repo:svc", graph_recurse["nodes"])
 
 
+class RecurseChildrenNamesRestrictionTest(unittest.TestCase):
+    """``recurse_children(names=...)`` visits only the named subset.
+
+    ADR 0066 part 3 step 4: auto-recurse-on-read refreshes *only* the stale
+    subset, not every present child. The selector passes the stale child
+    names; ``recurse_children`` must skip every other present child so a
+    one-child edit refreshes one child (proportional refresh).
+    """
+
+    def test_names_restricts_to_named_subset(self) -> None:
+        from weld._discover_recurse import recurse_children
+        from weld.workspace_state import build_workspace_state
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child_a = _init_repo(root / "svc-a")
+            child_b = _init_repo(root / "svc-b")
+            _write_child_graph(child_a)
+            _write_child_graph(child_b)
+            _write_discover_yaml(child_a)
+            _write_discover_yaml(child_b)
+            config = _write_workspaces(root, [
+                ChildEntry(name="svc-a", path="svc-a"),
+                ChildEntry(name="svc-b", path="svc-b"),
+            ])
+            state = build_workspace_state(root, config)
+
+            graph_a = child_a / ".weld" / "graph.json"
+            graph_b = child_b / ".weld" / "graph.json"
+            before_a = graph_a.read_text(encoding="utf-8")
+            before_b = graph_b.read_text(encoding="utf-8")
+
+            result = recurse_children(
+                root, config, state, incremental=False, names={"svc-a"},
+            )
+
+            # Only svc-a was discovered; svc-b's graph is byte-untouched.
+            self.assertEqual(result.discovered, ["svc-a"])
+            self.assertNotIn("svc-b", result.discovered)
+            self.assertNotEqual(before_a, graph_a.read_text(encoding="utf-8"))
+            self.assertEqual(before_b, graph_b.read_text(encoding="utf-8"))
+
+    def test_names_none_visits_all_present(self) -> None:
+        """names=None preserves the existing 'visit every present child'."""
+        from weld._discover_recurse import recurse_children
+        from weld.workspace_state import build_workspace_state
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child_a = _init_repo(root / "svc-a")
+            child_b = _init_repo(root / "svc-b")
+            _write_child_graph(child_a)
+            _write_child_graph(child_b)
+            _write_discover_yaml(child_a)
+            _write_discover_yaml(child_b)
+            config = _write_workspaces(root, [
+                ChildEntry(name="svc-a", path="svc-a"),
+                ChildEntry(name="svc-b", path="svc-b"),
+            ])
+            state = build_workspace_state(root, config)
+
+            result = recurse_children(root, config, state, incremental=False)
+            self.assertEqual(sorted(result.discovered), ["svc-a", "svc-b"])
+
+
 class DiscoverRecurseFromWorktreeTest(unittest.TestCase):
     """ADR 0028 §1: ``wd discover --recurse`` from a linked git worktree
     must resolve each child via the main checkout (where the child repo
@@ -223,6 +288,96 @@ class DiscoverRecurseFromWorktreeTest(unittest.TestCase):
             # gains a ``repo:services-api`` node.
             graph = discover(wt, incremental=False, recurse=True)
             self.assertIn("repo:services-api", graph["nodes"])
+
+
+def _seed_fastapi_child(child_root: Path) -> None:
+    """Write a ``services/<name>``-style FastAPI child (app + routers/).
+
+    The app is instantiated in ``src/app.py`` while the ``APIRouter`` lives
+    one directory down in ``src/routers/tokens.py`` -- the layout that made
+    ``wd init`` wire the fastapi strategy at the app-file glob and drop the
+    route. ``wd init`` is then run so the child gets a *generated*
+    discover.yaml, exercising the real config-generation path the bug lives
+    in (not a hand-written yaml that already points at the routers dir).
+    """
+    src = child_root / "src"
+    routers = src / "routers"
+    routers.mkdir(parents=True, exist_ok=True)
+    (src / "__init__.py").write_text("", encoding="utf-8")
+    (src / "app.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from .routers.tokens import router as tokens_router\n"
+        "app = FastAPI(title='auth')\n"
+        "app.include_router(tokens_router)\n",
+        encoding="utf-8",
+    )
+    (routers / "__init__.py").write_text("", encoding="utf-8")
+    (routers / "tokens.py").write_text(
+        "from fastapi import APIRouter\n"
+        "router = APIRouter()\n"
+        "@router.post('/tokens')\n"
+        "def create_token() -> dict:\n"
+        "    return {'value': 'tok'}\n",
+        encoding="utf-8",
+    )
+    from weld.init import main as init_main
+    init_main([str(child_root)])
+    _git(child_root, "add", "-A")
+    _git(child_root, "commit", "-q", "-m", "fastapi child")
+
+
+def _route_nodes(graph: dict) -> set[str]:
+    return {k for k in graph.get("nodes", {}) if k.startswith("route:")}
+
+
+class RecurseFastapiEquivalenceTest(unittest.TestCase):
+    """Recurse must produce the same child graph as a standalone discover.
+
+    Regression for the polyrepo dogfood gap: ``wd discover --recurse``
+    rebuilt a child *without* its FastAPI ``route:`` nodes while a
+    standalone ``wd discover --full <child>`` kept them. The divergence was
+    a ``wd init`` glob-selection bug, so the child's *generated*
+    discover.yaml is used here (via :func:`_seed_fastapi_child`).
+    """
+
+    def test_recurse_child_matches_standalone_for_fastapi_routes(self) -> None:
+        from weld.discover import _discover_single_repo
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = _init_repo(root / "services" / "auth")
+            _seed_fastapi_child(child)
+            _write_workspaces(root, [
+                ChildEntry(name="services-auth", path="services/auth"),
+            ])
+
+            # Standalone full discover of the child (the path users reach
+            # for to "restore" the routes).
+            standalone = _discover_single_repo(child, incremental=False)
+            standalone_routes = _route_nodes(standalone)
+            self.assertEqual(
+                standalone_routes, {"route:POST:/tokens"},
+                "standalone discover must extract the FastAPI route",
+            )
+
+            # Recurse from the root rebuilds the child graph on disk.
+            discover(root, incremental=False, recurse=True)
+            recurse_child = json.loads(
+                (child / ".weld" / "graph.json").read_text(encoding="utf-8"),
+            )
+
+            # The acceptance bar: recurse output is equivalent to standalone
+            # for the same child state -- asserted generally on the node set,
+            # and specifically on the route nodes that regressed.
+            self.assertEqual(
+                _route_nodes(recurse_child), standalone_routes,
+                "recurse must preserve the same FastAPI route nodes as a "
+                "standalone discover of the same child",
+            )
+            self.assertEqual(
+                set(recurse_child["nodes"]), set(standalone["nodes"]),
+                "recurse child node set must equal standalone node set",
+            )
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
 # Weld public benchmark (0.17.2)
 
-Published methodology and corpus results per ADR 0059.
+Published methodology and corpus results per the public benchmark methodology.
 
 ## Methodology
 
 This report is produced by ``wd bench --public``. The methodology is
-defined by ADR 0059:
+defined as follows:
 
 - Public corpus is SHA-pinned (see the Corpus manifest section).
 - Each task has a ground-truth answer key (repo-relative files).

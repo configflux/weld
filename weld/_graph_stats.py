@@ -36,6 +36,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from weld._graph_stats_trust import compute_per_language_trust
+
 _TOP_AUTHORITY_LIMIT = 5
 
 # Node types where a human-written description is a meaningful product
@@ -87,6 +89,14 @@ def compute_stats(
     ``description_coverage_by_type``, ``top_authority_nodes``) remain in
     place for backward compatibility with consumers and fixtures that
     pin them.
+
+    ``per_language_trust`` is the newest additive field: a map keyed by
+    language name (sorted) carrying that language's unresolved-symbol
+    ratio, ``inherits``/``calls`` edge-resolution rate, and description
+    coverage. It answers "do agents trust weld output in language X?"
+    with numbers instead of a vibe. The computation lives in
+    :mod:`weld._graph_stats_trust`; see that module for the exact
+    formulas and language-attribution rules.
     """
     limit = _TOP_AUTHORITY_LIMIT if top is None else int(top)
     nodes = data.get("nodes") or {}
@@ -128,6 +138,7 @@ def compute_stats(
             nodes, edges, limit=limit,
         ),
         "top": limit,
+        "per_language_trust": compute_per_language_trust(nodes, edges),
     }
 
 

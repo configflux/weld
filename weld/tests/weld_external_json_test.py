@@ -3,15 +3,11 @@ from __future__ import annotations
 
 import json
 import stat
-import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.contract import validate_fragment  # noqa: E402
 from weld.discover import _run_external_json  # noqa: E402

@@ -336,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from weld._auto_refresh import auto_refresh_if_stale
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
+    from weld._graph_cli_errors import load_graph_or_exit
 
     # Surface the friendly first-run message if the graph has not been
     # built. Mirrors trace/diff/enrich behaviour.
@@ -347,8 +348,8 @@ def main(argv: list[str] | None = None) -> int:
         args.root, no_refresh=args.no_refresh, json_output=args.json,
     )
 
-    graph = Graph(args.root)
-    graph.load()
+    # Corrupt/unsupported graph -> one-line structured error, not a traceback.
+    graph = load_graph_or_exit(Graph(args.root))
 
     stale_graph = _stale_gate(graph, allow_stale=args.allow_stale)
 

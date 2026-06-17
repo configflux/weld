@@ -3,6 +3,99 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.21.0 - 2026-06-17
+
+### Added
+
+- Rust, Go, and TypeScript are now Tier 1 in the language-support
+  ladder, joining Python, C#, Java, and C++. Tier 1 means each
+  strategy stack passes the measurable promotion contract — canonical
+  kind vocabulary, class-level edge accuracy, framework strategies,
+  deterministic output across reruns, polyrepo federation, enrichment
+  coverage, gold-query F1 against a pinned corpus, and a per-corpus
+  performance budget — rather than being an editorial claim. The
+  language-support table is now generated directly from those
+  baselines, so the documented status can no longer drift from what
+  the harness actually measures.
+  <!-- verify: file=README.md grep="tree-sitter-rust" -->
+- New framework strategies for `axum` (Rust), `gin` (Go), and
+  `express` (TypeScript / JavaScript). `wd init` auto-detects these
+  frameworks and wires the strategy automatically, so routes and
+  handlers surface as graph nodes for `wd query` and `wd context`
+  the same way FastAPI, Django, and Flask already do.
+  <!-- verify: file=weld/strategies/axum.py grep=axum -->
+- Go discovery now emits `inherits` edges for struct embedding and
+  `implements` edges where a type satisfies an interface, so
+  `wd context` on a Go type shows its real structural relationships
+  instead of stopping at declarations.
+  <!-- verify: file=weld/strategies/_go_inherits.py grep=implements -->
+- `wd viz` gained a substantial interactive overhaul: a corner
+  minimap, full keyboard shortcuts with a cheatsheet, shareable
+  views via URL hash state, browser back/forward through view
+  history, a node-type legend, manual layout control, an
+  open-in-editor action (VS Code and git-remote links), and a
+  clearer A/B path workflow with persistent pills. The graph is now
+  navigable without leaving the canvas.
+  <!-- verify: file=weld/viz/static/app.js grep=keyboard -->
+- `wd viz` now includes an in-UI Changes tab that renders the graph
+  diff between the working tree and the committed graph, plus an
+  Export view menu for saving the current view.
+  <!-- verify: file=weld/viz/_diff.py grep=diff -->
+- Static frontend assets are now discoverable: a `viz_frontend`
+  strategy surfaces frontend files as queryable file nodes so they
+  appear in `wd query` and `wd find` rather than being invisible to
+  the graph.
+  <!-- verify: file=weld/strategies/viz_frontend.py grep=frontend -->
+- New `wd warm` command fetches a prebuilt graph artifact so a fresh
+  checkout or CI job can come up with a ready graph without running a
+  full local discovery first.
+  <!-- verify: file=weld/warm.py grep=warm -->
+- The CLI and MCP server now share a single structured error contract:
+  failures carry a stable error code and an actionable hint, and the
+  same code surfaces whether you hit the error from `wd` or through an
+  MCP tool call.
+  <!-- verify: file=weld/_errors.py grep=hint -->
+- Query results now understand singular/plural equivalence, so a
+  search for `handlers` matches `handler` and vice versa without a
+  manual synonym list.
+  <!-- verify: file=weld/synonyms.py grep=plural -->
+
+### Changed
+
+- Reads now self-heal. `wd` and the MCP server refresh the graph
+  incrementally on read — the no-change path is sub-second — and a
+  root in a polyrepo workspace auto-recurses into stale children, so
+  query and context results reflect the current source without a
+  manual `wd discover` between edits.
+  <!-- verify: file=weld/_auto_refresh.py grep=refresh -->
+- Volatile graph metadata (`updated_at`, `git_sha`) moved out of the
+  tracked graph into a gitignored sidecar, so routine `wd` reads no
+  longer produce spurious graph diffs and version-control noise.
+  <!-- verify: file=weld/_graph_meta_sidecar.py grep=git_sha -->
+- Unresolved-reference sentinels are now hidden from query output by
+  default, and results carry an explicit confidence indicator so
+  low-confidence matches are visible rather than silently mixed in.
+  <!-- verify: file=weld/_confidence_defaults.py grep=confidence -->
+- Discovery post-processing fuses what were two canonicalization
+  passes into one, trimming hundreds of milliseconds off a warm
+  discover on a large repository with no change in output.
+  <!-- verify: file=weld/_discover_postprocess.py grep=canonical -->
+
+### Fixed
+
+- Polyrepo federation query paths now apply OR-fallback consistently,
+  so a multi-term query returns the same results whether or not the
+  eager federation index is in use.
+  <!-- verify: file=weld/_federation_eager_or_fallback.py grep=fallback -->
+- A corrupt current graph now surfaces as an explicit
+  `graph_corrupt` error instead of silently returning an empty diff
+  or empty results.
+  <!-- verify: file=weld/_errors.py grep=graph_corrupt -->
+- The bundled YAML parser now expands literal and folded block
+  scalars, so multi-line values in `.weld` configuration files are
+  read correctly without requiring a system YAML library.
+  <!-- verify: file=weld/_yaml_block_scalar.py grep=scalar -->
+
 ## v0.20.1 - 2026-05-18
 
 ### Fixed

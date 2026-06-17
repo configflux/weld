@@ -229,40 +229,22 @@ def build_file_index(root: Path) -> dict[str, list[str]]:
     determinism contract: any downstream consumer -- ``save_file_index``,
     the brief builder, CLI ``find``, or MCP tools -- sees the same token
     sequence regardless of AST visit order or dict insertion order. File
-    iteration order is already stable via ``iter_repo_files``.
+    iteration order is already stable via ``iter_repo_files``. The
+    per-file tokenization lives in
+    :func:`weld._file_index_incremental.tokens_for_file` so the
+    incremental updater reuses the exact same logic (byte-identical
+    output).
     """
+    from weld._file_index_incremental import tokens_for_file
+
     root = root.resolve()
     index: dict[str, list[str]] = {}
 
     for filepath in iter_repo_files(root):
-        suffix = filepath.suffix
         if not _is_indexed_file(filepath):
             continue
-
         rel_path = str(filepath.relative_to(root))
-        tokens = _tokenize_path(rel_path)
-
-        try:
-            content = filepath.read_text(encoding="utf-8", errors="replace")
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        if suffix == ".py":
-            tokens.extend(_extract_python_tokens(content))
-        elif suffix in (".ts", ".tsx", ".js", ".jsx"):
-            tokens.extend(_extract_typescript_tokens(content))
-        elif suffix == ".md":
-            tokens.extend(_extract_markdown_tokens(content))
-        elif suffix in (".yaml", ".yml"):
-            tokens.extend(_extract_yaml_tokens(content))
-        else:
-            tokens.extend(_extract_generic_tokens(content))
-
-        # Deduplicate, then sort lexicographically so the in-memory token
-        # order is canonical (ADR 0012 §3). Any future in-process consumer
-        # that bypasses save_file_index still sees stable output.
-        unique = sorted(set(tokens))
-
+        unique = tokens_for_file(root, rel_path)
         if unique:
             index[rel_path] = unique
 
@@ -338,45 +320,11 @@ def load_file_index(root: Path) -> dict[str, list[str]]:
         return data["files"]
     return data
 
-# Boost added when the query is the file's literal basename. Must beat
-# any plausible body-mention density; generic tokens cap at 512.
-_BASENAME_MATCH_BOOST = 1024
-
-
-def find_files(
-    index: dict[str, list[str]],
-    term: str,
-    limit: int | None = None,
-) -> dict:
-    """Search the index for files matching *term* via substring match.
-    A case-insensitive basename match adds ``_BASENAME_MATCH_BOOST`` to
-    its score so a literal query like ``wd find 'publish.sh'`` pins the
-    actual file ahead of docs that mention the basename in prose.
-    Otherwise files rank by matching-token count. Ties break by path
-    ascending. ``limit`` slices results after ranking.
-    """
-    term_lower = term.lower()
-    results: list[dict] = []
-
-    for path, tokens in index.items():
-        matching_tokens = [t for t in tokens if term_lower in t.lower()]
-        if not matching_tokens:
-            continue
-        score = len(matching_tokens)
-        if Path(path).name.lower() == term_lower:
-            score += _BASENAME_MATCH_BOOST
-        results.append({
-            "path": path,
-            "tokens": matching_tokens,
-            "score": score,
-        })
-
-    results.sort(key=lambda r: (-r["score"], r["path"]))
-
-    if limit is not None:
-        results = results[:max(limit, 0)]
-
-    return {"query": term, "files": results}
+# The read-side matcher behind ``wd find`` / MCP ``weld_find`` lives in
+# :mod:`weld.file_index_search`; it is re-exported here so existing
+# ``from weld.file_index import find_files`` imports keep working while the
+# build half (this module) and the query half stay within the line cap.
+from weld.file_index_search import find_files  # noqa: E402,F401
 
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point for build-index subcommand."""

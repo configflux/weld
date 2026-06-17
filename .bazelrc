@@ -14,6 +14,21 @@ build --show_result=2
 
 build --remote_download_outputs=toplevel
 
+# Bound the shared --disk_cache so it cannot grow without limit. The disk cache
+# is the content-addressed action cache the local gate points --disk_cache at;
+# with no bound it accumulates forever. Bazel's server runs disk-cache GC when it has
+# been idle for --experimental_disk_cache_gc_idle_delay, evicting least-recently
+# accessed entries until the cache is back under the max size.
+#
+# NOTE on the idle delay: ``startup --max_idle_secs=60`` above shuts the server
+# down after 60s idle, but the GC idle delay DEFAULTS to 5m -- so the default GC
+# would never fire before shutdown. We pull the delay to 30s so the GC actually
+# runs within the idle window. (This only bounds --disk_cache; per-worktree
+# output bases are NOT disk-cache entries and are reaped separately by
+# tools/bazel_cache_gc.sh.)
+build --experimental_disk_cache_gc_max_size=50G
+build --experimental_disk_cache_gc_idle_delay=30s
+
 # Sandboxing defaults (no NpmLifecycleHook — Python only)
 build --spawn_strategy=sandboxed
 build --strategy=CopyFile=sandboxed,standalone
@@ -24,8 +39,45 @@ build --sandbox_default_allow_network=false
 test --test_output=errors
 test --strategy=TestRunner=sandboxed,standalone
 
-# CI: skip tests that need devcontainer-only tools
-test:ci --test_tag_filters=-no-ci
+# Determinism: pin the environment every test observes so runs are reproducible
+# regardless of the host. PYTHONHASHSEED kills set/dict iteration-order flakes,
+# TZ/locale kill date- and locale-formatting flakes. Targets that previously
+# pinned PYTHONHASHSEED individually inherit this and can drop their local env.
+test --test_env=PYTHONHASHSEED=0
+test --test_env=TZ=UTC
+test --test_env=LANG=C.UTF-8
+test --test_env=LC_ALL=C.UTF-8
+
+# Fast-loop vs CI test tag taxonomy.
+#
+# FAST LOOP = the default ``test`` config. ``bazel test //...`` runs only the
+# HERMETIC, sandboxed subset by excluding the slow / non-hermetic lanes:
+#   - no-sandbox  : needs ambient tooling / ``local`` (e.g. real-grammar
+#                   parse tests, language gate tests, git end-to-end tests).
+#   - integration : end-to-end (shells out, builds repos, reads live manifest).
+#   - benchmark   : wall-clock/RSS measurement; must run un-contended.
+#   - no-ci       : cannot run on the GitHub runner.
+# This keeps the inner dev loop fast and fully sandboxed.
+test --test_tag_filters=-no-sandbox,-benchmark,-integration,-no-ci
+
+# Benchmark lane: wall-clock measurement targets are tagged "benchmark".
+# They print latency/RSS numbers for triage but gate only on
+# correctness/determinism, and they MUST run un-contended to be meaningful.
+# Excluded from the fast loop and the CI parallel sweep; run them serially via
+# `bazel test --config=benchmark //...`. This is the root-cause fix for the
+# parallel-load timing jitter that previously needed flaky-retry budgets.
+test:benchmark --test_tag_filters=benchmark
+test:benchmark --local_test_jobs=1
+
+# CI parallel set = the FULL sandboxed suite. ``bazel test --config=ci //...``
+# runs everything the fast loop skips EXCEPT the serial benchmark lane: it only
+# excludes no-ci and benchmark. ``--test_tag_filters`` is last-one-wins, and
+# this line is read AFTER the base ``test`` line above, so ``--config=ci``
+# OVERRIDES (does not inherit) the fast-loop exclusions and runs the no-sandbox
+# / integration lanes. The serial benchmark lane is run as a separate
+# ``bazel test --config=benchmark //...`` step so no lane is silently
+# uncovered. Keep this line below the base ``test`` line.
+test:ci --test_tag_filters=-no-ci,-benchmark
 
 # Local developer overrides (gitignored)
 try-import %workspace%/.bazelrc.local

@@ -15,9 +15,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.contract import validate_fragment  # noqa: E402
 from weld.strategies._helpers import StrategyResult  # noqa: E402

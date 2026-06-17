@@ -37,11 +37,8 @@ import sys
 import unittest
 from pathlib import Path
 
-# Ensure weld package is importable from the repo root
 _repo_root_path = Path(__file__).resolve().parent.parent.parent
 _repo_root = str(_repo_root_path)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.contract import CONFIDENCE_VALUES  # noqa: E402
 

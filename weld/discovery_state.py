@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from weld._incremental_purge import purge_edges_by_provenance
+
 #: Current state file schema version.  Bump when the on-disk format changes.
 STATE_VERSION: int = 1
 
@@ -212,8 +214,18 @@ def purge_stale_nodes(
 ) -> tuple[dict[str, dict], list[dict]]:
     """Remove nodes whose ``props.file`` matches any file in *stale_files*.
 
-    Also removes edges referencing removed nodes.  Used before merging
-    incremental results so modified/deleted files get a clean slate.
+    Edges are purged by ADR 0074's provenance rule
+    (:func:`weld._incremental_purge.purge_edges_by_provenance`): an edge
+    carrying a usable ``props.provenance.file`` is dropped iff *that* file is
+    stale -- not because an endpoint node was purged -- so a ``calls`` edge
+    from a clean sibling into a dirty file's symbol survives and the dirty
+    re-parse re-mints the same-id endpoint. Edges without usable provenance
+    keep the conservative endpoint-membership purge. This preserves the
+    incremental == full byte-identity invariant under parse-only-dirty
+    re-extraction (the cjij.2 defect the amendment fixes).
+
+    Used before merging incremental results so modified/deleted files get a
+    clean slate.
     """
     if not stale_files:
         return nodes, edges
@@ -229,16 +241,14 @@ def purge_stale_nodes(
     if not removed_ids:
         return nodes, edges
 
-    surviving_edges = [
-        e for e in edges
-        if e["from"] not in removed_ids and e["to"] not in removed_ids
-    ]
+    surviving_edges = purge_edges_by_provenance(edges, stale_files, removed_ids)
     return surviving_nodes, surviving_edges
 
 
 def files_missing_strategy_outputs(
     existing_graph: dict,
     source_file_map: list[list[str]],
+    exempt_files: set[str] | None = None,
 ) -> set[str]:
     """Audit *existing_graph* for sources whose files have zero nodes.
 
@@ -262,7 +272,19 @@ def files_missing_strategy_outputs(
     false positive when the strategy genuinely emits at least one node
     for at least one file in the set, and it costs at most one pass
     over the graph's nodes.
+
+    *exempt_files* (bd 85tb.2) is the prior run's ``files_with_no_nodes``
+    -- files the last run already proved produce no ``props.file`` /
+    ``props.declared_in``-anchored node (e.g. an issue-store source whose
+    strategy emits abstract ``concept`` nodes that anchor to no file).
+    Without this exemption such a source is flagged on *every* incremental
+    run, which on a repo that has one perpetually drops every refresh onto
+    the slow with-changes path instead of the no-change fast path. A file
+    in *exempt_files* whose content actually changed is still picked up by
+    the content-hash ``dirty`` set, so exempting it here cannot mask a real
+    edit -- it only stops the perpetual no-op re-run.
     """
+    exempt = exempt_files or set()
     nodes = existing_graph.get("nodes", {})
     # Different strategies record the source file under different prop
     # keys (``file`` for most, ``declared_in`` for the events family).
@@ -282,6 +304,10 @@ def files_missing_strategy_outputs(
             continue
         file_set = set(files)
         if not file_set & files_with_nodes:
+            # A source whose every file is already known to legitimately
+            # produce no file-anchored node must not perpetually re-trigger.
+            if file_set <= exempt:
+                continue
             missing |= file_set
     return missing
 
@@ -325,3 +351,36 @@ def resolve_source_files(
         files.append(rel)
 
     return files
+
+
+def resolve_source_file_map(
+    root: Path,
+    sources: list[dict],
+    filter_fn,
+) -> list[list[str]]:
+    """Resolve every source entry to its file list, memoizing duplicate globs.
+
+    Returns one list per entry in *sources*, preserving order. Many
+    ``.weld/discover.yaml`` configs point several strategy sources at the
+    *same* glob (e.g. ``python_module`` / ``python_callgraph`` /
+    ``python_package`` all on ``weld/*.py``); resolving each independently
+    re-walks the tree once per duplicate. Memoizing by the
+    resolution-relevant keys (glob, path, files, exclude) collapses those
+    to one walk apiece -- ~280 ms on this repo's 21-source / 13-glob config
+    (bd 85tb.2) -- while returning byte-identical lists (the same shared
+    list object is reused for identical keys, which downstream code only
+    reads).
+    """
+    cache: dict[tuple, list[str]] = {}
+    out: list[list[str]] = []
+    for source in sources:
+        key = (
+            source.get("glob"), source.get("path"),
+            tuple(source.get("files") or ()), tuple(source.get("exclude") or ()),
+        )
+        resolved = cache.get(key)
+        if resolved is None:
+            resolved = resolve_source_files(root, source, filter_fn)
+            cache[key] = resolved
+        out.append(resolved)
+    return out

@@ -14,9 +14,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 _tests_dir = str(Path(__file__).resolve().parent)
 if _tests_dir not in sys.path:
     sys.path.insert(0, _tests_dir)
@@ -179,7 +176,12 @@ class WeldMcpTraceToolTest(unittest.TestCase):
         result = mcp_server.dispatch(
             "weld_trace", {"term": "orders"}, root=self.root
         )
-        self.assertEqual(result, expected)
+        # Dispatch stamps the additive freshness object (bd 85tb.3); the rest
+        # of the envelope still matches the CLI helper byte-for-byte.
+        self.assertIn("freshness", result)
+        self.assertEqual(
+            {k: v for k, v in result.items() if k != "freshness"}, expected
+        )
 
     def test_trace_tool_schema(self) -> None:
         by_name = {t.name: t for t in mcp_server.build_tools()}
@@ -229,7 +231,12 @@ class WeldMcpBriefV2ParityTest(unittest.TestCase):
         result = mcp_server.dispatch(
             "weld_brief", {"area": "orders"}, root=self.root
         )
-        self.assertEqual(result, expected)
+        # Dispatch stamps the additive freshness object (bd 85tb.3); the brief
+        # envelope is otherwise identical to the CLI helper.
+        self.assertIn("freshness", result)
+        self.assertEqual(
+            {k: v for k, v in result.items() if k != "freshness"}, expected
+        )
         self.assertIn("interfaces", result)
 
 class WeldMcpRegistryCountTest(unittest.TestCase):

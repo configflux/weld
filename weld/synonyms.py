@@ -131,18 +131,61 @@ def expand_tokens(tokens: list[str]) -> list[str]:
                 result.append(alias_lower)
     return result
 
+_VOWELS = frozenset("aeiou")
+# -s endings that are not naive plurals (over-stemming guards).
+_NON_PLURAL_S = ("ss", "us", "is", "as", "ies")
+
+def _stem_variants(token: str) -> list[str]:
+    """Return singular/plural stem-equivalents of *token* (no external deps).
+
+    A deliberately small, symmetric two-rule heuristic (ADR 0075 part 3) so
+    a query group like ``strategy`` also matches the path token
+    ``strategies`` (``strategy`` is **not** a substring of ``strategies``):
+
+    * Rule 1 -- ``-ies <-> -y`` for a consonant + ``y`` stem
+      (``strategy`` <-> ``strategies``, ``entry`` <-> ``entries``);
+    * Rule 2 -- the simple ``-s <-> (null)`` plural
+      (``test`` <-> ``tests``).
+
+    Over-stemming is guarded by minimum lengths and by excluding the
+    non-plural ``-ss``/``-us``/``-is``/``-as`` endings, so short or
+    coincidental tokens (``is``, ``css``, ``status``, ``db``) yield nothing.
+    The input token itself is never returned.  Intentionally not a full
+    stemmer -- this is the minimal bridge ADR 0075 specifies.
+    """
+    t = token.lower()
+    n = len(t)
+    out: set[str] = set()
+    # Rule 1: -ies <-> -y (consonant + y).
+    if t.endswith("ies") and n >= 5:
+        out.add(t[:-3] + "y")
+    elif t.endswith("y") and n >= 4 and t[-2] not in _VOWELS:
+        out.add(t[:-1] + "ies")
+    # Rule 2: simple -s plural (both directions).
+    if t.endswith("s") and n >= 4 and not t.endswith(_NON_PLURAL_S):
+        out.add(t[:-1])
+    elif not t.endswith("s") and not t.endswith("y") and n >= 3:
+        out.add(t + "s")
+    out.discard(t)
+    return sorted(out)
+
 def expand_token_groups(tokens: list[str]) -> list[list[str]]:
-    """Expand each token into a group of [itself + synonym aliases].
+    """Expand each token into a group of [itself + synonym aliases + stems].
 
     Returns one group per original token.  Used by ``Graph.query()`` so
     that synonym alternatives are OR-ed within a group and AND-ed across
     groups (multi-token queries still require every original concept).
+
+    Each group also gains the singular/plural stem-equivalents of the raw
+    token (:func:`_stem_variants`) so a singular query (``strategy``) covers
+    a plural path token (``strategies``) within the same group -- ADR 0075
+    part 3.  Stems join the same group, so this never adds a new AND clause.
     """
     groups: list[list[str]] = []
     for tok in tokens:
         group = [tok]
         seen = {tok}
-        for alias in SYNONYMS.get(tok, []):
+        for alias in list(SYNONYMS.get(tok, [])) + _stem_variants(tok):
             a = alias.lower()
             if a not in seen:
                 seen.add(a)

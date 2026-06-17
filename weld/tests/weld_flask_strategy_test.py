@@ -11,15 +11,11 @@ tier-check criterion 3 reads via ``check_flask`` in
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.strategies._helpers import StrategyResult  # noqa: E402
 from weld.strategies.flask import extract  # noqa: E402

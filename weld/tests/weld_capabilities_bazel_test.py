@@ -9,14 +9,10 @@ runtime cross-import in this repo).
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.capabilities import compute_capabilities  # noqa: E402
 from weld.contract import SCHEMA_VERSION  # noqa: E402

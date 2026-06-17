@@ -1,0 +1,28 @@
+# .weld/discover.yaml for the gin route fixture (ADR 0071 / GO-2).
+#
+# Shipped (not auto-generated) so the fixture is self-describing and the
+# discovered graph is reproducible byte-for-byte, mirroring the
+# tier1/go/sample_go fixture. The `gin` source entry below is what `wd
+# init` adds for a Go project that imports github.com/gin-gonic/gin (see
+# weld/_init_framework_sources._add_go_framework_sources); shipping it
+# keeps the fixture's route nodes deterministic without depending on
+# init auto-detection.
+sources:
+  # gin HTTP routes: route:<METHOD>:<path> nodes for handler registration.
+  # Listed BEFORE the tree_sitter entry so the canonical tree_sitter
+  # file node wins the later nodes.update merge over gin's thin
+  # boundary-file placeholder (weld.discover applies sources in order).
+  - glob: "**/*.go"
+    type: route
+    strategy: gin
+
+  # Go application sources: exports, types, imports (origin-tagged).
+  - glob: "**/*.go"
+    type: file
+    strategy: tree_sitter
+    language: go
+
+  # Module manifest (drives same-module import origin=project resolution).
+  - files: ["go.mod"]
+    type: config
+    strategy: config_file

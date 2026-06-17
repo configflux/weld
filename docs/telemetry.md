@@ -69,13 +69,40 @@ Field-by-field:
 | `weld_version` | string | The installed `wd` version. |
 | `surface` | enum | `"cli"` or `"mcp"`. |
 | `command` | string | Subcommand (CLI) or MCP tool name. Validated against an allowlist; unknown values coerce to `"unknown"`. |
-| `outcome` | enum | `"ok"`, `"error"`, or `"interrupted"`. |
+| `outcome` | enum | `"ok"`, `"error"`, or `"interrupted"`. A clean exit — including `--help` (`SystemExit(0)`) — is `"ok"`; see "Outcome classification" below. |
 | `exit_code` | int | Process exit code. Sentinel `-1` for MCP (no exit-code concept). |
 | `duration_ms` | int | Derived from `time.monotonic_ns()`. |
-| `error_kind` | string \| null | Exception class name only (`type(exc).__name__`). Capped at 64 chars and matched against `^[A-Za-z_][A-Za-z0-9_]{0,63}$`. **Never** `str(exc)`. |
+| `error_kind` | string \| null | Exception class name only (`type(exc).__name__`). Capped at 64 chars and matched against `^[A-Za-z_][A-Za-z0-9_]{0,63}$`. **Never** `str(exc)`. A nonzero `SystemExit(n)` records `SystemExitCode<n>` (e.g. `SystemExitCode2` for an argparse usage error) so a usage error is distinguishable from a bare crash; a string exit code (`sys.exit("msg")`) records the generic `SystemExit` — the message is never read. |
 | `python_version` | string | `f"{major}.{minor}.{micro}"` only. |
 | `platform` | string | `sys.platform` (e.g. `"linux"`). Not `platform.platform()` — that string can embed hostname-flavored data. |
 | `flags` | list[string] | Sorted, deduplicated list of long/short flag *names* the user passed. Filtered through an allowlist. |
+
+## Outcome classification
+
+The exit-time exception decides `outcome` / `exit_code` / `error_kind`:
+
+- No exception → `ok` / `0` / `null`.
+- `KeyboardInterrupt` → `interrupted` / `130` / `KeyboardInterrupt`.
+- `BrokenPipeError` → `interrupted` / `141` / `BrokenPipeError`.
+- `SystemExit` is classified by its **code**, not just its type:
+  - code `None` or `0` (e.g. argparse `--help`, a clean `sys.exit()`) →
+    `ok` / `0` / `null`.
+  - a nonzero integer code `n` (argparse usage errors exit `2`) →
+    `error` / `n` / `SystemExitCode<n>`.
+  - a non-integer code (e.g. `sys.exit("message")`) → `error` / `1` /
+    `SystemExit`; the message is never read, so it cannot leak.
+- Any other exception → `error` / `1` / the exception class name.
+
+> **Backfill note — pre-fix telemetry overstates the `discover` error
+> rate.** Before this classification landed, **every** `SystemExit` was
+> recorded as `error` / `exit_code 1` / `error_kind "SystemExit"`. Because
+> `wd <command> --help` exits via `SystemExit(0)`, those help invocations
+> were logged as failures. In one observed sample, 174 of 175 recorded
+> `discover` "errors" were actually `--help` runs — a fabricated failure
+> rate near 40%. When analyzing telemetry collected by an older `wd`,
+> treat `command="discover"` (or any command) rows with `outcome="error"`,
+> `exit_code=1`, and `error_kind="SystemExit"` as **suspect**: most are
+> `--help`, not real failures. Rows written after the fix are accurate.
 
 ## What is never recorded
 

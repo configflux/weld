@@ -44,7 +44,10 @@ def check_staleness(weld_dir: Path, root: Path, result_cls: type) -> list:
         return []
 
     current_sha = _doctor_mod.get_git_sha(root)
-    meta = data.get("meta") or {}
+    # ADR 0065: git_sha now lives in the graph-meta.json sidecar (with a
+    # legacy in-graph fallback). Overlay it before reading.
+    from weld._graph_meta_sidecar import merge_sidecar_meta
+    meta = merge_sidecar_meta(data.get("meta") or {}, path)
     graph_sha = meta.get("git_sha")
 
     if graph_sha is None:

@@ -27,12 +27,15 @@ from weld.strategies._tree_sitter_ids import (
 from weld.strategies import (
     _cpp_tree_sitter,
     _csharp_tree_sitter,
+    _go_inherits,
     _go_tree_sitter,
     _java_tree_sitter,
+    _rust_inherits,
     _rust_tree_sitter,
     _ts_call_graph,
     _ts_definitions,
     _ts_parse,
+    _typescript_inherits,
     _typescript_tree_sitter,
 )
 
@@ -151,8 +154,7 @@ def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
 
 # Patchable re-exports of helpers extracted to other modules (tests mock
 # these names on this module, so ``extract()`` must read via namespace).
-# ADR 0041 § Layer 1 (Node IDs) lives in ``_tree_sitter_ids``; ADR 0041
-# § Layer 2 (cpp include resolver) lives in ``cpp_resolver``.
+# ADR 0041 Layer 1 (Node IDs) -> ``_tree_sitter_ids``; Layer 2 (cpp includes) -> ``cpp_resolver``.
 _resolve_cpp_include = _cpp_resolver.resolve_cpp_include
 _cpp_match_callee = _cpp_resolver.match_callee
 _resolve_cpp_includes_pass = _cpp_resolver.resolve_includes_pass
@@ -165,6 +167,9 @@ _FINALISERS = {
     "csharp": _csharp_tree_sitter.finalise,
     "java": _java_tree_sitter.finalise,
     "cpp": _cpp_tree_sitter.finalise,
+    "rust": _rust_inherits.finalise,  # ADR 0064 criterion 2: trait-impl edges
+    "typescript": _typescript_inherits.finalise,  # criterion 2: extends/implements
+    "go": _go_inherits.finalise,  # criterion 2: embedding inherits + iface implements
 }
 
 
@@ -237,7 +242,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     # ADR 0042: per-language manifests cached once per discovery run.
     # Each ``build_caches`` returns ``None`` for non-matching languages.
     ts_caches = _typescript_tree_sitter.build_caches(root, language)
-    enricher_caches: dict = (_csharp_tree_sitter.build_caches(root, language) or _java_tree_sitter.build_caches(root, language) or _cpp_tree_sitter.build_caches(root, language) or {})
+    enricher_caches: dict = (_csharp_tree_sitter.build_caches(root, language) or _java_tree_sitter.build_caches(root, language) or _cpp_tree_sitter.build_caches(root, language) or _rust_inherits.build_caches(language) or _typescript_inherits.build_caches(language) or _go_inherits.build_caches(language) or {})
     go_module_path = _go_tree_sitter.load_module_path(root) if language == "go" else ""
     rust_cargo = _rust_tree_sitter.load_cargo_metadata(root, language)
     parse_cache = _ts_parse.get_parse_cache(context)
@@ -325,16 +330,21 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         node_props["confidence"] = "definite"
         node_props["roles"] = ["implementation"]
         # ADR 0042: project file nodes are minted from the configured
-        # project glob for every language we support, so they are
-        # always project-origin. Per-language sentinel classification
-        # for the call-graph layer happens in ``_ts_call_graph``.
+        # project glob for every supported language, so always
+        # project-origin (call-graph sentinels are set in ``_ts_call_graph``).
         node_props["origin"] = "project"
 
-        language_enricher = {
-            "cpp": _cpp_tree_sitter,
-            "csharp": _csharp_tree_sitter,
-            "java": _java_tree_sitter,
-        }.get(language)
+        if language == "rust":  # ADR 0064 criterion 2: stage trait-impls
+            _rust_inherits.stage_trait_impls(
+                enricher_caches.get("impl_records"), rel_path=rel_path, source_text=source_text)
+        elif language == "typescript":  # criterion 2: stage extends/implements
+            _typescript_inherits.stage_inheritance(
+                enricher_caches.get("inherit_records"), rel_path=rel_path, source_text=source_text)
+        elif language == "go":  # criterion 2: stage embedding + iface satisfaction
+            _go_inherits.stage_file(
+                enricher_caches.get("go_inherit_records"), rel_path=rel_path, source_text=source_text)
+
+        language_enricher = {"cpp": _cpp_tree_sitter, "csharp": _csharp_tree_sitter, "java": _java_tree_sitter}.get(language)
         if language_enricher:
             language_enricher.enrich_file_node(
                 nodes, edges, nid, node_props, symbols,
@@ -347,11 +357,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 root=root, **ts_caches,
             )
 
-        nodes[nid] = {
-            "type": "file",
-            "label": fpath.stem,
-            "props": node_props,
-        }
+        nodes[nid] = {"type": "file", "label": fpath.stem, "props": node_props}
 
         if package_id:
             edges.append(
@@ -374,10 +380,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             nodes[def_id] = def_node
         edges.extend(def_edges)
 
-    # Layer 2 (cpp only): rewrite unresolved sentinels + ADR 0057
-    # Wave 2 header/source pairing edges. The consolidated post-pass
-    # lives in :mod:`weld.strategies._cpp_post_pass` so this strategy
-    # stays under the 400-line cap.
+    # Layer 2 (cpp only): rewrite unresolved sentinels + ADR 0057 Wave 2
+    # header/source pairing edges, in :mod:`weld.strategies._cpp_post_pass`.
     if language == "cpp" and emit_calls and cpp_per_file:
         def _parse_for_resolver(file_path: Path, lang: str) -> dict:
             return _parse_file_symbols(file_path, lang, queries, cache=parse_cache)
@@ -388,9 +392,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             source_strategy=source_strategy,
         )
 
-    # ADR 0056 Wave 3 + ADR 0064 criterion 2 post-passes: csharp merges
-    # partial-class declarations + base-list inheritance; java emits
-    # ``inherits`` / ``implements`` from the staged accumulator.
+    # Per-language inheritance post-pass (ADR 0056 Wave 3 / ADR 0064 criterion 2).
     finalise = _FINALISERS.get(language)
     if finalise is not None:
         finalise(nodes, edges, enricher_caches, source_strategy)

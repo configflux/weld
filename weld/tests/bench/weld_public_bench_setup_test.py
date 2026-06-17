@@ -20,15 +20,11 @@ integration test exercises the real git clone path.
 from __future__ import annotations
 
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.bench._public_corpus import CorpusSource, PublicRepo  # noqa: E402
 from weld.bench._public_setup import (  # noqa: E402

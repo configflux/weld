@@ -1,0 +1,62 @@
+# Graph-artifact workflow for weld.
+#
+# Builds the connected-structure graph once per main-branch commit and
+# publishes it as a CI artifact keyed by the commit SHA, so developers can
+# `wd warm` a near-instant graph on a fresh clone without committing the graph
+# to git. Rides GitHub's per-repository artifact storage -- no shared graph
+# store, no weld-operated service. The graph is content-addressable, so the
+# commit SHA identifies the graph content; the published graph.json.sha256 lets
+# `wd warm` verify it fetched exactly the bytes this job emitted.
+name: Graph Artifact
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: graph-artifact-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install weld
+        run: python -m pip install ./weld
+
+      # --safe keeps discovery deterministic and side-effect free: no
+      # project-local strategy overrides, no external_json subprocesses, no
+      # network/LLM enrichment. The output is the canonical, content-stable
+      # graph.json (volatile meta lives in a separate, unpublished sidecar).
+      - name: Build graph
+        run: wd discover --safe --output .weld/graph.json --quiet
+
+      # Bare 64-hex digest of the exact bytes uploaded. `wd warm` recomputes
+      # this over the fetched bytes and refuses any mismatch.
+      - name: Compute integrity tag
+        run: |
+          sha256sum .weld/graph.json | awk '{print $1}' > .weld/graph.json.sha256
+          echo "graph sha256: $(cat .weld/graph.json.sha256)"
+
+      - name: Upload graph artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weld-graph-${{ github.sha }}
+          path: |
+            .weld/graph.json
+            .weld/graph.json.sha256
+          if-no-files-found: error
+          retention-days: 30

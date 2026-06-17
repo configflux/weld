@@ -21,16 +21,11 @@ mid-migration. The test ensures:
 from __future__ import annotations
 
 import io
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
-# Ensure weld package is importable from the repo root
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.graph import Graph  # noqa: E402
 

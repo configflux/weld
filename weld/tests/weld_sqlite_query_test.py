@@ -10,99 +10,28 @@ Asserts envelope shape parity with :meth:`weld.graph.Graph.query`:
   against the JSON-backed Graph for the same fixture (semantic
   parity, the v1 acceptance criterion).
 - A SQL-injection-style term (``' OR 1=1 --``) does NOT return every
-  node; the parameter binding holds.
+  node; the parameter binding holds (incl. the per-group UNION path).
+
+Ranked-parity surfaces (coverage admission, OR-fallback) live in
+``weld_sqlite_query_parity_test``; the shared sidecar/JSON builders live in
+``_sqlite_query_test_fixtures``.
 """
 
 from __future__ import annotations
 
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
-
-from weld import _sqlite_reader as reader  # noqa: E402
-from weld import _sqlite_writer as writer  # noqa: E402
-from weld.graph import Graph  # noqa: E402
-from weld.serializer import dumps_graph  # noqa: E402
-
-
-def _fixture_nodes() -> dict[str, dict]:
-    """Mixed-topic fixture with distinguishable token surfaces."""
-    return {
-        "service:billing": {
-            "type": "service",
-            "label": "billing",
-            "props": {
-                "file": "services/billing.py",
-                "description": "Billing rollup",
-                "exports": ["bill", "charge"],
-            },
-        },
-        "service:auth": {
-            "type": "service",
-            "label": "auth",
-            "props": {
-                "file": "services/auth.py",
-                "description": "Auth surface",
-                "exports": ["login", "logout"],
-            },
-        },
-        "symbol:helper": {
-            "type": "symbol",
-            "label": "helper",
-            "props": {
-                "description": "Generic helper used by billing",
-            },
-        },
-        "file:readme": {
-            "type": "file",
-            "label": "README.md",
-            "props": {"file": "README.md"},
-        },
-    }
-
-
-def _open_sqlite_view(nodes: dict[str, dict]) -> tuple[
-    reader.SqliteBackedGraph, "tempfile.TemporaryDirectory[str]",
-]:
-    tmp = tempfile.TemporaryDirectory()
-    root = Path(tmp.name)
-    (root / ".weld").mkdir(parents=True, exist_ok=True)
-    graph = {"meta": {"schema_version": 1}, "nodes": nodes, "edges": []}
-    body = dumps_graph(graph).encode("utf-8")
-    (root / ".weld" / "graph.json").write_bytes(body)
-    writer.build_sidecar_for_bytes(graph, body, root / ".weld" / "graph.db")
-    view = reader.open_sidecar_if_fresh(root / ".weld" / "graph.json")
-    assert view is not None
-    return view, tmp
-
-
-def _open_json_graph(nodes: dict[str, dict]) -> tuple[
-    Graph, "tempfile.TemporaryDirectory[str]",
-]:
-    tmp = tempfile.TemporaryDirectory()
-    root = Path(tmp.name)
-    (root / ".weld").mkdir(parents=True, exist_ok=True)
-    payload = {
-        "meta": {"version": "0", "updated_at": "t", "schema_version": 1},
-        "nodes": nodes,
-        "edges": [],
-    }
-    (root / ".weld" / "graph.json").write_text(
-        dumps_graph(payload), encoding="utf-8",
-    )
-    g = Graph(root)
-    g.load()
-    return g, tmp
+from weld.tests._sqlite_query_test_fixtures import (
+    boundary_trap_nodes,
+    fixture_nodes,
+    open_json_graph,
+    open_sqlite_view,
+)
 
 
 class SqliteQueryEnvelopeTest(unittest.TestCase):
     def test_empty_term_returns_empty_envelope(self) -> None:
-        view, tmp = _open_sqlite_view(_fixture_nodes())
+        view, tmp = open_sqlite_view(fixture_nodes())
         try:
             result = view.query("")
             self.assertEqual(result["matches"], [])
@@ -114,7 +43,7 @@ class SqliteQueryEnvelopeTest(unittest.TestCase):
             tmp.cleanup()
 
     def test_single_unique_token_finds_target(self) -> None:
-        view, tmp = _open_sqlite_view(_fixture_nodes())
+        view, tmp = open_sqlite_view(fixture_nodes())
         try:
             ids = {m["id"] for m in view.query("auth")["matches"]}
             self.assertIn("service:auth", ids)
@@ -124,7 +53,7 @@ class SqliteQueryEnvelopeTest(unittest.TestCase):
             tmp.cleanup()
 
     def test_term_with_no_hits_returns_empty_matches(self) -> None:
-        view, tmp = _open_sqlite_view(_fixture_nodes())
+        view, tmp = open_sqlite_view(fixture_nodes())
         try:
             ids = {m["id"] for m in view.query("zzzzz_nothing")["matches"]}
             self.assertEqual(set(), ids)
@@ -141,10 +70,10 @@ class SqliteQueryEnvelopeTest(unittest.TestCase):
         and let a separate test pin ordering when we extend to hybrid
         scoring.
         """
-        nodes = _fixture_nodes()
-        view, tmp_sqlite = _open_sqlite_view(nodes)
+        nodes = fixture_nodes()
+        view, tmp_sqlite = open_sqlite_view(nodes)
         try:
-            json_graph, tmp_json = _open_json_graph(nodes)
+            json_graph, tmp_json = open_json_graph(nodes)
             try:
                 for term in ("auth", "billing", "helper", "README"):
                     sqlite_ids = {
@@ -170,7 +99,7 @@ class SqliteQuerySecurityTest(unittest.TestCase):
     """Term-injection probes for the parameter-bound reader."""
 
     def test_injection_attempt_does_not_widen_to_all_nodes(self) -> None:
-        view, tmp = _open_sqlite_view(_fixture_nodes())
+        view, tmp = open_sqlite_view(fixture_nodes())
         try:
             # A literal ``' OR 1=1 --`` cannot escape parameter
             # binding, so the substring search returns zero hits.
@@ -187,7 +116,7 @@ class SqliteQuerySecurityTest(unittest.TestCase):
 
     def test_term_with_semicolon_and_drop_does_not_alter_schema(self) -> None:
         """``term`` is bound as a parameter; DDL inside it must not run."""
-        view, tmp = _open_sqlite_view(_fixture_nodes())
+        view, tmp = open_sqlite_view(fixture_nodes())
         try:
             view.query("'; DROP TABLE token_index; --")
             # If the DDL ran, the next query would fail. The
@@ -195,6 +124,67 @@ class SqliteQuerySecurityTest(unittest.TestCase):
             # would error -- this is a belt-and-braces check.
             ids = {m["id"] for m in view.query("auth")["matches"]}
             self.assertIn("service:auth", ids)
+        finally:
+            view.close()
+            tmp.cleanup()
+
+    def test_multi_token_union_path_keeps_parameter_binding(self) -> None:
+        """The per-group UNION path is parameter-bound too.
+
+        The UNION scan (``_candidates_union``) feeds both the N>=3 admission
+        tier and the OR-fallback relaxation. A multi-token injection probe must
+        still bind every token literally and never widen to the full node set.
+
+        The probe tokens are chosen so none is a substring of any indexed
+        token, so a parameter-bound search yields exactly zero matches. (A
+        token like ``or`` would legitimately substring-match real content such
+        as "ordering" -- that is correct literal matching, not injection, so it
+        is deliberately avoided here to keep the assertion about binding.)
+        """
+        view, tmp = open_sqlite_view(boundary_trap_nodes())
+        try:
+            # Three injection-shaped tokens, each free of any substring overlap
+            # with the fixture's indexed tokens => N>=3 (union path runs) and a
+            # held binding yields nothing.
+            result = view.query("zz'; xy=1 qq--")
+            self.assertEqual([], result["matches"])
+            self.assertNotIn("degraded_match", result)
+        finally:
+            view.close()
+            tmp.cleanup()
+
+    def test_injection_probe_does_not_widen_via_or_fallback(self) -> None:
+        """A classic ``' OR 1=1 --`` probe must not widen to the full node set.
+
+        With OR-fallback now reachable on the sqlite path, this asserts the
+        stronger invariant directly: the probe may only surface nodes whose
+        indexed text literally contains one of the probe tokens as a substring
+        (here only the token ``or`` collides, with "ordering"/"order"), and it
+        must NEVER return the distractor or every node -- which is what a
+        successful injection would do. Binding holds: the literal token did the
+        matching, not unescaped SQL.
+        """
+        nodes = boundary_trap_nodes()
+        view, tmp = open_sqlite_view(nodes)
+        try:
+            result = view.query("' OR 1=1 -- ' OR 1=1 -- ' OR 1=1 --")
+            ids = {m["id"] for m in result["matches"]}
+            # The distractor contains no probe-token substring; an injection
+            # that escaped binding would return it (and every other node).
+            self.assertNotIn("file:weld/unrelated", ids)
+            self.assertNotEqual(ids, set(nodes), "probe must not widen to all")
+            # Every returned node must literally carry a probe token; otherwise
+            # the binding leaked.
+            from weld._coverage_admission import count_groups_hit
+            from weld.synonyms import expand_token_groups
+            groups = expand_token_groups(
+                "' OR 1=1 -- ' OR 1=1 -- ' OR 1=1 --".lower().split()
+            )
+            for nid in ids:
+                self.assertGreater(
+                    count_groups_hit(groups, nid, nodes[nid]), 0,
+                    f"{nid} matched without a literal token hit -> binding leak",
+                )
         finally:
             view.close()
             tmp.cleanup()

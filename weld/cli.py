@@ -47,6 +47,7 @@ _HELP = """Usage: wd <command> [args]
 Core commands:
   init           Bootstrap .weld/discover.yaml for the current repo
   discover       Run discovery and emit graph JSON to stdout
+  warm           Fetch a CI-published graph artifact and refresh to HEAD (else full discover)
   agents         Agent Graph for static AI customization assets
   graph          Canonical graph namespace (stats, validate, query, context, ...)
   workspace      Inspect child status (status) or one-shot federate a polyrepo (bootstrap)
@@ -239,6 +240,11 @@ def _dispatch(argv: list[str] | None) -> int:
         from weld import discover as discover_mod
 
         return discover_mod.main(rest)
+
+    if subcmd == "warm":
+        from weld import warm as warm_mod
+
+        return warm_mod.main(rest)
 
     if subcmd == "agents":
         from weld import agent_graph_cli as agents_mod

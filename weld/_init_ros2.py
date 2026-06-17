@@ -1,9 +1,9 @@
 """ROS2 source-entry generation for ``wd init``.
 
-Lives alongside ``weld/init.py`` so the ``init.py`` grandfather cap (420
-lines, see ``tools/lint_repo.py``) does not grow just to wire the ROS2
-strategies. The helper produces ready-to-use YAML fragments for the five
-``ros2_*`` strategies plus a C++ tree-sitter entry rooted at the
+Lives alongside ``weld/init.py`` so that wiring the ROS2 strategies does
+not push ``init.py`` over the default source line-count cap (see
+``tools/lint_repo.py``). The helper produces ready-to-use YAML fragments
+for the five ``ros2_*`` strategies plus a C++ tree-sitter entry rooted at the
 workspace ``src/`` directory so the ROS2 C++ nodes get call-graph edges.
 
 The ROS2 connected-structure schema ADR covers the node-type story;

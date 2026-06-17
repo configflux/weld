@@ -15,14 +15,10 @@ existing file under the 400-line cap. Covers:
 from __future__ import annotations
 
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._gitignore_writer import (  # noqa: E402
     CONFIG_ONLY_GITIGNORE,

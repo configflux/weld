@@ -33,10 +33,10 @@ from pathlib import Path
 from weld._gitignore_writer import write_weld_gitignore
 from weld._workspace_bootstrap_result import BootstrapResult
 from weld.init import init as _root_init
+from weld._graph_meta_sidecar import write_graph_with_meta
 from weld.init_workspace import merge_yaml_and_scan_children
 from weld.workspace import DEFAULT_MAX_DEPTH, ChildEntry, ScanConfig, WorkspaceConfig
 from weld.workspace_state import (
-    atomic_write_text,
     build_workspace_state,
     load_workspace_config,
     save_workspace_state,
@@ -208,7 +208,6 @@ def bootstrap_workspace(
     # order clean whichever one is imported first.
     from weld._discover_recurse import recurse_children
     from weld.federation_root import build_root_meta_graph
-    from weld.serializer import dumps_graph
     from weld.workspace_state import WorkspaceLock
 
     root_path = Path(root).resolve()
@@ -364,9 +363,11 @@ def bootstrap_workspace(
         # Rebuild ledger AFTER recurse so federation_root sees fresh state.
         state = build_workspace_state(root_path, config)
         graph = build_root_meta_graph(root_path, config, state)
-        atomic_write_text(
-            root_path / ".weld" / "graph.json", dumps_graph(graph),
-        )
+        # ADR 0065: write the root graph.json (volatile meta stripped)
+        # plus its graph-meta.json sidecar via the same paired writer
+        # the standalone federated-root discover uses, so the bootstrap
+        # root graph is byte-stable / content-addressable too.
+        write_graph_with_meta(root_path / ".weld" / "graph.json", graph)
         save_workspace_state(root_path, state)
 
     result.children_present = sorted(

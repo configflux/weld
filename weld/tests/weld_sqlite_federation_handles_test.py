@@ -14,14 +14,10 @@ files within the project line-count cap. Covers:
 
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld import _sqlite_reader as reader  # noqa: E402
 from weld.federation import FederatedGraph  # noqa: E402

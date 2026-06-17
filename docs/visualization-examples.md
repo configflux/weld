@@ -208,7 +208,12 @@ services-auth: present dirty (refs/heads/main d712c4d621fb)
 
 Each line is `<child-name>: <lifecycle-state> [dirty?] (<head-ref>
 <short-sha>)`. Lifecycle states are `present`, `missing`,
-`uninitialized`, or `corrupt`.
+`uninitialized`, or `corrupt`. A `present` child whose source has moved past
+its graph additionally renders as the derived `stale` view and adds a
+`stale=N` column to the `Counts:` line; all three children here are fresh, so
+no `stale` column appears. See the README's
+[Workspace status](../README.md#workspace-status) section for the full state
+reference.
 
 ### `wd workspace status --json` (one of three children shown)
 
@@ -473,6 +478,29 @@ section for the full taxonomy and rationale.
 
 ---
 
+## Reviewing what changed in `wd viz`
+
+The inspector panel exposes a **Changes** tab that lists everything that
+moved since the previous `wd discover` run: added, removed, and modified
+nodes plus added and removed edges. Clicking a row jumps to the node on
+the canvas and tints it green / red / amber so the change stays visible
+while you explore neighbors. When the previous and current snapshots
+match, the tab renders a friendly "No changes since last `wd discover`."
+message.
+
+The same data is reachable from the JSON API:
+
+```text
+GET /api/diff
+```
+
+The response wraps the stable contract emitted by `wd diff --json`
+(`added_nodes`, `removed_nodes`, `modified_nodes`, `added_edges`,
+`removed_edges`) inside the shared `viz_api_version` envelope, so a
+custom UI can render the same diff without re-running the CLI.
+
+---
+
 ## MCP config snippet
 
 `wd mcp config --client=<name>` prints the JSON snippet your MCP-aware
@@ -518,7 +546,7 @@ The full MCP install story (including the `[mcp]` extra) is covered in
 
 ## Reproducing locally
 
-Snippets on this page were captured against `wd 0.20.1` from a Linux
+Snippets on this page were captured against `wd 0.21.0` from a Linux
 host. To reproduce them on your own machine:
 
 ```bash

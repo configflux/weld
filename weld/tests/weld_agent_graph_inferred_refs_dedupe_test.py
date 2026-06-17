@@ -29,15 +29,11 @@ exercises cross-pattern dedupe collisions for the same target.
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.agent_graph_metadata import parse_agent_asset  # noqa: E402
 from weld.agent_graph_metadata_utils import AgentGraphReference  # noqa: E402

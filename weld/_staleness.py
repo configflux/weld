@@ -14,6 +14,7 @@ from weld._git import (
     get_git_sha,
     is_git_repo,
     source_files_changed_since,
+    working_tree_dirty_sources,
 )
 
 
@@ -22,9 +23,14 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
 
     Two orthogonal signals:
 
-    - ``source_stale`` (primary): any file in ``meta.discovered_from``
-      changed content between ``meta.git_sha`` and HEAD. Agents should
-      gate ``wd discover`` on this.
+    - ``source_stale`` (primary): a file in ``meta.discovered_from``
+      changed content -- either committed between ``meta.git_sha`` and
+      HEAD, or *uncommitted in the working tree* (staged, unstaged, or a
+      new untracked file under a tracked prefix). The working-tree
+      dimension is what lets an agent mid-edit see its own changes; a
+      commit-range-only check would report fresh until the edit landed.
+      Agents should gate ``wd discover`` (and auto-refresh, ADR 0051) on
+      this.
     - ``sha_behind`` (secondary): the recorded SHA is non-null and
       differs from HEAD.
 
@@ -36,7 +42,9 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
     ``.weld/graph.json``, ``sha_behind`` is reported False as well. The
     graph is effectively fresh -- reporting drift in that state drives
     users into a touch/commit/touch loop because ``wd touch`` re-stamps
-    HEAD, the user commits the graph, and HEAD advances again.
+    HEAD, the user commits the graph, and HEAD advances again. By the same
+    rule, dirty ``.weld/`` bookkeeping never feeds ``source_stale`` -- the
+    working-tree check excludes those paths.
     """
     root = graph_path.parent.parent  # .weld/ -> project root
     if not is_git_repo(root):
@@ -61,6 +69,14 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
         source_stale = False
     else:
         source_stale = bool(source_files_changed_since(root, gsha, tracked))
+    # Working-tree dimension: uncommitted edits to a tracked source file
+    # are drift the commit-range diff cannot see. Only consult git status
+    # when the committed signal has not already flagged the graph -- this
+    # keeps the already-stale paths to a single git call and runs the
+    # status probe only on the clean-committed branches (where it is the
+    # check that catches the agent's own in-flight edits).
+    if not source_stale and working_tree_dirty_sources(root, tracked):
+        source_stale = True
     # Collapse pure graph-only drift -- the graph tracks its inputs and
     # no advisory is warranted. Only applies when sources are unchanged.
     if sha_behind and not source_stale and gsha is not None:

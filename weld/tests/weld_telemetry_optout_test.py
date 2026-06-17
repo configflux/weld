@@ -23,9 +23,6 @@ from unittest import mock
 
 # Make ``weld`` importable from a Bazel runfiles tree as well as from the
 # repo root in local runs.
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 _tests_dir = str(Path(__file__).resolve().parent)
 if _tests_dir not in sys.path:
     sys.path.insert(0, _tests_dir)

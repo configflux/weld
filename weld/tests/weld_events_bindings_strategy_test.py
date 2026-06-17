@@ -29,15 +29,11 @@ fragment is in the graph.
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.contract import validate_fragment  # noqa: E402
 from weld.strategies.events_bindings import extract  # noqa: E402

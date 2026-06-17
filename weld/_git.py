@@ -90,6 +90,36 @@ def is_git_repo(root: Path) -> bool:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return False
 
+def ancestor_shas(root: Path, max_count: int = 50) -> list[str]:
+    """Return HEAD and up to *max_count*-1 ancestors, nearest first.
+
+    Wraps ``git rev-list --max-count=N HEAD``. The first element is HEAD; each
+    subsequent element is its next ancestor on the rev-list walk. Used by
+    ``wd warm`` (ADR 0067) to probe a CI artifact store for the nearest commit
+    that has a published graph.
+
+    Returns ``[]`` when *root* is not a git checkout, ``git`` is unavailable,
+    the command fails, or *max_count* is not positive -- callers treat an empty
+    list as "no candidates" and fall back to a full local discover.
+    """
+    if max_count <= 0:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", f"--max-count={max_count}", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+            timeout=10,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 def commits_behind(root: Path, old_sha: str, new_sha: str) -> int:
     """Count commits between *old_sha* and *new_sha*.
 
@@ -141,6 +171,21 @@ _WELD_BOOKKEEPING_PATHS = frozenset({
     # alongside a wd-touched graph.json does not trip the source-drift
     # detector and force a spurious rebuild.
     ".weld/graph.db",
+    # Volatile-meta sidecar written alongside graph.json by ``wd discover``
+    # / ``wd touch`` (ADR 0065): holds the wall-clock ``updated_at`` and the
+    # ``git_sha`` that used to live in graph.json. Gitignored by default,
+    # but a user (or a test) who commits it alongside graph.json must not
+    # see it counted as a changed *source* file -- it is pure weld output,
+    # the same trust boundary as graph.json itself.
+    ".weld/graph-meta.json",
+    # Surface-hash companion to file-index.json written by ``wd discover``
+    # (bd 85tb.2): records the SHA of every indexed file so the next refresh
+    # re-tokenizes only what changed. Pure weld output, same trust boundary
+    # as file-index.json. Without this entry every read self-heal writes a
+    # fresh, untracked ``.weld/file-index-state.json`` that the working-tree
+    # drift probe counts as source change -- making every repo perpetually
+    # ``source_stale`` and defeating the cheap refresh-on-read contract.
+    ".weld/file-index-state.json",
 })
 
 
@@ -181,6 +226,34 @@ def drift_is_graph_only(root: Path, graph_sha: str) -> bool:
     return all(p in _WELD_BOOKKEEPING_PATHS for p in paths)
 
 
+def _path_is_tracked(path: str, tracked: list[str]) -> bool:
+    """Return True if *path* falls under any prefix in *tracked*.
+
+    *tracked* is a list of directory prefixes or file paths (as stored
+    in ``meta.discovered_from``). Directory prefixes may end in ``/`` or
+    be bare names; both forms match descendants. The root marker ``"./"``
+    / ``"."`` means every path is tracked (strategies that scan from the
+    repo root record their ``discovered_from`` that way).
+
+    Weld bookkeeping files (``.weld/graph.json`` and siblings) are never
+    source and return False regardless of *tracked* -- a broad ``['./']``
+    (default ``wd init``) would otherwise match them.
+    """
+    if path in _WELD_BOOKKEEPING_PATHS:
+        return False
+    for prefix in tracked:
+        if not isinstance(prefix, str) or not prefix:
+            continue
+        if (
+            prefix in (".", "./")
+            or (prefix.endswith("/") and path.startswith(prefix))
+            or path == prefix
+            or path.startswith(prefix.rstrip("/") + "/")
+        ):
+            return True
+    return False
+
+
 def source_files_changed_since(
     root: Path, graph_sha: str, tracked: list[str]
 ) -> list[str]:
@@ -188,17 +261,15 @@ def source_files_changed_since(
     any path in *tracked* (ADR 0017).
 
     *tracked* is a list of directory prefixes or file paths (as stored
-    in ``meta.discovered_from``). Directory prefixes may end in ``/``
-    or be bare names; both forms match descendants. The root prefix
-    ``"./"`` / ``"."`` is treated as "any path" (strategies that scan
-    from the repo root record their ``discovered_from`` that way). An
-    empty *tracked* yields an empty result -- nothing can be intersected.
+    in ``meta.discovered_from``); see :func:`_path_is_tracked` for the
+    prefix-match rules. An empty *tracked* yields an empty result --
+    nothing can be intersected.
 
     Weld's own bookkeeping files (``.weld/graph.json``,
-    ``.weld/discovery-state.json``) are always excluded -- they are
-    outputs of discovery, never user source, and a broad ``tracked``
-    such as ``['./']`` (default ``wd init``) would otherwise match
-    them on every graph-commit and produce a false ``source_stale``
+    ``.weld/discovery-state.json``, and siblings) are always excluded --
+    they are outputs of discovery, never user source, and a broad
+    ``tracked`` such as ``['./']`` (default ``wd init``) would otherwise
+    match them on every graph-commit and produce a false ``source_stale``
     (tracked issue).
 
     Returns ``[]`` when the diff cannot be computed (git missing, SHA
@@ -217,23 +288,104 @@ def source_files_changed_since(
         return []
     if result.returncode != 0:
         return []
-    out: list[str] = []
-    for path in result.stdout.splitlines():
-        if not path:
+    return [
+        path
+        for path in result.stdout.splitlines()
+        if path and _path_is_tracked(path, tracked)
+    ]
+
+
+def _parse_porcelain_v2_paths(stdout: str) -> list[str]:
+    """Extract changed file paths from ``git status --porcelain=v2 -z``.
+
+    Record types (porcelain v2): ``1`` ordinary changed entry, ``2``
+    rename/copy (followed by an extra NUL-separated original-path token
+    we discard), ``u`` unmerged, ``?`` untracked, ``!`` ignored. Header
+    lines start with ``#`` and are skipped. ``-z`` emits NUL-separated
+    records; the trailing NUL after the last record yields an empty tail
+    token dropped by the truthy filter. Mirrors the proven parser in
+    :mod:`weld.impact_cli`.
+    """
+    tokens = [tok for tok in stdout.split("\0") if tok]
+    paths: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        i += 1
+        prefix = tok[0]
+        if prefix == "#":
             continue
-        # Weld bookkeeping is never source; skip before prefix match.
-        if path in _WELD_BOOKKEEPING_PATHS:
-            continue
-        for prefix in tracked:
-            if not isinstance(prefix, str) or not prefix:
-                continue
-            # Repo-root marker "./" or "." means every file is tracked.
-            if (
-                prefix in (".", "./")
-                or (prefix.endswith("/") and path.startswith(prefix))
-                or path == prefix
-                or path.startswith(prefix.rstrip("/") + "/")
-            ):
-                out.append(path)
-                break
-    return out
+        if prefix == "1":
+            parts = tok.split(" ", 8)  # 9 fields; path is the last.
+            if len(parts) == 9:
+                paths.append(parts[8])
+        elif prefix == "2":
+            parts = tok.split(" ", 9)  # 10 fields; path then orig-path.
+            if len(parts) == 10:
+                paths.append(parts[9])
+            i += 1  # consume and discard the original-path token.
+        elif prefix == "u":
+            parts = tok.split(" ", 10)  # 11 fields; path is the last.
+            if len(parts) == 11:
+                paths.append(parts[10])
+        elif prefix in ("?", "!"):
+            parts = tok.split(" ", 1)
+            if len(parts) == 2:
+                paths.append(parts[1])
+    return paths
+
+
+def working_tree_dirty_sources(root: Path, tracked: list[str]) -> list[str]:
+    """Return uncommitted-change paths under *tracked* prefixes (ADR 0017).
+
+    Refines the freshness signal: ``source_files_changed_since`` only
+    sees committed ``graph_sha..HEAD`` diffs, so an agent editing a
+    tracked source file *without committing* would query a graph that
+    ignores its own changes. This helper detects that dirty state by
+    parsing ``git status --porcelain=v2 --untracked-files=all -z`` and
+    intersecting the changed paths (staged, unstaged, untracked, renamed,
+    unmerged) with *tracked* via :func:`_path_is_tracked`.
+
+    Weld bookkeeping dirt (``.weld/graph.json`` and siblings) is excluded
+    so that committing/touching the graph -- the only "dirt" present in
+    the bookkeeping-only case -- never trips the signal.
+
+    Cheap by construction: an empty *tracked* short-circuits before any
+    git call, and a clean tree returns the empty list after a single
+    ``git status`` (no per-file hashing). ``-c core.quotePath=false``
+    keeps unicode/quoted filenames as UTF-8 and prevents a filename
+    containing ``" -> "`` from being misread as a rename. The argv is
+    fixed and *tracked* is never interpolated into the command, so there
+    is no shell-injection surface. Read-only: no git state is mutated.
+
+    Returns ``[]`` when the status cannot be computed (git missing,
+    non-git root, timeout): callers fall back to other staleness signals.
+    """
+    if not tracked:
+        return []
+    try:
+        result = subprocess.run(
+            [
+                # ``--untracked-files=all`` lists every untracked file by
+                # its full path instead of collapsing a fully-untracked
+                # directory into a single ``dir/`` summary entry. The
+                # summary form would defeat the bookkeeping filter: an
+                # untracked ``.weld/`` (its files not yet committed) would
+                # arrive as the bare ``.weld/`` directory, which is not in
+                # ``_WELD_BOOKKEEPING_PATHS`` and would wrongly count as
+                # source drift under a broad ``./`` prefix.
+                "git", "-c", "core.quotePath=false",
+                "status", "--porcelain=v2", "--untracked-files=all", "-z",
+            ],
+            capture_output=True, text=True, cwd=str(root), timeout=10,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [
+        path
+        for path in _parse_porcelain_v2_paths(result.stdout)
+        if _path_is_tracked(path, tracked)
+    ]

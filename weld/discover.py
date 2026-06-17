@@ -12,37 +12,36 @@ a complete re-scan.
 
 from __future__ import annotations
 
-import copy
 import json
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from weld._discover_empty_guard import (
     EmptyFederatedGraphRefusedError,
     enforce_nonempty_federated_write as _enforce_nonempty_federated_write,
 )
+from weld._discover_empty_warn import warn_if_no_sources as _warn_if_no_sources
 from weld._discover_federate import merge_cross_repo_edges, retag_federated_origins_on_disk
+from weld._discover_no_change import no_change_refresh as _no_change_refresh
 from weld._discover_postprocess import post_process as _post_process
-from weld._discover_sidecar import (persist_file_index as _persist_file_index,
-                                    persist_query_state_sidecar as _persist_query_state_sidecar,
+from weld._discover_sidecar import (finalize_single_repo as _finalize_single_repo,
                                     persist_sqlite_sidecar as _persist_sqlite_sidecar)
 from weld._discover_state_check import (files_missing_from_graph,
-                                         graph_files_with_nodes,
-                                         save_state_for_graph)
+                                         graph_files_with_nodes)
 from weld._discover_strategies import (
+    IncrementalHint,
     load_strategy as _load_strategy,  # noqa: F401 -- re-export for test consumers
     run_external_json as _run_external_json,  # noqa: F401 -- re-export for test consumers
     run_source as _run_source,
 )
 from weld._discover_summary import emit_summary as _emit_summary
-from weld._git import get_git_sha
 from weld._yaml import parse_yaml
 from weld.contract import SCHEMA_VERSION  # noqa: F401 -- re-export for consumers
 from weld.discovery_state import (StateDiff, build_file_hashes, diff_state,
                                    files_missing_strategy_outputs, load_state,
-                                   purge_stale_nodes, resolve_source_files)
+                                   purge_stale_nodes, resolve_source_file_map)
+from weld._graph_meta_sidecar import write_graph_with_meta as _write_graph_with_meta
 from weld.federation_root import build_root_meta_graph
 from weld.serializer import dumps_graph as _dumps_graph
 from weld.workspace import WorkspaceConfigError
@@ -85,6 +84,7 @@ def _discover_single_repo(
     incremental: bool | None = None,
     safe: bool = False,
     with_sqlite: bool = True,
+    write_graph: bool = False,
 ) -> dict:
     """Walk the codebase and build a connected structure from config.
 
@@ -94,6 +94,12 @@ def _discover_single_repo(
     *safe*: when True, refuse project-local strategy overrides and the
     ``external_json`` subprocess adapter (ADR 0024).
 
+    *write_graph*: when True, write ``.weld/graph.json`` (+ ADR 0065
+    sidecar) here reusing the bytes already serialized for the sidecars,
+    skipping a second ~900 ms serialization (bd 85tb.2). Auto-refresh sets
+    this; ``discover()`` / ``main()`` leave it ``False`` -- they own a
+    configurable ``--output`` and keep the pure build-and-return shape.
+
     Strategies may share state via ``context`` keys such as
     ``table_to_entity``/``pending_fk_edges`` (sqlalchemy strategy) and
     ``command_texts`` (firstline_md strategy) -- :func:`_post_process`
@@ -102,6 +108,7 @@ def _discover_single_repo(
     config_path = root / ".weld" / "discover.yaml"
     config = parse_yaml(config_path.read_text(encoding="utf-8")) if config_path.exists() else {"sources": [], "topology": {}}
     sources = config.get("sources", [])
+    _warn_if_no_sources(root, sources)  # loud signal for a forgotten `wd init`
 
     # Load the previous graph and snapshot it for `wd diff` -- but only after
     # we've confirmed it parses. A corrupt graph.json must not overwrite the
@@ -124,8 +131,8 @@ def _discover_single_repo(
         except OSError:
             pass  # best-effort; diff will report "no previous"
 
-    # Resolve all globs -> current file set
-    source_file_map = [resolve_source_files(root, s, filter_glob_results) for s in sources]
+    # Resolve all globs -> current file set (duplicate globs walk once).
+    source_file_map = resolve_source_file_map(root, sources, filter_glob_results)
     current_file_set = sorted({f for files in source_file_map for f in files})
 
     # State tracking
@@ -149,27 +156,27 @@ def _discover_single_repo(
 
     if not incremental:
         # Full discovery
-        context: dict = {}
-        nodes: dict[str, dict] = {}
-        edges: list[dict] = []
-        df: list[str] = []
+        context, nodes, edges, df = {}, {}, [], []  # type: dict, dict[str, dict], list[dict], list[str]
         for s in sources:
             r = _run_source(root, s, context, safe=safe)
             nodes.update(r.nodes)
             edges.extend(r.edges)
             df.extend(r.discovered_from)
         graph = _post_process(nodes, edges, context, config, root, df)
-        save_state_for_graph(root, current_hashes, graph)
-        _persist_query_state_sidecar(root / ".weld", graph)
-        if with_sqlite:
-            _persist_sqlite_sidecar(root / ".weld", graph)
-        _persist_file_index(root)
+        _finalize_single_repo(
+            root, current_hashes, graph, with_sqlite, write_graph,
+        )
         _drain_context_warnings(context)
         return graph
 
     # --- Incremental path ---
     assert existing_graph is not None and old_state is not None
-    missing_outputs = files_missing_strategy_outputs(existing_graph, source_file_map)
+    # Pass ``files_with_no_nodes`` so legitimately node-less sources (e.g.
+    # concept_from_bd) stop perpetually re-triggering the slow path
+    # (bd 85tb.2); see files_missing_strategy_outputs for the full rationale.
+    missing_outputs = files_missing_strategy_outputs(
+        existing_graph, source_file_map, old_state.files_with_no_nodes,
+    )
     # Per-file audit: catches files that are state-disk-consistent
     # but absent from a graph that predates them, even when sibling
     # files in the same source still have nodes (which satisfies the
@@ -183,27 +190,30 @@ def _discover_single_repo(
     stale = dirty | state_diff.deleted
 
     if not state_diff.has_changes and not missing_outputs and not missing_per_file:
-        print("[weld] notice: no files changed, graph is up to date", file=sys.stderr)
-        refreshed = copy.deepcopy(existing_graph)
-        refreshed["meta"]["version"] = SCHEMA_VERSION
-        refreshed["meta"]["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        sha = get_git_sha(root)
-        if sha is not None:
-            refreshed["meta"]["git_sha"] = sha
-        if not refreshed["meta"].get("discovered_from"):
-            refreshed["meta"]["discovered_from"] = current_file_set
-        save_state_for_graph(root, current_hashes, refreshed)
-        _persist_query_state_sidecar(root / ".weld", refreshed)
-        if with_sqlite:
-            _persist_sqlite_sidecar(root / ".weld", refreshed)
-        _persist_file_index(root)
-        return refreshed
+        # No content change: refresh volatile meta only, no strategy re-run.
+        # The loaded ``existing_graph`` stays byte-pristine (see
+        # discover_no_changes_does_not_mutate_loaded_graph_test).
+        return _no_change_refresh(
+            root, existing_graph, existing_graph_bytes,
+            current_file_set, current_hashes,
+            with_sqlite=with_sqlite, write_graph=write_graph,
+        )
 
-    # Purge stale nodes from existing graph
+    # Purge stale nodes; edges purge by ADR 0074 provenance (clean-caller
+    # inbound edges into dirty-file symbols survive, dirty re-parse re-mints
+    # the endpoint) so parse-only-dirty stays byte-identical to a full run.
     ex_nodes, ex_edges = purge_stale_nodes(
         dict(existing_graph.get("nodes", {})),
         list(existing_graph.get("edges", [])),
         stale,
+    )
+
+    # ADR 0074: hand python_callgraph the dirty scope + POST-PURGE prior node
+    # set (snapshot before dirty re-runs mutate ``ex_nodes``) so it parses
+    # only dirty files and reconstructs cross-glob ``project_modules`` from
+    # surviving prior symbols instead of re-globbing every sibling.
+    incremental_hint = IncrementalHint(
+        dirty_files=frozenset(dirty), prior_nodes=dict(ex_nodes),
     )
 
     # Run strategies for source entries with dirty files
@@ -211,7 +221,9 @@ def _discover_single_repo(
     for i, source in enumerate(sources):
         if not set(source_file_map[i]).intersection(dirty):
             continue
-        r = _run_source(root, source, context, safe=safe)
+        r = _run_source(
+            root, source, context, safe=safe, incremental_hint=incremental_hint,
+        )
         for nid, node in r.nodes.items():
             nf = node.get("props", {}).get("file", "")
             if not nf or nf in dirty:
@@ -222,11 +234,9 @@ def _discover_single_repo(
     old_df = [p for p in existing_graph.get("meta", {}).get("discovered_from", []) if p not in state_diff.deleted]
     new_df = [str(p) for files in source_file_map for p in files if p in dirty]
     graph = _post_process(ex_nodes, ex_edges, context, config, root, old_df + new_df)
-    save_state_for_graph(root, current_hashes, graph)
-    _persist_query_state_sidecar(root / ".weld", graph)
-    if with_sqlite:
-        _persist_sqlite_sidecar(root / ".weld", graph)
-    _persist_file_index(root)
+    _finalize_single_repo(
+        root, current_hashes, graph, with_sqlite, write_graph,
+    )
     _drain_context_warnings(context)
     return graph
 
@@ -292,22 +302,20 @@ def discover(
         # resolvers consume child graphs by reading those files.
         graph = merge_cross_repo_edges(root, workspace_config, state, graph)
         if output is not None:
-            from weld.workspace_state import atomic_write_text
-
             _enforce_nonempty_federated_write(
                 output, graph, state, allow_empty=allow_empty,
             )
-            atomic_write_text(output, _dumps_graph(graph))
+            # ADR 0065: write graph.json (volatile meta stripped) plus the
+            # graph-meta.json sidecar when the target is the canonical name.
+            _write_graph_with_meta(output, graph)
             if with_sqlite and output.name == "graph.json":  # ADR 0058: sidecar pairs by name
                 _persist_sqlite_sidecar(output.parent, graph)
         elif write_root_graph:
-            from weld.workspace_state import atomic_write_text
-
             target = root / ".weld" / "graph.json"
             _enforce_nonempty_federated_write(
                 target, graph, state, allow_empty=allow_empty,
             )
-            atomic_write_text(target, _dumps_graph(graph))
+            _write_graph_with_meta(target, graph)  # ADR 0065
             if with_sqlite:
                 _persist_sqlite_sidecar(target.parent, graph)
         save_workspace_state(root, state)
@@ -357,8 +365,9 @@ def main(argv: list[str] | None = None) -> int:
         # The guard already wrote the explanatory stderr message.
         return 3
     if output_path is not None and not is_federated:
-        from weld.workspace_state import atomic_write_text
-        atomic_write_text(output_path, _dumps_graph(result))
+        # ADR 0065: write graph.json (volatile meta stripped) plus the
+        # graph-meta.json sidecar when the output is the canonical name.
+        _write_graph_with_meta(output_path, result)
         if not args.no_sqlite and output_path.name == "graph.json":  # ADR 0058: sidecar pairs by name
             _persist_sqlite_sidecar(output_path.parent, result)
     elif output_path is None:

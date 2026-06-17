@@ -1,0 +1,28 @@
+# .weld/discover.yaml for the axum route fixture (ADR 0071 / Rust).
+#
+# Shipped (not auto-generated) so the fixture is self-describing and the
+# discovered graph is reproducible byte-for-byte, mirroring the
+# gin_routes_project fixture. The `axum` source entry below is what `wd
+# init` adds for a Rust project that imports axum (see
+# weld/_init_framework_sources._add_rust_framework_sources); shipping it
+# keeps the fixture's route nodes deterministic without depending on
+# init auto-detection.
+sources:
+  # axum HTTP routes: route:<METHOD>:<path> nodes for handler registration.
+  # Listed BEFORE the tree_sitter entry so the canonical tree_sitter
+  # file node wins the later nodes.update merge over axum's thin
+  # boundary-file placeholder (weld.discover applies sources in order).
+  - glob: "**/*.rs"
+    type: route
+    strategy: axum
+
+  # Rust application sources: exports, types, imports (origin-tagged).
+  - glob: "**/*.rs"
+    type: file
+    strategy: tree_sitter
+    language: rust
+
+  # Module manifest (drives same-crate import origin=project resolution).
+  - files: ["Cargo.toml"]
+    type: config
+    strategy: config_file

@@ -9,14 +9,10 @@ walker the rule shares with the strategies themselves.
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 
 class StrategyPairConsistencyTest(unittest.TestCase):

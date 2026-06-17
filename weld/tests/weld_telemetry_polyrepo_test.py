@@ -17,7 +17,6 @@ from __future__ import annotations
 import io
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -26,9 +25,6 @@ from unittest import mock
 
 # Make ``weld`` importable from a Bazel runfiles tree as well as from the
 # repo root in local runs.
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld import _telemetry as tel  # noqa: E402
 from weld.workspace import (  # noqa: E402

@@ -377,6 +377,7 @@ def main(argv: list[str] | None = None) -> None:
 
     from weld._auto_refresh import auto_refresh_if_stale
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
+    from weld._graph_cli_errors import load_graph_or_exit
     from weld.graph import Graph
 
     # Friendly first-run message when the graph has not been built.
@@ -384,8 +385,9 @@ def main(argv: list[str] | None = None) -> None:
     # ADR 0051: auto-refresh stale graphs. ``brief`` always emits JSON,
     # so the human banner is unconditionally suppressed.
     auto_refresh_if_stale(args.root, no_refresh=args.no_refresh, json_output=True)
-    g = Graph(args.root)
-    g.load()
+    # A corrupt/unsupported graph yields a one-line structured error, not a
+    # traceback (shared contract via weld._errors).
+    g = load_graph_or_exit(Graph(args.root))
     result = brief(g, args.term, limit=args.limit)
     json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")

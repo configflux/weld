@@ -115,6 +115,15 @@ def _add_query(sub) -> None:
     )
     p.add_argument("--limit", type=int, default=20)
     p.add_argument(
+        "--include-speculative",
+        dest="include_speculative",
+        action="store_true",
+        help=(
+            "Include unresolved-symbol sentinels (origin=unresolved) that are "
+            "demoted and hidden by default; restores the pre-filter result set"
+        ),
+    )
+    p.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
     _add_no_refresh(p)

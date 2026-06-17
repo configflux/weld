@@ -12,6 +12,8 @@ monkey-patch :func:`weld._telemetry._write_locked` to raise and verify:
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import sys
 import tempfile
@@ -21,9 +23,6 @@ from unittest import mock
 
 # Make ``weld`` importable from a Bazel runfiles tree as well as from the
 # repo root in local runs.
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 _tests_dir = str(Path(__file__).resolve().parent)
 if _tests_dir not in sys.path:
     sys.path.insert(0, _tests_dir)
@@ -33,6 +32,7 @@ from weld import cli  # noqa: E402
 from weld.cli import main as cli_main  # noqa: E402
 from telemetry_test_helpers import (  # noqa: E402
     captured as _captured,
+    chdir as _chdir,
     make_repo as _make_repo,
 )
 
@@ -116,6 +116,43 @@ class BrokenPipePreservedTests(unittest.TestCase):
                  ):
                 rc = cli_main(["--version"])
             self.assertEqual(rc, 141)
+
+
+class HelpAndUsageRecordingTests(unittest.TestCase):
+    """End-to-end: a subcommand's argparse exit is classified by its code.
+
+    Regression for the telemetry bug where ``wd <cmd> --help``
+    (``SystemExit(0)``) was recorded as ``outcome=error, exit_code=1,
+    error_kind=SystemExit`` -- fabricating a large fake discover error
+    rate. Runs the real :func:`weld.cli.main` dispatcher so both the
+    dispatch wiring and the Recorder classification are exercised.
+    """
+
+    def _record(self, root: Path, argv: list[str]) -> dict:
+        with _chdir(root), mock.patch.object(sys, "stdout", io.StringIO()), \
+                mock.patch.object(sys, "stderr", io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cli_main(argv)
+        path = root / ".weld" / tel.TELEMETRY_FILENAME
+        events = [json.loads(ln) for ln in path.read_text().splitlines()
+                  if ln.strip()]
+        self.assertEqual(len(events), 1)
+        return events[0]
+
+    def test_discover_help_records_ok_not_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = self._record(_make_repo(Path(tmp)), ["discover", "--help"])
+            self.assertEqual(ev["command"], "discover")
+            self.assertEqual(ev["outcome"], "ok")
+            self.assertEqual(ev["exit_code"], 0)
+            self.assertIsNone(ev["error_kind"])
+
+    def test_discover_usage_error_records_error_with_category(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = self._record(_make_repo(Path(tmp)), ["discover", "--bad-xyz"])
+            self.assertEqual(ev["outcome"], "error")
+            self.assertEqual(ev["exit_code"], 2)
+            self.assertEqual(ev["error_kind"], "SystemExitCode2")
 
 
 if __name__ == "__main__":

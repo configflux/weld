@@ -38,6 +38,53 @@ def _emit(args, data: object, renderer) -> None:
     sys.stdout.write(renderer(data))
 
 
+def _emit_node_lookup(args, data: dict, renderer) -> None:
+    """Thin adapter to :func:`weld._graph_cli_errors.emit_node_lookup`.
+
+    Passes :func:`_emit` so the error module stays free of a back-import.
+    """
+    from weld._graph_cli_errors import emit_node_lookup
+
+    emit_node_lookup(args, data, renderer, _emit)
+
+
+def _query_envelope(args, envelope: dict) -> dict:
+    """Apply the default ``wd query`` speculative filter to *envelope*.
+
+    Unresolved-symbol sentinels (``origin=unresolved``) are noise an agent
+    cannot discount, so the CLI hides them by default and exposes them via
+    ``--include-speculative``. Filtering happens here, at the CLI boundary,
+    rather than in ``Graph.query`` so the MCP surface and direct API callers
+    keep receiving the full, unfiltered envelope.
+
+    Two projections, both gated on ``--include-speculative`` being off (the
+    flag restores the full, untrimmed window):
+
+    * ``matches`` drops the sentinels. The filter runs *after* ``--limit``
+      truncation, so a noisy query may return fewer than ``--limit`` matches.
+      That is intended: the result is the genuinely-resolved subset of the
+      top-``limit`` ranked window, not a re-padded list pulling in
+      lower-ranked matches the user never would have seen.
+    * ``neighbors``/``edges`` are re-derived for the surviving matches via
+      :func:`weld._query_envelope.trim_envelope_to_matches` so the ``--json``
+      envelope stays self-consistent (no edge dangling on a dropped sentinel,
+      no orphaned neighbour). Text output never renders edges, so this is
+      invisible there but load-bearing for strict ``--json`` consumers.
+    """
+    if getattr(args, "include_speculative", False):
+        return envelope
+    from weld._query_envelope import trim_envelope_to_matches
+    from weld.ranking import filter_speculative_matches
+
+    matches = envelope.get("matches")
+    if not matches:
+        return envelope
+    surviving_ids = {
+        m["id"] for m in filter_speculative_matches(matches) if "id" in m
+    }
+    return trim_envelope_to_matches(envelope, surviving_ids)
+
+
 # Graph-backed read commands. A missing `.weld/graph.json` here yields an
 # actionable first-run message instead of a silently empty payload. Mutating
 # commands (add-*/rm-*/import/touch) and diagnostic commands
@@ -153,9 +200,25 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
                 render_context, render_path, render_query,
             )
 
+            # ADR 0066 part 3: auto-recurse stale children before serving a
+            # federated read. Refreshes only the stale-or-uninitialized
+            # subset and rebuilds the root meta-graph, so FederatedGraph
+            # (constructed next) loads fresh root + child bytes. Honours
+            # WELD_AUTO_REFRESH=0 / --no-refresh (the gate freeze, bd 19tw).
+            from weld._auto_refresh import auto_refresh_if_stale
+            auto_refresh_if_stale(
+                args.root,
+                no_refresh=getattr(args, "no_refresh", False),
+                json_output=getattr(args, "as_json", False),
+            )
+
             fg = FederatedGraph(args.root)
             if cmd == "query":
-                _emit(args, fg.query(args.term, args.limit), render_query)
+                _emit(
+                    args,
+                    _query_envelope(args, fg.query(args.term, args.limit)),
+                    render_query,
+                )
             elif cmd == "context":
                 _emit(args, fg.context(args.node_id), render_context)
             else:
@@ -179,8 +242,8 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
             no_refresh=getattr(args, "no_refresh", False),
             json_output=getattr(args, "as_json", False),
         )
-    g = Graph(args.root)
-    g.load()
+    from weld._graph_cli_errors import load_graph_or_exit
+    g = load_graph_or_exit(Graph(args.root))
     mutates = False
     if cmd == "find":
         from weld._cli_render import render_find
@@ -189,13 +252,19 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
         _emit(args, find_files(index, args.term, limit=args.limit), render_find)
     elif cmd == "query":
         from weld._cli_render import render_query
-        _emit(args, g.query(args.term, args.limit), render_query)
+        _emit(
+            args,
+            _query_envelope(args, g.query(args.term, args.limit)),
+            render_query,
+        )
     elif cmd == "context":
         from weld._cli_render import render_context
-        _emit(args, g.context(args.node_id), render_context)
+        _emit_node_lookup(args, g.context(args.node_id), render_context)
     elif cmd == "callers":
         from weld._cli_render import render_callers
-        _emit(args, g.callers(args.symbol, depth=args.depth), render_callers)
+        _emit_node_lookup(
+            args, g.callers(args.symbol, depth=args.depth), render_callers,
+        )
     elif cmd == "references":
         from weld._cli_render import render_references
         from weld.file_index import find_files, load_file_index
@@ -235,7 +304,10 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
         _out(g.list_nodes(args.type_filter))
     elif cmd == "stale":
         from weld._cli_render import render_stale
-        _emit(args, g.stale(), render_stale)
+        from weld._federation_staleness import stale_payload
+        # ADR 0066 §2: at a federated root, fold per-child staleness into
+        # the root payload; a single repo returns g.stale() unchanged.
+        _emit(args, stale_payload(args.root, g.stale()), render_stale)
     elif cmd == "touch":
         g.save(touch_git_sha=True)
         _out({

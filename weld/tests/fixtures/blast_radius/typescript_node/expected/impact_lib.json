@@ -15,6 +15,12 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "axum": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "bazel": {
         "deps_edges": false,
         "nodes_emitted": false,
@@ -99,6 +105,12 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "express": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "fastapi": {
         "deps_edges": false,
         "nodes_emitted": false,
@@ -106,6 +118,12 @@
         "test_edges": false
       },
       "flask": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "gin": {
         "deps_edges": false,
         "nodes_emitted": false,
         "srcs_edges": false,
@@ -202,6 +220,12 @@
         "test_edges": false
       },
       "vcpkg": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "web_frontend": {
         "deps_edges": false,
         "nodes_emitted": false,
         "srcs_edges": false,

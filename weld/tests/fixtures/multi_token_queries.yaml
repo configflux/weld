@@ -1,0 +1,92 @@
+# Multi-token query F1 regression fixtures (parent bd 8rm0).
+#
+# WHY THIS FILE IS SEPARATE FROM weld/tests/fixtures/tier1/<lang>/queries.yaml
+# ---------------------------------------------------------------------------
+# Criterion-7 query-F1 (ADR 0064) is provably blind to multi-token AND-coverage
+# regressions today: every one of the per-language tier-1 fixtures
+# (weld/tests/fixtures/tier1/**/queries.yaml) is single-token, so the mean-F1
+# gate cannot move when the soft-AND / coverage-threshold ranking changes under
+# parent 8rm0. This file is the DEDICATED multi-token set kept OUT of the
+# tier1/<lang>/<tag>/ layout on purpose:
+#   * tools/tier_check_query_f1.check_query_f1 only resolves
+#     <fixture_dir>/<lang>/[<tag>/]queries.yaml, so it never reads this path and
+#     the single-token mean-F1 baseline is unperturbed by construction; and
+#   * tools/tier_check_query_f1_fixture_shape_test iterates explicit per-language
+#     _CORPORA tuples (no glob), so this file is exempt from the >=10-entry /
+#     per-corpus shape contract that governs the tier1 fixtures.
+#
+# These entries follow the same canonical schema as the tier1 fixtures
+# (id / question / query_kind / query / top_k / gold) and exist as executable
+# documentation of the DESIRED multi-token behavior plus a parse-shape guard
+# (tools/multi_token_query_fixture_test.py). They are intentionally graph-shape
+# fixtures, NOT scored against a live corpus here -- the focused, position-
+# asserting regression guard is weld/tests/weld_multi_token_query_test.py, which
+# replays the headline N=4 query against a hermetic synthetic graph.
+#
+# Coverage spans N=2, N=3, and N=4 multi-token queries. The gold reflects the
+# post-8rm0 target ordering (high-coverage code/entity nodes admitted and ranked
+# above a heading-only "diffuse" doc); until the 8rm0.3 mechanism lands these
+# remain documentation of intent, which is exactly why the parent's regression
+# guard is the executable weld_multi_token_query_test.py golden.
+#
+# Node IDs below mirror the structural reproduction in
+# weld/tests/weld_multi_token_query_test.py (the boundary_entrypoint strategy
+# module, its sibling test target, and the docs/determinism-audit-T1a doc whose
+# headings happen to contain all four query tokens). See parent 8rm0 for the
+# full mechanism description.
+
+# --- N=4: the headline failing query (parent 8rm0 repro) ------------
+- id: multi-token-boundary-entrypoint-strategy-test
+  question: "Entity-shaped 4-token query: the boundary_entrypoint strategy module and its test should outrank a heading-only doc"
+  query_kind: query
+  query: "boundary entrypoint strategy test"
+  top_k: 5
+  gold:
+    - "file:weld/strategies/boundary_entrypoint"
+    - "file:weld/tests/weld_boundary_entrypoint_test"
+    - "doc:docs/determinism-audit-T1a"
+
+# --- N=2: co-occurrence baseline (must NOT regress; full-coverage) --
+- id: multi-token-discovery-strategy
+  question: "2-token co-occurrence query: a node hitting both tokens wins"
+  query_kind: query
+  query: "discovery strategy"
+  top_k: 5
+  gold:
+    - "module:discovery-strategy"
+
+# --- N=3: high-coverage code node above a heading-only doc ----------
+- id: multi-token-graph-query-fallback
+  question: "3-token query: the graph_query fallback module should surface for its own tokens"
+  query_kind: query
+  query: "graph query fallback"
+  top_k: 5
+  gold:
+    - "file:weld/graph_query"
+
+# --- N=2: doc still present when it owns the concept -----------------
+- id: multi-token-language-support
+  question: "2-token query: a doc that genuinely owns the heading stays present"
+  query_kind: query
+  query: "language support"
+  top_k: 5
+  gold:
+    - "doc:readme/language-support"
+
+# --- N=3: entity-shaped query for an inverted-index seam ------------
+- id: multi-token-inverted-index-build
+  question: "3-token query: the inverted-index builder node surfaces for its identity tokens"
+  query_kind: query
+  query: "inverted index build"
+  top_k: 5
+  gold:
+    - "file:weld/query_index"
+
+# --- N=4: another entity-shaped multi-token case --------------------
+- id: multi-token-tier-check-query-f1
+  question: "4-token query: the criterion-7 query-F1 checker surfaces for its identity tokens"
+  query_kind: query
+  query: "tier check query f1"
+  top_k: 5
+  gold:
+    - "file:tools/tier_check_query_f1"

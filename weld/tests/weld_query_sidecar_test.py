@@ -18,15 +18,11 @@ Covers:
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld import _query_sidecar as sidecar  # noqa: E402
 from weld.contract import SCHEMA_VERSION  # noqa: E402
@@ -315,20 +311,29 @@ class DiscoverWritesSidecarTest(unittest.TestCase):
             (root / ".weld" / "discover.yaml").write_text(
                 "sources: []\n", encoding="utf-8",
             )
-            graph = _discover_single_repo(root, incremental=False)
-            # Simulate what the caller does (write graph.json to .weld/).
-            from weld.serializer import dumps_graph
+            # ``write_graph=True`` makes discovery write ``.weld/graph.json``
+            # itself via the ADR 0065 paired writer (volatile meta stripped),
+            # exactly as auto-refresh and the CLI ``--output`` path do. The
+            # sidecar's freshness digest is taken over those same stripped
+            # bytes (bd 85tb.2), so a cold read is a hit -- the prior manual
+            # ``dumps_graph`` (full-meta) write here masked a real cold-load
+            # cache miss because the on-disk graph.json is stripped.
+            _discover_single_repo(root, incremental=False, write_graph=True)
             graph_path = root / ".weld" / "graph.json"
-            graph_path.write_text(dumps_graph(graph), encoding="utf-8")
-            # The discover hook must have written the sidecar already.
+            # The discover hook must have written both graph.json and sidecar.
+            self.assertTrue(graph_path.is_file(), "discover must write graph.json")
             sidecar_path = root / ".weld" / "query_state.bin"
             self.assertTrue(
                 sidecar_path.is_file(),
                 "wd discover must write the query-state sidecar",
             )
-            # And it must be readable as a fresh hit on the just-written graph.
+            # Read the sidecar against the on-disk graph.json -- which carries
+            # the stripped meta, so its node/edge sets match what discovery
+            # produced and the digest matches the bytes the sidecar recorded.
+            import json as _json
+            on_disk = _json.loads(graph_path.read_text(encoding="utf-8"))
             loaded = sidecar.read_sidecar(
-                graph_path, graph.get("nodes", {}), graph.get("edges", []),
+                graph_path, on_disk.get("nodes", {}), on_disk.get("edges", []),
             )
             self.assertIsNotNone(
                 loaded,

@@ -9,15 +9,11 @@ have to remember which one they're in.
 from __future__ import annotations
 
 import io
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._first_run_enrich import has_been_prompted, mark_prompted  # noqa: E402
 from weld.enrich import main as enrich_main  # noqa: E402

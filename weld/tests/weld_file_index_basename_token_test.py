@@ -21,13 +21,9 @@ This test pins the tokenizer-level contract and the end-to-end
 
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.file_index import _tokenize_path, find_files  # noqa: E402
 

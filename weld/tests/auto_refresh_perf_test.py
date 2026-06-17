@@ -20,15 +20,11 @@ from __future__ import annotations
 
 import io
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 # Per ADR 0051: 1 second budget on the no-op incremental path.
 _PERF_BUDGET_SECONDS: float = 1.0

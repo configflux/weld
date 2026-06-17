@@ -156,7 +156,13 @@ class DoctorMcpConfigTest(unittest.TestCase):
             root = Path(td)
             _setup_dir(root, mcp=True)
             results = doctor(root)
-            ok_mcp = [r for r in results if "mcp" in r.message.lower() and r.level == "ok"]
+            # Filter on the config check's message, not bare "mcp": hosts with
+            # the optional mcp SDK installed also emit an ok-level optional-deps
+            # result that would match a looser filter.
+            ok_mcp = [
+                r for r in results
+                if "mcp server config" in r.message.lower() and r.level == "ok"
+            ]
             self.assertTrue(ok_mcp)
 
     def test_ok_with_codex_config(self):
@@ -164,7 +170,10 @@ class DoctorMcpConfigTest(unittest.TestCase):
             root = Path(td)
             _setup_dir(root, codex_mcp=True)
             results = doctor(root)
-            ok_mcp = [r for r in results if "mcp" in r.message.lower() and r.level == "ok"]
+            ok_mcp = [
+                r for r in results
+                if "mcp server config" in r.message.lower() and r.level == "ok"
+            ]
             self.assertTrue(ok_mcp)
             self.assertIn(".codex/config.toml", ok_mcp[0].message)
 

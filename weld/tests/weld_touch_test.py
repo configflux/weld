@@ -16,15 +16,24 @@ import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._git import get_git_sha  # noqa: E402
 from weld._graph_cli import main as cli_main  # noqa: E402
+from weld._graph_meta_sidecar import load_graph_meta  # noqa: E402
 from weld.contract import SCHEMA_VERSION  # noqa: E402
 from weld.graph import Graph  # noqa: E402
 from weld.serializer import dumps_graph as _dumps_graph  # noqa: E402
+
+
+def _logical_git_sha(root: Path) -> str | None:
+    """Return the effective ``git_sha`` for the graph at *root*.
+
+    ADR 0065 relocated ``git_sha`` from ``graph.json`` into the
+    ``graph-meta.json`` sidecar; ``load_graph_meta`` overlays the sidecar
+    (with the legacy in-graph fallback) so this is the location-agnostic
+    view every consumer sees.
+    """
+    return load_graph_meta(root / ".weld" / "graph.json").get("git_sha")
 
 
 def _run(cmd: list[str], cwd: Path) -> str:
@@ -127,11 +136,13 @@ class WdTouchTest(unittest.TestCase):
         self.assertEqual(payload["git_sha"], self._head)
         self.assertIn("updated_at", payload)
 
-        # graph.json now has git_sha == HEAD
-        data = json.loads(
+        # The logical git_sha (sidecar, ADR 0065) is now HEAD; graph.json
+        # itself no longer carries git_sha.
+        self.assertEqual(_logical_git_sha(self.root), self._head)
+        on_disk = json.loads(
             (self.root / ".weld" / "graph.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(data["meta"]["git_sha"], self._head)
+        self.assertNotIn("git_sha", on_disk["meta"])
 
     def test_touch_preserves_nodes_and_edges_byte_stable(self) -> None:
         """Structural bytes (nodes + edges) must be identical before and
@@ -182,8 +193,8 @@ class WdTouchTest(unittest.TestCase):
 
         self.assertEqual(rc1, 0)
         self.assertEqual(rc2, 0)
-        self.assertEqual(first["meta"]["git_sha"], self._head)
-        self.assertEqual(second["meta"]["git_sha"], self._head)
+        # git_sha == HEAD both times (logical view via the sidecar).
+        self.assertEqual(_logical_git_sha(self.root), self._head)
         self.assertEqual(first_bytes, _structural_bytes(second))
 
 
@@ -202,14 +213,13 @@ class GraphSaveTouchFlagTest(unittest.TestCase):
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_default_save_does_not_stamp_git_sha(self) -> None:
+        # Legacy graph carries git_sha in-graph; default save() preserves
+        # it (relocated to the sidecar via ADR 0065, value unchanged).
         _write_graph(self.root, git_sha="old-sha", nodes={}, edges=[])
         g = Graph(self.root)
         g.load()
         g.save()   # default: touch_git_sha=False
-        data = json.loads(
-            (self.root / ".weld" / "graph.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(data["meta"].get("git_sha"), "old-sha",
+        self.assertEqual(_logical_git_sha(self.root), "old-sha",
             "default save() must preserve existing git_sha")
 
     def test_touch_save_stamps_git_sha_to_head(self) -> None:
@@ -217,10 +227,7 @@ class GraphSaveTouchFlagTest(unittest.TestCase):
         g = Graph(self.root)
         g.load()
         g.save(touch_git_sha=True)
-        data = json.loads(
-            (self.root / ".weld" / "graph.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(data["meta"]["git_sha"], self._head)
+        self.assertEqual(_logical_git_sha(self.root), self._head)
 
     def test_touch_save_in_non_git_is_noop(self) -> None:
         """Outside a git repo, touch_git_sha=True silently skips the stamp."""
@@ -231,11 +238,8 @@ class GraphSaveTouchFlagTest(unittest.TestCase):
             g = Graph(non_git)
             g.load()
             g.save(touch_git_sha=True)
-            data = json.loads(
-                (non_git / ".weld" / "graph.json").read_text(encoding="utf-8")
-            )
             # No git -> git_sha preserved (no HEAD to copy from).
-            self.assertEqual(data["meta"].get("git_sha"), "keep-me")
+            self.assertEqual(_logical_git_sha(non_git), "keep-me")
         finally:
             import shutil
             shutil.rmtree(non_git, ignore_errors=True)
@@ -277,10 +281,7 @@ class MutatingCliStampsGitShaTest(unittest.TestCase):
             "--label", "X", "--props", "{}",
         ])
         self.assertEqual(rc, 0)
-        data = json.loads(
-            (self.root / ".weld" / "graph.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(data["meta"]["git_sha"], self._head)
+        self.assertEqual(_logical_git_sha(self.root), self._head)
 
     def test_add_edge_stamps_git_sha(self) -> None:
         _write_graph(
@@ -296,10 +297,7 @@ class MutatingCliStampsGitShaTest(unittest.TestCase):
             "--props", "{}",
         ])
         self.assertEqual(rc, 0)
-        data = json.loads(
-            (self.root / ".weld" / "graph.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(data["meta"]["git_sha"], self._head)
+        self.assertEqual(_logical_git_sha(self.root), self._head)
 
 
 if __name__ == "__main__":

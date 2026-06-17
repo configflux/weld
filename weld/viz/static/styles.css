@@ -77,8 +77,202 @@ select {
 }
 
 .search {
+  position: relative;
   display: flex;
   min-width: 0;
+}
+
+/* bd h6z0.8: search-suggest dropdown. Anchors below the search input
+   and shows {id, label, type} rows. Hidden when empty so the surface
+   is invisible until the user types. */
+.search-suggest {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  max-height: 260px;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  list-style: none;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.search-suggest[hidden] {
+  display: none;
+}
+
+.search-suggest-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.search-suggest-item:hover,
+.search-suggest-item:focus-visible {
+  background: var(--surface);
+}
+
+.search-suggest-item .suggest-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-suggest-item .suggest-type {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant: small-caps;
+}
+
+/* bd h6z0.14: Export view menu. The wrap is the positioning anchor
+   so the menu drops from the export button's lower-right edge. The
+   menu mirrors the search-suggest dropdown chrome for visual
+   consistency, but anchors right-aligned so it doesn't escape the
+   topbar's right margin. */
+.export-wrap {
+  position: relative;
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 5;
+  min-width: 180px;
+  margin: 0;
+  padding: 4px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  list-style: none;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.export-menu[hidden] {
+  display: none;
+}
+
+.export-menu li {
+  margin: 0;
+}
+
+.export-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.export-menu button:hover,
+.export-menu button:focus-visible {
+  background: var(--surface);
+  outline: none;
+}
+
+/* bd h6z0.15: minimap toggle + corner panel. The toggle reuses the
+   toolbar button chrome but gains a teal accent when active so users
+   can tell at a glance whether the bird's-eye-view panel is open.
+   The #cy-minimap div is the container handed to cytoscape-navigator;
+   upstream JS keeps the `cytoscape-navigator` class and its CSS docks a
+   400px square bottom-right. The `.cy-minimap` rule below shares that
+   single-class specificity and loads first, so it cannot win on source
+   order alone; the 220px square that overrides the upstream default is
+   pinned on the `#cy-minimap` id (specificity 1,0,0) in the bd jko2
+   block below, which wins regardless of load order. */
+#minimap-toggle.active {
+  border-color: var(--teal);
+  color: var(--teal);
+  background: rgba(17, 140, 139, 0.08);
+}
+
+.cy-minimap {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  width: 220px;
+  height: 220px;
+  z-index: 6;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.cy-minimap[hidden] {
+  display: none;
+}
+
+/* bd jko2: the minimap is position:fixed, so a bare right:12px docks it
+   against the viewport edge -- on top of the 320px inspector column
+   (.inspector is grid-column 3). Offset the right edge by the inspector
+   width plus a gutter so the panel sits entirely within the #cy canvas
+   region (grid-column 2) and never paints over the inspector. These
+   rules are keyed on the #cy-minimap id (specificity 1,0,0) so they win
+   over the single-class vendor `.cytoscape-navigator` defaults
+   (width:400px; bottom:0; right:0) no matter which sheet loads last --
+   index.html loads /styles.css *before* the vendor CSS, so a same-class
+   `.cy-minimap` override would otherwise lose the cascade. Geometry is
+   therefore pinned here as the single source of truth for the panel. */
+#cy-minimap {
+  bottom: 12px;
+  right: calc(320px + 12px);
+  width: 220px;
+  height: 220px;
+}
+
+/* bd jko2: the navigator view-rectangle gets width/height set inline by
+   the vendor JS (panelDim / cyZoom * thumbnailZoom). When the graph is
+   zoomed out the divisor shrinks and the rectangle balloons past the
+   panel, reading as oversized. The vendor CSS sets no max bound, so cap
+   it to the panel: max-* is the only property we add (no cascade
+   conflict with the vendor rule) and clamps the rendered box whatever
+   inline size the JS writes. */
+.cytoscape-navigatorView {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* bd h6z0.8: empty-state suggestions list inside the inspector
+   when a slice returns zero nodes. */
+.empty-state-suggestions {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.empty-state-suggestions li {
+  margin-bottom: 4px;
+}
+
+/* ADR 0073: cold-open entry-point list seeded into the default
+   inspector panel. Same list affordance as the empty-state hint, with
+   a dimmed type label trailing each entry. */
+.entry-points {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.entry-points li {
+  margin-bottom: 4px;
+}
+
+.entry-points .entry-point-type {
+  margin-left: 6px;
+  color: var(--muted, #667085);
+  font-size: 11px;
 }
 
 .search input {
@@ -103,6 +297,24 @@ button:hover,
 button:focus-visible {
   border-color: var(--teal);
   outline: 2px solid rgba(17, 140, 139, 0.16);
+}
+
+/* bd h6z0.3: inline Lucide-MIT icon glyphs replace placeholder text on
+   toolbar / inspector / banner buttons. The sprite block is removed
+   from layout; only the <use> references render. */
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+  pointer-events: none;
 }
 
 .search button {
@@ -191,6 +403,53 @@ button:focus-visible {
   font-weight: 400;
 }
 
+.rail .legend {
+  margin: 0 0 14px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rail .legend legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.legend-list {
+  display: grid;
+  gap: 4px;
+}
+
+.legend-row {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.legend-row.dim {
+  opacity: 0.35;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+}
+
+.legend-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
 #cy {
   grid-column: 2;
   grid-row: 2;
@@ -199,12 +458,49 @@ button:focus-visible {
   background: #fbfcfd;
 }
 
+.stale-banner {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--amber);
+  border-radius: 6px;
+  background: #fff7e6;
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stale-banner[hidden] {
+  display: none;
+}
+
+.stale-banner button {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--amber);
+}
+
 .inspector {
   grid-column: 3;
   grid-row: 2;
   border-left: 1px solid var(--line);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* Four tracks for the four always-visible children: head, tab strip,
+     the body panel, and the action row. The on-demand #inspect-changes
+     and #trace-tray ship hidden (display:none) so they hold no track.
+     The stretch row sits on the third track so it binds to the body
+     panel (#inspect-body or its #inspect-changes twin, which auto-place
+     into the same slot) -- the tab strip keeps its natural height and the
+     body fills and scrolls. A three-track grid bound 1fr to the tabs,
+     collapsing them and overlapping the body (bd yski). */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
 .inspector-head {
@@ -212,6 +508,40 @@ button:focus-visible {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 4px;
+}
+
+/* bd h6z0.9: inspector tab strip lives between the head and body so
+   the Changes tab can swap in without disturbing the selection chrome
+   or the bottom action row. */
+.inspect-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.inspect-tab {
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.inspect-tab:hover,
+.inspect-tab:focus-visible {
+  color: var(--ink);
+  outline: none;
+}
+
+.inspect-tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--teal);
 }
 
 .inspect-body {
@@ -251,6 +581,231 @@ pre {
   white-space: pre-wrap;
 }
 
+/* bd 1bfc: readable Properties view. Each prop is a label/value row;
+   values are scalars (text), chips (scalar arrays), or nested rows
+   (objects). Reuses the inspector's muted-label + pill-chip language so
+   the section reads as the same family as the rest of the inspector.
+   The raw JSON moves into a collapsed <details> ".prop-raw" disclosure
+   so power users keep every field without it being the default wall. */
+.prop-rows {
+  margin-top: 6px;
+  display: grid;
+  gap: 8px;
+}
+
+.prop-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 34%) 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.prop-row .prop-key {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.prop-row .prop-val {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.prop-row.prop-nested {
+  grid-template-columns: minmax(72px, 30%) 1fr;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.prop-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.prop-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.prop-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.prop-raw {
+  margin-top: 10px;
+}
+
+.prop-raw > summary {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.prop-raw > summary:hover,
+.prop-raw > summary:focus-visible {
+  color: var(--teal);
+}
+
+.path-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.path-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.path-pill.path-pill-a { border-color: var(--teal); color: var(--teal); }
+.path-pill.path-pill-b { border-color: var(--red); color: var(--red); }
+.path-pill.empty { border-color: var(--line); color: var(--muted); font-weight: 500; }
+
+.path-pill .path-pill-label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-pill-clear {
+  margin: 0 0 0 2px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+/* bd h6z0.9: changes-tab panel. Each section header carries an
+   accent stripe (green / red / amber) so the user can scan added vs
+   removed vs modified at a glance. Rows are clickable to jump to the
+   node. */
+.inspect-changes .changes-section {
+  margin-bottom: 14px;
+}
+
+.inspect-changes .changes-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-left: 3px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.inspect-changes .changes-section.added .changes-section-head { border-left-color: var(--green); color: var(--green); }
+.inspect-changes .changes-section.removed .changes-section-head { border-left-color: var(--red); color: var(--red); }
+.inspect-changes .changes-section.modified .changes-section-head { border-left-color: var(--amber); color: var(--amber); }
+
+.inspect-changes .changes-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.inspect-changes ul.changes-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inspect-changes .changes-row {
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.inspect-changes .changes-row:hover,
+.inspect-changes .changes-row:focus-visible {
+  background: var(--surface);
+  outline: 2px solid rgba(17, 140, 139, 0.16);
+}
+
+.inspect-changes .changes-empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* bd h6z0.10: trace tray. Sits between the inspector body and the
+   action row so the bucket counts surface alongside the existing
+   chrome. Hidden until /api/trace returns. Pills mirror the
+   path-pill chrome so the trace surface reads as the same family. */
+.trace-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.trace-tray[hidden] {
+  display: none;
+}
+
+.trace-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--teal);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--teal);
+}
+
+.trace-pill-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.inspector-link {
+  color: var(--teal);
+  text-decoration: none;
+  border-bottom: 1px dashed transparent;
+  cursor: pointer;
+}
+
+.inspector-link:hover,
+.inspector-link:focus-visible {
+  border-bottom-color: var(--teal);
+  outline: 2px solid rgba(17, 140, 139, 0.16);
+  outline-offset: 1px;
+}
+
 .pill-row {
   display: flex;
   flex-wrap: wrap;
@@ -278,8 +833,13 @@ pre {
 
   .rail,
   #cy,
-  .inspector {
+  .inspector,
+  .stale-banner {
     grid-column: 1;
+  }
+
+  .stale-banner {
+    grid-row: 3;
   }
 
   .rail {
@@ -300,4 +860,83 @@ pre {
     border-left: 0;
     border-top: 1px solid var(--line);
   }
+
+  /* bd jko2: in the stacked single-column layout the inspector moves
+     *below* the canvas (grid-row 4), so the right edge is free. Drop the
+     inspector-clearing offset and return the minimap to the corner gutter
+     so it does not get pushed off the left/bottom of the viewport. */
+  #cy-minimap {
+    right: 12px;
+  }
+}
+
+/* bd h6z0.16: keyboard-shortcut cheatsheet modal. Overlay + centered
+   panel; the root element ships with the `hidden` attribute so it
+   never paints until the "?" handler toggles it on. */
+.cheatsheet {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.36);
+}
+
+.cheatsheet[hidden] {
+  display: none;
+}
+
+.cheatsheet-panel {
+  min-width: 280px;
+  max-width: 420px;
+  width: 100%;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+.cheatsheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.cheatsheet-head strong {
+  font-size: 14px;
+}
+
+.cheatsheet-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.cheatsheet-list dt {
+  margin: 0;
+}
+
+.cheatsheet-list dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.cheatsheet-list kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  text-align: center;
 }

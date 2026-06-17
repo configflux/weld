@@ -3,21 +3,19 @@
 ADR 0011 defines the federation model: a workspace root enumerates child git
 repositories and declares cross-repo resolvers. This module owns the YAML
 contract plus auto-discovery helpers used by ``wd init`` and bootstrap.
+
+The canonical YAML dumper lives in :mod:`weld.workspace_dump` and the
+nested-repo filesystem scanner in :mod:`weld.workspace_scan`; both are
+re-exported here so ``weld.workspace`` remains the single public facade.
 """
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from weld._yaml import parse_yaml
-from weld.workspace_scan_filter import (
-    gitignored_child_paths,
-    normalise_scan_exclude_patterns,
-    path_matches_scan_exclude,
-)
 
 __all__ = [
     "ChildEntry",
@@ -51,28 +49,6 @@ KNOWN_CROSS_REPO_STRATEGIES: frozenset[str] = frozenset({
     "grpc_service_binding",
     "package_import_resolver",
     "service_graph",
-})
-
-# Directory names that the scanner always skips, independent of user
-# configuration. ``.git`` is special: we stop *descending* into it but do not
-# treat the parent as excluded. Items in this set apply to the directory name
-# itself and cover weld's own storage plus common vendoring/cache patterns.
-_BUILTIN_EXCLUDE_DIRS: frozenset[str] = frozenset({
-    ".git",
-    ".weld",
-    ".hg",
-    ".svn",
-    "node_modules",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".tox",
-    ".mypy_cache",
-    ".pytest_cache",
-    "bazel-bin",
-    "bazel-out",
-    "bazel-testlogs",
-    "bazel-project",
 })
 
 
@@ -267,70 +243,6 @@ def load_workspaces_yaml(path: Path | str) -> WorkspaceConfig:
 
 
 # ---------------------------------------------------------------------------
-# Dumper (canonical, deterministic)
-# ---------------------------------------------------------------------------
-
-def _yaml_scalar(value: object) -> str:
-    """Emit a YAML scalar. Quotes strings that contain YAML-special chars."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    s = str(value)
-    if s == "":
-        return '""'
-    # Characters that benefit from quoting in block scalars.
-    unsafe = set(": #[]{},&*!|>'\"%@`")
-    if any(c in s for c in unsafe) or s[0] in " -?":
-        escaped = s.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    return s
-
-
-def _emit_inline_list(items: list[str]) -> str:
-    if not items:
-        return "[]"
-    return "[" + ", ".join(_yaml_scalar(x) for x in items) + "]"
-
-
-def dump_workspaces_yaml(cfg: WorkspaceConfig, path: Path | str) -> None:
-    """Write ``cfg`` to ``path`` as canonical, deterministic YAML.
-
-    The output is the ground truth for any round-trip; the same input config
-    always produces byte-identical output. Children are emitted in the order
-    stored on the config (callers typically sort before dumping), and each
-    child's ``tags`` are emitted in sorted key order so hand-reordering the
-    config does not create spurious diffs.
-    """
-    lines: list[str] = []
-    lines.append(f"version: {cfg.version}")
-    lines.append("scan:")
-    lines.append(f"  max_depth: {cfg.scan.max_depth}")
-    lines.append(
-        f"  respect_gitignore: {_yaml_scalar(cfg.scan.respect_gitignore)}",
-    )
-    lines.append(f"  exclude_paths: {_emit_inline_list(cfg.scan.exclude_paths)}")
-    if cfg.children:
-        lines.append("children:")
-        for child in cfg.children:
-            lines.append(f"  - name: {_yaml_scalar(child.name)}")
-            lines.append(f"    path: {_yaml_scalar(child.path)}")
-            if child.tags:
-                lines.append("    tags:")
-                for key in sorted(child.tags):
-                    lines.append(f"      {key}: {_yaml_scalar(child.tags[key])}")
-            if child.remote:
-                lines.append(f"    remote: {_yaml_scalar(child.remote)}")
-    else:
-        lines.append("children: []")
-    lines.append(f"cross_repo_strategies: {_emit_inline_list(cfg.cross_repo_strategies)}")
-    text = "\n".join(lines) + "\n"
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(text, encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
 # Validator
 # ---------------------------------------------------------------------------
 
@@ -415,92 +327,17 @@ def _validate_child_path(path: str, index: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Nested-repo scanner
+# Re-exported facade members
 # ---------------------------------------------------------------------------
+#
+# The dumper and the nested-repo scanner live in sibling modules to keep this
+# file within the line-count cap. They depend on the schema/helpers defined
+# above, so these imports sit at the bottom of the module (after every name
+# they consume is bound) and are re-exported via ``__all__``. Importers keep
+# using ``weld.workspace`` as the single public entry point.
 
-def _should_skip_dir(name: str) -> bool:
-    if name in _BUILTIN_EXCLUDE_DIRS:
-        return True
-    if name.startswith("bazel-"):
-        return True
-    return False
-
-
-def scan_nested_repos_with_diagnostics(
-    root: Path | str,
-    *,
-    max_depth: int = DEFAULT_MAX_DEPTH,
-    exclude_paths: list[str] | None = None,
-    respect_gitignore: bool = False,
-) -> NestedRepoScanResult:
-    """Walk ``root`` looking for nested ``.git`` directories."""
-    if max_depth < 1:
-        raise WorkspaceConfigError(
-            f"max_depth must be >= 1, got {max_depth}",
-        )
-    root_path = Path(root).resolve()
-    if not root_path.is_dir():
-        raise WorkspaceConfigError(f"scan root is not a directory: {root_path}")
-
-    exclude_patterns = normalise_scan_exclude_patterns(
-        exclude_paths, DEFAULT_EXCLUDE_PATHS,
-    )
-    found: list[ChildEntry] = []
-
-    def _walk(current: Path, depth: int) -> None:
-        # At the workspace root we never register the root itself; at deeper
-        # levels a .git directory means "stop descending and register this dir".
-        if depth > 0 and (current / ".git").is_dir():
-            rel = current.relative_to(root_path).as_posix()
-            found.append(
-                ChildEntry(
-                    name=auto_derive_name(rel),
-                    path=rel,
-                    tags=auto_derive_tags(rel),
-                ),
-            )
-            return
-        if depth >= max_depth:
-            return
-        try:
-            entries = sorted(os.listdir(current))
-        except OSError:
-            return
-        for entry in entries:
-            sub = current / entry
-            if not sub.is_dir() or sub.is_symlink():
-                continue
-            if _should_skip_dir(entry):
-                continue
-            if path_matches_scan_exclude(root_path, sub, exclude_patterns):
-                continue
-            _walk(sub, depth + 1)
-
-    _walk(root_path, 0)
-    found.sort(key=lambda c: c.path)
-    if not respect_gitignore:
-        return NestedRepoScanResult(children=found)
-    skipped = gitignored_child_paths(root_path, [entry.path for entry in found])
-    if not skipped:
-        return NestedRepoScanResult(children=found)
-    kept = [entry for entry in found if entry.path not in skipped]
-    return NestedRepoScanResult(
-        children=kept,
-        skipped_by_gitignore=sorted(skipped),
-    )
-
-
-def scan_nested_repos(
-    root: Path | str,
-    *,
-    max_depth: int = DEFAULT_MAX_DEPTH,
-    exclude_paths: list[str] | None = None,
-    respect_gitignore: bool = False,
-) -> list[ChildEntry]:
-    """Walk ``root`` looking for nested ``.git`` directories."""
-    return scan_nested_repos_with_diagnostics(
-        root,
-        max_depth=max_depth,
-        exclude_paths=exclude_paths,
-        respect_gitignore=respect_gitignore,
-    ).children
+from weld.workspace_dump import dump_workspaces_yaml  # noqa: E402
+from weld.workspace_scan import (  # noqa: E402
+    scan_nested_repos,
+    scan_nested_repos_with_diagnostics,
+)

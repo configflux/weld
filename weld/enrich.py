@@ -12,6 +12,7 @@ from pathlib import Path
 from weld._enrich_safe import (SafeModeRefusedError, refuse_if_network_provider, resolve_provider_name)
 from weld._first_run_enrich import cli_reset_prompt
 from weld._graph_cli import _build_retry_hint, ensure_graph_exists
+from weld._graph_cli_errors import load_graph_or_exit
 from weld.graph import Graph
 from weld.providers import EnrichmentProvider, resolve_provider
 
@@ -368,8 +369,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.reset_prompt:
         return cli_reset_prompt(args.root)
     ensure_graph_exists(args.root, _build_retry_hint("enrich", node=args.node_id) if args.node_id else _build_retry_hint("enrich"))
-    graph = Graph(args.root)
-    graph.load()
+    graph = load_graph_or_exit(Graph(args.root))
     try:
         result = enrich(
             graph,

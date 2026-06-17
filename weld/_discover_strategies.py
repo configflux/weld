@@ -16,6 +16,10 @@ import sys
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
+from weld.strategies._incremental_hint import (  # noqa: F401 -- re-export
+    INCREMENTAL_HINT_KEY,
+    IncrementalHint,
+)
 
 # ---------------------------------------------------------------------------
 # Strategy loader
@@ -197,11 +201,27 @@ def run_external_json(root: Path, source: dict, *, safe: bool = False) -> Strate
 # Source runner
 # ---------------------------------------------------------------------------
 
-def run_source(root: Path, source: dict, context: dict, *, safe: bool = False) -> StrategyResult:
+def run_source(
+    root: Path,
+    source: dict,
+    context: dict,
+    *,
+    safe: bool = False,
+    incremental_hint: IncrementalHint | None = None,
+) -> StrategyResult:
     """Run a single source entry through its strategy.
 
     When *safe* is True, project-local strategy overrides and the
     ``external_json`` subprocess adapter are refused (ADR 0024).
+
+    *incremental_hint* (ADR 0074), when present, carries the dirty-file
+    scope and the post-purge prior node set for incremental-aware
+    strategies. It is deposited under ``context[INCREMENTAL_HINT_KEY]`` for
+    the duration of this strategy call (and removed afterwards) so the
+    ``extract(root, source, context)`` contract is preserved and the hint
+    never leaks onto the declarative ``source`` dict. Strategies that do
+    not consult the key (every strategy except ``python_callgraph``) are
+    unaffected.
     """
     name = source.get("strategy", "")
     if name == "external_json":
@@ -209,4 +229,14 @@ def run_source(root: Path, source: dict, context: dict, *, safe: bool = False) -
     extract_fn = load_strategy(name, root, safe=safe)
     if not extract_fn:
         return StrategyResult(nodes={}, edges=[], discovered_from=[])
-    return extract_fn(root, source, context)
+    if incremental_hint is None or not isinstance(context, dict):
+        return extract_fn(root, source, context)
+    prior = context.get(INCREMENTAL_HINT_KEY)
+    context[INCREMENTAL_HINT_KEY] = incremental_hint
+    try:
+        return extract_fn(root, source, context)
+    finally:
+        if prior is None:
+            context.pop(INCREMENTAL_HINT_KEY, None)
+        else:
+            context[INCREMENTAL_HINT_KEY] = prior

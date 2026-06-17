@@ -21,15 +21,11 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.strategies import cpp_libclang  # noqa: E402
 from weld.strategies import _cpp_libclang_db as db_mod  # noqa: E402

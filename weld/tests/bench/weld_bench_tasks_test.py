@@ -13,10 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Ensure weld package is importable from the repo root.
 _repo_root = str(Path(__file__).resolve().parent.parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 # Allow the test helpers next to this file to be imported.
 _bench_dir = str(Path(__file__).resolve().parent)

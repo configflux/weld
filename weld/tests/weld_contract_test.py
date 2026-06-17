@@ -5,14 +5,8 @@ ROS2-vocabulary tests for tracked project live in weld_contract_ros2_test.py.
 
 from __future__ import annotations
 
-import sys
 import unittest
-from pathlib import Path
 
-# Ensure weld package is importable from the repo root
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.contract import (  # noqa: E402
     AUTHORITY_VALUES,
@@ -249,8 +243,12 @@ class ValidateMetaTest(unittest.TestCase):
     def test_missing_version(self) -> None:
         self.assertTrue(any("version" in e.field for e in validate_meta({"updated_at": _TS})))
 
-    def test_missing_updated_at(self) -> None:
-        self.assertTrue(any("updated_at" in e.field for e in validate_meta({"version": SCHEMA_VERSION})))
+    def test_missing_updated_at_is_allowed(self) -> None:
+        # ADR 0065: updated_at lives in the graph-meta.json sidecar; absent is OK.
+        self.assertFalse(any("updated_at" in e.field for e in validate_meta({"version": SCHEMA_VERSION})))
+
+    def test_wrong_updated_at_type_still_errors(self) -> None:
+        self.assertTrue(any("updated_at" in e.field for e in validate_meta({"version": SCHEMA_VERSION, "updated_at": 123})))
 
     def test_wrong_version_type(self) -> None:
         self.assertTrue(any("version" in e.field for e in validate_meta({"version": "1", "updated_at": _TS})))

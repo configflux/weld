@@ -8,13 +8,8 @@ even when the underlying edge index reshuffles. This test pins the contract.
 from __future__ import annotations
 
 import hashlib
-import sys
 import unittest
-from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._review import mint_edge_id  # noqa: E402
 

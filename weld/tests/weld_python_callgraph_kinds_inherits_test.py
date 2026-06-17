@@ -18,15 +18,11 @@ below pin each branch.
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.strategies import python_callgraph as pc  # noqa: E402
 
@@ -208,6 +204,122 @@ class PythonCallgraphKindAndInheritsTest(unittest.TestCase):
         )
         self.assertTrue(match["props"]["resolved"])
         self.assertEqual(match["props"]["resolution"], "local")
+
+
+class QualnameFromSymbolIdTest(unittest.TestCase):
+    """``qualname_from_symbol_id`` returns the bare qualname, never module:qual.
+
+    Pins the parsing fix for the cross-glob node-clobber bug: the resolved
+    target mint must not leak ``<module>:<qualname>`` into the label. A
+    dotted qualname (``Class.method``) must survive verbatim, and a malformed
+    id falls back to the trailing colon-segment without raising.
+    """
+
+    def _qfn(self):
+        from weld.strategies._python_origin import qualname_from_symbol_id
+
+        return qualname_from_symbol_id
+
+    def test_simple_qualname(self) -> None:
+        self.assertEqual(
+            self._qfn()("symbol:py:weld._git:commits_behind"), "commits_behind"
+        )
+
+    def test_dotted_module_simple_qualname(self) -> None:
+        self.assertEqual(self._qfn()("symbol:py:os.path:join"), "join")
+
+    def test_nested_qualname_preserved(self) -> None:
+        self.assertEqual(self._qfn()("symbol:py:pkg.mod:Class.method"), "Class.method")
+
+    def test_malformed_id_falls_back_to_trailing_segment(self) -> None:
+        self.assertEqual(self._qfn()("symbol:unresolved:print"), "print")
+        self.assertEqual(self._qfn()("bare"), "bare")
+
+
+class MakeResolvedTargetNodeShapeTest(unittest.TestCase):
+    """``make_resolved_target_node`` mints a well-formed, colon-free label."""
+
+    def _node(self, target_id: str, origin: str = "external") -> dict:
+        from weld.strategies._python_origin import make_resolved_target_node
+
+        return make_resolved_target_node(target_id, origin)
+
+    def test_label_and_qualname_are_bare(self) -> None:
+        node = self._node("symbol:py:weld._git:commits_behind", "project")
+        self.assertEqual(node["label"], "commits_behind")
+        self.assertEqual(node["props"]["qualname"], "commits_behind")
+        self.assertEqual(node["props"]["module"], "weld._git")
+        self.assertNotIn(":", node["label"])
+        self.assertEqual(node["props"]["origin"], "project")
+
+    def test_nested_qualname_node(self) -> None:
+        node = self._node("symbol:py:pkg.mod:Outer.inner")
+        self.assertEqual(node["label"], "Outer.inner")
+        self.assertEqual(node["props"]["qualname"], "Outer.inner")
+        self.assertEqual(node["props"]["module"], "pkg.mod")
+
+
+class ResolvedTargetLabelIntegrationTest(unittest.TestCase):
+    """End-to-end: a resolved target the glob did not walk gets a clean label.
+
+    Regression for the cross-glob node-clobber bug. ``main`` calls an
+    imported stdlib (``os.path.join``) and third-party (``foo``) symbol the
+    strategy never walks, so each target node is minted by
+    ``make_resolved_target_node``. The label/qualname must be the bare
+    ``<qualname>`` -- never the leaked ``<module>:<qualname>`` -- and
+    ``props.module`` the dotted module, matching how same-glob definite
+    nodes are shaped. ``props.file`` is intentionally not asserted: a
+    cross-glob target's defining file is unknown at single-glob mint time
+    and is restored by the orchestrator's post-merge reconciliation.
+    """
+
+    def _run(self) -> dict:
+        td = Path(tempfile.mkdtemp(prefix="weld_resolved_label_"))
+        (td / "pkg").mkdir()
+        (td / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+        (td / "pkg" / "a.py").write_text(
+            textwrap.dedent(
+                """
+                from os.path import join
+                from third_party_pkg import foo
+
+                def main():
+                    join("a", "b")
+                    foo()
+                """
+            ).lstrip(),
+            encoding="utf-8",
+        )
+        return pc.extract(td, {"glob": "pkg/**/*.py"}, {}).nodes
+
+    def _assert_wellformed(
+        self, nodes: dict, nid: str, module: str, qual: str
+    ) -> None:
+        self.assertIn(nid, nodes, f"resolved-target node not minted: {nid}")
+        props = nodes[nid]["props"]
+        self.assertEqual(
+            nodes[nid]["label"], qual,
+            f"{nid}: label leaked module:qualname instead of bare qualname",
+        )
+        self.assertEqual(
+            props.get("qualname"), qual,
+            f"{nid}: props.qualname leaked module:qualname",
+        )
+        self.assertEqual(props.get("module"), module, f"{nid}: wrong props.module")
+        self.assertNotIn(
+            ":", str(nodes[nid]["label"]),
+            f"{nid}: label still contains a ':' (module:qualname leak)",
+        )
+
+    def test_stdlib_resolved_target_label_is_bare_qualname(self) -> None:
+        self._assert_wellformed(
+            self._run(), "symbol:py:os.path:join", "os.path", "join"
+        )
+
+    def test_external_resolved_target_label_is_bare_qualname(self) -> None:
+        self._assert_wellformed(
+            self._run(), "symbol:py:third_party_pkg:foo", "third_party_pkg", "foo"
+        )
 
 
 if __name__ == "__main__":

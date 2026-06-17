@@ -10,16 +10,10 @@ from __future__ import annotations
 import io
 import json
 import os
-import sys
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-# Ensure weld package is importable from the repo root
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.brief import main as brief_main  # noqa: E402
 from weld.cli import main as cli_main  # noqa: E402

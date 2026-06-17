@@ -9,13 +9,8 @@ tests run.
 
 from __future__ import annotations
 
-import sys
 import unittest
-from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._cli_render import (  # noqa: E402
     render_callers,
@@ -42,6 +37,31 @@ class RendererPurityTest(unittest.TestCase):
         self.assertIn("# query: alpha", text)
         self.assertIn("entity:Foo", text)
         self.assertIn("[type: entity]", text)
+
+    def test_render_query_shows_confidence_per_match(self) -> None:
+        """Each match block surfaces ``props.confidence`` so agents can discount."""
+        text = render_query({
+            "query": "alpha",
+            "matches": [{
+                "id": "symbol:py:weld.foo:bar",
+                "type": "function",
+                "label": "bar",
+                "props": {"confidence": "speculative"},
+            }],
+            "neighbors": [],
+            "edges": [],
+        })
+        self.assertIn("confidence: speculative", text)
+
+    def test_render_query_omits_confidence_when_absent(self) -> None:
+        """No confidence line when the match has no ``props.confidence``."""
+        text = render_query({
+            "query": "alpha",
+            "matches": [{"id": "entity:Foo", "type": "entity", "props": {}}],
+            "neighbors": [],
+            "edges": [],
+        })
+        self.assertNotIn("confidence:", text)
 
     def test_render_query_marks_or_fallback(self) -> None:
         text = render_query({

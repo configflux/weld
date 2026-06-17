@@ -22,6 +22,7 @@ from types import TracebackType
 from typing import Final, IO, Iterable
 
 from weld._telemetry_allowlist import coerce_command, coerce_flags
+from weld._telemetry_outcome import classify_outcome
 from weld._telemetry_redact import validate_event
 
 
@@ -333,7 +334,7 @@ class Recorder:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> bool:
-        outcome, default_rc, error_kind = _classify_outcome(exc_type)
+        outcome, default_rc, error_kind = _classify_outcome(exc_type, exc)
         self.outcome = outcome
         override = self._exit_code_override
         self.exit_code = override if override is not None else default_rc
@@ -380,20 +381,8 @@ class Recorder:
         }
 
 
-def _classify_outcome(
-    exc_type: type[BaseException] | None,
-) -> tuple[str, int, str | None]:
-    """Map an exit-time exception type to (outcome, exit_code, error_kind).
-
-    ``KeyboardInterrupt`` and ``BrokenPipeError`` map to ``"interrupted"``
-    with exit codes 130 and 141 respectively (POSIX convention). Any
-    other exception is ``"error"`` with exit code 1. ``None`` is ``"ok"``
-    with exit code 0.
-    """
-    if exc_type is None:
-        return "ok", 0, None
-    if issubclass(exc_type, KeyboardInterrupt):
-        return "interrupted", 130, "KeyboardInterrupt"
-    if issubclass(exc_type, BrokenPipeError):
-        return "interrupted", 141, "BrokenPipeError"
-    return "error", 1, exc_type.__name__
+# Outcome classification lives in ``_telemetry_outcome`` so this writer
+# module stays under the line-count cap (ADR 0035). ``_classify_outcome``
+# is re-exported here because ``Recorder.__exit__`` and the writer tests
+# reference it by this name.
+_classify_outcome = classify_outcome

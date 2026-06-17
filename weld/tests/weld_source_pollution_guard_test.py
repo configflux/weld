@@ -102,10 +102,13 @@ class PipWheelSourceTreeIntegrityTest(unittest.TestCase):
             # Two-layer hardening around the pip wheel call:
             #   A. per-invocation PIP_CACHE_DIR + PIP_NO_CACHE_DIR=1
             #      so the cross-test pip cache cannot seed a race.
-            #   B. live weld/__init__.py chmod 0o444 for the duration
-            #      of the call -- any producer that reaches back to
-            #      live source via Bazel's hardlinked execroot hits a
-            #      deterministic EACCES instead of silent rewrite.
+            #   B. content perimeter on live weld/__init__.py -- its
+            #      bytes are snapshotted for the call and, if a producer
+            #      reaches back through Bazel's hardlinked execroot and
+            #      rewrites them, they are restored and the test fails
+            #      loudly. (The perimeter never chmods the file: a mode
+            #      flip leaked onto the shared runfiles inode and raced
+            #      concurrent sandbox copies into EACCES -- bd ck8l.)
             with hermetic_pip_wheel(
                 test_tmpdir=tmp_path, protect=[init_path],
             ) as pip_env:

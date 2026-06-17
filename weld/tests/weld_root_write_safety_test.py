@@ -293,7 +293,16 @@ class RootDiscoverWriteSafetyTest(unittest.TestCase):
             self.assertEqual(leftovers, [], f"temp-file debris: {leftovers}")
 
     def test_discover_writes_root_graph_when_requested(self) -> None:
-        """write_root_graph=True atomically writes .weld/graph.json."""
+        """write_root_graph=True atomically writes .weld/graph.json.
+
+        ADR 0065: the federated root write also funnels through the
+        volatile-meta sidecar -- graph.json carries no git_sha / updated_at,
+        and graph-meta.json holds them.
+        """
+        from weld._graph_meta_sidecar import (
+            sidecar_path_for,
+            split_volatile_meta,
+        )
         from weld.serializer import dumps_graph
 
         with TemporaryDirectory() as tmp:
@@ -303,10 +312,18 @@ class RootDiscoverWriteSafetyTest(unittest.TestCase):
             graph = discover(root, incremental=False, write_root_graph=True)
             root_graph_path = root / ".weld" / "graph.json"
             self.assertTrue(root_graph_path.is_file())
+            on_disk, _ = split_volatile_meta(graph)
             self.assertEqual(
                 root_graph_path.read_text(encoding="utf-8"),
-                dumps_graph(graph),
+                dumps_graph(on_disk),
             )
+            disk_meta = json.loads(root_graph_path.read_text(encoding="utf-8"))[
+                "meta"
+            ]
+            self.assertNotIn("git_sha", disk_meta)
+            self.assertNotIn("updated_at", disk_meta)
+            # The sidecar exists and carries the volatile timestamp.
+            self.assertTrue(sidecar_path_for(root_graph_path).is_file())
 
     def test_concurrent_root_write_blocks_second_caller(self) -> None:
         """Nested discover under a held lock raises WorkspaceLockedError."""

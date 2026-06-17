@@ -136,6 +136,69 @@ class RecorderErrorPathTests(unittest.TestCase):
             self.assertEqual(ev["exit_code"], 141)
 
 
+class SystemExitClassificationTests(unittest.TestCase):
+    """SystemExit must split on ``.code``: clean exit vs. real failure.
+
+    Regression for the telemetry bug where argparse's ``--help`` path
+    (``SystemExit(0)``) was recorded as ``outcome=error, exit_code=1,
+    error_kind=SystemExit`` -- fabricating a large fake error rate and
+    making real failures indistinguishable from usage help. Runs through
+    the real Recorder so the event is built and validated end to end.
+    """
+
+    _UNSET = object()
+
+    def _record(self, code: object) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make_repo(Path(tmp))
+            with self.assertRaises(SystemExit):
+                with _rec(root):
+                    raise SystemExit() if code is self._UNSET else SystemExit(code)
+            return _read_events(root / ".weld" / tel.TELEMETRY_FILENAME)[0]
+
+    def test_code_zero_and_none_record_ok(self) -> None:
+        # argparse ``--help`` / ``parser.exit()`` -> 0; bare exit -> None.
+        for code in (0, self._UNSET):
+            with self.subTest(code=code):
+                ev = self._record(code)
+                self.assertEqual(ev["outcome"], "ok")
+                self.assertEqual(ev["exit_code"], 0)
+                self.assertIsNone(ev["error_kind"])
+
+    def test_nonzero_int_codes_record_error_with_category(self) -> None:
+        # Usage error exits 2; a category distinguishes it from a crash.
+        for code in (1, 2):
+            with self.subTest(code=code):
+                ev = self._record(code)
+                self.assertEqual(ev["outcome"], "error")
+                self.assertEqual(ev["exit_code"], code)
+                self.assertEqual(ev["error_kind"], f"SystemExitCode{code}")
+
+    def test_string_code_records_error_without_leaking_message(self) -> None:
+        # ``sys.exit("...")`` is exit 1, but the string MUST NOT be recorded.
+        ev = self._record("secret /tmp/leak detail")
+        self.assertEqual(ev["outcome"], "error")
+        self.assertEqual(ev["exit_code"], 1)
+        self.assertEqual(ev["error_kind"], "SystemExit")
+        for value in ev.values():
+            if isinstance(value, str):
+                self.assertNotIn("secret", value)
+                self.assertNotIn("leak", value)
+
+    def test_classify_outcome_reads_instance_code(self) -> None:
+        # Direct unit of the classifier: it must read the instance's code.
+        self.assertEqual(
+            tel._classify_outcome(SystemExit, SystemExit(0)), ("ok", 0, None))
+        self.assertEqual(
+            tel._classify_outcome(SystemExit, SystemExit(2)),
+            ("error", 2, "SystemExitCode2"))
+        # Non-SystemExit exceptions keep their class name unchanged.
+        self.assertEqual(
+            tel._classify_outcome(ValueError, ValueError("x")),
+            ("error", 1, "ValueError"))
+        self.assertEqual(tel._classify_outcome(None, None), ("ok", 0, None))
+
+
 class RecorderFailureIsolationTests(unittest.TestCase):
     def test_writer_oserror_is_swallowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

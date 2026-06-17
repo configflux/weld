@@ -8,15 +8,11 @@ scales on large monorepos. Correctness for small repos is preserved.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.init_detect import (  # noqa: E402
     _MAX_FILES_PER_LANG,
@@ -69,6 +65,12 @@ class DetectFrameworksCorrectnessTest(unittest.TestCase):
         # :data:`weld.init_detect.FRAMEWORK_PATTERNS`.
         self.assertEqual(strategy, "flask")
         self.assertEqual(rel, "service.py")
+
+    # HTTPClient detection assertions (bd 0ssj) live with the rest of the
+    # http_client init coverage in ``weld_init_http_client_source_test.py``;
+    # the two kitchen-sink fixtures below intentionally include an
+    # ``import requests`` line so HTTPClient (now a Python-family framework)
+    # is detected and the per-language / per-file early exits still fire.
 
     def test_detects_gin_via_canonical_go_import_path(self) -> None:
         """Go projects import gin via ``"github.com/gin-gonic/gin"``;
@@ -184,13 +186,17 @@ class DetectFrameworksBoundedScanTest(unittest.TestCase):
             root = Path(td)
             # The first file (alphabetically) imports every detected
             # Python framework so per-language outstanding empties on it.
+            # ``import requests`` is the HTTPClient trigger (bd 0ssj): it
+            # must be present or HTTPClient stays outstanding and the
+            # per-language early exit never fires.
             (root / "a_kitchen_sink.py").write_text(
                 "from fastapi import FastAPI\n"
                 "from django import db\n"
                 "from flask import Flask\n"
                 "from sqlalchemy import Column\n"
                 "from pydantic import BaseModel\n"
-                "from prisma import Prisma\n",
+                "from prisma import Prisma\n"
+                "import requests\n",
             )
             # 50 trailing .py files; none should be opened.
             for i in range(50):
@@ -204,7 +210,8 @@ class DetectFrameworksBoundedScanTest(unittest.TestCase):
 
         self.assertEqual(
             {fw for fw, _, _ in detected},
-            {"FastAPI", "Django", "Flask", "SQLAlchemy", "Pydantic", "Prisma"},
+            {"FastAPI", "Django", "Flask", "SQLAlchemy", "Pydantic",
+             "Prisma", "HTTPClient"},
         )
         self.assertEqual(
             calls["count"], 1,
@@ -243,11 +250,11 @@ class DetectFrameworksBoundedScanTest(unittest.TestCase):
         Direct signal: replace ``Path.read_text`` with a wrapper whose
         result behaves like a string but whose ``splitlines()`` yields
         a *generator* that raises after a fixed number of lines. With
-        the per-file ``break`` in place, the loop yields six detection
+        the per-file ``break`` in place, the loop yields seven detection
         lines plus exactly one extra line (the break is checked at the
         top of the next iteration). Without the break, the loop would
         consume every line in the file. The tripwire fires only on the
-        eighth element so the legitimate one-line lookahead is allowed.
+        ninth element so the legitimate one-line lookahead is allowed.
         """
 
         class _Tripwire(str):
@@ -257,17 +264,21 @@ class DetectFrameworksBoundedScanTest(unittest.TestCase):
                 lines = str.splitlines(self, keepends)
 
                 def gen():
-                    # Permit six detection lines + one lookahead (the
+                    # Permit seven detection lines + one lookahead (the
                     # `if not file_remaining: break` is at the top of
-                    # each iteration, so the seventh line is fetched
-                    # before the break fires). The eighth line MUST
+                    # each iteration, so the eighth line is fetched
+                    # before the break fires). The ninth line MUST
                     # never be reached on a correctly-bounded scan.
+                    # ``import requests`` is the seventh framework line
+                    # (HTTPClient trigger, bd 0ssj); it must be present
+                    # or HTTPClient stays in file_remaining and the
+                    # per-file break never fires.
                     for i, line in enumerate(lines):
-                        if i >= 8:
+                        if i >= 9:
                             raise AssertionError(
                                 f"per-file early exit did not fire: "
                                 f"line {i} reached on a kitchen-sink "
-                                f"file (max permitted index is 7)",
+                                f"file (max permitted index is 8)",
                             )
                         yield line
 
@@ -275,7 +286,7 @@ class DetectFrameworksBoundedScanTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            # One framework per line (six lines), then 100 trailing
+            # One framework per line (seven lines), then 100 trailing
             # ``x = 1`` lines that the tripwire will guard against.
             (root / "kitchen_sink.py").write_text(
                 "from fastapi import FastAPI\n"
@@ -284,6 +295,7 @@ class DetectFrameworksBoundedScanTest(unittest.TestCase):
                 "from sqlalchemy import Column\n"
                 "from pydantic import BaseModel\n"
                 "from prisma import Prisma\n"
+                "import requests\n"
                 + ("x = 1\n" * 100),
             )
 
@@ -300,7 +312,8 @@ class DetectFrameworksBoundedScanTest(unittest.TestCase):
 
         self.assertEqual(
             {fw for fw, _, _ in detected},
-            {"FastAPI", "Django", "Flask", "SQLAlchemy", "Pydantic", "Prisma"},
+            {"FastAPI", "Django", "Flask", "SQLAlchemy", "Pydantic",
+             "Prisma", "HTTPClient"},
         )
 
 

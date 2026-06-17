@@ -13,15 +13,11 @@ from __future__ import annotations
 
 import io
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.brief import BRIEF_VERSION, brief  # noqa: E402
 from weld.brief import main as brief_main  # noqa: E402

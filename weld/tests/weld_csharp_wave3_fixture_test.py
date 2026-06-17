@@ -25,15 +25,11 @@ for the older invariants.
 from __future__ import annotations
 
 import os
-import sys
 import unittest
 from pathlib import Path
 
 # Ensure the in-source weld package is on sys.path when run outside
 # Bazel.
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.contract import CONFIDENCE_VALUES  # noqa: E402
 from weld.strategies.csharp_msbuild_targets import (  # noqa: E402

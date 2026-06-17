@@ -55,6 +55,8 @@ workspace.lock
 query_state.bin
 graph.json
 graph.db
+graph-meta.json
+file-index-state.json
 agent-graph.json
 graph-communities.json
 graph-community-report.md
@@ -75,6 +77,8 @@ workspace-state.json
 workspace.lock
 query_state.bin
 graph.db
+graph-meta.json
+file-index-state.json
 graph-communities.json
 graph-community-report.md
 graph-community-index.md

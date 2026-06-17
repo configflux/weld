@@ -25,6 +25,11 @@ import ast
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld.strategies._python_callgraph_incremental import (
+    dirty_matched,
+    get_incremental_hint,
+    reconstruct_project_modules,
+)
 from weld.strategies._python_callgraph_visitor import _CallGraphVisitor
 from weld.strategies._python_inherits import emit_inherits_edges
 from weld.strategies._python_origin import (
@@ -155,21 +160,64 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not matched:
         return StrategyResult(nodes, edges, discovered_from)
 
-    # Project-membership set per ADR 0042 §"Per-language detection rules"
-    # (Python). The "project file set" for an extract() call is the set
-    # of dotted module paths derived from the matched (non-skipped)
-    # source files. Imports whose target module matches any of these
-    # paths classify as ``project``; imports outside both this set and
-    # ``sys.stdlib_module_names`` classify as ``external``.
-    project_modules = project_module_set(
-        root,
-        matched,
-        excludes,
-        should_skip=should_skip,
-        module_dotted_path=_module_dotted_path,
-    )
+    # ADR 0074: incremental dirty-scoping. When the orchestrator hands a
+    # dirty-file hint, parse only the dirty subset of this glob and rebuild
+    # the cross-file ``project_modules`` set from the post-purge prior graph
+    # instead of re-deriving it from a full sibling parse. ``hint is None``
+    # (full discover + every non-incremental caller) keeps the whole-glob
+    # behaviour byte-for-byte.
+    hint = get_incremental_hint(context)
+    parse_files = matched
+    project_modules: frozenset[str]
+    if hint is not None:
+        parse_files = dirty_matched(matched, root, hint.dirty_files)
+        project_modules = reconstruct_project_modules(
+            hint.prior_nodes, parse_files, root,
+            module_dotted_path=_module_dotted_path,
+        )
+        # Decision item 4: reconstruction is an optimization; if the prior
+        # graph yields no project module while there are dirty files to
+        # parse (absent/empty/incompatible prior state), fall back to the
+        # full-glob derivation -- correct, slightly slower -- rather than
+        # mis-tag origins from an empty set.
+        if not project_modules and parse_files:
+            project_modules = project_module_set(
+                root, matched, excludes,
+                should_skip=should_skip,
+                module_dotted_path=_module_dotted_path,
+            )
+    else:
+        # Project-membership set per ADR 0042 §"Per-language detection rules"
+        # (Python). The "project file set" for an extract() call is the set
+        # of dotted module paths derived from the matched (non-skipped)
+        # source files. Imports whose target module matches any of these
+        # paths classify as ``project``; imports outside both this set and
+        # ``sys.stdlib_module_names`` classify as ``external``.
+        project_modules = project_module_set(
+            root,
+            matched,
+            excludes,
+            should_skip=should_skip,
+            module_dotted_path=_module_dotted_path,
+        )
 
-    for py in matched:
+    # Publish this batch's project module paths to a run-level union in
+    # the shared ``context`` (ADR 0042 §Python: "any project file set
+    # discovered by THIS RUN"). A multi-glob config runs one extract()
+    # per glob, so a cross-glob call target resolves against a batch set
+    # that does not contain it and is mislabelled ``external``. The
+    # post-discovery reconciliation pass uses this union -- which is keyed
+    # on the source file set, not on node survival -- to heal those tags
+    # even when the orchestrator's last-batch-wins merge clobbered the
+    # owning batch's definite ``project`` node.
+    if isinstance(context, dict):
+        run_set = context.get("python_project_modules")
+        if not isinstance(run_set, set):
+            run_set = set()
+            context["python_project_modules"] = run_set
+        run_set.update(project_modules)
+
+    for py in parse_files:
         if should_skip(py, excludes, root=root):
             continue
         try:
@@ -184,7 +232,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             continue
 
         import_table = _build_import_table(tree)
-        visitor = _CallGraphVisitor(module_path, import_table)
+        visitor = _CallGraphVisitor(module_path, import_table, project_modules)
         visitor.visit(tree)
 
         # Emit one symbol node per defined qualname.

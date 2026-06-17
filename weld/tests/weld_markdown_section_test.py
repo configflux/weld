@@ -8,6 +8,7 @@ their parent doc via contains edges, and passes contract validation.
 from __future__ import annotations
 
 import tempfile
+import unittest
 from pathlib import Path
 
 from weld.strategies.markdown import extract
@@ -91,7 +92,7 @@ def _extract_guide(root: Path, text: str, **overrides) -> tuple:
     source = {**_GUIDE_SOURCE, **overrides}
     return extract(root, source, {})
 
-class TestSectionExtraction:
+class TestSectionExtraction(unittest.TestCase):
     """Section-level extraction from markdown headings."""
 
     def test_sections_enabled_produces_section_nodes(self) -> None:
@@ -194,7 +195,7 @@ class TestSectionExtraction:
             }
             assert "overview" in kinds, f"got {kinds}"
 
-class TestSectionContract:
+class TestSectionContract(unittest.TestCase):
     """Section nodes pass contract validation."""
 
     def test_section_kind_vocabulary(self) -> None:
@@ -251,3 +252,6 @@ class TestSectionContract:
             for edge in result.edges:
                 errors = validate_edge(edge, node_ids)
                 assert errors == [], f"edge {edge}: {errors}"
+
+if __name__ == "__main__":
+    unittest.main()

@@ -35,7 +35,15 @@ import copy
 import json
 from typing import Any
 
-__all__ = ["canonical_graph", "dumps_graph"]
+# ``_edge_sort_key`` is exported (ADR 0077) so the discover post-process can
+# reuse the *single* canonical edge-sort definition when it fuses the edge
+# sort into its recursive key-sort walk, instead of re-spelling the tuple.
+__all__ = [
+    "canonical_graph",
+    "dumps_graph",
+    "dumps_graph_canonical",
+    "_edge_sort_key",
+]
 
 # Fixed canonical dump settings. The whitespace contract lives here so any
 # drift is a single-line change reviewable in a single diff.
@@ -143,3 +151,47 @@ def dumps_graph(graph: dict) -> str:
     canonical = canonical_graph(graph)
     text = json.dumps(canonical, **_JSON_SETTINGS)
     return text + "\n"
+
+
+def _is_already_canonical(graph: dict) -> bool:
+    """True when *graph* is already in canonical shape (cheap structural check).
+
+    Canonical means ``nodes`` is a dict and ``edges`` is a list already in
+    the ADR 0012 §3 rule-2 order. Node-key ordering is handled by
+    ``sort_keys=True`` at emit time regardless, so only the edge order needs
+    verifying. The check is O(edges) and avoids re-sorting or copying.
+    """
+    nodes = graph.get("nodes")
+    edges = graph.get("edges")
+    if not isinstance(nodes, dict) or not isinstance(edges, list):
+        return False
+    prev: tuple[str, str, str, str] | None = None
+    for edge in edges:
+        if not isinstance(edge, dict):
+            return False
+        key = _edge_sort_key(edge)
+        if prev is not None and key < prev:
+            return False
+        prev = key
+    return True
+
+
+def dumps_graph_canonical(graph: dict) -> str:
+    """Emit canonical JSON for a graph that is *already* canonical.
+
+    Byte-for-byte identical to :func:`dumps_graph` but skips the defensive
+    deep copy + re-sort that :func:`canonical_graph` performs -- a ~900 ms
+    saving on a 6.5k-node graph (bd 85tb.2). The output of
+    :func:`weld._discover_postprocess.post_process` and any graph loaded
+    back from a canonical ``graph.json`` already satisfy the contract, so
+    re-canonicalizing them is pure waste.
+
+    Safety: if the input turns out *not* to be canonical (edges out of
+    order, or a list-form ``nodes``), this transparently falls back to the
+    full :func:`dumps_graph` path so output can never diverge from the
+    contract. The fast path is therefore an optimization, never a new way
+    to emit non-canonical bytes.
+    """
+    if not _is_already_canonical(graph):
+        return dumps_graph(graph)
+    return json.dumps(graph, **_JSON_SETTINGS) + "\n"

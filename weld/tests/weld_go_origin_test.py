@@ -21,13 +21,9 @@ two surfaces stay independent.
 
 from __future__ import annotations
 
-import sys
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.strategies._go_origin import (  # noqa: E402
     GO_STDLIB_PACKAGES,

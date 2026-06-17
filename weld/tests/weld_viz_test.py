@@ -209,6 +209,61 @@ class VizApiTest(unittest.TestCase):
             self.assertIn(prefix_node_id("repo-a", "file:src/a.py"), ids)
 
 
+class VizSummaryGitRemoteTest(unittest.TestCase):
+    """bd h6z0.13: summary surfaces git remote + HEAD sha for editor links."""
+
+    def test_summary_returns_none_when_not_a_git_repo(self) -> None:
+        with _simple_root() as tmp:
+            summary = VizApi(tmp).summary()
+        # _simple_root() doesn't git-init, so both fields fall back to
+        # None and the JS inspector hides the remote affordance.
+        self.assertIsNone(summary["remote_url"])
+        self.assertIsNone(summary["head_sha"])
+        # abs_root is always populated so the local vscode link works.
+        self.assertTrue(summary["abs_root"].startswith("/"))
+
+    def test_summary_normalizes_ssh_remote_to_https(self) -> None:
+        with _simple_root() as tmp:
+            root = Path(tmp)
+            _git(root, "init", "-q")
+            _git(root, "config", "user.email", "test@example.com")
+            _git(root, "config", "user.name", "Weld Test")
+            (root / "README.md").write_text("# fixture\n", encoding="utf-8")
+            _git(root, "add", "README.md")
+            _git(root, "commit", "-q", "-m", "initial")
+            _git(root, "remote", "add", "origin", "git@github.com:foo/bar.git")
+            summary = VizApi(root).summary()
+        self.assertEqual(summary["remote_url"], "https://github.com/foo/bar")
+        self.assertRegex(summary["head_sha"], r"^[0-9a-f]{40}$")
+
+    def test_summary_strips_dot_git_from_https_remote(self) -> None:
+        with _simple_root() as tmp:
+            root = Path(tmp)
+            _git(root, "init", "-q")
+            _git(root, "config", "user.email", "test@example.com")
+            _git(root, "config", "user.name", "Weld Test")
+            (root / "README.md").write_text("# fixture\n", encoding="utf-8")
+            _git(root, "add", "README.md")
+            _git(root, "commit", "-q", "-m", "initial")
+            _git(root, "remote", "add", "origin", "https://github.com/foo/bar.git")
+            summary = VizApi(root).summary()
+        self.assertEqual(summary["remote_url"], "https://github.com/foo/bar")
+
+    def test_summary_handles_repo_without_origin(self) -> None:
+        with _simple_root() as tmp:
+            root = Path(tmp)
+            _git(root, "init", "-q")
+            _git(root, "config", "user.email", "test@example.com")
+            _git(root, "config", "user.name", "Weld Test")
+            (root / "README.md").write_text("# fixture\n", encoding="utf-8")
+            _git(root, "add", "README.md")
+            _git(root, "commit", "-q", "-m", "initial")
+            summary = VizApi(root).summary()
+        # Repo exists, HEAD sha resolves, but no origin remote -> None URL.
+        self.assertIsNone(summary["remote_url"])
+        self.assertRegex(summary["head_sha"], r"^[0-9a-f]{40}$")
+
+
 class VizServerTest(unittest.TestCase):
     def _with_server(self, root: Path):
         server = make_server(str(root), host="127.0.0.1", port=0)

@@ -15,17 +15,17 @@ the 400-line cap.
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.graph import Graph  # noqa: E402
-from weld.ranking import resolution_penalty  # noqa: E402
+from weld.ranking import (  # noqa: E402
+    filter_speculative_matches,
+    is_unresolved_match,
+    resolution_penalty,
+)
 
 
 def _make_graph(nodes: dict, edges: list | None = None) -> Graph:
@@ -231,6 +231,74 @@ class MultiWordOrFallbackRegressionTest(unittest.TestCase):
         self.assertIn("module:discovery", ids)
         self.assertIn("module:strategy", ids)
         self.assertEqual(result.get("degraded_match"), "or_fallback")
+
+
+class IsUnresolvedMatchUnitTest(unittest.TestCase):
+    """``is_unresolved_match`` keys strictly on ``props.origin``."""
+
+    def test_origin_unresolved_is_flagged(self) -> None:
+        match = {
+            "id": "symbol:unresolved:summary",
+            "props": {"origin": "unresolved", "confidence": "speculative"},
+        }
+        self.assertTrue(is_unresolved_match(match))
+
+    def test_stdlib_speculative_resolved_is_not_flagged(self) -> None:
+        """Speculative-but-resolved stdlib builtins (origin=stdlib) are kept.
+
+        Guards the documented ``wd query "print"`` behaviour: stdlib nodes
+        carry ``confidence=speculative`` but ``origin=stdlib``, so they are
+        NOT unresolved sentinels and must survive the default filter.
+        """
+        match = {
+            "id": "symbol:py:builtins:print",
+            "props": {"origin": "stdlib", "confidence": "speculative"},
+        }
+        self.assertFalse(is_unresolved_match(match))
+
+    def test_project_definite_is_not_flagged(self) -> None:
+        match = {
+            "id": "symbol:py:weld.foo:bar",
+            "props": {"origin": "project", "confidence": "definite"},
+        }
+        self.assertFalse(is_unresolved_match(match))
+
+    def test_missing_props_is_not_flagged(self) -> None:
+        self.assertFalse(is_unresolved_match({"id": "x"}))
+
+
+class FilterSpeculativeMatchesUnitTest(unittest.TestCase):
+    """``filter_speculative_matches`` drops origin=unresolved, preserves order."""
+
+    def test_drops_only_unresolved_and_preserves_order(self) -> None:
+        matches = [
+            {"id": "a", "props": {"origin": "project", "confidence": "definite"}},
+            {"id": "u1", "props": {"origin": "unresolved", "confidence": "speculative"}},
+            {"id": "b", "props": {"origin": "stdlib", "confidence": "speculative"}},
+            {"id": "u2", "props": {"origin": "unresolved", "confidence": "speculative"}},
+            {"id": "c", "props": {"origin": "project", "confidence": "inferred"}},
+        ]
+        kept = filter_speculative_matches(matches)
+        self.assertEqual([m["id"] for m in kept], ["a", "b", "c"])
+
+    def test_empty_input_returns_empty(self) -> None:
+        self.assertEqual(filter_speculative_matches([]), [])
+
+    def test_all_unresolved_returns_empty(self) -> None:
+        matches = [
+            {"id": "u1", "props": {"origin": "unresolved"}},
+            {"id": "u2", "props": {"origin": "unresolved"}},
+        ]
+        self.assertEqual(filter_speculative_matches(matches), [])
+
+    def test_is_idempotent(self) -> None:
+        matches = [
+            {"id": "a", "props": {"origin": "project"}},
+            {"id": "u1", "props": {"origin": "unresolved"}},
+        ]
+        once = filter_speculative_matches(matches)
+        twice = filter_speculative_matches(once)
+        self.assertEqual(once, twice)
 
 
 if __name__ == "__main__":

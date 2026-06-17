@@ -54,25 +54,22 @@ _WORKSPACES_CANDIDATES: tuple[str, ...] = (".weld/workspaces.yaml", "workspaces.
 _STATUS_ORDER: tuple[str, ...] = ("present", "missing", "uninitialized", "corrupt")
 
 
-def atomic_write_text(final_path: Path | str, text: str) -> None:
-    """Atomically replace ``final_path`` with ``text``.
+def _atomic_write(final_path: Path | str, payload: str | bytes) -> None:
+    """Atomically replace ``final_path`` with ``payload`` (str or bytes).
 
-    Writes via :func:`tempfile.mkstemp` in the same directory as
-    ``final_path`` (POSIX rename atomicity) then :func:`os.replace`.
-    Any exception removes the temp file and leaves ``final_path``
-    untouched, so callers see exactly the old bytes or exactly the new.
-    Missing parent directories are created.
+    Temp file via :func:`tempfile.mkstemp` in the same directory then
+    :func:`os.replace` (POSIX rename atomicity); any exception unlinks the
+    temp and leaves ``final_path`` untouched -- callers see exactly the old
+    bytes or the new. Parent dirs are created; ``str`` writes UTF-8, ``bytes`` binary.
     """
     final = Path(final_path)
     final.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f"{final.name}.tmp.",
-        dir=str(final.parent),
-    )
+    fd, tmp_name = tempfile.mkstemp(prefix=f"{final.name}.tmp.", dir=str(final.parent))
     tmp_path = Path(tmp_name)
+    is_text = isinstance(payload, str)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
+        with os.fdopen(fd, "w" if is_text else "wb", encoding="utf-8" if is_text else None) as handle:
+            handle.write(payload)
         os.replace(str(tmp_path), str(final))
     except BaseException:
         try:
@@ -80,34 +77,16 @@ def atomic_write_text(final_path: Path | str, text: str) -> None:
         except OSError:
             pass
         raise
+
+
+def atomic_write_text(final_path: Path | str, text: str) -> None:
+    """Atomically replace ``final_path`` with UTF-8 ``text`` (see :func:`_atomic_write`)."""
+    _atomic_write(final_path, text)
 
 
 def atomic_write_bytes(final_path: Path | str, data: bytes) -> None:
-    """Atomically replace ``final_path`` with ``data``.
-
-    Bytes-mode sibling of :func:`atomic_write_text`: same temp-file
-    naming convention (``<basename>.tmp.*`` in the same directory),
-    same :func:`os.replace` rename, same cleanup-on-failure so callers
-    see exactly the old bytes or exactly the new. Missing parent
-    directories are created.
-    """
-    final = Path(final_path)
-    final.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f"{final.name}.tmp.",
-        dir=str(final.parent),
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-        os.replace(str(tmp_path), str(final))
-    except BaseException:
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
-        raise
+    """Atomically replace ``final_path`` with ``data`` bytes (see :func:`_atomic_write`)."""
+    _atomic_write(final_path, data)
 
 
 class WorkspaceStateError(RuntimeError):
@@ -127,6 +106,11 @@ class WorkspaceChildState:
     last_seen_utc: str
     error: str | None = None
     remote: str | None = None
+    # ADR 0011 §5 self-describing fields (additive; null for non-present
+    # children; older workspace-state.json omits these and loads fine).
+    graph_mtime_ns: int | None = None
+    node_count: int | None = None
+    edge_count: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         data: dict[str, object] = {
@@ -137,11 +121,13 @@ class WorkspaceChildState:
             "graph_path": self.graph_path,
             "graph_sha256": self.graph_sha256,
             "last_seen_utc": self.last_seen_utc,
+            "graph_mtime_ns": self.graph_mtime_ns,
+            "node_count": self.node_count,
+            "edge_count": self.edge_count,
         }
-        if self.error is not None:
-            data["error"] = self.error
-        if self.remote is not None:
-            data["remote"] = self.remote
+        for key, value in (("error", self.error), ("remote", self.remote)):
+            if value is not None:
+                data[key] = value
         return data
 
 
@@ -242,35 +228,41 @@ def load_workspace_state_json(root: Path | str) -> dict[str, object]:
     return data
 
 
-def format_workspace_status(state: dict[str, object]) -> str:
-    """Render a human-readable workspace status summary."""
+def format_workspace_status(
+    state: dict[str, object],
+    freshness: dict[str, dict] | None = None,
+) -> str:
+    """Render a human-readable workspace status summary.
+
+    *freshness* (ADR 0066 §2): name -> oracle dict; a ``present`` child
+    reported ``stale`` renders as ``stale`` (token + ``stale=N`` column).
+    """
     raw_children = state.get("children", {})
     if not isinstance(raw_children, dict):
         raise WorkspaceStateError("workspace-state.json children payload is not an object")
+    from weld._federation_staleness import child_status_token
 
-    counts = Counter(
-        str(entry.get("status", "unknown"))
-        for entry in raw_children.values()
-        if isinstance(entry, dict)
-    )
+    fresh = freshness or {}
+    display = {
+        name: child_status_token(str(e.get("status", "unknown")), fresh.get(name))
+        for name, e in raw_children.items() if isinstance(e, dict)
+    }
+    counts = Counter(display.values())
+    order = _STATUS_ORDER + (("stale",) if counts.get("stale") else ())
     lines = [
         f"Workspace status ({len(raw_children)} children)",
-        "Counts: "
-        + ", ".join(f"{status}={counts.get(status, 0)}" for status in _STATUS_ORDER),
+        "Counts: " + ", ".join(f"{s}={counts.get(s, 0)}" for s in order),
     ]
-
     for name in sorted(raw_children):
         entry = raw_children[name]
         if not isinstance(entry, dict):
             lines.append(f"{name}: invalid")
             continue
-        status = str(entry.get("status", "unknown"))
         dirty = " dirty" if entry.get("is_dirty") else ""
         head_ref = entry.get("head_ref") or "detached"
         head_sha = entry.get("head_sha")
         head_suffix = f" {str(head_sha)[:12]}" if isinstance(head_sha, str) and head_sha else ""
-        lines.append(f"{name}: {status}{dirty} ({head_ref}{head_suffix})")
-
+        lines.append(f"{name}: {display[name]}{dirty} ({head_ref}{head_suffix})")
     return "\n".join(lines)
 
 
@@ -298,7 +290,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     status_parser.add_argument(
         "--json", action="store_true",
-        help="Emit the raw workspace-state.json payload",
+        help="Emit the workspace-state.json payload (present children gain a "
+        "derived 'freshness' object; ADR 0066)",
     )
 
     add_bootstrap_subparser(subparsers, _WS_DEFAULT_MAX_DEPTH)
@@ -316,8 +309,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[weld] error: {exc}", file=sys.stderr)
         return 2
 
+    # ADR 0066 §2: derive child staleness at render time (read-only). The
+    # oracle is failure-isolated, so a probe error degrades one child to
+    # 'unknown' rather than failing the whole status command.
+    from weld._federation_staleness import augment_status_json, freshness_by_name
+
     if args.json:
-        sys.stdout.write(json.dumps(state, indent=2, sort_keys=True) + "\n")
+        payload = augment_status_json(args.root, state)
+        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     else:
-        sys.stdout.write(format_workspace_status(state) + "\n")
+        fresh = freshness_by_name(args.root, state)
+        sys.stdout.write(format_workspace_status(state, fresh) + "\n")
     return 0

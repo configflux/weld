@@ -11,13 +11,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import sys
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.graph import Graph  # noqa: E402
-from weld.synonyms import SYNONYMS, expand_tokens  # noqa: E402
+from weld.synonyms import (  # noqa: E402
+    SYNONYMS,
+    _stem_variants,
+    expand_token_groups,
+    expand_tokens,
+)
 
 def _make_graph(nodes: dict, edges: list | None = None) -> Graph:
     """Create an in-memory Graph with the given nodes and edges."""
@@ -113,6 +114,13 @@ _SYNONYM_NODES: dict[str, dict] = {
             "exports": ["process_job", "schedule_task"],
         },
     },
+    # Path tokenizes to 'strategies' (plural); a singular 'strategy' query
+    # must reach it via stem-equivalence (bd 8rm0.2 / ADR 0075 part 3).
+    "file:weld/strategies/boundary_entrypoint": {
+        "type": "file",
+        "label": "boundary_entrypoint",
+        "props": {"file": "weld/strategies/boundary_entrypoint.py"},
+    },
 }
 
 class ExpandTokensTest(unittest.TestCase):
@@ -201,6 +209,107 @@ class SynonymQueryIntegrationTest(unittest.TestCase):
         """Unrelated terms still return empty results."""
         result = self.graph.query("zzzznonexistent99")
         self.assertEqual(len(result["matches"]), 0)
+
+class StemVariantsTest(unittest.TestCase):
+    """Tests for the _stem_variants singular/plural helper (bd 8rm0.2).
+
+    Two symmetric rules with over-stem guards: ``-ies <-> -y`` and the
+    simple ``-s <-> (null)`` plural. The helper underpins stem-equivalence
+    at the ``expand_token_groups`` seam (ADR 0075 part 3).
+    """
+
+    def test_strategy_and_strategies_are_equivalent(self) -> None:
+        """The motivating pair: strategy <-> strategies (both directions)."""
+        self.assertIn("strategies", _stem_variants("strategy"))
+        self.assertIn("strategy", _stem_variants("strategies"))
+
+    def test_simple_s_plural_is_symmetric(self) -> None:
+        """test <-> tests via the -s rule, both directions."""
+        self.assertIn("tests", _stem_variants("test"))
+        self.assertIn("test", _stem_variants("tests"))
+
+    def test_ies_y_pair_beyond_the_motivating_word(self) -> None:
+        """entry <-> entries exercises the -ies/-y rule generally."""
+        self.assertIn("entries", _stem_variants("entry"))
+        self.assertIn("entry", _stem_variants("entries"))
+
+    def test_short_words_are_not_over_stemmed(self) -> None:
+        """Guard: tiny words must not collapse to noise variants."""
+        for word in ("is", "as", "os", "db", "id"):
+            self.assertEqual(
+                _stem_variants(word), [],
+                f"{word!r} should not be stemmed",
+            )
+
+    def test_non_plural_s_endings_are_not_stripped(self) -> None:
+        """Guard: -ss/-us/-is/-as endings are not naive plurals."""
+        for word in ("class", "css", "bus", "status", "process"):
+            self.assertNotIn(
+                word[:-1], _stem_variants(word),
+                f"{word!r} should not strip a trailing -s",
+            )
+
+    def test_vowel_plus_y_is_not_pluralized_to_ies(self) -> None:
+        """Guard: 'day'/'key' must not become 'daies'/'keies'."""
+        self.assertNotIn("daies", _stem_variants("day"))
+        self.assertNotIn("keies", _stem_variants("key"))
+
+    def test_does_not_return_the_input_itself(self) -> None:
+        """The input token is never echoed back as its own variant."""
+        for word in ("strategy", "strategies", "test", "tests"):
+            self.assertNotIn(word, _stem_variants(word))
+
+    def test_empty_string_is_safe(self) -> None:
+        """Degenerate empty input yields no variants, no error."""
+        self.assertEqual(_stem_variants(""), [])
+
+class ExpandTokenGroupsStemmingTest(unittest.TestCase):
+    """Stem variants are folded into the SAME group (bd 8rm0.2)."""
+
+    def test_singular_query_group_includes_plural_stem(self) -> None:
+        """'strategy' group carries 'strategies' so it matches the path."""
+        groups = expand_token_groups(["strategy"])
+        self.assertEqual(len(groups), 1)
+        self.assertIn("strategy", groups[0])
+        self.assertIn("strategies", groups[0])
+
+    def test_plural_query_group_includes_singular_stem(self) -> None:
+        """Symmetry: 'strategies' group also carries 'strategy'."""
+        groups = expand_token_groups(["strategies"])
+        self.assertIn("strategy", groups[0])
+
+    def test_stem_added_alongside_synonym_aliases(self) -> None:
+        """'test' keeps its synonym aliases AND gains the 'tests' stem."""
+        groups = expand_token_groups(["test"])
+        self.assertIn("tests", groups[0])
+        # Existing synonym aliases for 'test' are preserved.
+        self.assertIn("fixture", groups[0])
+
+    def test_group_has_no_duplicates(self) -> None:
+        """Folding stems must not introduce duplicate tokens in a group."""
+        for token in ("strategy", "test", "entry", "authentication"):
+            group = expand_token_groups([token])[0]
+            self.assertEqual(
+                len(group), len(set(group)),
+                f"group for {token!r} has duplicates: {group}",
+            )
+
+    def test_one_group_per_original_token_preserved(self) -> None:
+        """Stemming must not change the group-per-token cardinality."""
+        groups = expand_token_groups(["strategy", "test"])
+        self.assertEqual(len(groups), 2)
+
+class StemEquivalenceQueryIntegrationTest(unittest.TestCase):
+    """End-to-end: a singular query reaches a plural-path node (bd 8rm0.2)."""
+
+    def setUp(self) -> None:
+        self.graph = _make_graph(_SYNONYM_NODES)
+
+    def test_singular_strategy_matches_strategies_path(self) -> None:
+        """'strategy' surfaces weld/strategies/boundary_entrypoint."""
+        result = self.graph.query("strategy")
+        ids = [m["id"] for m in result["matches"]]
+        self.assertIn("file:weld/strategies/boundary_entrypoint", ids)
 
 if __name__ == "__main__":
     unittest.main()

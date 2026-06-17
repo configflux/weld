@@ -24,15 +24,11 @@ not cause a perf regression when state and graph are mutually consistent.
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld import discover as discover_mod  # noqa: E402
 from weld.discover import _discover_single_repo  # noqa: E402

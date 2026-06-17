@@ -130,7 +130,8 @@ def missing_top_level_hint(field: str) -> str:
     if field == "meta":
         return (
             "the graph document needs a top-level `meta` block with at "
-            "least `version` and `updated_at`. " + REGEN_HINT
+            "least `version` (the `updated_at` / `git_sha` timestamp lives "
+            "in the graph-meta.json sidecar per ADR 0065). " + REGEN_HINT
         )
     if field == "nodes":
         return (

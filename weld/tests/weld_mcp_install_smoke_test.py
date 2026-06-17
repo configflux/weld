@@ -313,7 +313,7 @@ class WheelInstallSmokeTest(unittest.TestCase):
             # intentionally NOT passed because the smoke must mirror what
             # users actually do (``pip install configflux-weld``). The copy
             # prevents backend side effects; ``hermetic_pip_wheel`` adds
-            # cache isolation + a read-only perimeter on live __init__.py.
+            # cache isolation + a content perimeter on live __init__.py.
             with hermetic_pip_wheel(test_tmpdir=tmp_path,
                                     protect=[weld_root / "__init__.py"]) as pip_env:
                 self._run([

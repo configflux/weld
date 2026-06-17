@@ -32,6 +32,16 @@ mode.
 
 ## Running the Demo
 
+The explicit steps below discover each child standalone, then run a plain
+federated `wd discover` at the root -- the path that reliably re-derives the
+cross-repo edge. On a real git-initialized polyrepo you can instead onboard
+the whole root in one command with `wd workspace bootstrap` (init + scan +
+per-child discover + root meta-graph). Bootstrap leaves
+`cross_repo_strategies: []`, so to get the cross-repo edge you still declare
+`service_graph` in `.weld/workspaces.yaml` and re-run `wd discover` at the
+root. See the "Polyrepo Federation" section of the root `README.md` for the
+full bootstrap -> status -> query -> refresh lifecycle.
+
 ```bash
 cd examples/05-polyrepo
 

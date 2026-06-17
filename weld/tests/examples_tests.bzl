@@ -15,8 +15,6 @@ def examples_tests():
             "//weld:yaml",
             "//weld/strategies:helpers",
         ],
-        local = True,
-        tags = ["no-sandbox"],
     )
 
     native.filegroup(
@@ -35,6 +33,4 @@ def examples_tests():
             "//weld:runtime",
         ],
         env = {"PYTHONHASHSEED": "0"},
-        local = True,
-        tags = ["no-sandbox"],
     )

@@ -28,14 +28,10 @@ serializer ever stopped sorting nodes.
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.discover import discover  # noqa: E402
 from weld.serializer import dumps_graph  # noqa: E402
@@ -134,6 +130,53 @@ class DiscoverTwiceIdenticalTest(unittest.TestCase):
                 "Two sequential runs on the same fixture produced "
                 "different bytes.",
             )
+
+    def test_write_path_graph_json_is_byte_identical_without_stripping(
+        self,
+    ) -> None:
+        """ADR 0065: the on-disk ``graph.json`` written by the production
+        write seam is byte-identical across two discover runs at a fixed
+        commit with **no** volatile-field stripping -- the volatile meta
+        lives in the ``graph-meta.json`` sidecar instead.
+        """
+        from weld._graph_meta_sidecar import (
+            sidecar_path_for,
+            write_graph_with_meta,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="det-sidecar-") as td:
+            root = Path(td)
+            _build_fixture(root)
+            graph_path = root / ".weld" / "graph.json"
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+
+            graph1 = discover(root, incremental=False)
+            write_graph_with_meta(graph_path, graph1)
+            bytes1 = graph_path.read_bytes()
+
+            graph2 = discover(root, incremental=False)
+            write_graph_with_meta(graph_path, graph2)
+            bytes2 = graph_path.read_bytes()
+
+            self.assertEqual(
+                bytes1,
+                bytes2,
+                "ADR 0065: graph.json must be byte-identical across two "
+                "discover runs with no volatile-field stripping.",
+            )
+            on_disk_meta = json.loads(bytes1).get("meta", {})
+            self.assertNotIn("updated_at", on_disk_meta)
+            self.assertNotIn("git_sha", on_disk_meta)
+            # discovered_from stays in graph.json (content-stable input).
+            self.assertIn("discovered_from", on_disk_meta)
+            # The sidecar carries updated_at (fixture has no git, so no
+            # git_sha is recorded -- the sidecar still exists for the
+            # timestamp).
+            sidecar = json.loads(
+                sidecar_path_for(graph_path).read_text(encoding="utf-8")
+            )
+            self.assertEqual(sidecar.get("version"), 1)
+            self.assertIn("updated_at", sidecar)
 
     def test_fixture_produces_at_least_three_nodes_and_one_edge(self) -> None:
         """The fixture must actually exercise sort paths.

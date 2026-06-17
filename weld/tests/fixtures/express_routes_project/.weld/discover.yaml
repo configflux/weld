@@ -1,0 +1,28 @@
+# .weld/discover.yaml for the express route fixture (ADR 0064 criterion
+# 3, TypeScript / JS).
+#
+# Shipped (not auto-generated) so the fixture is self-describing and the
+# discovered graph is reproducible byte-for-byte, mirroring the
+# axum_routes_project fixture. The `express` source entry below is keyed
+# to the TypeScript / JS Tier-1 ladder; shipping it keeps the fixture's
+# route nodes deterministic without depending on init auto-detection.
+sources:
+  # express HTTP routes: route:<METHOD>:<path> nodes for handler
+  # registration. Listed BEFORE the tree_sitter entry so the canonical
+  # tree_sitter file node wins the later nodes.update merge over express's
+  # thin boundary-file placeholder (weld.discover applies sources in
+  # order).
+  - glob: "src/**/*.ts"
+    type: route
+    strategy: express
+
+  # TypeScript application sources: exports, types, imports (origin-tagged).
+  - glob: "src/**/*.ts"
+    type: file
+    strategy: tree_sitter
+    language: typescript
+
+  # Root manifest (drives import origin=external resolution for express).
+  - files: ["package.json"]
+    type: config
+    strategy: config_file

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from weld._alias_index import build_alias_index as _build_alias_index
 from weld._git import get_git_sha, is_git_repo
+from weld._graph_meta_sidecar import merge_sidecar_meta, write_graph_with_meta
 from weld._staleness import compute_stale_info as _compute_stale_info
 from weld._graph_schema import (
     CHILD_SCHEMA_VERSION,
@@ -23,8 +24,6 @@ from weld.graph_context import context_with_fallback as _context_with_fallback
 from weld.graph_context import simple_exact_context as _simple_exact_context
 from weld.graph_query import query_graph as _query_graph
 from weld.query_state import build_query_state as _build_query_state
-from weld.serializer import dumps_graph as _dumps_graph
-from weld.workspace_state import atomic_write_text
 
 # Re-export schema symbols for backward compatibility -- some tests import directly from weld.graph.
 __all__ = ["CHILD_SCHEMA_VERSION", "ROOT_FEDERATED_SCHEMA_VERSION", "SchemaVersionError", "Graph", "load_graph_file", "main"]
@@ -57,6 +56,8 @@ class Graph:
     def load(self) -> None:
         if self._path.exists():
             self._data = load_graph_file(self._path)
+            # ADR 0065: overlay the volatile-meta sidecar (legacy fallback).
+            self._data["meta"] = merge_sidecar_meta(self._data.get("meta", {}), self._path)
             self._load_query_state_with_sidecar()
         else:
             self._data = {
@@ -93,7 +94,9 @@ class Graph:
         Stamps ``meta.schema_version`` from the node set. When
         *touch_git_sha* is True and the root is a git working tree,
         also stamp ``meta.git_sha=HEAD`` before writing (ADR 0017).
-        Silent no-op outside a git repo.
+        Silent no-op outside a git repo. Volatile meta (``updated_at`` /
+        ``git_sha``) is split to the ``graph-meta.json`` sidecar by
+        ``write_graph_with_meta`` (ADR 0065); ``self._data`` keeps it all.
         """
         self._data["meta"]["updated_at"] = _now()
         self._data["meta"]["schema_version"] = _schema_version_for(
@@ -103,7 +106,7 @@ class Graph:
             sha = get_git_sha(self._path.parent.parent)
             if sha is not None:
                 self._data["meta"]["git_sha"] = sha
-        atomic_write_text(self._path, _dumps_graph(self._data))
+        write_graph_with_meta(self._path, self._data)
 
     def add_node(self, node_id: str, node_type: str, label: str, props: dict) -> dict:
         entry = {"type": node_type, "label": label, "props": props}

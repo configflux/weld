@@ -23,8 +23,13 @@ import unittest
 from pathlib import Path
 
 _repo_root = str(Path(__file__).resolve().parent.parent.parent)
+# Load-bearing path insert: this test imports the sibling test module
+# ``weld.tests.weld_prime_freshness_test`` for shared helpers, and that module
+# lives in a different Bazel target's srcs (not this target's deps/runfiles),
+# so the repo-root insert is what makes it importable. Not the usual redundant
+# weld-package hack.
 if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
+    sys.path.insert(0, _repo_root)  # test-hygiene: allow path-hack
 
 from weld._git import get_git_sha  # noqa: E402
 from weld.prime import prime  # noqa: E402

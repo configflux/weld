@@ -21,15 +21,11 @@ covered by ``weld_ros2_package_test.py`` and not retested here.
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld.agent_graph_discovery import discover_agent_graph  # noqa: E402
 from weld.agent_graph_materialize import (  # noqa: E402

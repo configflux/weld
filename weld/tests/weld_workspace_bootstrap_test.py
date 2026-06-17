@@ -19,14 +19,10 @@ import contextlib
 import io
 import json
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._workspace_bootstrap import bootstrap_workspace  # noqa: E402
 from weld.workspace_state import (  # noqa: E402
@@ -288,10 +284,12 @@ class BootstrapWorkspaceUnitTest(unittest.TestCase):
             import weld.discover as _discover_mod
             original = _discover_mod._discover_single_repo
 
-            def _maybe_raise(child_root: Path, *, incremental=None, safe=False):  # type: ignore[no-untyped-def]
+            def _maybe_raise(child_root: Path, **kwargs):  # type: ignore[no-untyped-def]
+                # **kwargs keeps the stub signature-compatible with whatever the
+                # recurse path forwards (incremental / safe / write_graph / ...).
                 if child_root.name == "auth":
                     raise RuntimeError("simulated discover failure")
-                return original(child_root, incremental=incremental, safe=safe)
+                return original(child_root, **kwargs)
 
             _discover_mod._discover_single_repo = _maybe_raise
             try:

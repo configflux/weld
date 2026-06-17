@@ -74,6 +74,22 @@ def module_from_symbol_id(symbol_id: str) -> str:
     return ""
 
 
+def qualname_from_symbol_id(symbol_id: str) -> str:
+    """Extract the bare ``<qualname>`` portion of a ``symbol:py:<mod>:<qual>`` id.
+
+    Symmetric to :func:`module_from_symbol_id`: splits with ``maxsplit=3`` so
+    the qualname (which may itself contain dots, e.g. ``Class.method``) is
+    returned verbatim and the module is *not* leaked into it. A naive
+    ``split(":", 2)[-1]`` would yield ``<mod>:<qual>`` -- the malformed label
+    that clobbered file-bearing project nodes on a full discover. Falls back
+    to the trailing segment for ids that are not a well-formed python symbol.
+    """
+    parts = symbol_id.split(":", 3)
+    if len(parts) == 4 and parts[0] == "symbol" and parts[1] == "py":
+        return parts[3]
+    return symbol_id.split(":", 2)[-1]
+
+
 def origin_for_resolved(module: str, project_modules: frozenset[str]) -> str:
     """Origin for a resolved (non-sentinel) Python target.
 
@@ -106,8 +122,15 @@ def make_resolved_target_node(target_id: str, origin: str) -> dict[str, Any]:
     did not also walk (e.g. a stdlib or external import). The node is
     speculative (we never actually parsed its definition) but carries
     the origin tag so consumers can filter it consistently.
+
+    The ``label``/``qualname`` are the bare symbol name (see
+    :func:`qualname_from_symbol_id`); we do *not* leak the ``module:qualname``
+    composite, so this speculative node's identifying shape matches a
+    same-glob definite node's. ``props.file`` is intentionally absent: a
+    cross-glob target's defining file is unknown at single-glob mint time and
+    is restored by the orchestrator's post-merge reconciliation.
     """
-    qualname = target_id.split(":", 2)[-1]
+    qualname = qualname_from_symbol_id(target_id)
     module = module_from_symbol_id(target_id)
     return {
         "type": "symbol",
@@ -155,4 +178,5 @@ __all__ = [
     "origin_for_resolved",
     "origin_for_sentinel",
     "project_module_set",
+    "qualname_from_symbol_id",
 ]

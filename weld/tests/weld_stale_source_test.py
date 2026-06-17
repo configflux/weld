@@ -14,14 +14,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._git import drift_is_graph_only, get_git_sha  # noqa: E402
 from weld.contract import SCHEMA_VERSION  # noqa: E402

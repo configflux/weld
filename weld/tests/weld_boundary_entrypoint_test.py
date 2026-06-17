@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import tempfile
+import unittest
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
 from weld.strategies.boundary_entrypoint import extract
 
-class TestEntrypointDetection:
+class TestEntrypointDetection(unittest.TestCase):
     """Entrypoint nodes from if __name__ == '__main__' and CLI patterns."""
 
     def test_detects_main_guard(self) -> None:
@@ -17,16 +18,20 @@ class TestEntrypointDetection:
             pkg = root / "services" / "api"
             pkg.mkdir(parents=True)
             main_py = pkg / "main.py"
+            # Plain main guard with no server/CLI framework import: the
+            # strategy classifies this via the main_guard fallback branch
+            # (see _detect_entrypoint_kind). A framework import here would
+            # take priority and is covered by the server/CLI tests below.
             main_py.write_text('''\
 """API service entrypoint."""
 
-import uvicorn
-from app import create_app
+from app import run
 
-app = create_app()
+def main() -> None:
+    run()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    main()
 ''')
             source = {"glob": "services/api/*.py"}
             result = extract(root, source, {})
@@ -43,6 +48,7 @@ if __name__ == "__main__":
             assert node["label"] == "main"
             assert node["props"]["file"] == "services/api/main.py"
             assert node["props"]["kind"] == "main_guard"
+            assert "framework" not in node["props"]
 
     def test_detects_cli_entry_click(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -156,7 +162,7 @@ def helper():
             }
             assert len(entrypoint_nodes) == 0
 
-class TestBoundaryDetection:
+class TestBoundaryDetection(unittest.TestCase):
     """Boundary nodes from FastAPI app factories and ASGI/WSGI patterns."""
 
     def test_detects_fastapi_app_factory(self) -> None:
@@ -263,7 +269,7 @@ app = FastAPI()
             entry = result.nodes["entrypoint:services/api/main"]
             assert "startup" in entry["props"]["description"]
 
-class TestMetadataContract:
+class TestMetadataContract(unittest.TestCase):
     """Every node/edge must satisfy the normalized metadata contract."""
 
     def test_node_metadata(self) -> None:
@@ -310,7 +316,7 @@ if __name__ == "__main__":
                 assert edge["props"]["source_strategy"] == "boundary_entrypoint"
                 assert "confidence" in edge["props"]
 
-class TestRecursiveGlob:
+class TestRecursiveGlob(unittest.TestCase):
     """Strategy handles recursive globs."""
 
     def test_recursive_pattern(self) -> None:
@@ -326,7 +332,7 @@ class TestRecursiveGlob:
 
             assert len(result.nodes) == 2
 
-class TestDiscoveredFrom:
+class TestDiscoveredFrom(unittest.TestCase):
     """Strategy reports discovered_from paths."""
 
     def test_discovered_from_populated(self) -> None:
@@ -341,7 +347,7 @@ class TestDiscoveredFrom:
 
             assert len(result.discovered_from) > 0
 
-class TestExcludes:
+class TestExcludes(unittest.TestCase):
     """Strategy respects exclude patterns."""
 
     def test_excludes_patterns(self) -> None:
@@ -358,3 +364,6 @@ class TestExcludes:
             assert len(result.nodes) == 1
             nid = list(result.nodes.keys())[0]
             assert "test_main" not in nid
+
+if __name__ == "__main__":
+    unittest.main()

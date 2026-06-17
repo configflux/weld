@@ -9,11 +9,13 @@ from typing import Iterable
 from weld._graph_origin import classify_node
 from weld.viz import VIZ_API_VERSION
 from weld.viz._adapter_helpers import (
+    architecture_overview_ids as _architecture_overview_ids,
     dedupe as _dedupe,
     degree_by_node as _degree_by_node,
     edge_element as _edge_element,
     edge_id as _edge_id,
     empty_payload as _empty_payload,
+    has_overview_anchors as _has_overview_anchors,
     node_element as _node_element,
     overview_key as _overview_key,
 )
@@ -265,13 +267,22 @@ def normalize_graph_data(
 ) -> dict:
     """Return graph data as a small, deterministic browser payload.
 
+    The unconfigured cold-open overview (``requested_node_ids is None``
+    and ``node_types is None``) is a curated architecture slice
+    (ADR 0073): orientation anchors plus a few principal files per
+    package, bounded so the first paint is never truncated. Pinning
+    ``node_types`` or supplying ``requested_node_ids`` bypasses curation
+    and keeps the prior behavior (legacy all-graph ordering / verbatim
+    ids respectively). See :func:`_resolve_ordered_ids`.
+
     ``hide_origins`` drops nodes whose ADR-0042 origin classification
     (``project | stdlib | external | unresolved``) is in the set. An
     explicit empty set disables origin filtering. When ``hide_origins
-    is None``, the overview slice (``requested_node_ids is None``)
-    defaults to ``{"unresolved"}`` to preserve the legacy
-    ``symbol:unresolved:*`` strip; query / context / path slices keep
-    all four origins by default. See :func:`_effective_hide_origins`.
+    is None``, the legacy ``symbol:unresolved:*`` strip is preserved
+    only for the non-curated overview (the empty-anchor fallback) and
+    only when ``node_types`` is unset; query / context / path slices and
+    the curated slice keep all four origins by default. See
+    :func:`_effective_hide_origins`.
     """
     nodes = data.get("nodes", {}) or {}
     edges = [
@@ -280,14 +291,18 @@ def normalize_graph_data(
     ]
     degree = _degree_by_node(edges)
 
-    effective_hide_origins = _effective_hide_origins(
-        hide_origins, node_types, overview=requested_node_ids is None,
+    # ADR 0073: ``curated`` is True when the cold-open overview produced
+    # a real architecture slice. That slice is origin-clean by
+    # construction, so it suppresses the implicit ``unresolved`` strip
+    # below (else its agent-graph anchors would be filtered back out).
+    ordered_ids, curated = _resolve_ordered_ids(
+        nodes, edges, degree, requested_node_ids, node_types,
     )
 
-    if requested_node_ids is None:
-        ordered_ids = sorted(nodes, key=lambda nid: _overview_key(nid, nodes[nid], degree))
-    else:
-        ordered_ids = _dedupe(requested_node_ids)
+    effective_hide_origins = _effective_hide_origins(
+        hide_origins, node_types,
+        overview=requested_node_ids is None and not curated,
+    )
 
     if node_types is not None:
         ordered_ids = [
@@ -330,6 +345,34 @@ def normalize_graph_data(
         "focus_ids": focus,
         "warnings": [],
     }
+
+
+def _resolve_ordered_ids(
+    nodes: dict,
+    edges: list[dict],
+    degree: dict[str, int],
+    requested_node_ids: list[str] | None,
+    node_types: set[str] | None,
+) -> tuple[list[str], bool]:
+    """Return ``(ordered_ids, curated)`` for the requested slice.
+
+    For the unconfigured cold-open overview (``requested_node_ids is
+    None and node_types is None``) the ids come from the curated
+    architecture slice (ADR 0073) and ``curated`` is True. When that
+    slice finds no anchors (e.g. a symbol-only snapshot) it falls back
+    to the legacy ``overview_key`` ordering and ``curated`` is False so
+    the implicit ``unresolved`` strip still applies. A node-type-pinned
+    overview keeps the legacy all-graph ordering; an explicit
+    ``requested_node_ids`` is honored verbatim.
+    """
+    if requested_node_ids is not None:
+        return _dedupe(requested_node_ids), False
+    if node_types is None:
+        return _architecture_overview_ids(nodes, edges), _has_overview_anchors(nodes)
+    return (
+        sorted(nodes, key=lambda nid: _overview_key(nid, nodes[nid], degree)),
+        False,
+    )
 
 
 def _effective_hide_origins(

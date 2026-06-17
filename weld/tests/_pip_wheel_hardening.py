@@ -8,15 +8,29 @@ Layer A -- pip cache isolation
     wheel builds for the same package could resolve their shared cache
     entries back to live source via Bazel's hardlinked execroot.
 
-Layer B -- read-only perimeter
-    For the duration of the with-block, chmod the protected files to
-    ``0o444``. The original mode is captured per file and restored
-    deterministically on exit, including on exception paths. Any future
+Layer B -- content perimeter
+    For the duration of the with-block, snapshot the bytes of each
+    protected file. On exit -- including on exception paths -- if a
+    file's bytes changed, restore the snapshot and raise loudly. Any
     producer that reaches back to live source through the execroot
-    hardlink hits a deterministic ``EACCES`` instead of silently
-    overwriting bytes -- the same regression class that the perimeter
-    SHA guard already detects, but at a hard-fail-loud boundary instead
-    of after-the-fact detection.
+    hardlink and rewrites the file is caught at a hard-fail-loud
+    boundary, and the live tree is self-healed back to its pre-call
+    bytes -- the same regression class the perimeter SHA guard detects,
+    surfaced eagerly at the test boundary.
+
+    This layer deliberately does **not** ``chmod`` the protected files.
+    The historical chmod-to-``0o444`` perimeter mutated file *mode*, and
+    because Bazel hardlinks the runfiles/execroot copies to a single
+    shared inode, ``chmod`` on the live ``weld/__init__.py`` flipped the
+    read-only bit on the very inode the sandbox runner must copy for
+    *other* concurrently-starting tests -- yielding intermittent
+    "Could not copy inputs into sandbox: .../weld/__init__.py
+    (Permission denied)" failures (bd ck8l), and a stuck-``0o444`` leak
+    on the worktree source in linked worktrees (bd 5ko1). A content
+    snapshot touches no mode and shares no inode state, so that leak is
+    structurally impossible while the protective intent is preserved
+    (and strengthened: a byte rewrite is caught even when the producer
+    would have bypassed a mode bit).
 
 Both layers are wired together in :func:`hermetic_pip_wheel`. Callers
 that want only the cache-isolation half pass ``protect=None``.
@@ -32,23 +46,29 @@ Design notes
   consumers always pass an existing path, but the contract keeps the
   helper safe against drift (e.g., an installed-package smoke test
   running where the live source is not on disk).
-* Original modes are captured *inside* the with-block so a caller that
-  pre-chmods a file outside the block sees the right restore target.
+* Byte snapshots are captured *inside* the with-block so a caller that
+  pre-mutates a file outside the block sees the right restore target.
+* File *modes* are never read or written: the perimeter must not
+  perturb the mode of an inode that Bazel shares across the
+  runfiles/execroot hardlink graph.
 """
 
 from __future__ import annotations
 
 import contextlib
-import stat
 import tempfile
 from pathlib import Path
 from typing import Iterable, Iterator
 
 
-# Mode applied while the perimeter is active. ``0o444`` (read-only for
-# owner/group/other) lets legitimate readers (pip / setuptools loading
-# the package source) succeed, while any write call hits ``EACCES``.
-_READONLY_MODE = 0o444
+class SourcePerimeterViolation(AssertionError):
+    """Raised when a protected file's bytes changed inside the perimeter.
+
+    Subclasses :class:`AssertionError` so a violation reads as a test
+    failure (the perimeter exists purely as a test boundary) while still
+    being catchable by a more specific ``except`` if a future caller
+    wants to assert on it directly.
+    """
 
 
 def pip_wheel_env(test_tmpdir: Path) -> dict[str, str]:
@@ -75,39 +95,65 @@ def pip_wheel_env(test_tmpdir: Path) -> dict[str, str]:
 
 
 @contextlib.contextmanager
-def readonly_perimeter(targets: Iterable[Path]) -> Iterator[None]:
-    """Chmod each target to read-only inside the block; restore on exit.
+def content_perimeter(targets: Iterable[Path]) -> Iterator[None]:
+    """Snapshot each target's bytes inside the block; verify + heal on exit.
 
-    The original mode is captured per file. Restoration runs in a
-    ``finally`` block so an exception inside the with-body cannot leave
-    the source tree write-disabled. Missing targets are silently
-    skipped -- callers can pass a path that may not exist on disk
-    without branching.
+    On enter, the bytes of every existing target are captured. On exit
+    -- in a ``finally`` so an exception inside the with-body cannot
+    suppress the check -- each target is re-read; if its bytes differ
+    from the snapshot the original bytes are restored (self-healing the
+    live source tree) and a :class:`SourcePerimeterViolation` is raised.
 
-    Yields ``None``. The caller can read the chmod state via
-    ``stat.S_IMODE(path.stat().st_mode)`` if needed.
+    Unlike the historical chmod-to-``0o444`` perimeter, this never reads
+    or writes file *mode*. Bazel hardlinks the runfiles/execroot copies
+    of a source file to one shared inode, so a ``chmod`` on the live
+    file leaked the read-only bit onto the inode a concurrently-starting
+    sandboxed test had to copy (bd ck8l / 5ko1). A byte snapshot shares
+    no inode mode state, so that leak cannot occur.
+
+    Missing targets are silently skipped -- callers can pass a path that
+    may not exist on disk (e.g., an installed-package smoke test running
+    where the live source is absent) without branching.
+
+    Yields ``None``.
     """
-    # Capture original modes for the files that exist; remember the
-    # exact path so restore touches the same inode the test used.
-    saved: list[tuple[Path, int]] = []
+    # Capture original bytes for the files that exist; remember the exact
+    # path so the verify/restore on exit targets the same file the test
+    # used. Bytes (not mode) are the protected invariant.
+    saved: list[tuple[Path, bytes]] = []
+    for path in targets:
+        try:
+            saved.append((path, path.read_bytes()))
+        except FileNotFoundError:
+            # Missing target -- skip silently (documented contract).
+            continue
     try:
-        for path in targets:
-            if not path.exists():
-                continue
-            saved.append((path, stat.S_IMODE(path.stat().st_mode)))
-            path.chmod(_READONLY_MODE)
         yield
     finally:
-        for path, mode in saved:
-            # ``chmod`` honors the inode even if the path was renamed
-            # mid-test; if the file vanished entirely (extremely
-            # unlikely in our test contexts), swallow the error -- the
-            # tracked-diff guard at the gate boundary still catches
-            # any stray mutation.
+        violations: list[Path] = []
+        for path, original in saved:
             try:
-                path.chmod(mode)
+                current = path.read_bytes()
             except FileNotFoundError:
-                pass
+                # The producer deleted the file outright -- that is a
+                # violation too; restore it and record the path.
+                path.write_bytes(original)
+                violations.append(path)
+                continue
+            if current != original:
+                # Self-heal the live tree, then flag the violation so the
+                # offending producer fails loudly rather than silently
+                # shipping a corrupted source file.
+                path.write_bytes(original)
+                violations.append(path)
+        if violations:
+            joined = ", ".join(str(p) for p in violations)
+            raise SourcePerimeterViolation(
+                "pip wheel mutated protected source file(s) "
+                f"({joined}); original bytes have been restored. "
+                "A producer reached back to the live source tree -- "
+                "see the source-pollution regression class."
+            )
 
 
 @contextlib.contextmanager
@@ -116,7 +162,7 @@ def hermetic_pip_wheel(
     test_tmpdir: Path,
     protect: Iterable[Path] | None = None,
 ) -> Iterator[dict[str, str]]:
-    """Combine :func:`pip_wheel_env` and :func:`readonly_perimeter`.
+    """Combine :func:`pip_wheel_env` and :func:`content_perimeter`.
 
     Parameters
     ----------
@@ -124,10 +170,11 @@ def hermetic_pip_wheel(
         Per-test temporary directory. The hermetic pip cache lives
         under this dir and dies with it.
     protect:
-        Optional iterable of files to flip read-only for the duration
-        of the block. When ``None`` (the default), only the cache
-        isolation is active -- useful for callers that only want
-        Approach A.
+        Optional iterable of files whose bytes must not change for the
+        duration of the block. If any do, they are restored and a
+        :class:`SourcePerimeterViolation` is raised on exit. When
+        ``None`` (the default), only the cache isolation is active --
+        useful for callers that only want Approach A.
 
     Yields
     ------
@@ -137,5 +184,5 @@ def hermetic_pip_wheel(
     """
     env = pip_wheel_env(test_tmpdir)
     target_list = list(protect) if protect is not None else []
-    with readonly_perimeter(target_list):
+    with content_perimeter(target_list):
         yield env

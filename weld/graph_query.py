@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from weld._coverage_admission import (
+    _COVERAGE_MIN_GROUPS,
+    count_groups_hit,
+    coverage_admissions,
+    or_fallback_sort_key,
+    strip_match,
+    tag_match,
+)
 from weld.embeddings import semantic_scores
 from weld.ranking import rank_query_matches
 from weld.synonyms import candidate_nodes_grouped, expand_token_groups
@@ -48,11 +56,26 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
             if nid in graph._data["nodes"]
         )
     matched: list[tuple[str, dict]] = []
+    matched_ids: set[str] = set()
     for node_id, node in candidate_iter:
         if graph._match_token_groups(token_groups, node_id, node):
-            matched.append((node_id, node))
+            matched.append((node_id, tag_match(node_id, node, token_groups)))
+            matched_ids.add(node_id)
     if not matched:
         return _maybe_or_fallback(graph, term, tokens, limit)
+    # ADR 0075 part 1: when strict-AND succeeds on an N>=3 query, ALSO admit
+    # high-coverage (>= max(2, N-1)) code/entity nodes that strict-AND filtered
+    # out, so an entity-shaped query surfaces its owning nodes above a diffuse
+    # full-coverage doc. Scans the per-group UNION (so 3/4 nodes the strict-AND
+    # intersection dropped are reachable). Gated to N>=3 so 1-2 token queries
+    # skip the union scan entirely (the mechanism is inert for N<=2).
+    if len(token_groups) >= _COVERAGE_MIN_GROUPS:
+        union = _candidate_nodes_or(graph._inverted_index, token_groups)
+        matched.extend(
+            coverage_admissions(
+                graph._data["nodes"], union, token_groups, matched_ids
+            )
+        )
     ranked = rank_query_matches(
         matched,
         token_groups,
@@ -60,7 +83,7 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
         graph._structural_scores,
         semantic=semantic_scores(term, matched, graph._embedding_cache),
     )
-    matches = [{"id": node_id, **node} for node_id, node in ranked[:limit]]
+    matches = [strip_match(node, node_id) for node_id, node in ranked[:limit]]
     match_ids = {match["id"] for match in matches}
     neighbors, edges = graph._neighborhood(match_ids)
     return {"query": term, "matches": matches, "neighbors": neighbors, "edges": edges}
@@ -142,40 +165,6 @@ def _candidate_nodes_or(
     return union
 
 
-def _count_groups_hit(token_groups: list[list[str]], nid: str, node: dict) -> int:
-    """Return how many of ``token_groups`` are hit by ``(nid, node)``.
-
-    Unlike :meth:`Graph._match_token_groups`, this does NOT short-circuit on
-    a missing group -- it counts partial hits so OR-fallback callers can
-    rank by ``num_groups_hit_desc``. The match surface tracks
-    :meth:`Graph._match_token_groups` (incl. ``props.headings`` for doc
-    nodes) so the OR fallback never undercounts a node that strict-AND
-    would have hit.
-    """
-    nid_l = nid.lower()
-    label_l = node.get("label", "").lower()
-    props = node.get("props") or {}
-    file_l = (props.get("file") or "").lower()
-    qualname_l = str(props.get("qualname") or "").lower()
-    exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
-    headings_l = [h.lower() for h in props.get("headings", []) if isinstance(h, str)]
-    desc_l = (props.get("description") or "").lower()
-    hits = 0
-    for group in token_groups:
-        if any(
-            t in nid_l
-            or t in label_l
-            or t in file_l
-            or t in qualname_l
-            or t in desc_l
-            or any(t in e for e in exports_l)
-            or any(t in h for h in headings_l)
-            for t in group
-        ):
-            hits += 1
-    return hits
-
-
 def query_or_fallback(graph: object, term: str, limit: int = 20) -> dict:
     """Soft retrieval path used by :func:`query_graph` when strict-AND zeroes.
 
@@ -211,17 +200,22 @@ def query_or_fallback(graph: object, term: str, limit: int = 20) -> dict:
     matched: list[tuple[str, dict]] = []
     group_hits: dict[str, int] = {}
     for node_id, node in candidate_iter:
-        hits = _count_groups_hit(token_groups, node_id, node)
+        hits = count_groups_hit(token_groups, node_id, node)
         if hits > 0:
             matched.append((node_id, node))
             group_hits[node_id] = hits
     if not matched:
         return {"query": term, "matches": [], "neighbors": [], "edges": []}
     bm25 = graph._bm25
-    def _key(item: tuple[str, dict]) -> tuple[int, float, str]:
-        node_id, _ = item
+    # Rank via the shared OR-fallback key (group_hits, subject tie-break, BM25,
+    # id) so this JSON impl and its sqlite peer cannot drift on order. The BM25
+    # score is supplied per-node from this backend's corpus.
+    def _key(item: tuple[str, dict]) -> tuple[int, int, float, str]:
+        node_id, node = item
         bm25_score = bm25.score(node_id, token_groups) if bm25 else 0.0
-        return (-group_hits[node_id], -bm25_score, node_id)
+        return or_fallback_sort_key(
+            node_id, node, group_hits[node_id], token_groups, bm25_score
+        )
     ranked = sorted(matched, key=_key)
     matches = [{"id": node_id, **node} for node_id, node in ranked[:limit]]
     match_ids = {match["id"] for match in matches}

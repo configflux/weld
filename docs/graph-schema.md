@@ -42,19 +42,39 @@ forward compatibility but are not validated by the contract.
 
 ## `meta` block
 
-The `meta` block carries the contract version, the generation timestamp,
-the federation schema version, and optional freshness metadata.
+The `meta` block carries the contract version, the federation schema
+version, the list of scanned source roots, and -- via a sidecar, see
+below -- freshness metadata.
 
 | Field | Required | Type | Description |
 |---|---|---|---|
 | `version` | yes | int | Contract vocabulary version. Must equal `weld.contract.SCHEMA_VERSION` (currently `5`). A mismatch causes `validate_graph` to emit a remediation message that names the current version and the `wd discover` invocation needed to regenerate. |
-| `updated_at` | yes | string | ISO-8601 timestamp written by the emitter on every save. |
 | `schema_version` | written on save | int | Federation layout version: `1` for a single-repo or child graph, `2` for a federated root graph that contains `repo:*` nodes. See `weld/_graph_schema.py` for the gating rules. |
-| `git_sha` | optional | string | HEAD commit SHA stamped by `Graph.save(touch_git_sha=True)` when the root is a git working tree. Used by `wd stale` to detect when the graph is older than the working tree. |
+| `discovered_from` | yes | list | Source roots scanned during discovery. Content-stable at a fixed commit; consumed by `wd stale` to scope source-drift detection. |
+| `updated_at` | sidecar | string | ISO-8601 timestamp written on every save. Stored in the `graph-meta.json` sidecar, not in `graph.json`. Surfaced back on the logical `meta` when a graph is loaded. |
+| `git_sha` | sidecar (optional) | string | HEAD commit SHA recorded when the root is a git working tree. Stored in the `graph-meta.json` sidecar. Used by `wd stale` to detect when the graph is older than the working tree. |
 
 `meta.version` is the **contract** version (what node/edge types exist).
 `meta.schema_version` is the **layout** version (whether the file carries
 federation constructs). They are orthogonal.
+
+### Volatile-meta sidecar (`graph-meta.json`)
+
+`meta.updated_at` (a wall-clock timestamp) and `meta.git_sha` (the HEAD
+SHA) change independently of source content, so they are stored in a
+**gitignored sidecar** `.weld/graph-meta.json` rather than in `graph.json`.
+This keeps `graph.json` content-addressable: two `wd discover`
+runs at a fixed commit produce a byte-identical `graph.json`. The sidecar
+is a small object: `{"version": 1, "updated_at": "...", "git_sha": "..."}`
+(a field is present only when discovery produced it).
+
+Readers transparently overlay the sidecar back onto the logical `meta`,
+so every consumer still sees `updated_at` / `git_sha` as before. A graph
+written by an older weld carries these fields in-graph and has no sidecar;
+it loads unchanged (the in-graph values are used as a fallback). A graph
+whose sidecar is absent (e.g. a fresh checkout that never fetched the
+gitignored file) simply lacks `git_sha`, which `wd stale` treats as "stale"
+and refreshes -- regenerating the sidecar.
 
 ## Nodes
 
@@ -334,8 +354,8 @@ A minimal valid `graph.json`:
 {
   "meta": {
     "version": 5,
-    "updated_at": "2026-04-24T12:00:00Z",
-    "schema_version": 1
+    "schema_version": 1,
+    "discovered_from": ["src/"]
   },
   "nodes": {
     "service:billing": {

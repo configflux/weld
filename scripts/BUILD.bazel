@@ -28,8 +28,9 @@ sh_test(
         "_demo_common.sh",
         "create-polyrepo-demo.sh",
     ],
-    # Runs `git init` inside a temp dir; needs real git on PATH.
-    tags = ["no-sandbox"],
+    # End-to-end: runs `git init` and builds a real demo repo in a temp dir;
+    # needs real git on PATH. no-sandbox + integration (ADR 0070 taxonomy).
+    tags = ["no-sandbox", "integration"],
 )
 
 sh_test(
@@ -39,7 +40,7 @@ sh_test(
         "_demo_common.sh",
         "create-monorepo-demo.sh",
     ],
-    tags = ["no-sandbox"],
+    tags = ["no-sandbox", "integration"],
 )
 
 sh_test(
@@ -50,5 +51,5 @@ sh_test(
         "create-monorepo-demo.sh",
         "create-polyrepo-demo.sh",
     ],
-    tags = ["no-sandbox"],
+    tags = ["no-sandbox", "integration"],
 )

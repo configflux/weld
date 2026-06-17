@@ -16,17 +16,12 @@ and asserts ``LC_ALL=C`` is in that env.
 from __future__ import annotations
 
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
-
-from weld import _git as git_helpers  # noqa: E402
+from weld import _git as git_helpers
 
 
 # Capture the real subprocess.run before any patching so the capturing

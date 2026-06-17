@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ipaddress
 import json
 import mimetypes
+import os
 import sys
 import webbrowser
 from http import HTTPStatus
@@ -14,6 +16,7 @@ from importlib.resources import files
 from pathlib import PurePosixPath
 from urllib.parse import parse_qs, unquote, urlparse
 
+from weld.viz._export_route import export_response
 from weld.viz.adapter import (
     DEFAULT_MAX_EDGES,
     DEFAULT_MAX_NODES,
@@ -24,6 +27,37 @@ from weld.viz.adapter import (
 from weld.viz.api import VizApi
 
 _LOOPBACK_HOSTNAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
+
+
+@contextlib.contextmanager
+def _suppress_node_deprecation():
+    """Scope ``NODE_OPTIONS=--no-deprecation`` for a child process.
+
+    On VS Code remote / Codespaces the ``$BROWSER`` handler shells out to a
+    Node-based CLI (``code … --openExternal``) that still calls the legacy
+    ``url.parse()`` and prints a ``[DEP0169]`` deprecation warning. Python's
+    ``webbrowser`` launches that handler as a ``GenericBrowser``, which
+    inherits our stderr, so the launcher's warning leaks into ``wd viz``
+    output and reads as a weld defect. Append ``--no-deprecation`` to whatever
+    ``NODE_OPTIONS`` is already set so Node-based launchers stay quiet, and
+    restore the prior value afterward. Non-Node launchers ignore it.
+    """
+    previous = os.environ.get("NODE_OPTIONS")
+    combined = f"{previous} --no-deprecation" if previous else "--no-deprecation"
+    os.environ["NODE_OPTIONS"] = combined
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("NODE_OPTIONS", None)
+        else:
+            os.environ["NODE_OPTIONS"] = previous
+
+
+def _open_browser_quietly(url: str) -> None:
+    """Open *url* in a browser without leaking launcher deprecation noise."""
+    with _suppress_node_deprecation():
+        webbrowser.open(url)
 
 
 def make_server(
@@ -38,7 +72,7 @@ def make_server(
     ensure_available = getattr(api, "ensure_available", None)
     if ensure_available is not None:
         ensure_available()
-    handler_cls = _handler_for(api)
+    handler_cls = _handler_for(api, graph_kind=graph_kind)
     return ThreadingHTTPServer((host, port), handler_cls)
 
 
@@ -57,7 +91,7 @@ def serve(
     label = "Weld Agent Graph" if graph_kind == "agent" else "Weld graph"
     print(f"{label} visualizer: {url}", flush=True)
     if open_browser:
-        webbrowser.open(url)
+        _open_browser_quietly(url)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -145,7 +179,7 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
-def _handler_for(api: VizApi) -> type[BaseHTTPRequestHandler]:
+def _handler_for(api: VizApi, *, graph_kind: str = "code") -> type[BaseHTTPRequestHandler]:
     class VizRequestHandler(BaseHTTPRequestHandler):
         server_version = "WeldViz/1"
 
@@ -180,6 +214,38 @@ def _handler_for(api: VizApi) -> type[BaseHTTPRequestHandler]:
 
         def _handle_api(self, path: str, query: str, send_body: bool) -> None:
             params = _params(query)
+            # bd h6z0.14: /api/export wraps weld.export's pure emitters
+            # and ships the rendered text back with a Content-Disposition
+            # filename derived from the focused node id. The format
+            # allowlist gates the dispatch before reaching the graph
+            # loader so unknown values 400 fast. The route is code-graph
+            # only: under ``wd agents viz`` the route 400s rather than
+            # silently emitting an empty document against the wrong
+            # graph (the frontend hides the menu in agent mode too).
+            if path == "/api/export":
+                if graph_kind != "code":
+                    self._send_json(
+                        {"error": (
+                            "export is unavailable for the agent graph; "
+                            "this surface is code-graph only"
+                        )},
+                        HTTPStatus.BAD_REQUEST,
+                        send_body,
+                    )
+                    return
+                try:
+                    body, ctype, filename = export_response(
+                        getattr(api, "root", "."), params,
+                    )
+                except ValueError as exc:
+                    self._send_json(
+                        {"error": str(exc)}, HTTPStatus.BAD_REQUEST, send_body,
+                    )
+                    return
+                self._send_bytes_with_filename(
+                    body, ctype, filename, HTTPStatus.OK, send_body,
+                )
+                return
             try:
                 if path == "/api/summary":
                     payload = api.summary()
@@ -191,6 +257,10 @@ def _handler_for(api: VizApi) -> type[BaseHTTPRequestHandler]:
                     payload = api.path(params)
                 elif path == "/api/trace":
                     payload = api.trace(params)
+                elif path == "/api/search-suggest":
+                    payload = api.search_suggest(params)
+                elif path == "/api/diff":
+                    payload = api.diff(params)
                 else:
                     self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND, send_body)
                     return
@@ -230,6 +300,27 @@ def _handler_for(api: VizApi) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", content_type)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body) if send_body else 0))
+            self.end_headers()
+            if send_body:
+                self.wfile.write(body)
+
+        def _send_bytes_with_filename(
+            self,
+            body: bytes,
+            content_type: str,
+            filename: str,
+            status: HTTPStatus,
+            send_body: bool,
+        ) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="{filename}"',
+            )
             self.send_header("Content-Length", str(len(body) if send_body else 0))
             self.end_headers()
             if send_body:

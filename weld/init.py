@@ -11,6 +11,13 @@ from weld._gitignore_writer import write_weld_gitignore
 from weld._init_classify import classify_files
 from weld._init_cpp import cpp_buildsystem_source_entries, detect_cpp_buildsystem
 from weld._init_csharp import csharp_source_entries, detect_csharp_artifacts
+from weld._init_framework_sources import (
+    _add_framework_sources,
+    _add_go_framework_sources,
+    _add_rust_framework_sources,
+    _files_entry,
+    _source_entry,
+)
 from weld._init_ros2 import ros2_source_entries
 from weld.init_workspace import init_workspace as _init_workspace
 from weld.init_workspace import maybe_bootstrap_polyrepo as _maybe_bootstrap_polyrepo
@@ -42,6 +49,8 @@ _YAML_HEADER = """\
 #   sqlalchemy      — AST: SQLAlchemy Base subclasses, FKs, columns, StrEnum
 #   fastapi         — AST: APIRouter + @router decorators
 #   flask           — AST: Flask/Blueprint + @app.route/@bp.route decorators
+#   gin             — Regex: gin route registration (r.GET/POST/Any/Handle)
+#   axum            — Regex: axum route registration (.route("/p", get(h)))
 #   pydantic        — AST: BaseModel subclasses, fields, docstrings
 #   worker_stage    — AST: __init__.py __all__ exports in stage subdirs
 #   dockerfile      — Line parse: FROM base image
@@ -72,71 +81,26 @@ _TREE_SITTER_LANGUAGES: dict[str, tuple[str, ...]] = {
     "java": (".java",),
 }
 _TREE_SITTER_EMIT_CALLS: frozenset[str] = frozenset({"cpp", "csharp"})
-
-def _source_entry(
-    glob: str, node_type: str, strategy: str,
-    *, comment: str = "", extra: dict[str, str] | None = None,
-) -> str:
-    lines = [f"\n  # --- {comment} ---"] if comment else []
-    lines += [f'  - glob: "{glob}"', f"    type: {node_type}", f"    strategy: {strategy}"]
-    if extra:
-        lines += [f"    {k}: {v}" for k, v in extra.items()]
-    return "\n".join(lines)
-
-def _files_entry(
-    file_list: list[str], node_type: str, strategy: str, *, comment: str = "",
-) -> str:
-    lines = [f"\n  # --- {comment} ---"] if comment else []
-    inner = ", ".join(f'"{f}"' for f in file_list)
-    lines += [f"  - files: [{inner}]", f"    type: {node_type}", f"    strategy: {strategy}"]
-    return "\n".join(lines)
-
-def _glob_matches_path(glob: str, path: str) -> bool:
-    """``find_python_glob_roots`` emits 3 shapes: ``*.py``,
-    ``<dir>/*.py``, ``<top>/**/*.py`` (bd et6o)."""
-    if not path.endswith(".py"):
-        return False
-    if glob == "*.py":
-        return "/" not in path
-    if "/**/*.py" in glob:
-        return path.startswith(glob.split("/**/*.py", 1)[0] + "/")
-    dirpart = glob[:-len("/*.py")] if glob.endswith("/*.py") else ""
-    rest = path.removeprefix(dirpart + "/") if dirpart else ""
-    return bool(rest) and rest != path and "/" not in rest
-
-def _find_matching_glob(
-    globs: list[str], keywords: tuple[str, ...], path: str = "",
-) -> str | None:
-    """Pick a python_glob: prefer one covering detection *path* (bd et6o),
-    else fall back to the first glob matching a *keyword*."""
-    hit = next((g for g in globs if path and _glob_matches_path(g, path)), None)
-    return hit or next(
-        (g for g in globs if any(k in g.lower() for k in keywords)), None)
-
-def _add_framework_sources(
-    sources: list[str], frameworks: list[tuple[str, str, str]],
-    python_globs: list[str],
-) -> None:
-    """Append framework-specific source entries."""
-    fw_to_path = {fw: path for fw, _strategy, path in frameworks}
-    fallback = python_globs[0] if python_globs else "**/*.py"
-    for fw, kw, node_type, strategy, label, hint in (
-        ("SQLAlchemy", ("domain", "model", "entities", "libs"), "entity", "sqlalchemy", "SQLAlchemy domain models", "model directory"),
-        ("FastAPI", ("router", "route", "api", "services"), "route", "fastapi", "FastAPI routes", "router directory"),
-        ("Flask", ("app", "blueprints", "views", "routes", "api", "flask"), "route", "flask", "Flask routes", "app/blueprints directory"),
-    ):
-        if fw in fw_to_path:
-            matched = _find_matching_glob(python_globs, kw, fw_to_path[fw])
-            sources.append(_source_entry(
-                matched or fallback, node_type, strategy,
-                comment=label if matched else f"{label} (adjust glob to match your {hint})",
-            ))
-    if "Pydantic" in fw_to_path:
-        matched = _find_matching_glob(python_globs,
-            ("contract", "schema", "dto", "libs"), fw_to_path["Pydantic"])
-        if matched:
-            sources.append(_source_entry(matched, "contract", "pydantic",
-                comment="Pydantic contracts/schemas"))
+# Tree-sitter languages whose test convention a glob can target, paired
+# with the glob(s) the matching ``weld.strategies._test_peer_*`` resolver
+# recognizes, so `wd init` scaffolds a `test_peer` source entry (the
+# `tests` edge) alongside the `tree_sitter` entry -- parity with the
+# Python python_module + test_peer pairing (ADR 0046). A language may need
+# more than one glob (TS spreads tests across ``*.test`` / ``*.spec`` /
+# ``__tests__/`` shapes), so the value is a tuple. Only globs the resolver
+# actually pairs are listed, so a stock init never writes an entry the
+# resolver would ignore:
+#   - rust: Cargo integration tests under ``tests/`` resolved to
+#     ``src/<name>.rs`` by ``_test_peer_rust``.
+#   - go: ``foo_test.go`` beside ``foo.go`` (same dir) -- ``_test_peer_go``.
+#   - typescript: ``*.test.ts`` / ``*.spec.ts`` (mid-suffix) and
+#     ``__tests__/*.ts`` (Jest dir) -- all recognized by
+#     ``_test_peer_ts.is_test_file``.
+_TREE_SITTER_TEST_PEER_GLOBS: dict[str, tuple[str, ...]] = {
+    "rust": ("**/tests/*.rs",),
+    "go": ("**/*_test.go",),
+    "typescript": ("**/*.test.ts", "**/*.spec.ts", "**/__tests__/*.ts"),
+}
 
 def _section_header(label: str) -> str:
     """Return a YAML comment that marks an artifact-class section."""
@@ -176,6 +140,12 @@ def generate_yaml(
 
     # --- code ---
     _add_framework_sources(buckets["code"], frameworks, python_globs)
+    # Go framework strategies (gin) precede the tree-sitter Go entry so
+    # the canonical tree-sitter file node wins the nodes.update merge.
+    _add_go_framework_sources(buckets["code"], frameworks)
+    # Rust framework strategies (axum) precede the tree-sitter Rust entry
+    # for the same nodes.update merge-order reason (ADR 0071).
+    _add_rust_framework_sources(buckets["code"], frameworks)
 
     if "python" in languages:
         # python_module / python_callgraph / test_peer emit file/symbol
@@ -214,6 +184,20 @@ def generate_yaml(
                 f"**/*{ext}", "file", "tree_sitter",
                 comment=f"{label} sources ({ext})",
                 extra=extras,
+            ))
+    # Pair tree-sitter test conventions with a test_peer entry so the
+    # ``tests`` edge is emitted by a stock ``wd init`` + ``wd discover``,
+    # mirroring the Python python_module + test_peer pairing (ADR 0046).
+    # The tree_sitter entry above only emits symbol/definition nodes; the
+    # ``tests`` edge needs the per-language test_peer resolver.
+    for lang, test_globs in _TREE_SITTER_TEST_PEER_GLOBS.items():
+        if lang not in languages:
+            continue
+        label = "C#" if lang == "csharp" else lang.capitalize()
+        for test_glob in test_globs:
+            buckets["tests"].append(_source_entry(
+                test_glob, "file", "test_peer",
+                comment=f"{label} tests (test_peer; ADR 0046)",
             ))
     # --- C# strategy stack (helpers in weld/_init_csharp.py) ---
     if csharp_flags:

@@ -128,8 +128,21 @@ def load_and_diff(root: Path) -> dict:
 
     Reads ``graph.json`` (current) and ``graph-previous.json`` (previous)
     from the ``.weld/`` directory.  If no previous snapshot exists, all
-    current nodes are reported as added.  If no current graph exists,
-    returns an empty diff.
+    current nodes are reported as added.  If no current graph file exists,
+    returns an empty diff (the missing-graph guidance is a separate CLI
+    guard).
+
+    The two graphs are *not* equally tolerant of corruption.  The previous
+    snapshot is optional and a half-written one is treated as absent, so a
+    corrupt ``graph-previous.json`` still lets the current graph diff as
+    all-added.  But the CURRENT ``graph.json`` is the thing being reported
+    on: a corrupt current graph used to be swallowed into an empty diff that
+    looks like "no changes" -- a silent, dangerously-wrong result.  We now let
+    its parse failure propagate so each surface translates it to the shared
+    ``graph_corrupt`` structured error (CLI: :func:`main`; MCP:
+    ``mcp_server._dispatch_inner`` -> ``_mcp_guard.load_error_payload``, both
+    via :func:`weld._errors.classify_graph_load_error`, which derives a safe
+    positional detail and never echoes the raw bytes).
     """
     weld_dir = root / ".weld"
     current_path = weld_dir / "graph.json"
@@ -139,10 +152,9 @@ def load_and_diff(root: Path) -> dict:
     previous: dict | None = None
 
     if current_path.is_file():
-        try:
-            current = json.loads(current_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
+        # Do NOT swallow a corrupt current graph -- propagate so the caller
+        # surfaces graph_corrupt instead of a silent empty diff.
+        current = json.loads(current_path.read_text(encoding="utf-8"))
 
     if previous_path.is_file():
         try:
@@ -278,7 +290,23 @@ def main(argv: list[str] | None = None) -> int:
     # (tracked issue / tracked issue).
     ensure_graph_exists(Path(args.root), _build_retry_hint("diff"))
 
-    result = load_and_diff(Path(args.root))
+    root = Path(args.root)
+    try:
+        result = load_and_diff(root)
+    except Exception as exc:  # noqa: BLE001 - classify then re-raise non-graph
+        # A corrupt/truncated CURRENT graph.json (json.JSONDecodeError) becomes
+        # the shared one-line ``error[graph_corrupt]: ... | hint: ...`` contract
+        # and a nonzero exit -- not a silent empty diff. Mirrors the read-command
+        # guard in weld._graph_cli_errors.load_graph_or_exit; reuses the same
+        # safe classifier so the corrupt-file bytes never reach stderr. Any
+        # non-graph exception re-raises unchanged rather than being mislabeled.
+        from weld._errors import classify_graph_load_error, format_error_line
+
+        code, detail = classify_graph_load_error(exc, root / ".weld" / "graph.json")
+        if code is None:
+            raise
+        sys.stderr.write(format_error_line(code, detail) + "\n")
+        sys.exit(1)
 
     if args.json_output:
         json.dump(result, sys.stdout, indent=2, ensure_ascii=False)

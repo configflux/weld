@@ -61,7 +61,7 @@ summarise the required fields.
 | Tool | Required input | Purpose |
 |---|---|---|
 | `weld_query` | `term` | Tokenized ranked search over the connected structure; returns matches, neighbors, and edges. |
-| `weld_find` | `term` | Substring search over `.weld/file-index.json`; returns ranked file hits with matching tokens and a score. |
+| `weld_find` | `term` | Substring search over `.weld/file-index.json`; returns ranked file hits with matching tokens and a score. A single word is a literal substring match; a multi-word phrase is tokenized on whitespace and ranked by how many of the words a file's tokens hit (so `"mcp server"` surfaces `mcp_server.py`). |
 | `weld_context` | `node_id` | Node plus its 1-hop neighborhood. |
 | `weld_path` | `from_id`, `to_id` | Shortest path between two nodes, with visited nodes and connecting edges. |
 | `weld_brief` | `area` | Stable agent-facing brief (`BRIEF_VERSION=2`) for a task area: primary matches, interfaces, docs, build surfaces, boundaries. |
@@ -184,14 +184,33 @@ graph so the change plan accounts for every dependent.
 > `depth=2` to see transitive callers. List every caller you'll need to
 > update.
 
-### 4. Check freshness before trusting the graph
+### 4. Trust freshness -- reads self-heal
 
-If the repo has changed since the last discovery run, the graph is stale
-and MCP answers can be outdated.
+MCP reads inherit the same freshness contract as the CLI: a graph-backed
+read **auto-refreshes before serving** when the repo has changed since the
+last discovery run (incremental discovery, the same path `wd query` uses),
+so you do not have to run `wd discover` by hand. Every graph-backed read
+result also carries a small `freshness` object so you can see the state at a
+glance:
 
-> Before you run any other `weld_*` tool, call `weld_stale`. If it
-> reports `stale: true`, stop and ask me to run `wd discover` before
-> continuing.
+```json
+{ "...": "...", "freshness": { "stale": false, "commits_behind": 0 } }
+```
+
+- `stale` -- `true` when source files have drifted since the recorded
+  discovery point. After an auto-refresh this is normally `false`; it stays
+  `true` only when refresh is disabled (see below) or could not run.
+- `commits_behind` -- how many commits the recorded graph SHA trails HEAD
+  (`0` when current, `-1` when no SHA was recorded yet).
+
+Disable auto-refresh by launching the server with `WELD_AUTO_REFRESH=0` in
+its environment (for CI or read-only mirrors). With refresh off, reads still
+serve and still carry `freshness`, so a `stale: true` field is your signal
+that the answer may lag the working tree -- the server will not silently
+rewrite the graph.
+
+`weld_stale` remains the detailed, on-demand freshness probe; the per-read
+`freshness` object is the cheap inline signal.
 
 ### 5. Estimate blast radius before risky edits
 
@@ -222,8 +241,45 @@ Shapes are tool-specific and follow the same envelopes the CLI emits:
 - `weld_trace`, `weld_impact`, `weld_enrich`, `weld_diff` return the same
   envelopes documented for their CLI counterparts.
 
+Graph-backed **read** tools (`weld_query`, `weld_context`, `weld_path`,
+`weld_brief`, `weld_callers`, `weld_references`, `weld_trace`, `weld_impact`)
+additionally carry a top-level `freshness` object,
+`{stale: bool, commits_behind: int}` (see "Trust freshness" above). It is
+additive -- the rest of each envelope is byte-identical to the CLI helper.
+`weld_find` (file index, not the graph) and `weld_stale` (already the
+freshness surface) are not stamped, and a structured error payload
+(`error_code` present) never carries `freshness`.
+
 Unknown tool names raise a dispatch error that the stdio server converts
 to `{"error": "unknown weld MCP tool: <name>"}`.
+
+### Structured error codes
+
+Graph-load failures and node-lookup misses return a structured error
+payload instead of crashing the transport (or silently returning an empty
+result), carrying a machine-readable `error_code` plus a stable,
+copy-pasteable `hint`. The same vocabulary is emitted by the CLI (as a
+single `error[<code>]: <summary> | hint: <hint>` line on stderr with a
+nonzero exit), so an agent can branch on the code regardless of surface:
+
+| `error_code`     | Cause                                              | Hint (remediation)                                              |
+| ---------------- | -------------------------------------------------- | --------------------------------------------------------------- |
+| `graph_missing`  | `.weld/graph.json` is absent (first run)           | `Run: wd init (if no config), then wd discover.`                |
+| `graph_corrupt`  | `graph.json` exists but is not valid JSON          | `graph.json is not valid JSON. Rebuild it: wd discover.`        |
+| `schema_mismatch` | `meta.schema_version` is newer than this build    | Upgrade weld, or rebuild with this version: `wd discover`.      |
+| `node_not_found` | A requested node id resolves to nothing            | `Check the node id (wd query <term> to find it).`               |
+
+The MCP payload shape is `{"error", "error_code", "hint"}` (the
+missing-graph case also carries a `retry` field). `node_not_found` is
+stamped on `weld_context` and `weld_callers` results when the requested id
+resolves to nothing; the only value echoed in `error` is the
+caller-supplied id. `weld_path` reports a miss as `{"path": null,
+"reason": ...}` and is intentionally **not** stamped (matching the CLI
+`path` command), so an agent distinguishes "no such node" from "no route
+between two real nodes". For `graph_corrupt`, the `error` summary localizes
+the parse failure by **position only** (line / column / byte offset) and
+never echoes the raw file bytes, so a secret living in a half-written graph
+cannot leak into a tool result or terminal output.
 
 ## Trust model
 
@@ -270,9 +326,11 @@ path as an argument (`python -m weld.mcp_server /path/to/repo`) or set
 the client's working directory to the repo root.
 
 **`weld_stale` reports stale**
-The on-disk `.weld/graph.json` is older than the current git HEAD. Run
-`wd discover --output .weld/graph.json` in a shell to refresh before
-continuing. The server will not auto-refresh.
+The on-disk `.weld/graph.json` trails the working tree. By default the next
+graph-backed read auto-refreshes it for you (and reports `freshness.stale`
+inline), so no manual step is needed. If the server was launched with
+`WELD_AUTO_REFRESH=0`, refresh is disabled: run `wd discover` in a shell to
+rebuild, or restart the server without the opt-out.
 
 **`weld_query` or `weld_context` returns empty or surprising results**
 The connected structure may be stale, or the search term may not be

@@ -187,6 +187,92 @@ that ~34 s rebuild into a load.
 
 ---
 
+## Incremental auto-refresh cost
+
+Every read command (`query`, `find`, `context`, ...) self-heals a stale
+graph before serving (refresh-on-read). For that contract to feel free,
+the steady-state incremental refresh has to be sub-second. The dominant
+cost is **not** parsing the changed files -- it is rebuilding the
+postprocess output, the query-state / file-index sidecars, and
+re-serializing the whole canonical `graph.json` on every refresh.
+
+Measured on **this repository** (≈6.5k nodes, ≈25k edges, a 14 MB
+`graph.json`, ≈1.6k indexed files), single cold `python -m weld`
+invocation per run, sqlite sidecar deferred on the read path (it is
+federation-scoped and self-heals):
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| No content change (the common refresh-on-read case) | 5.9–8.4 s | **~1.5 s** (first refresh) / ~0.6 s (subsequent reads short-circuit on `stale=False`) |
+| 1–5 source files changed (incremental rebuild) | ~6–8 s | ~6 s |
+
+The no-change collapse from ~6–8 s to ~1.5 s is the win that makes
+refresh-on-read viable: once a refresh writes fresh state, later reads see
+`stale=False` and skip discovery entirely (~0.6 s CLI floor). A genuine
+content change still re-runs the global post-process and the 14 MB
+`graph.json` re-serialization; the `python_callgraph` strategy no longer
+re-extracts every call edge in a dirty glob (it now parses only
+the dirty files and reconstructs cross-file state from the prior graph,
+saving ~0.6–0.9 s per dirty glob). So the sub-second target is met
+for the no-content-change steady state and the strategy-parse lever is
+landed, but post-process + serialization keep a real edit above sub-second
+on a graph this size; see the caveat below.
+
+What changed (bd 85tb.2):
+
+- **No-change is the dominant real case.** The live
+  `.weld/auto-refresh.jsonl` showed ~6.5 s even for *zero* changed files,
+  because a source that legitimately produces no file-anchored node (an
+  issue-store source whose strategy emits abstract concepts) re-triggered
+  the full with-changes path on every refresh. The audit now exempts files
+  the prior run proved node-less, so an unchanged repo takes the fast
+  path (~1.5 s on the first refresh, dominated by the two change-detection
+  walks: the discover-source glob walk plus the file-index surface re-hash
+  of ≈1.6k files). After that first refresh the graph is fresh, so the very
+  next read short-circuits at ~0.6 s.
+- **File index incrementalized.** Instead of re-parsing every Python AST
+  (~3.7 s here), the refresh re-tokenizes only files whose content hash
+  changed since the last write (~0.2 s), driven by the index's own
+  surface so doc changes outside `discover.yaml` are still caught. The
+  output is byte-identical to a full rebuild.
+- **One serialization, not four.** The canonical graph is serialized once
+  and the bytes are threaded into the query-state and sqlite sidecar
+  writers and the `graph.json` write. The sidecars hash their freshness
+  digest over the *volatile-stripped* bytes, so a cold load
+  now actually hits the sidecar instead of always missing on the
+  `updated_at` delta -- and a byte-identical refresh skips the rebuilds
+  entirely.
+
+The genuine-content-change rows are now bounded by re-serializing a 14 MB
+canonical `graph.json` (~0.9 s) plus the global query-state rebuild and the
+global post-process -- inherent to writing a changed graph of this size. The
+per-source `python_callgraph` re-extraction (parsing) lever has landed:
+a dirty glob parses only its changed files and reconstructs the
+`project_modules` origin set from the prior graph instead of re-parsing every
+sibling. The remaining levers (post-process scoping, partial/delta
+serialization) are tracked separately.
+
+Determinism is the hard bar: the incrementally-refreshed graph and every
+index are byte-identical to a full `wd discover` at the same state. The
+standing `//tools:tier_check_determinism_gate_test`, the file-index
+equivalence tests (`weld/tests/file_index_incremental_test.py`), the
+integration equivalence tests
+(`weld/tests/incremental_refresh_equivalence_test.py`), and the
+`python_callgraph` provenance-purge regression
+(`weld/tests/incremental_callgraph_provenance_purge_test.py` — a
+clean caller's `calls` edge into an edited callee's symbol must survive the
+purge) gate it at merge.
+
+Reproduce the no-change row in a checkout with a built graph:
+
+```bash
+wd discover --output .weld/graph.json   # warm the graph + sidecars once
+# time a no-op refresh-on-read (a read auto-refreshes when stale):
+time wd query something --json >/dev/null
+```
+
+---
+
 ## Polyrepo scaling
 
 Each row was produced by:

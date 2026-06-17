@@ -17,6 +17,7 @@ label happens to be higher.
 
 from __future__ import annotations
 
+from weld._coverage_admission import partial_coverage_subject_miss
 from weld.bm25 import BM25Corpus
 
 # Authority ordering: canonical > derived > manual > inferred
@@ -43,6 +44,13 @@ _UNKNOWN_RANK: int = 99
 # to a real definition; surfacing them ahead of definite resolved symbols
 # in retrieval results is a known quality regression.
 _UNRESOLVED_SYMBOL_PREFIX: str = "symbol:unresolved:"
+
+# ``props.origin`` value stamped on unresolved-symbol sentinel nodes by the
+# language origin classifiers (see ``weld/strategies/_python_origin.py`` and
+# peers). It is the canonical, language-agnostic marker for "this node names a
+# callee/base we could not link to a definition" and is the gate the default
+# ``wd query`` CLI text filter keys on (see :func:`filter_speculative_matches`).
+_UNRESOLVED_ORIGIN: str = "unresolved"
 
 DEFAULT_HYBRID_WEIGHTS: dict[str, float] = {
     "bm25": 0.4,
@@ -96,6 +104,44 @@ def resolution_penalty(node: dict) -> int:
     if props.get("resolution") == "unresolved":
         return 1
     return 0
+
+
+def is_unresolved_match(match: dict) -> bool:
+    """Return True when *match* is an unresolved-symbol sentinel.
+
+    The signal is ``props.origin == "unresolved"`` -- the canonical marker
+    the language origin classifiers stamp on call-graph / inheritance
+    sentinels that name a callee or base which could not be linked to a
+    definition. This is intentionally narrower than ``resolution_penalty``:
+
+    * a speculative-but-*resolved* node (e.g. a stdlib builtin such as
+      ``print`` or ``sum``, which carries ``origin == "stdlib"`` and
+      ``confidence == "speculative"``) is NOT unresolved and is kept, so
+      the documented ``wd query "print"`` behaviour is preserved;
+    * ``confidence`` and the ``symbol:unresolved:`` id prefix are not
+      consulted here -- ``origin`` is the single source of truth so the
+      filter and the discovery-side classifier never drift.
+    """
+    props = match.get("props") or {}
+    return props.get("origin") == _UNRESOLVED_ORIGIN
+
+
+def filter_speculative_matches(matches: list[dict]) -> list[dict]:
+    """Drop unresolved-symbol sentinels from a list of query *matches*.
+
+    Used by the ``wd query`` CLI text/JSON dispatch to keep the default
+    result set focused on definite + inferred + speculative-resolved
+    matches. The relative order of the surviving matches is preserved, so
+    the upstream ranking (``rank_query_matches``) is untouched -- this is a
+    pure post-rank projection.
+
+    The core ``Graph.query`` envelope is deliberately *not* filtered: the
+    MCP surface and direct API callers still receive every node (each
+    already carries ``confidence`` for client-side discounting). Only the
+    CLI default applies this projection, and ``--include-speculative``
+    bypasses it to restore the unfiltered view.
+    """
+    return [match for match in matches if not is_unresolved_match(match)]
 
 
 def exact_symbol_match_rank(node: dict, token_groups: list[list[str]]) -> int:
@@ -278,7 +324,9 @@ def rank_query_matches(
     }
     weights = active_hybrid_weights(normalized_bm25, semantic_scores, structural)
 
-    def sort_key(item: tuple[str, dict]) -> tuple[int, int, int, float, int, int, str]:
+    def sort_key(
+        item: tuple[str, dict]
+    ) -> tuple[int, int, int, int, int, float, int, int, str]:
         node_id, node = item
         node_with_id = {"id": node_id, **node}
         score = hybrid_score(
@@ -300,6 +348,23 @@ def rank_query_matches(
             # discovery), and (c) single-token queries -- so non-cpp
             # behaviour is unchanged.
             amalgamation_boost(node_with_id, token_groups),
+            # ADR 0075: diffuse-doc demotion. A full-coverage doc whose match
+            # is purely scattered across bag fields (``_diffuse`` pre-tagged in
+            # weld.graph_query, N>=3 only) sorts AFTER every non-diffuse node
+            # (0 < 1) -- i.e. below the bounded-coverage code/entity nodes
+            # admitted alongside it. It is re-ranked, never excluded, and the
+            # relative order of all non-diffuse nodes is untouched.
+            int(bool(node.get("_diffuse"))),
+            # ADR 0075 subject tie-break: a bounded-coverage admission that
+            # misses the query's leading (subject) token-group in every
+            # identity field sorts AFTER coverage-tied peers that carry it
+            # (1 > 0). Fixes the entity-shaped collision where a node tied on
+            # covered-group count but missing the subject (e.g.
+            # ``discovery_state`` for ``"typescript discovery strategy"``)
+            # won purely on BM25 IDF rarity. Inert for N<3 and for every
+            # non-admitted node; placed ahead of -score so it survives BM25
+            # noise, after _diffuse so diffuse-doc demotion still wins.
+            partial_coverage_subject_miss(node_with_id, token_groups),
             -score,
             role_boost(node, query_roles),
             confidence_score(node),

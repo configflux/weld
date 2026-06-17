@@ -18,14 +18,10 @@ from __future__ import annotations
 import contextlib
 import io
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._workspace_bootstrap import bootstrap_workspace  # noqa: E402
 from weld.workspace_state import main as workspace_main  # noqa: E402

@@ -11,12 +11,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld._mcp_read import load_single_repo_for_read as _load_single_repo_for_read
 from weld.enrich import enrich as _enrich
 from weld.graph import Graph as _Graph
 from weld.impact import impact as _impact
 from weld.trace import trace as _trace
 
+
 def _load_graph(root: Path) -> _Graph:
+    """Uncached graph load for the *mutating* enrich path.
+
+    ``weld_enrich`` mutates the graph and persists it; it must own a fresh
+    in-memory object rather than the process-wide read cache (a persist must
+    never write back from a shared instance). The read helpers (``weld_trace``
+    / ``weld_impact``) use
+    :func:`weld._mcp_read.load_single_repo_for_read` instead, so they inherit
+    the auto-refresh + sha-keyed cache (bd 85tb.3).
+    """
     g = _Graph(root)
     g.load()
     return g
@@ -53,9 +64,11 @@ def weld_trace(
 
     Exactly one of *term* or *node_id* must be supplied. Returns the
     stable trace envelope (``TRACE_VERSION``). Alias-aware per ADR
-    0041: a legacy *node_id* is rewritten to its canonical form.
+    0041: a legacy *node_id* is rewritten to its canonical form. Self-heals on
+    a stale graph and reuses the in-process cache (bd 85tb.3) via
+    :func:`weld._mcp_read.load_single_repo_for_read`.
     """
-    g = _load_graph(Path(root))
+    g = _load_single_repo_for_read(Path(root))
     node_id = resolve_node_id_via_alias(g, node_id)
     return _trace(
         g, term=term, node_id=node_id, depth=depth, seed_limit=seed_limit,
@@ -72,9 +85,10 @@ def weld_impact(
 
     Alias-aware per ADR 0041 when *target* is a node id (file paths
     pass through unchanged because they are never registered as
-    aliases of node ids).
+    aliases of node ids). Self-heals on a stale graph and reuses the
+    in-process cache (bd 85tb.3).
     """
-    g = _load_graph(Path(root))
+    g = _load_single_repo_for_read(Path(root))
     target = resolve_node_id_via_alias(g, target) or target
     try:
         return _impact(g, target=target, depth=depth)

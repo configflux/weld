@@ -12,15 +12,21 @@ weld_impact, weld_enrich.
 
 from __future__ import annotations
 
-import json
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from weld._mcp_guard import (
     graph_present as _graph_present,
+    load_error_payload as _load_error_payload,
     missing_graph_payload as _missing_graph_payload,
+    serialize_dispatch as _serialize_dispatch,
+    stamp_node_not_found as _stamp_node_not_found,
+)
+from weld._mcp_read import (
+    FRESHNESS_TOOLS as _FRESHNESS_TOOLS,
+    load_graph_for_read as _load_graph_for_read,
+    stamp_freshness as _stamp_freshness,
 )
 from weld.brief import brief as _brief
 from weld.diff import load_and_diff as _load_and_diff
@@ -37,7 +43,6 @@ from weld.mcp_helpers import weld_enrich as _weld_enrich
 from weld.mcp_helpers import weld_impact as _weld_impact
 from weld.mcp_helpers import weld_review_guarded as _weld_review_guarded
 from weld.mcp_helpers import weld_trace as _weld_trace
-from weld.workspace_state import find_workspaces_yaml as _find_workspaces_yaml
 
 # ---------------------------------------------------------------------------
 # Tool descriptors
@@ -53,14 +58,17 @@ class Tool:
     handler: Callable[..., Any] = field(repr=False)
 
 def _load_graph(root: Path) -> _Graph | _FederatedGraph:
-    """Return a ``FederatedGraph`` when ``workspaces.yaml`` is present at
-    *root*, else a single-repo ``Graph``. Lets MCP tools that use
-    ``query``/``context``/``path`` transparently span child repos."""
-    if _find_workspaces_yaml(root) is not None:
-        return _FederatedGraph(root)
-    g = _Graph(root)
-    g.load()
-    return g
+    """Return a loaded graph for a read tool, self-healing first (bd 85tb.3).
+
+    Delegates to :func:`weld._mcp_read.load_graph_for_read`, which mirrors the
+    CLI read path: it runs ``auto_refresh_if_stale`` (ADR 0051 -- honouring the
+    ``WELD_AUTO_REFRESH=0`` / ``--no-refresh`` opt-outs and the federated
+    auto-recurse delegation) *before* loading, and serves a single-repo graph
+    from an in-process sha-keyed cache so a repeated MCP call does not re-read
+    and re-parse the (large) ``graph.json``. Returns a ``FederatedGraph`` at a
+    workspace root so ``query`` / ``context`` / ``path`` span child repos.
+    """
+    return _load_graph_for_read(root)
 
 
 def _attach_children_status(
@@ -281,11 +289,38 @@ def build_tools() -> list[Tool]:
 def _dispatch_inner(
     tool_name: str, arguments: dict | None, *, root: Path | str = ".",
 ) -> dict:
-    """Select the tool by name and invoke it. Raises ``KeyError`` on miss."""
+    """Select the tool by name and invoke it. Raises ``KeyError`` on miss.
+
+    A corrupt/truncated ``graph.json`` (``json.JSONDecodeError``) or a graph
+    written by a newer Weld (``SchemaVersionError``) raised from
+    ``Graph.load`` inside a tool handler is converted to the shared
+    structured-error payload (``error_code`` + ``hint`` via
+    :mod:`weld._errors`) instead of escaping -- so the same code an
+    unhandled ``JSONDecodeError`` used to produce a transport crash now
+    returns a parseable error to the client. A node-not-found result
+    (``weld_context`` / ``weld_callers`` on an unknown id) is stamped with the
+    shared ``node_not_found`` code by :func:`weld._mcp_guard.\
+stamp_node_not_found`, matching the CLI. A successful graph-backed *read*
+    payload (the tools in :data:`weld._mcp_read.FRESHNESS_TOOLS`) is stamped
+    with the additive ``freshness`` object (``{stale, commits_behind}``) by
+    :func:`weld._mcp_read.stamp_freshness` so the agent never consumes a stale
+    answer without a signal (bd 85tb.3); the stamp no-ops on any error payload.
+    Unknown tool names still raise ``KeyError`` (the registry contract); the
+    stdio layer turns that into a payload via :func:`dispatch_to_text_payload`.
+    """
     args = dict(arguments or {})
     for tool in build_tools():
         if tool.name == tool_name:
-            return tool.handler(**args, root=root)
+            try:
+                result = _stamp_node_not_found(tool.handler(**args, root=root))
+            except Exception as exc:  # noqa: BLE001 - classify graph-load only
+                payload = _load_error_payload(exc, root)
+                if payload is None:
+                    raise
+                return payload
+            if tool_name in _FRESHNESS_TOOLS:
+                result = _stamp_freshness(result, root)
+            return result
     raise KeyError(f"unknown weld MCP tool: {tool_name}")
 
 
@@ -312,86 +347,28 @@ def dispatch(
         rec.set_exit_code(-1)  # ADR 0035 MCP sentinel; no exit concept.
         return _dispatch_inner(tool_name, arguments, root=root)
 
+
+def dispatch_to_text_payload(
+    tool_name: str, arguments: dict | None, *, root: Path | str = ".",
+) -> str:
+    """Dispatch and return a JSON string the stdio layer wraps in TextContent.
+
+    SDK-free seam used by the stdio ``_call_tool`` handler. Graph-load
+    failures are already converted to a structured payload by
+    :func:`_dispatch_inner`; the remaining transport guarantees (unknown
+    tool -> payload, last-resort serialization) live in
+    :func:`weld._mcp_guard.serialize_dispatch`.
+    """
+    return _serialize_dispatch(dispatch, tool_name, arguments, root)
+
 # ---------------------------------------------------------------------------
 # Stdio entry point (optional; requires the ``mcp`` SDK)
 # ---------------------------------------------------------------------------
-
-_HELP = """Usage: python -m weld.mcp_server [ROOT]
-
-Run the Weld MCP stdio server for ROOT, or the current directory when ROOT
-is omitted. The stdio server requires the optional MCP SDK:
-
-  pip install 'configflux-weld[mcp]'
-
-The rest of the weld package, including `wd mcp config`, works without that
-extra.
-"""
-
-def run_stdio(root: Path | str = ".") -> int:
-    """Run the stdio MCP server loop.
-
-    Imports the ``mcp`` SDK lazily so the rest of this module stays usable
-    without it.
-    """
-    try:
-        from mcp.server import Server  # type: ignore
-        from mcp.server.stdio import stdio_server  # type: ignore
-        from mcp.types import TextContent, Tool as McpTool  # type: ignore
-    except ImportError as exc:  # pragma: no cover - exercised only with extras
-        sys.stderr.write(
-            "weld.mcp_server: the 'mcp' Python SDK is not installed. "
-            "Install the optional extra with "
-            "'pip install \"configflux-weld[mcp]\"' to run the "
-            f"stdio server. Original error: {exc}\n"
-        )
-        return 2
-
-    import asyncio
-
-    server: Server = Server("weld")
-    tools = build_tools()
-
-    @server.list_tools()  # type: ignore[misc]
-    async def _list_tools() -> list[McpTool]:  # pragma: no cover - requires sdk
-        return [
-            McpTool(
-                name=t.name,
-                description=t.description,
-                inputSchema=t.input_schema,
-            )
-            for t in tools
-        ]
-
-    @server.call_tool()  # type: ignore[misc]
-    async def _call_tool(
-        name: str, arguments: dict | None
-    ) -> list[TextContent]:  # pragma: no cover - requires sdk
-        try:
-            result = dispatch(name, arguments, root=root)
-        except KeyError as exc:
-            return [TextContent(type="text", text=json.dumps({"error": str(exc)}))]
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps(result, ensure_ascii=False),
-            )
-        ]
-
-    async def _main() -> None:  # pragma: no cover - requires sdk
-        async with stdio_server() as (read, write):
-            await server.run(read, write, server.create_initialization_options())
-
-    asyncio.run(_main())
-    return 0
-
-def main(argv: list[str] | None = None) -> int:
-    """Module entry point: ``python -m weld.mcp_server``."""
-    args = list(sys.argv[1:] if argv is None else argv)
-    if args and args[0] in {"-h", "--help"}:
-        sys.stdout.write(_HELP)
-        return 0
-    root = Path(args[0]) if args else Path(".")
-    return run_stdio(root)
+# The transport lives in :mod:`weld._mcp_stdio` to keep this module -- the
+# SDK-free tool adapters and registry -- under the line-count cap. Re-exported
+# here so ``weld.mcp_server.run_stdio`` / ``main`` and ``python -m
+# weld.mcp_server`` keep working.
+from weld._mcp_stdio import main, run_stdio  # noqa: E402,F401  (re-export)
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

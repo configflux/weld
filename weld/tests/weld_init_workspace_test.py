@@ -7,14 +7,10 @@ auto-scaffold ``.weld/workspaces.yaml`` using the schema from
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._yaml import parse_yaml  # noqa: E402
 from weld.init_workspace import discover_children, init_workspace  # noqa: E402

@@ -29,13 +29,8 @@ test file pins the behaviour:
 from __future__ import annotations
 
 import logging
-import sys
 import unittest
-from pathlib import Path
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 from weld._alias_index import build_alias_index, resolve_id  # noqa: E402
 

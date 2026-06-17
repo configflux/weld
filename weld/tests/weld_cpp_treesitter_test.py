@@ -17,16 +17,12 @@ that layer 1 promises:
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 from unittest import mock
 
-_repo_root = str(Path(__file__).resolve().parent.parent.parent)
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
 
 class CppQueryFileLoadingTest(unittest.TestCase):
     """The bundled cpp.yaml must be loadable and contain expected queries."""

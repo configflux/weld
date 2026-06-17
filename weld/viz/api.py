@@ -11,6 +11,23 @@ from weld.federation import FederatedGraph
 from weld.graph import Graph
 from weld.trace import trace
 from weld.viz import VIZ_API_VERSION
+from weld.viz._api_params import (
+    child_name as _child_name,
+    clean as _clean,
+    csv_set as _csv_set,
+    error_payload as _error_payload,
+    is_child_scope as _is_child_scope,
+    required as _required,
+    to_int as _int,
+)
+from weld.viz._diff import load_diff_payload
+from weld.viz._git_remote import git_remote_info
+from weld.viz._search import (
+    substring_match_nodes,
+    substring_suggestions,
+    suggest_limit,
+    top_degree_suggestions,
+)
 from weld.viz.adapter import (
     DEFAULT_MAX_EDGES,
     DEFAULT_MAX_NODES,
@@ -46,17 +63,28 @@ class VizApi:
         graph = self._load_root_graph()
         data = graph.dump()
         config = load_workspace_config(self.root)
+        # bd h6z0.13: discover git origin URL + HEAD sha once per summary
+        # so the inspector's "open in editor" links can render a remote
+        # URL without re-shelling out per node click. Both fields fall
+        # back to ``None`` when the repo / remote / git binary is absent.
+        # ``abs_root`` is the absolute filesystem path used to build the
+        # local ``vscode://file/<abs-path>`` URI; the policy on ``root``
+        # / ``graph_path`` (always posix-relative) is unchanged.
+        git_info = git_remote_info(self.root)
         payload = {
             "viz_api_version": VIZ_API_VERSION,
             "graph_kind": "code",
             "title": "Weld Graph",
             "root": ".",
+            "abs_root": str(self.root),
             "graph_path": ".weld/graph.json",
             "graph_exists": (self.root / ".weld" / "graph.json").is_file(),
             "meta": data.get("meta", {}),
             "stale": graph.stale(),
             "counts": graph_counts(data),
             "scopes": ["root"],
+            "remote_url": git_info["remote_url"],
+            "head_sha": git_info["head_sha"],
         }
         if config is not None:
             federated = FederatedGraph(self.root)
@@ -66,6 +94,10 @@ class VizApi:
                 f"child:{name}" for name in sorted(children_status)
             ]
         return payload
+
+    def diff(self, _params: dict[str, Any] | None = None) -> dict:
+        """Return the structured diff between the current/previous snapshots."""
+        return load_diff_payload(self.root)
 
     def slice(self, params: dict[str, Any]) -> dict:
         """Return an overview, query, or node-centered graph slice."""
@@ -190,10 +222,27 @@ class VizApi:
                 max_nodes=max_nodes, max_edges=max_edges)
         graph = self._graph_for_scope(scope)
         result = graph.query(query, limit=max_nodes)
-        records = list(result.get("matches", []) or [])
+        matches = list(result.get("matches", []) or [])
+        warnings: list[str] = []
+        if not matches:
+            # bd h6z0.8: tokenized query missed -- fall back to a
+            # case-insensitive substring scan over node id + label so
+            # an obvious-looking query like "vizapi" or "visualize"
+            # still surfaces nodes the tokenizer ranks at zero.
+            fallback = substring_match_nodes(
+                self._data_for_scope(scope), query, limit=max_nodes,
+            )
+            if fallback:
+                matches = fallback
+                warnings.append(
+                    "substring fallback: no tokenized hits for "
+                    f"{query!r}; showing case-insensitive id/label "
+                    "matches instead."
+                )
+        records = list(matches)
         records.extend(result.get("neighbors", []) or [])
-        focus_ids = [node["id"] for node in result.get("matches", []) or []]
-        return normalize_records(
+        focus_ids = [node["id"] for node in matches]
+        payload = normalize_records(
             records,
             result.get("edges", []) or [],
             focus_ids=focus_ids,
@@ -203,6 +252,26 @@ class VizApi:
             max_nodes=max_nodes,
             max_edges=max_edges,
         )
+        if warnings:
+            existing = list(payload.get("warnings", []) or [])
+            payload["warnings"] = warnings + existing
+        return payload
+
+    def search_suggest(self, params: dict[str, Any]) -> dict:
+        """Return autocomplete suggestions for the search input (bd h6z0.8).
+
+        Empty ``q`` -> top-N by degree (empty-state hint). Non-empty ``q``
+        -> case-insensitive substring scan over id + label, label hits
+        ranked above id-only hits then by ascending label length.
+        """
+        query = _clean(params.get("q"))
+        limit = suggest_limit(params.get("limit"), default=20 if query else 5)
+        data = self._data_for_scope("root")
+        if not query:
+            suggestions = top_degree_suggestions(data, limit)
+        else:
+            suggestions = substring_suggestions(data.get("nodes", {}) or {}, query, limit)
+        return {"viz_api_version": VIZ_API_VERSION, "suggestions": suggestions}
 
     def _child_query_slice(
         self,
@@ -311,42 +380,3 @@ class VizApi:
 
     def _is_federated(self) -> bool:
         return load_workspace_config(self.root) is not None
-
-
-def _csv_set(raw: object) -> set[str] | None:
-    if raw in (None, ""):
-        return None
-    values = [part.strip() for part in str(raw).split(",")]
-    return {value for value in values if value} or None
-
-
-def _clean(raw: object) -> str:
-    return str(raw).strip() if raw not in (None, "") else ""
-
-
-def _int(raw: object, default: int) -> int:
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return default
-
-
-def _required(params: dict[str, Any], key: str) -> str:
-    value = _clean(params.get(key))
-    if not value:
-        raise ValueError(f"{key} is required")
-    return value
-
-
-def _is_child_scope(scope: str) -> bool:
-    return scope.startswith("child:")
-
-
-def _child_name(scope: str) -> str:
-    return scope.split(":", 1)[1]
-
-
-def _error_payload(message: str) -> dict:
-    payload = normalize_graph_data({"nodes": {}, "edges": []})
-    payload["warnings"] = [message]
-    return payload

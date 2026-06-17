@@ -15,12 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from weld._workspace_inspect import resolve_child_root
-from weld.serializer import dumps_graph as _dumps_graph
 from weld.workspace import WorkspaceConfig
-from weld.workspace_state import (
-    WorkspaceState,
-    atomic_write_text,
-)
+from weld.workspace_state import WorkspaceState
 
 
 @dataclass
@@ -48,6 +44,7 @@ def recurse_children(
     *,
     incremental: bool | None = None,
     safe: bool = False,
+    names: set[str] | None = None,
 ) -> RecurseResult:
     """Discover each present child in-process, return a RecurseResult.
 
@@ -57,6 +54,15 @@ def recurse_children(
     to its ``.weld/graph.json`` so the subsequent root rebuild sees
     fresh state.
 
+    *names*: when given, only children whose name is in this set are
+    visited (others are silently skipped -- they were intentionally
+    excluded by the caller, not failed). This is the ADR 0066 part 3
+    auto-recurse-on-read seam: the read-time refresh selector passes the
+    *stale-or-uninitialized* subset so a one-child edit refreshes one
+    child, never the whole workspace. ``None`` preserves the existing
+    "visit every present/uninitialized child" behaviour used by
+    ``wd discover --recurse``.
+
     Returns a :class:`RecurseResult` whose ``discovered`` list holds the
     names of children that were successfully refreshed, and whose
     ``errors`` dict maps name -> formatted reason for children whose
@@ -65,6 +71,11 @@ def recurse_children(
     result = RecurseResult()
 
     for child in sorted(config.children, key=lambda c: c.name):
+        if names is not None and child.name not in names:
+            # Intentionally excluded by the caller's selection -- not a
+            # lifecycle skip, so no stderr notice (would be noise when the
+            # selector already narrowed to the stale subset).
+            continue
         entry = state.children.get(child.name)
         status = entry.status if entry else "unknown"
         if status not in ("present", "uninitialized"):
@@ -96,7 +107,19 @@ def _discover_child(
     incremental: bool | None = None,
     safe: bool = False,
 ) -> Exception | None:
-    """Discover a single child repo and write its graph atomically.
+    """Discover a single child repo and write its graph + ADR 0065 sidecar.
+
+    Delegates the write to ``_discover_single_repo(write_graph=True)`` -- the
+    same paired writer (``write_graph_with_meta``) the standalone
+    ``wd discover`` tail uses -- so the child's ``graph.json`` (volatile meta
+    stripped) **and** its ``graph-meta.json`` sidecar are refreshed together,
+    along with the discovery-state and derived sidecars. Writing only
+    ``graph.json`` (as this path did before) left the child's sidecar holding
+    the *old* discovered-from SHA; since the sidecar wins over in-graph meta
+    (ADR 0065), the child-staleness oracle would keep reporting it stale on
+    every subsequent read -- an auto-recurse-on-read (ADR 0066) re-refresh
+    loop. The paired write also makes recurse output byte-equivalent to a
+    standalone child discover.
 
     Returns ``None`` on success, or the captured exception instance on
     failure so the caller can record a structured error reason. The
@@ -106,8 +129,11 @@ def _discover_child(
     from weld.discover import _discover_single_repo
 
     print(f"[weld] recurse: discovering {name} ...", file=sys.stderr)
+    (child_root / ".weld").mkdir(parents=True, exist_ok=True)
     try:
-        graph = _discover_single_repo(child_root, incremental=incremental, safe=safe)
+        _discover_single_repo(
+            child_root, incremental=incremental, safe=safe, write_graph=True,
+        )
     except Exception as exc:  # noqa: BLE001 -- per-child isolation
         print(
             f"[weld] recurse: {name} failed: {exc}",
@@ -115,8 +141,5 @@ def _discover_child(
         )
         return exc
 
-    graph_path = child_root / ".weld" / "graph.json"
-    graph_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(graph_path, _dumps_graph(graph))
     print(f"[weld] recurse: {name} done", file=sys.stderr)
     return None

@@ -372,7 +372,11 @@ class FederatedGraphLoadTest(unittest.TestCase):
             _write_workspaces(root, [ChildEntry(name="repo-a", path="repo-a")])
             _write_root_graph(root, ["repo-a"])
 
-            graph = FederatedGraph(root)
+            # eager_index=False so the constructor does not pre-warm the
+            # child cache (ADR 0063 default-on amendment): this test is
+            # about the lazy JSON-load recheck warning, which only fires on
+            # an uncached first load via the patched ``_read_graph_bytes``.
+            graph = FederatedGraph(root, eager_index=False)
             first = (repo_a / ".weld" / "graph.json").read_bytes()
             second = first.replace(b'"label": "alpha"', b'"label": "beta" ')
             stderr = io.StringIO()

@@ -2,9 +2,9 @@
 
 ADR 0058 rewires ``_load_child`` to a :class:`SqliteBackedGraph` when
 the child's sidecar is fresh; read paths run against it. Option B
-added the lazy per-query inverted index. ADR 0063 adds an opt-in
-eager aggregation (``WELD_FEDERATION_EAGER`` / ``eager_index=True``).
-Stale/missing sidecars fall back via :meth:`_load_child_for_query`.
+added the lazy per-query inverted index. ADR 0063 adds the eager
+aggregation, default-on for fresh-sidecar children. Stale/missing
+sidecars fall back via :meth:`_load_child_for_query`.
 """
 
 from __future__ import annotations
@@ -67,8 +67,8 @@ class FederatedGraph:
         # ADR 0058: per-name sqlite-handle cache; shares the
         # ``_root_graph`` TOCTOU window (one MCP/CLI invocation).
         self._sqlite_cache: dict[str, SqliteBackedGraph] = {}
-        # ADR 0063: opt-in eager inverted-index aggregation. Kwarg wins;
-        # otherwise consult ``WELD_FEDERATION_EAGER`` (1/true/yes/on).
+        # ADR 0063: eager inverted-index aggregation, default-on for
+        # fresh-sidecar children. ``WELD_FEDERATION_EAGER=0`` force-disables.
         self.eager_index_active: bool = resolve_eager_flag(eager_index)
         self._eager_index: EagerFederationIndex = (
             build_eager_index_for(self) if self.eager_index_active
