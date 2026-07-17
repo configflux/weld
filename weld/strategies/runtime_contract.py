@@ -4,7 +4,7 @@ Ingests ``docs/runtime-contract.md`` (or any markdown file glob the source
 points at) as the authoritative record of runtime boundaries, health
 endpoints, and cross-boundary linkage for the HTTP interaction graph.
 
-Per ADR 0018's static-truth policy this strategy only emits:
+Per ADR 0086's static-truth policy this strategy only emits:
 
 - ``rpc`` nodes for healthcheck endpoints declared verbatim in the
   "Runtime Summary" table (``GET /healthz``, ``GET /readyz`` for the

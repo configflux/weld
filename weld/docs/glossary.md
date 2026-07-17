@@ -76,7 +76,7 @@ Values:
 - `implementation` -- production source code
 - `entrypoint` -- application startup file (Program.cs, `__main__.py`,
   `cli.py`, etc.); exempts `file:*` nodes from the
-  `file-anchor-symmetry` rule per ADR 0041 Layer 3
+  `file-anchor-symmetry` lint rule
 - `test` -- test code and test infrastructure
 - `config` -- configuration files
 - `doc` -- documentation
@@ -95,16 +95,16 @@ Core values: `service`, `package`, `entity`, `stage`, `concept`, `doc`,
 `build-target`, `test-target`, `boundary`, `entrypoint`, `gate`, `deploy`,
 `symbol`.
 
-ROS2 vocabulary (schema v3, ADR 0016): `ros_package`, `ros_interface`,
+ROS2 vocabulary (schema v3): `ros_package`, `ros_interface`,
 `ros_node`, `ros_topic`, `ros_service`, `ros_action`, `ros_parameter`.
 
-Interaction-surface vocabulary (schema v4, ADR 0018): `rpc`, `channel`.
+Interaction-surface vocabulary (schema v4): `rpc`, `channel`.
 `rpc` models a request/response or stream method exposed or consumed by
 a module (HTTP handler, gRPC method, ROS2 service or action). `channel`
 models a named pub/sub or stream endpoint (event topic, ROS2 topic,
 queue). Both node types carry the optional protocol metadata below.
 
-Agent Graph vocabulary (schema v5, ADR 0021): `subagent`, `skill`,
+Agent Graph vocabulary (schema v5): `subagent`, `skill`,
 `instruction`, `prompt`, `hook`, `mcp-server`, `permission`, `platform`,
 `scope`. These model static AI customization assets and the platform,
 path-scope, permission, and tool surfaces they declare.
@@ -146,8 +146,9 @@ Which protocol family an interaction surface belongs to. Defined in
 
 Values: `http`, `grpc`, `event`, `ros2`, `inproc`.
 
-See ADR 0018 for the static-truth policy that constrains how strategies
-stamp this field.
+This field follows the static-truth policy that constrains how strategies
+stamp it: values are derived from statically declared sources, never from
+runtime observation.
 
 ## Surface Kind
 
@@ -184,8 +185,9 @@ Values:
 ## Declared In
 
 Optional repo-relative path to the declarative source (IDL file, schema,
-manifest, launch file) that declares an interaction surface. Per ADR 0018,
-`declared_in` is always a checked-in path -- never a runtime URI.
+manifest, launch file) that declares an interaction surface. Under the
+static-truth policy, `declared_in` is always a checked-in path -- never a
+runtime URI.
 
 ## Adapter
 

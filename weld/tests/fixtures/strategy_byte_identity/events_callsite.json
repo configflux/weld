@@ -1,0 +1,191 @@
+{
+  "discovered_from": [
+    "src/pkg/_shared.py",
+    "src/pkg/consumers.py",
+    "src/pkg/producers.py"
+  ],
+  "edges": [
+    {
+      "from": "file:src/pkg/_shared",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "events"
+      },
+      "to": "channel:kafka:shared.topic",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/pkg/consumers",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "events"
+      },
+      "to": "channel:kafka:orders.events",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/pkg/consumers",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "events"
+      },
+      "to": "channel:kafka:users.created",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/pkg/consumers",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "events"
+      },
+      "to": "channel:tcp:notify:users",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/pkg/producers",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "events"
+      },
+      "to": "channel:kafka:orders.events",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/pkg/producers",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "events"
+      },
+      "to": "channel:kafka:topic.x",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/pkg/producers",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "events"
+      },
+      "to": "channel:tcp:notify:users",
+      "type": "contains"
+    },
+    {
+      "from": "file:src/pkg/producers",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "events"
+      },
+      "to": "channel:kafka:orders.literal",
+      "type": "contains"
+    }
+  ],
+  "nodes": {
+    "channel:kafka:orders.events": {
+      "label": "orders.events",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "internal",
+        "confidence": "definite",
+        "declared_in": "src/pkg/producers.py",
+        "name": "orders.events",
+        "protocol": "event",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "events",
+        "surface_kind": "pub_sub",
+        "transport": "kafka"
+      },
+      "type": "channel"
+    },
+    "channel:kafka:orders.literal": {
+      "label": "orders.literal",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "internal",
+        "confidence": "definite",
+        "declared_in": "src/pkg/producers.py",
+        "name": "orders.literal",
+        "protocol": "event",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "events",
+        "surface_kind": "pub_sub",
+        "transport": "kafka"
+      },
+      "type": "channel"
+    },
+    "channel:kafka:shared.topic": {
+      "label": "shared.topic",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "internal",
+        "confidence": "definite",
+        "declared_in": "src/pkg/_shared.py",
+        "name": "shared.topic",
+        "protocol": "event",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "events",
+        "surface_kind": "pub_sub",
+        "transport": "kafka"
+      },
+      "type": "channel"
+    },
+    "channel:kafka:topic.x": {
+      "label": "topic.x",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "internal",
+        "confidence": "definite",
+        "declared_in": "src/pkg/producers.py",
+        "name": "topic.x",
+        "protocol": "event",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "events",
+        "surface_kind": "pub_sub",
+        "transport": "kafka"
+      },
+      "type": "channel"
+    },
+    "channel:kafka:users.created": {
+      "label": "users.created",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "internal",
+        "confidence": "definite",
+        "declared_in": "src/pkg/consumers.py",
+        "name": "users.created",
+        "protocol": "event",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "events",
+        "surface_kind": "pub_sub",
+        "transport": "kafka"
+      },
+      "type": "channel"
+    },
+    "channel:tcp:notify:users": {
+      "label": "notify:users",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "internal",
+        "confidence": "definite",
+        "declared_in": "src/pkg/producers.py",
+        "name": "notify:users",
+        "protocol": "event",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "events",
+        "surface_kind": "pub_sub",
+        "transport": "tcp"
+      },
+      "type": "channel"
+    }
+  }
+}

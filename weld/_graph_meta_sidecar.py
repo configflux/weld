@@ -37,12 +37,15 @@ from weld.workspace_state import atomic_write_text
 
 __all__ = [
     "VOLATILE_META_KEYS",
+    "STALENESS_MIRROR_KEYS",
     "SIDECAR_NAME",
     "SIDECAR_VERSION",
     "sidecar_path_for",
     "split_volatile_meta",
     "read_sidecar_meta",
     "merge_sidecar_meta",
+    "read_staleness_meta",
+    "read_meta_for_staleness",
     "write_graph_with_meta",
     "load_graph_meta",
 ]
@@ -50,6 +53,20 @@ __all__ = [
 # Meta fields relocated out of ``graph.json`` into the sidecar (ADR 0065).
 # Order is irrelevant for correctness; kept stable for readability.
 VOLATILE_META_KEYS: tuple[str, ...] = ("updated_at", "git_sha")
+
+# Staleness-precheck mirror fields (bd aqqa). ``discovered_from`` is the
+# content-stable staleness input that stays authoritative in ``graph.json``;
+# it is *copied* into the sidecar so the read-path precheck
+# (:func:`read_staleness_meta`) can reach it without parsing the multi-MB
+# graph. ``graph_size`` / ``graph_mtime_ns`` pin the exact ``graph.json`` this
+# mirror was written beside, so the reader can prove the mirror is still
+# current before trusting it. All three must be present *and* the stat pair
+# must match the live ``graph.json`` for the fast path to engage.
+STALENESS_MIRROR_KEYS: tuple[str, ...] = (
+    "discovered_from",
+    "graph_size",
+    "graph_mtime_ns",
+)
 
 # Sidecar file name; pairs with ``graph.json`` by location in ``.weld/``.
 SIDECAR_NAME: str = "graph-meta.json"
@@ -96,6 +113,22 @@ def split_volatile_meta(graph: dict) -> tuple[dict, dict]:
     return on_disk, volatile
 
 
+def _read_sidecar_raw(graph_path: Path) -> dict | None:
+    """Best-effort parse of the sidecar into its raw dict, or ``None``.
+
+    Returns ``None`` when the sidecar is missing, unreadable, malformed, or not
+    a JSON object -- the normal cases (legacy graph, fresh checkout) that must
+    never raise into a read command. Shared by every sidecar reader so the
+    parse rules live in one place.
+    """
+    path = sidecar_path_for(graph_path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def read_sidecar_meta(graph_path: Path) -> dict:
     """Best-effort read of the volatile keys from the sidecar.
 
@@ -105,14 +138,80 @@ def read_sidecar_meta(graph_path: Path) -> dict:
     sidecar is the normal case for legacy graphs and fresh checkouts, and
     must never raise into a read command.
     """
-    path = sidecar_path_for(graph_path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
+    data = _read_sidecar_raw(graph_path)
+    if data is None:
         return {}
     return {k: data[k] for k in VOLATILE_META_KEYS if k in data}
+
+
+def read_staleness_meta(graph_path: Path) -> dict | None:
+    """Return ``{git_sha, discovered_from}`` from the sidecar, or ``None``.
+
+    The cheap read-path staleness precheck (bd aqqa): serves the exact two
+    fields :func:`weld._staleness.compute_stale_info` reads, *without* parsing
+    the multi-MB ``graph.json``. Returns ``None`` to signal the caller must
+    fall back to the authoritative full parse.
+
+    Precedence / when fallback triggers -- the sidecar mirror is trusted **only**
+    when it both carries every :data:`STALENESS_MIRROR_KEYS` field *and* its
+    recorded ``(graph_size, graph_mtime_ns)`` exactly match the live
+    ``graph.json`` stat. ``None`` is returned (fall back) for any other state:
+
+    * sidecar missing / unreadable / not an object (legacy graph, fresh
+      checkout whose gitignored sidecar was never fetched);
+    * sidecar without the mirror (an older or ``wd warm``-stamped sidecar);
+    * ``graph.json`` rewritten since the sidecar -- ``wd discover`` (which
+      rewrites both together), a ``git checkout`` of a committed graph, or an
+      editor save all change ``mtime_ns``, so the stale mirror is rejected.
+
+    When it returns a dict, that dict is byte-identical to what the full parse
+    would feed ``compute_stale_info``: ``write_graph_with_meta`` writes
+    ``graph.json`` and this mirror in one paired write, and the stat guard
+    proves ``graph.json`` has not diverged since. ``git_sha`` may be ``None``
+    (non-git root or unavailable git), which is exactly how the full path would
+    also see it.
+    """
+    try:
+        graph_stat = Path(graph_path).stat()
+    except OSError:
+        return None
+    data = _read_sidecar_raw(graph_path)
+    if data is None:
+        return None
+    if not all(key in data for key in STALENESS_MIRROR_KEYS):
+        return None
+    if data.get("graph_size") != graph_stat.st_size:
+        return None
+    if data.get("graph_mtime_ns") != graph_stat.st_mtime_ns:
+        return None
+    return {
+        "git_sha": data.get("git_sha"),
+        "discovered_from": data.get("discovered_from"),
+    }
+
+
+def read_meta_for_staleness(graph_path: Path) -> dict | None:
+    """Meta for the staleness precheck: cheap sidecar mirror, else full parse.
+
+    Fast path (bd aqqa): :func:`read_staleness_meta` returns
+    ``{git_sha, discovered_from}`` from the sidecar without reading graph bytes
+    when the mirror is provably current. Fallback (the prior behaviour):
+    parse ``graph.json`` and overlay the sidecar's volatile keys via
+    :func:`merge_sidecar_meta`. Both feed ``compute_stale_info`` identical
+    ``git_sha`` / ``discovered_from``. Returns ``None`` when ``graph.json`` is
+    missing, unreadable, or not a JSON object, so the auto-refresh caller bails
+    and lets the normal load surface a friendly error.
+    """
+    fast = read_staleness_meta(graph_path)
+    if fast is not None:
+        return fast
+    try:
+        data = json.loads(Path(graph_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return merge_sidecar_meta(data.get("meta", {}), graph_path)
 
 
 def merge_sidecar_meta(graph_meta: dict, graph_path: Path) -> dict:
@@ -208,10 +307,39 @@ def write_graph_with_meta(
         atomic_write_text(path, _dumps_graph(on_disk))
     if volatile:
         payload = {"version": SIDECAR_VERSION, **volatile}
+        # bd aqqa: mirror the staleness inputs so the read-path precheck can
+        # skip parsing graph.json. Pinned to the exact on-disk graph via its
+        # (size, mtime_ns); read_staleness_meta rejects the mirror the instant
+        # that stat pair stops matching graph.json.
+        payload.update(_staleness_mirror(path, graph))
         atomic_write_text(
             sidecar_path_for(path),
             json.dumps(payload, sort_keys=True, indent=2, ensure_ascii=False) + "\n",
         )
+
+
+def _staleness_mirror(graph_path: Path, graph: dict) -> dict:
+    """Return the :data:`STALENESS_MIRROR_KEYS` payload for the sidecar.
+
+    Reads ``discovered_from`` from *graph*'s meta and stats the just-written
+    ``graph.json`` to pin the mirror to it. Returns ``{}`` (no mirror; the
+    reader falls back to the full parse) when ``discovered_from`` is absent or
+    ``graph.json`` cannot be stat-ed -- the mirror is a pure optimisation and
+    must never block the paired write.
+    """
+    meta = graph.get("meta")
+    discovered_from = meta.get("discovered_from") if isinstance(meta, dict) else None
+    if discovered_from is None:
+        return {}
+    try:
+        graph_stat = graph_path.stat()
+    except OSError:
+        return {}
+    return {
+        "discovered_from": discovered_from,
+        "graph_size": graph_stat.st_size,
+        "graph_mtime_ns": graph_stat.st_mtime_ns,
+    }
 
 
 def load_graph_meta(graph_path: Path) -> dict:

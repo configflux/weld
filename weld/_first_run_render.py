@@ -19,6 +19,7 @@ from weld._enrichment_cost import (
     estimate_enrichment_cost,
     format_cost_range,
 )
+from weld._prime_coverage import MEANINGFUL_COVERAGE_THRESHOLD
 
 
 def branch_a_prompt(provider: str, node_count: int) -> str:
@@ -76,15 +77,38 @@ def branch_b_message(agent: str) -> str:
     )
 
 
-def branch_c_message() -> str:
-    """Return the Branch C silent tip (one line, no prompt).
+# Meaningful description-coverage (percent) at or above which the long-tail
+# Branch C tip falls silent: past this line the graph is already well
+# described and nudging to enrich would be inaccurate. Reuses ``wd prime``'s
+# escalation threshold so both surfaces agree on what "well covered" means.
+_TIP_SILENT_COVERAGE_PCT = MEANINGFUL_COVERAGE_THRESHOLD
 
-    Branch C is the long-tail reminder for CI and shell users who
-    have no provider and no agent. The text mentions both paths so
-    the user has a discoverable next step regardless of where they
-    end up running enrichment.
+
+def branch_c_message(coverage_pct: float = 0.0) -> str:
+    """Return the Branch C silent tip, worded for *coverage_pct*.
+
+    Branch C is the long-tail reminder for CI and shell users who have no
+    provider and no agent. Because enrichment now survives ``wd discover``
+    (ADR 0079), a rediscovered graph can already carry descriptions, so the
+    tip is coverage-aware across three regimes:
+
+    * ``0`` -- descriptions are genuinely empty; nudge to populate.
+    * ``0 < pct < threshold`` -- coverage is sparse; report the percent and
+      nudge to raise it (not "empty", which would be a lie).
+    * ``>= threshold`` -- coverage is already good; stay silent (return
+      ``""``) rather than nag inaccurately.
+
+    Both nudging regimes name ``wd enrich`` and ``/enrich-weld`` so the user
+    keeps a discoverable next step regardless of environment.
     """
+    if coverage_pct >= _TIP_SILENT_COVERAGE_PCT:
+        return ""
+    if coverage_pct <= 0.0:
+        state, action = "descriptions empty", "to populate"
+    else:
+        state = f"descriptions sparse ({coverage_pct:g}%)"
+        action = "to raise coverage"
     return (
-        "Tip: descriptions empty. Run 'wd enrich --provider <name>' "
-        "to populate (or run /enrich-weld inside an agent harness).\n"
+        f"Tip: {state}. Run 'wd enrich --provider <name>' {action} "
+        "(or run /enrich-weld inside an agent harness).\n"
     )

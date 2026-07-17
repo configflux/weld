@@ -13,6 +13,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from weld.agent_graph_metadata_diagnostics import broken_file_diagnostics
 from weld.agent_graph_metadata_utils import (
     dedupe_references,
     diagnostic,
@@ -32,7 +33,6 @@ def parse_toml_asset(
     # need ParsedAgentGraphAsset / helpers that live there.
     from weld.agent_graph_metadata import (
         ParsedAgentGraphAsset,
-        _broken_file_diagnostics,
         _config_props,
         _mcp_nodes,
         _metadata_references,
@@ -55,9 +55,9 @@ def parse_toml_asset(
     for raw in iter_strings(payload):
         refs.extend(_text_references(raw, start_line=1, known_commands=known_commands))
     refs = dedupe_references(refs)
-    diagnostics = _broken_file_diagnostics(root, rel_path, refs)
+    diagnostics = broken_file_diagnostics(root, rel_path, refs)
     for node in derived:
-        diagnostics.extend(_broken_file_diagnostics(root, rel_path, node.references))
+        diagnostics.extend(broken_file_diagnostics(root, rel_path, node.references))
     return ParsedAgentGraphAsset(
         props=props, references=tuple(dedupe_references(refs)),
         derived_nodes=tuple(derived), diagnostics=tuple(diagnostics),

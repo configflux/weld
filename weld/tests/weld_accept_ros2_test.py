@@ -5,7 +5,7 @@ ros2_package strategies against the ``ros2_accept`` fixture and
 verifies the resulting interaction graph: nodes, topics, services,
 parameters, interface types, package dependencies, and edges.
 
-Per ADR 0018, all ROS2 surfaces are statically extracted from source
+Per ADR 0086, all ROS2 surfaces are statically extracted from source
 text without requiring colcon build or runtime introspection.
 """
 

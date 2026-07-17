@@ -10,7 +10,7 @@ Verifies that the FastAPI strategy links routes to:
   entries, and Pydantic body parameters.
 
 It also locks in the protocol metadata stamped on every ``route`` node per
-ADR 0018 and tracked project: ``protocol=http``, ``surface_kind=request_response``,
+ADR 0086 and tracked project: ``protocol=http``, ``surface_kind=request_response``,
 ``boundary_kind=inbound``, ``transport=http``, ``declared_in=<rel-path>``.
 
 The extraction must stay conservative and static -- no runtime hooks, no
@@ -31,7 +31,7 @@ def _write(pkg: Path, name: str, body: str) -> None:
     (pkg / name).write_text(textwrap.dedent(body))
 
 class FastapiProtocolMetadataTest(unittest.TestCase):
-    """Every route node should carry ADR 0018 interaction-surface metadata."""
+    """Every route node should carry ADR 0086 interaction-surface metadata."""
 
     def test_route_stamps_http_protocol_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as d:

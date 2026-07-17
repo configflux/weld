@@ -5,7 +5,7 @@
   boundary semantics, with actionable diagnostics for bundled strategies
   and external adapters.
 
-See ADR 0018 (the interaction-structure and static-truth ADR) for the
+See ADR 0086 (the interaction-structure and static-truth ADR) for the
 rationale, the static-truth policy, and the four protocol families
 (HTTP, gRPC, events, ROS2) these additions standardize over.
 

@@ -11,7 +11,6 @@ refreshes only volatile meta. Extracted from :mod:`weld.discover` to keep
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,7 +38,8 @@ def no_change_refresh(
     backfilled ``discovered_from`` would make the bytes differ from
     *existing_graph_bytes*).
     """
-    print("[weld] notice: no files changed, graph is up to date", file=sys.stderr)
+    from weld._notice import emit
+    emit("[weld] notice: no files changed, graph is up to date")
     refreshed = dict(existing_graph)
     refreshed["meta"] = dict(existing_graph.get("meta", {}))
     refreshed["meta"]["version"] = SCHEMA_VERSION

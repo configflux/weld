@@ -192,7 +192,7 @@ def _adapter_metric_cell(
 
 _METHODOLOGY = """\
 This report is produced by ``wd bench --public``. The methodology is
-defined by ADR 0059:
+defined as follows:
 
 - Public corpus is SHA-pinned (see the Corpus manifest section).
 - Each task has a ground-truth answer key (repo-relative files).
@@ -351,7 +351,8 @@ def render_public_report(report: PublicRunReport) -> str:
     lines: list[str] = [
         f"# Weld public benchmark ({report.weld_version})",
         "",
-        "Published methodology and corpus results per ADR 0059.",
+        "Published methodology and corpus results per the public "
+        "benchmark methodology.",
         "",
         "## Methodology",
         "",

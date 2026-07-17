@@ -13,7 +13,6 @@ a complete re-scan.
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -26,6 +25,7 @@ from weld._discover_federate import merge_cross_repo_edges, retag_federated_orig
 from weld._discover_no_change import no_change_refresh as _no_change_refresh
 from weld._discover_postprocess import post_process as _post_process
 from weld._discover_sidecar import (finalize_single_repo as _finalize_single_repo,
+                                    persist_cli_graph as _persist_cli_graph,
                                     persist_sqlite_sidecar as _persist_sqlite_sidecar)
 from weld._discover_state_check import (files_missing_from_graph,
                                          graph_files_with_nodes)
@@ -43,12 +43,12 @@ from weld.discovery_state import (StateDiff, build_file_hashes, diff_state,
                                    purge_stale_nodes, resolve_source_file_map)
 from weld._graph_meta_sidecar import write_graph_with_meta as _write_graph_with_meta
 from weld.federation_root import build_root_meta_graph
-from weld.serializer import dumps_graph as _dumps_graph
 from weld.workspace import WorkspaceConfigError
 from weld.workspace_state import (WorkspaceLock, WorkspaceLockedError,
                                   build_workspace_state, load_workspace_config,
                                   save_workspace_state)
 from weld.strategies._helpers import filter_glob_results
+from weld._notice import emit
 
 
 def _drain_context_warnings(context: dict) -> None:
@@ -75,7 +75,7 @@ def _drain_context_warnings(context: dict) -> None:
         if text in seen:
             continue
         seen.add(text)
-        print(f"[weld] warning: {text}", file=sys.stderr)
+        emit(f"[weld] warning: {text}")
 
 
 def _discover_single_repo(
@@ -142,13 +142,13 @@ def _discover_single_repo(
 
     if incremental:
         if old_state is None:
-            print("[weld] notice: no discovery state file, running full discovery", file=sys.stderr)
+            emit("[weld] notice: no discovery state file, running full discovery")
             incremental = False
         elif not graph_path.is_file():
-            print("[weld] notice: no graph.json found, running full discovery", file=sys.stderr)
+            emit("[weld] notice: no graph.json found, running full discovery")
             incremental = False
         elif existing_graph is None:
-            print("[weld] warning: corrupt graph.json, falling back to full discovery", file=sys.stderr)
+            emit("[weld] warning: corrupt graph.json, falling back to full discovery")
             incremental = False
 
     current_hashes = build_file_hashes(root, current_file_set)
@@ -162,7 +162,10 @@ def _discover_single_repo(
             nodes.update(r.nodes)
             edges.extend(r.edges)
             df.extend(r.discovered_from)
-        graph = _post_process(nodes, edges, context, config, root, df)
+        graph = _post_process(
+            nodes, edges, context, config, root, df,
+            previous_graph=existing_graph,
+        )
         _finalize_single_repo(
             root, current_hashes, graph, with_sqlite, write_graph,
         )
@@ -233,7 +236,10 @@ def _discover_single_repo(
     # Merge discovered_from
     old_df = [p for p in existing_graph.get("meta", {}).get("discovered_from", []) if p not in state_diff.deleted]
     new_df = [str(p) for files in source_file_map for p in files if p in dirty]
-    graph = _post_process(ex_nodes, ex_edges, context, config, root, old_df + new_df)
+    graph = _post_process(
+        ex_nodes, ex_edges, context, config, root, old_df + new_df,
+        previous_graph=existing_graph,
+    )
     _finalize_single_repo(
         root, current_hashes, graph, with_sqlite, write_graph,
     )
@@ -328,9 +334,9 @@ def _emit_compile_db_stub_main(root: Path) -> int:
     try:
         json_p, readme_p = emit_compile_db_stub(root)
     except FileExistsError as exc:
-        print(f"[weld] error: {exc}", file=sys.stderr)
+        emit(f"[weld] error: {exc}")
         return 2
-    print(f"[weld] wrote stub {json_p} and {readme_p}", file=sys.stderr)
+    emit(f"[weld] wrote stub {json_p} and {readme_p}")
     return 0
 
 
@@ -359,21 +365,22 @@ def main(argv: list[str] | None = None) -> int:
             with_sqlite=not args.no_sqlite,
         )
     except (WorkspaceConfigError, WorkspaceLockedError) as exc:
-        print(f"[weld] error: {exc}", file=sys.stderr)
+        emit(f"[weld] error: {exc}")
         return 2
     except EmptyFederatedGraphRefusedError:
         # The guard already wrote the explanatory stderr message.
         return 3
-    if output_path is not None and not is_federated:
-        # ADR 0065: write graph.json (volatile meta stripped) plus the
-        # graph-meta.json sidecar when the output is the canonical name.
-        _write_graph_with_meta(output_path, result)
-        if not args.no_sqlite and output_path.name == "graph.json":  # ADR 0058: sidecar pairs by name
-            _persist_sqlite_sidecar(output_path.parent, result)
-    elif output_path is None:
-        sys.stdout.write(_dumps_graph(result))
+    # Persist + echo the graph (ADR 0019). A single-repo root writes
+    # .weld/graph.json even without --output so reads resolve after a bare
+    # discover (bd ck0w); federated writes land inside discover()'s workspace
+    # lock. Sibling helper keeps the write-shape logic out of main().
+    _persist_cli_graph(
+        root_path, output_path, result,
+        is_federated=is_federated, no_sqlite=args.no_sqlite,
+    )
+    # Summary names the canonical target whenever we persisted one.
     sp = output_path or ((root_path / ".weld" / "graph.json")
-                         if args.write_root_graph and is_federated else None)
+                         if not is_federated or args.write_root_graph else None)
     _emit_summary(result, sp, time.monotonic() - started, quiet=args.quiet)
     # ADR 0052: first-run enrichment policy. Federated roots are
     # scoped out today.

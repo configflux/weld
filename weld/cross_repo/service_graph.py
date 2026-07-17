@@ -27,7 +27,7 @@ Matching rules are static and intentionally narrow:
 4. The client's ``(METHOD, path)`` must exactly equal the server's
    ``(METHOD, path)`` for an edge to be emitted. No normalisation,
    no trailing-slash tolerance, no prefix matching: the static-truth
-   policy from ADR 0018 applies end-to-end across repos too.
+   policy from ADR 0086 applies end-to-end across repos too.
 
 Output edges are typed ``cross_repo:calls`` and carry the matched
 ``host``, ``port`` (``None`` when absent), ``path``, ``method``, and the
@@ -273,7 +273,7 @@ class ServiceGraphResolver(CrossRepoResolver):
                         # disambiguating pieces of evidence -- host
                         # equals child name, HTTP method matches
                         # exactly, path matches exactly. The
-                        # static-truth policy from ADR 0018 makes that
+                        # static-truth policy from ADR 0086 makes that
                         # a `definite` declaration, not a guess.
                         "source_strategy": "service_graph",
                         "confidence": "definite",

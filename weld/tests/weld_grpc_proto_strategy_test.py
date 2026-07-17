@@ -1,7 +1,7 @@
 """Tests for the grpc_proto strategy (tracked project).
 
 Extracts services, rpc methods, message contracts, and enums from
-declared ``.proto`` files. Per ADR 0018's static-truth policy,
+declared ``.proto`` files. Per ADR 0086's static-truth policy,
 extraction is text-only: the strategy never invokes protoc and never
 inspects runtime bindings. Emitted rpc nodes are stamped with
 ``protocol="grpc"``, ``transport="http2"``, ``boundary_kind="inbound"``,

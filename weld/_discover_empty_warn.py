@@ -26,8 +26,8 @@ repo's 400-line cap and so the guard can be unit-tested in isolation.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+from weld._notice import emit
 
 __all__ = ["no_sources_warning", "warn_if_no_sources"]
 
@@ -68,4 +68,4 @@ def warn_if_no_sources(root: Path, sources: list) -> None:
     """
     msg = no_sources_warning(root, sources)
     if msg is not None:
-        print(f"[weld] warning: {msg}", file=sys.stderr)
+        emit(f"[weld] warning: {msg}")

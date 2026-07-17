@@ -107,6 +107,7 @@ _INFERRED_STRATEGIES: tuple[str, ...] = (
     "events_bindings",
     "events_callsite",
     "events_config",
+    "events_mqtt",
     "events",
     "grpc_bindings",
     "ros2_topology",

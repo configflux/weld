@@ -25,7 +25,7 @@ from weld.warnings import check_confidence_gaps, check_freshness, check_partial_
 # -- Stable JSON output contract -------------------------------------------
 #
 # The brief output is a versioned JSON envelope. v2 adds the ``interfaces``
-# bucket and interaction-aware ranking per ADR 0018 and tracked project:
+# bucket and interaction-aware ranking per ADR 0086 and tracked project:
 #
 #   {
 #     "brief_version": 2,
@@ -65,7 +65,7 @@ _BUILD_TYPES: frozenset[str] = frozenset([
 _BOUNDARY_TYPES: frozenset[str] = frozenset(["boundary", "entrypoint"])
 
 # Node types that count as interaction surfaces -- ``rpc``/``channel`` are
-# the generalized Phase 7 vocabulary (ADR 0018); ROS2 interaction nodes are
+# the generalized Phase 7 vocabulary (ADR 0086); ROS2 interaction nodes are
 # their domain-specific counterparts and belong alongside them in the
 # interfaces bucket.
 _INTERFACE_TYPES: frozenset[str] = frozenset([
@@ -95,7 +95,7 @@ _INTERACTION_QUERY_TOKENS: frozenset[str] = frozenset([
 def _has_interaction_metadata(node: dict) -> bool:
     """Return True if *node* carries any interaction-surface metadata.
 
-    Per ADR 0018, ``protocol``, ``surface_kind``, ``transport``, and
+    Per ADR 0086, ``protocol``, ``surface_kind``, ``transport``, and
     ``boundary_kind`` are optional props that can ride on any node type.
     A node is interaction-relevant when any of them is set to a recognized
     vocabulary value.
@@ -373,6 +373,11 @@ def main(argv: list[str] | None = None) -> None:
         "--no-refresh", dest="no_refresh", action="store_true", default=False,
         help="Skip auto-refresh on stale graph (ADR 0051).",
     )
+    parser.add_argument(
+        "--full-size", dest="full_size", action="store_true", default=False,
+        help="Skip the ADR 0082 read byte budget and emit the full (edge-de-"
+        "dangled) brief.",
+    )
     args = parser.parse_args(argv)
 
     from weld._auto_refresh import auto_refresh_if_stale
@@ -388,6 +393,8 @@ def main(argv: list[str] | None = None) -> None:
     # A corrupt/unsupported graph yields a one-line structured error, not a
     # traceback (shared contract via weld._errors).
     g = load_graph_or_exit(Graph(args.root))
-    result = brief(g, args.term, limit=args.limit)
+    from weld.read import shape_brief
+
+    result = shape_brief(brief(g, args.term, limit=args.limit), full_size=args.full_size)
     json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")

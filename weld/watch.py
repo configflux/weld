@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
+from weld._notice import emit
 
 
 DEFAULT_DEBOUNCE: float = 0.5   # seconds before flushing pending changes
@@ -189,10 +190,9 @@ def get_backend(
             try:
                 return _WatchdogBackend(root, enumerate_fn, observers_mod)
             except Exception as exc:
-                print(
+                emit(
                     f"[weld] watchdog backend failed ({exc}); "
-                    f"falling back to polling",
-                    file=sys.stderr,
+                    f"falling back to polling"
                 )
     return _PollingBackend(root, enumerate_fn)
 
@@ -241,7 +241,7 @@ class WatchEngine:
             try:
                 self.on_change(flushed)
             except Exception as exc:  # pragma: no cover - defensive
-                print(f"[weld] watch on_change error: {exc}", file=sys.stderr)
+                emit(f"[weld] watch on_change error: {exc}")
 
     def run_forever(self, poll_interval: float = POLL_INTERVAL) -> None:
         """Drive ``tick()`` in a loop; callers handle KeyboardInterrupt."""

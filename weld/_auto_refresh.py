@@ -26,13 +26,14 @@ elapsed milliseconds, and incremental/full flag.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import IO, Final
+
+from weld._notice import emit
 
 
 _ENV_VAR: Final[str] = "WELD_AUTO_REFRESH"
@@ -49,27 +50,20 @@ def _env_disabled(env: Mapping[str, str]) -> bool:
 
 
 def _read_graph_meta(graph_path: Path) -> dict | None:
-    """Best-effort read of ``meta`` from ``.weld/graph.json``.
+    """Best-effort read of the staleness ``meta`` for ``.weld/graph.json``.
 
-    Returns ``None`` when the file is missing or unreadable. A corrupt
-    graph is treated like a missing one -- we cannot make a sensible
-    staleness call on it, so the auto-refresh path bails and lets the
-    normal load surface a friendly error.
+    Returns ``None`` when the graph is missing, unreadable, or corrupt -- we
+    cannot make a sensible staleness call on it, so the auto-refresh path bails
+    and lets the normal load surface a friendly error.
 
-    ADR 0065: the staleness signal depends on ``meta.git_sha``, which now
-    lives in the ``graph-meta.json`` sidecar (with a legacy in-graph
-    fallback). Overlay the sidecar so ``compute_stale_info`` sees the
-    recorded SHA; a graph whose sidecar is absent (fresh checkout) yields
-    no ``git_sha`` and is correctly treated as stale.
+    bd aqqa: delegates to
+    :func:`weld._graph_meta_sidecar.read_meta_for_staleness`, which serves the
+    two fields ``compute_stale_info`` needs (``git_sha``, ``discovered_from``)
+    from the ADR 0065 sidecar without parsing the multi-MB graph when the mirror
+    is provably current, else falls back to the full parse + sidecar merge.
     """
-    try:
-        data = json.loads(graph_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    from weld._graph_meta_sidecar import merge_sidecar_meta
-    return merge_sidecar_meta(data.get("meta", {}), graph_path)
+    from weld._graph_meta_sidecar import read_meta_for_staleness
+    return read_meta_for_staleness(graph_path)
 
 
 def _is_federated_root(root: Path) -> bool:
@@ -95,16 +89,18 @@ def _emit_banner(
     if json_output or safe or files_changed == 0:
         return
     mode = "incremental" if incremental else "full"
-    stderr.write(
+    emit(
         f"[weld] auto-refresh: {files_changed} file(s) changed, "
-        f"{mode} refresh in {elapsed_ms} ms\n"
+        f"{mode} refresh in {elapsed_ms} ms",
+        stream=stderr,
     )
 
 
 def _emit_no_refresh_warning(stderr: IO[str]) -> None:
-    stderr.write(
+    emit(
         "[weld] warning: graph is stale; --no-refresh in effect, "
-        "answer may not reflect current source\n"
+        "answer may not reflect current source",
+        stream=stderr,
     )
 
 
@@ -285,8 +281,14 @@ def auto_refresh_if_stale(
         _emit_no_refresh_warning(err)
         return None
 
-    return _do_refresh(
-        root, safe=safe, json_output=json_output, stderr=err,
+    # bd o18k: skip re-running discovery (~0.7-6s) when the working-tree
+    # signature and graph identity are unchanged since our last refresh, so
+    # repeated reads *between* edits do not each re-discover.
+    from weld._refresh_cache import refresh_with_cache
+    return refresh_with_cache(
+        root, graph_path, meta,
+        lambda: _do_refresh(root, safe=safe, json_output=json_output, stderr=err),
+        head_sha=info.get("current_sha"),  # bd q3le: reuse HEAD, no re-shell
     )
 
 

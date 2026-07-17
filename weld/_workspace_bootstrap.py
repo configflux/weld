@@ -27,7 +27,6 @@ modulo ``meta.generated_at`` / ``meta.updated_at`` stamps.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from weld._gitignore_writer import write_weld_gitignore
@@ -41,6 +40,7 @@ from weld.workspace_state import (
     load_workspace_config,
     save_workspace_state,
 )
+from weld._notice import emit
 
 __all__ = ["BootstrapResult", "bootstrap_workspace"]
 
@@ -382,10 +382,9 @@ def bootstrap_workspace(
         if name not in result.children_present
     ]
     if missing:
-        print(
+        emit(
             "[weld] bootstrap: children not present after run: "
-            + ", ".join(missing),
-            file=sys.stderr,
+            + ", ".join(missing)
         )
 
     return result

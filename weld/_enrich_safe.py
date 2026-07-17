@@ -29,9 +29,9 @@ same name ``wd doctor`` would have endorsed.
 from __future__ import annotations
 
 import os
-import sys
 
 from weld.providers import NETWORK_PROVIDERS, _PROVIDER_LOADERS
+from weld._notice import emit
 
 # Documented agent-direct entry point. Surfaced in error messages when no
 # provider is installed (or under --safe, where every registered provider
@@ -152,8 +152,8 @@ def refuse_if_network_provider(provider_name: str, *, safe: bool) -> None:
     if not safe:
         return
     if provider_name in NETWORK_PROVIDERS:
-        sys.stderr.write(
-            f"[weld] safe mode: refused enrichment provider '{provider_name}'\n"
+        emit(
+            f"[weld] safe mode: refused enrichment provider '{provider_name}'"
         )
         raise SafeModeRefusedError(
             f"safe mode refused enrichment provider {provider_name!r}: "

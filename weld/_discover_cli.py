@@ -12,7 +12,10 @@ import argparse
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wd discover",
-        description="Run config-driven Weld discovery and emit graph JSON to stdout")
+        description="Run config-driven Weld discovery. For a single-repo root, "
+                    "writes the canonical .weld/graph.json (or --output PATH) so "
+                    "query/context/stats resolve; without --output, the graph "
+                    "JSON is also echoed to stdout.")
     parser.add_argument("root", nargs="?", default=".", help="Project root directory (default: .)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--incremental", action="store_true", default=False,

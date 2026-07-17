@@ -17,6 +17,7 @@ from pathlib import PurePosixPath
 from urllib.parse import parse_qs, unquote, urlparse
 
 from weld.viz._export_route import export_response
+from weld.viz._views import views_response
 from weld.viz.adapter import (
     DEFAULT_MAX_EDGES,
     DEFAULT_MAX_NODES,
@@ -66,13 +67,20 @@ def make_server(
     host: str = "127.0.0.1",
     port: int = 0,
     graph_kind: str = "code",
+    enable_saved_views: bool = False,
 ) -> ThreadingHTTPServer:
-    """Create a configured visualizer HTTP server."""
+    """Create a configured visualizer HTTP server.
+
+    ``enable_saved_views`` gates the opt-in ``/api/views`` write surface
+    (ADR 0092); default off keeps the server read-only.
+    """
     api = _api_for(root, graph_kind)
     ensure_available = getattr(api, "ensure_available", None)
     if ensure_available is not None:
         ensure_available()
-    handler_cls = _handler_for(api, graph_kind=graph_kind)
+    handler_cls = _handler_for(
+        api, graph_kind=graph_kind, enable_saved_views=enable_saved_views
+    )
     return ThreadingHTTPServer((host, port), handler_cls)
 
 
@@ -83,9 +91,13 @@ def serve(
     port: int = 0,
     open_browser: bool = True,
     graph_kind: str = "code",
+    enable_saved_views: bool = False,
 ) -> int:
     """Serve the visualizer until interrupted."""
-    httpd = make_server(root, host=host, port=port, graph_kind=graph_kind)
+    httpd = make_server(
+        root, host=host, port=port, graph_kind=graph_kind,
+        enable_saved_views=enable_saved_views,
+    )
     actual_host, actual_port = httpd.server_address
     url = f"http://{actual_host}:{actual_port}/"
     label = "Weld Agent Graph" if graph_kind == "agent" else "Weld graph"
@@ -128,6 +140,7 @@ def main(argv: list[str] | None = None, *, graph_kind: str = "code") -> int:
             port=args.port,
             open_browser=not args.no_open,
             graph_kind=graph_kind,
+            enable_saved_views=args.enable_saved_views,
         )
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
@@ -148,6 +161,12 @@ def add_server_arguments(parser: argparse.ArgumentParser) -> None:
         "--allow-remote",
         action="store_true",
         help="Allow binding to a non-loopback host (exposes the visualizer beyond this machine)",
+    )
+    # bd h6z0.17 / ADR 0092: opt-in switch for the saved-views write surface.
+    parser.add_argument(
+        "--enable-saved-views",
+        action="store_true",
+        help="Allow saving named views to .weld/viz-views.json (the only write this server can do)",
     )
 
 
@@ -179,7 +198,9 @@ def _is_loopback_host(host: str) -> bool:
         return False
 
 
-def _handler_for(api: VizApi, *, graph_kind: str = "code") -> type[BaseHTTPRequestHandler]:
+def _handler_for(
+    api: VizApi, *, graph_kind: str = "code", enable_saved_views: bool = False,
+) -> type[BaseHTTPRequestHandler]:
     class VizRequestHandler(BaseHTTPRequestHandler):
         server_version = "WeldViz/1"
 
@@ -190,13 +211,13 @@ def _handler_for(api: VizApi, *, graph_kind: str = "code") -> type[BaseHTTPReque
             self._handle(send_body=True)
 
         def do_POST(self) -> None:  # noqa: N802
-            self._method_not_allowed()
+            self._handle_views_write("POST")
 
         def do_PUT(self) -> None:  # noqa: N802
             self._method_not_allowed()
 
         def do_DELETE(self) -> None:  # noqa: N802
-            self._method_not_allowed()
+            self._handle_views_write("DELETE")
 
         def log_message(self, fmt: str, *args: object) -> None:
             return
@@ -246,6 +267,9 @@ def _handler_for(api: VizApi, *, graph_kind: str = "code") -> type[BaseHTTPReque
                     body, ctype, filename, HTTPStatus.OK, send_body,
                 )
                 return
+            if path == "/api/views":
+                self._views_response("GET", query, send_body=send_body)
+                return
             try:
                 if path == "/api/summary":
                     payload = api.summary()
@@ -278,6 +302,22 @@ def _handler_for(api: VizApi, *, graph_kind: str = "code") -> type[BaseHTTPReque
                 return
             ctype = mimetypes.guess_type(rel_path)[0] or "application/octet-stream"
             self._send_bytes(resource.read_bytes(), ctype, HTTPStatus.OK, send_body)
+
+        def _handle_views_write(self, method: str) -> None:
+            # bd h6z0.17 / ADR 0092: the ONLY write surface -- exactly one path
+            # (POST/DELETE /api/views); every other path stays 405.
+            parsed = urlparse(self.path)
+            if unquote(parsed.path) != "/api/views":
+                self._method_not_allowed()
+                return
+            self._views_response(method, parsed.query, send_body=True)
+
+        def _views_response(self, method: str, query: str, *, send_body: bool) -> None:
+            payload, status = views_response(
+                enable_saved_views, getattr(api, "root", "."), method, query,
+                self.headers.get("Content-Length"), self.rfile.read,
+            )
+            self._send_json(payload, status, send_body)
 
         def _method_not_allowed(self) -> None:
             self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)

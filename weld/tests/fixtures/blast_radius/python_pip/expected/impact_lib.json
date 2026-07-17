@@ -100,6 +100,12 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "dds": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "dockerfile": {
         "deps_edges": false,
         "nodes_emitted": false,

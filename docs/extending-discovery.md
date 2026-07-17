@@ -3,7 +3,7 @@
 This guide is for users who want weld to understand a framework or
 language it does not support out of the box. It describes the
 discovery layer, the contract a strategy plugin must satisfy, and
-walks through a complete worked example end-to-end. After reading
+walks through two complete worked examples end-to-end. After reading
 this you should be able to drop a Python file in
 `.weld/strategies/` and have `wd impact`, `wd query`, and the
 capability matrix all light up for your new framework.
@@ -11,6 +11,19 @@ capability matrix all light up for your new framework.
 This document covers the practical "how": writing a strategy that
 extends discovery to a new language, framework, or build system, and
 the contract its outputs must satisfy.
+
+This guide has two worked examples, each following the same five-step
+shape (strategy file → `discover.yaml` → capability registry → fixture
+→ regenerate and test):
+
+- [§4 — a `csproj_dependency` build strategy](#4-worked-example-a-hypothetical-csproj_dependency-strategy)
+  recovers *structural* evidence from a project file (`contains` /
+  `depends_on` edges).
+- [§5 — an `events_nats` pub-sub strategy](#5-worked-example-a-hypothetical-events_nats-pub-sub-strategy)
+  recovers an *interaction surface* from call sites (`channel` nodes plus
+  directional `produces` / `consumes` edges).
+
+Skim whichever is closer to your framework's evidence shape.
 
 ---
 
@@ -132,9 +145,12 @@ shows the "emit the target file node yourself" pattern.
    Set `language=`, `framework=`, or both, plus the `evidence`
    tuple drawn from `LANGUAGE_EVIDENCE` /`FRAMEWORK_EVIDENCE`,
    and the relevant `file_extensions` / `file_basenames`. This
-   step is *required for bundled strategies*. For project-local
-   strategies, see the "v1.1+ gap" note at the bottom of this
-   section.
+   step is *required for bundled strategies*. **Project-local
+   strategies** under `.weld/strategies/` cannot edit this in-tree
+   table; they declare capabilities with a declarative manifest
+   instead — see [Project-local capability
+   registration](#project-local-capability-registration) at the end
+   of this section.
 
 5. **Add a fixture** under
    `weld/tests/fixtures/blast_radius/<framework>/`. The
@@ -153,15 +169,42 @@ shows the "emit the target file node yourself" pattern.
    `weld_capabilities_test` will fail if you forgot step 4 — that
    is the design.
 
-> **Project-local capability registration is a v1.1+ gap.** The
-> registry currently only knows about bundled strategies under
-> `weld/strategies/`. A project-local strategy under
-> `.weld/strategies/` will run and emit nodes/edges, but it will
-> not appear in `wd capabilities` output until a project-local
-> registry hook lands. If you need this, please file an issue
-> with the title `feat(capabilities): project-local capability
-> registration` so it can be tracked. Until then, the workaround
-> is to land the strategy bundled (PR upstream).
+### Project-local capability registration
+
+A project-local strategy under `.weld/strategies/` cannot edit the
+in-tree `STRATEGY_CAPABILITIES` table, so it declares its capability as
+**data** — read in the same trust tier as `discover.yaml`, never by
+importing the strategy module. That keeps it correct under
+`wd discover --safe`, which refuses to execute project-local code: safe
+mode still won't *run* the strategy, but it *reads* the declared
+capability. Use either declaration site, with the same fields as a
+registry entry (`language` / `languages`, `framework` / `frameworks`,
+`evidence`, `file_extensions`, `file_basenames`):
+
+- an inline `capabilities:` block on the strategy's `discover.yaml`
+  source entry, or
+- a sibling `.weld/strategies/<name>.yaml` manifest (optionally wrapped
+  in a top-level `capabilities:` key).
+
+```yaml
+# .weld/discover.yaml
+sources:
+  - glob: "src/**/*.foo"
+    type: file
+    strategy: foo_lang          # runs .weld/strategies/foo_lang.py
+    capabilities:
+      language: foolang
+      evidence: [file, symbols]
+      file_extensions: [".foo"]
+```
+
+The inline block wins when both sites declare the same strategy. The
+evidence rule is unchanged: a declared flag flips true only when the
+strategy is wired **and** the graph carries a matching file, so a
+declaration alone can never spoof support. Under `--safe` the strategy's
+`extract` never runs, so the capability surfaces with all evidence flags
+`False` until a normal discovery run collects real evidence — declared,
+but honestly empty.
 
 ---
 
@@ -334,7 +377,251 @@ graph for sanity, then commit.
 
 ---
 
-## 5. Adding a fixture without a new strategy
+## 5. Worked example: a hypothetical `events_nats` pub-sub strategy
+
+The `csproj_dependency` walkthrough above recovers *structural* evidence
+from a project file. This second example recovers an *interaction
+surface*: it reads Python call sites and emits the `channel` nodes and
+directional `produces` / `consumes` edges that `wd impact` follows to
+trace a message across a pub/sub boundary. It mirrors the bundled
+[`events_mqtt`](../weld/strategies/events_mqtt.py) strategy — read that
+file for the production version. This walkthrough is illustrative and
+uses NATS purely because its `publish("subject", …)` /
+`subscribe("subject", …)` API is the cleanest single-literal shape to
+teach the pattern.
+
+The interaction-surface vocabulary — the `channel` node type, the
+`protocol` / `surface_kind` / `transport` / `boundary_kind` node props,
+and the `produces` / `consumes` edge types — is defined and validated in
+[`weld/contract.py`](../weld/contract.py). The rule there is
+omission-over-guess: a strategy stamps a metadata prop **only** when it
+is statically knowable, and leaves it unset otherwise.
+
+Two evidence shapes:
+
+- `<client>.publish("subject", …)` → a `channel:tcp:<subject>` node plus
+  a `produces` edge `file:<caller> → channel:tcp:<subject>`.
+- `<client>.subscribe("subject")` → the same channel node plus a
+  `consumes` edge in the opposite direction.
+
+NATS rides the TCP wire, so `transport="tcp"`: the `event` row of
+`PROTOCOL_TRANSPORT_COMPATIBILITY` in `weld/contract.py` admits
+`{amqp, kafka, mqtt, tcp, inproc}`. A broker with its own transport
+value (Kafka, MQTT, AMQP) would use that instead; the node shape is
+otherwise identical.
+
+Prefer **reusing** an existing `TRANSPORT_VALUES` member over minting a
+new one: a new value is a contract change (`SCHEMA_VERSION` bump plus an
+ADR), whereas reuse keeps a strategy purely additive. The bundled
+`dds_idl` strategy is the worked example — its CycloneDDS / FastDDS topic
+channels reuse `ros2_dds` (the DDS/RTPS wire, not the ROS2 framework)
+rather than adding a `dds` value, and leave `protocol` unset because no
+`PROTOCOL_VALUES` member fits non-ROS2 DDS (omission-over-guess skips the
+coherence check). Mint a new transport value only when a concrete
+correctness need forces the distinction.
+
+### 5a. The strategy file
+
+Place this at `<repo>/.weld/strategies/events_nats.py` (project-local)
+or `weld/strategies/events_nats.py` (bundled, requires PR). It reuses
+the shared call-site primitives in
+[`weld/strategies/_ast_calls.py`](../weld/strategies/_ast_calls.py) and
+the channel-node minter in
+[`weld/strategies/events_shared.py`](../weld/strategies/events_shared.py),
+so the strategy is mostly a table of rules plus a short walk:
+
+```python
+"""Strategy: NATS subject producer/consumer extraction (illustrative)."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from weld.strategies._ast_calls import (
+    classify_receiver_verb,
+    file_imports_root,
+    iter_call_nodes,
+    iter_python_asts,
+    literal_first_arg,
+)
+from weld.strategies._helpers import StrategyResult
+from weld.strategies.events_shared import channel_id, channel_node, file_node_id
+
+_TRANSPORT = "tcp"  # NATS rides TCP; see PROTOCOL_TRANSPORT_COMPATIBILITY.
+
+# Idiomatic NATS connection-handle names (``nc = await nats.connect(...)``).
+_CLIENT_ROOTS = frozenset(["nc", "nats_client"])
+_PRODUCER_RULES = ((_CLIENT_ROOTS, frozenset(["publish"]), _TRANSPORT),)
+_CONSUMER_RULES = ((_CLIENT_ROOTS, frozenset(["subscribe"]), _TRANSPORT),)
+_IMPORT_ROOTS = frozenset(["nats"])  # pre-filter: only walk files importing nats.
+
+
+def _edge(src: str, dst: str, etype: str) -> dict:
+    return {
+        "from": src,
+        "to": dst,
+        "type": etype,
+        "props": {"source_strategy": "events_nats", "confidence": "inferred"},
+    }
+
+
+def _emit(node, rules, etype, rel_path, file_id, nodes, edges) -> bool:
+    transport = classify_receiver_verb(node, rules)
+    if transport is None:
+        return False
+    subject = literal_first_arg(node)  # dynamic subjects are dropped, not guessed
+    if not subject:
+        return False
+    cid = channel_id(transport, subject)
+    nodes[cid] = channel_node(transport=transport, name=subject, rel_path=rel_path)
+    edges.append(_edge(file_id, cid, etype))
+    return True
+
+
+def extract(root: Path, source: dict, context: dict) -> StrategyResult:
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
+    discovered_from: list[str] = []
+
+    pattern = source.get("glob")
+    if not pattern:
+        return StrategyResult(nodes, edges, discovered_from)
+
+    for rel_path, tree in iter_python_asts(root, pattern):
+        if not file_imports_root(tree, _IMPORT_ROOTS):
+            continue
+        file_id = file_node_id(rel_path)
+        emitted = False
+        for node in iter_call_nodes(tree):
+            if _emit(node, _PRODUCER_RULES, "produces", rel_path, file_id, nodes, edges):
+                emitted = True
+                continue
+            if _emit(node, _CONSUMER_RULES, "consumes", rel_path, file_id, nodes, edges):
+                emitted = True
+        if emitted:
+            discovered_from.append(rel_path)
+
+    return StrategyResult(nodes, edges, discovered_from)
+```
+
+Three details, all shared with the bundled events family:
+
+- **Node vs edge provenance.** `channel_node()` stamps the channel node
+  `authority="canonical"`, `confidence="definite"`, and
+  `source_strategy="events"` (the family name). The directional edge
+  carries `source_strategy="events_nats"` and `confidence="inferred"`:
+  the channel is a definite declaration, but *which* file produces or
+  consumes it is a static inference. That node-definite / edge-inferred
+  split is the events-family convention.
+- **The `file:` endpoint is minted elsewhere.** The edge's `from` side is
+  `file_node_id(rel_path)` — the canonical extensionless `file:<path>`
+  id that the `python_module` strategy mints. `events_nats` does **not**
+  emit that node; it relies on `python_module` running in the same
+  discovery pass (see 5b). If nothing mints the `file:` node,
+  `weld/_discover_postprocess.py` prunes the edge as dangling — the
+  contract from §2. (Contrast `csproj_dependency`, which mints its own
+  target nodes with `nodes.setdefault(...)`.)
+- **Static-truth only.** A non-literal subject — `nc.publish(topic, …)`
+  where `topic` is a variable — makes `literal_first_arg` return `None`,
+  and the call is skipped. Partial coverage is honest; a guessed subject
+  is not.
+
+### 5b. The `discover.yaml` entry
+
+Append to `<repo>/.weld/discover.yaml`. Keep the `python_module` entry:
+it mints the `file:` nodes the `produces` / `consumes` edges attach to.
+
+```yaml
+sources:
+  - glob: "src/**/*.py"
+    type: file
+    strategy: python_module
+  - glob: "src/**/*.py"
+    type: channel
+    strategy: events_nats
+```
+
+### 5c. The capability registry entry (bundled only)
+
+Unlike `csproj_dependency`, which introduced a brand-new `dotnet`
+framework, `events_nats` slots under the **existing** `events` framework
+that the bundled `events*` strategies already register. In
+[`weld/_capabilities_registry.py`](../weld/_capabilities_registry.py),
+add one line alongside them:
+
+```python
+"events_nats": _fw("events", ("nodes_emitted",), (".py",)),
+```
+
+There is no `MISSING_FRAMEWORK_PATTERNS` entry to remove — `events` is
+already covered. The `test_expected_strategies_match_disk` discipline
+test still fails until this line is present, exactly as for any bundled
+strategy. If you keep `events_nats` **project-local** rather than
+upstreaming it, skip this registry line and declare the capability with
+a manifest instead — see [Project-local capability
+registration](#project-local-capability-registration).
+
+### 5d. The minimal fixture
+
+Create `weld/tests/fixtures/blast_radius/events_nats_minimal/`:
+
+```
+events_nats_minimal/
+├── README.md                       # describes the scenario
+├── .weld/
+│   └── discover.yaml               # the two source entries above
+├── src/
+│   └── orders.py                   # one publish + one subscribe
+└── expected/
+    ├── graph.json                  # generated by the regen target
+    └── impact_orders_py.json       # placeholder seed
+```
+
+`src/orders.py` — one subject, produced in one function and consumed in
+another:
+
+```python
+import nats
+
+
+async def emit(nc):
+    await nc.publish("orders.created", b"{}")
+
+
+async def listen(nc):
+    await nc.subscribe("orders.created")
+```
+
+This yields a single `channel:tcp:orders.created` node with both a
+`produces` and a `consumes` edge from `file:src/orders`. The `await`
+wrappers do not matter — the AST walk sees the inner call either way.
+The seed placeholder `expected/impact_orders_py.json`:
+
+```json
+{"depth": 3, "target": {"input": "src/orders.py"}}
+```
+
+### 5e. Run the regenerator and the test
+
+```bash
+bazel run //weld/tests:regenerate_blast_radius_goldens
+bazel test //weld/tests:weld_blast_radius_fixtures_test --test_output=errors
+```
+
+The first command writes `expected/graph.json` and fills in the
+`impact_orders_py.json` golden; the second verifies the output is
+byte-deterministic across runs. Inspect the generated channel node and
+its two edges for sanity, then commit.
+
+> **Open follow-up — a runnable `examples/NN-*/` fixture?** The
+> `examples/` tree ships full, runnable sample projects. Whether this
+> pub-sub walkthrough should graduate into a runnable `examples/NN-*/`
+> project — versus staying an in-doc illustration like `csproj_dependency`
+> — is left open here; raise it with the maintainers if the runnable
+> version would help.
+
+---
+
+## 6. Adding a fixture without a new strategy
 
 If you only want to pin a regression for an *already-supported*
 framework, skip steps 1–4 and follow the harness contract in
@@ -344,7 +631,7 @@ golden-parity, impact-parity, and in-process-determinism checks.
 
 ---
 
-## 6. CI sync check
+## 7. CI sync check
 
 Strategy/registry drift is already caught by an existing test —
 no extra doc-sync test is needed:
@@ -365,7 +652,7 @@ gate tells you if you missed a step.
 
 ---
 
-## 7. Pre-PR checklist and reference
+## 8. Pre-PR checklist and reference
 
 Checklist:
 
@@ -391,6 +678,13 @@ Reference:
   — emits nodes plus `contains` edges with defensive target-node
   creation.
 - [weld/strategies/python_module.py](../weld/strategies/python_module.py)
-  — full-featured strategy.
+  — full-featured strategy; also the file-node minter the §5 example's
+  `produces` / `consumes` edges attach to.
+- [weld/strategies/events_mqtt.py](../weld/strategies/events_mqtt.py)
+  — self-contained pub/sub strategy (channel node plus directional
+  `produces` / `consumes` edges): the model for the §5 walkthrough.
+- [weld/strategies/_ast_calls.py](../weld/strategies/_ast_calls.py)
+  — shared call-site primitives (`iter_python_asts`,
+  `classify_receiver_verb`, `literal_first_arg`) the events family reuses.
 - ADRs 0043–0047 in the upstream design docs — capability matrix,
   edge closures, and the fixture suite.

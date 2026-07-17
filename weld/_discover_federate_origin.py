@@ -40,13 +40,13 @@ collide. Adding a new language is a matter of adding it to
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 from weld._graph_meta_sidecar import write_graph_with_meta
 from weld._workspace_inspect import resolve_child_root
 from weld.workspace import WorkspaceConfig
 from weld.workspace_state import WorkspaceState
+from weld._notice import emit
 
 #: Languages whose strategies ship per-ADR-0042 origin tagging and
 #: therefore participate in federated cross-child re-tagging. Each
@@ -238,26 +238,23 @@ def _load_child_graph_dict(
     try:
         raw = graph_path.read_bytes()
     except OSError as exc:
-        print(
+        emit(
             f"[weld] federate: failed to read {graph_path}: "
-            f"{type(exc).__name__}: {exc}",
-            file=sys.stderr,
+            f"{type(exc).__name__}: {exc}"
         )
         return None
     try:
         graph = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        print(
+        emit(
             f"[weld] federate: failed to parse {graph_path}: "
-            f"{type(exc).__name__}: {exc}",
-            file=sys.stderr,
+            f"{type(exc).__name__}: {exc}"
         )
         return None
     if not isinstance(graph, dict):
-        print(
+        emit(
             f"[weld] federate: graph at {graph_path} is not a JSON object; "
-            "skipping origin pass",
-            file=sys.stderr,
+            "skipping origin pass"
         )
         return None
     return graph, raw

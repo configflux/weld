@@ -225,6 +225,26 @@ class ReportRenderTest(unittest.TestCase):
         # graphify / tree_sitter shown as unavailable in the row.
         self.assertIn("unavailable", md)
 
+    def test_rendered_report_has_no_internal_refs(self) -> None:
+        """Guard: the EMITTED report carries zero internal refs.
+
+        PUBLIC-BENCHMARK-*.md ships publicly, so regenerating it must never
+        reintroduce the v0.21.0 leak (internal ADR names / docs/adrs links).
+        Module docstrings/comments are source refs and out of scope.
+        """
+        import re
+
+        row = _adapter_row("navigation", ["a.py"], ["a.py"])
+        md = render_public_report(PublicRunReport(
+            corpus_id="smoke", schema_version=1,
+            weld_version="0.21.0", rows=[row],
+        ))
+        offenders = [
+            ln for ln in md.splitlines()
+            if re.search(r"ADR[ -][0-9]{4}|docs/adrs|\.{1,2}/adrs|postmortems", ln)
+        ]
+        self.assertEqual(offenders, [], msg="\n".join(offenders))
+
     def test_caveats_lists_losses(self) -> None:
         # weld returns nothing while grep nails the answer.
         row = _adapter_row("callgraph", [], ["a.py"])

@@ -11,8 +11,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from weld._mcp_read import load_single_repo_for_read as _load_single_repo_for_read
+from weld._mcp_read import load_graph_for_read as _load_for_read
 from weld.enrich import enrich as _enrich
+from weld.federation import FederatedGraph as _FederatedGraph
+from weld.federation_tools import federated_impact as _federated_impact
+from weld.federation_tools import federated_trace as _federated_trace
 from weld.graph import Graph as _Graph
 from weld.impact import impact as _impact
 from weld.trace import trace as _trace
@@ -66,9 +69,14 @@ def weld_trace(
     stable trace envelope (``TRACE_VERSION``). Alias-aware per ADR
     0041: a legacy *node_id* is rewritten to its canonical form. Self-heals on
     a stale graph and reuses the in-process cache (bd 85tb.3) via
-    :func:`weld._mcp_read.load_single_repo_for_read`.
+    :func:`weld._mcp_read.load_graph_for_read`. At a federated root the graph is
+    flattened across children (ADR 0089) so the trace reaches child nodes.
     """
-    g = _load_single_repo_for_read(Path(root))
+    g = _load_for_read(Path(root))
+    if isinstance(g, _FederatedGraph):
+        return _federated_trace(
+            g, term=term, node_id=node_id, depth=depth, seed_limit=seed_limit,
+        )
     node_id = resolve_node_id_via_alias(g, node_id)
     return _trace(
         g, term=term, node_id=node_id, depth=depth, seed_limit=seed_limit,
@@ -86,9 +94,12 @@ def weld_impact(
     Alias-aware per ADR 0041 when *target* is a node id (file paths
     pass through unchanged because they are never registered as
     aliases of node ids). Self-heals on a stale graph and reuses the
-    in-process cache (bd 85tb.3).
+    in-process cache (bd 85tb.3). At a federated root the graph is flattened
+    across children (ADR 0089) so the reverse-BFS reaches child dependents.
     """
-    g = _load_single_repo_for_read(Path(root))
+    g = _load_for_read(Path(root))
+    if isinstance(g, _FederatedGraph):
+        return _federated_impact(g, target, depth=depth)
     target = resolve_node_id_via_alias(g, target) or target
     try:
         return _impact(g, target=target, depth=depth)

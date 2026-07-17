@@ -60,15 +60,15 @@ summarise the required fields.
 
 | Tool | Required input | Purpose |
 |---|---|---|
-| `weld_query` | `term` | Tokenized ranked search over the connected structure; returns matches, neighbors, and edges. |
+| `weld_query` | `term` | Tokenized ranked search over the connected structure; returns matches, neighbors, and edges. By default `origin=unresolved` sentinel **matches** are dropped (parity with `wd query`); pass `include_speculative: true` to restore them. The neighborhood is also bounded by default: it is dieted (stdlib/unresolved/speculative-external neighbors dropped, fan-out capped) and a byte budget prunes the lowest-priority survivors to fit the tool cap, all reported in `omitted_neighbors` (including `size_capped`). Pass `full_neighborhood: true` to restore the full neighborhood, or `full_size: true` to keep the diet but skip the byte budget. |
 | `weld_find` | `term` | Substring search over `.weld/file-index.json`; returns ranked file hits with matching tokens and a score. A single word is a literal substring match; a multi-word phrase is tokenized on whitespace and ranked by how many of the words a file's tokens hit (so `"mcp server"` surfaces `mcp_server.py`). |
-| `weld_context` | `node_id` | Node plus its 1-hop neighborhood. |
+| `weld_context` | `node_id` | Node plus its 1-hop neighborhood (bounded by default, same as `weld_query`; pass `full_neighborhood: true` for the full neighborhood or `full_size: true` to skip the byte budget). |
 | `weld_path` | `from_id`, `to_id` | Shortest path between two nodes, with visited nodes and connecting edges. |
-| `weld_brief` | `area` | Stable agent-facing brief (`BRIEF_VERSION=2`) for a task area: primary matches, interfaces, docs, build surfaces, boundaries. |
+| `weld_brief` | `area` | Stable agent-facing brief (`BRIEF_VERSION=2`) for a task area: primary matches, interfaces, docs, build surfaces, boundaries. Bounded by default (edges de-dangled to emitted nodes; a byte budget prunes lowest-priority nodes, recorded in `warnings`); pass `full_size: true` for the unbounded brief. |
 | `weld_stale` | -- | Advisory freshness check vs git HEAD; does not mutate the graph. |
 | `weld_callers` | `symbol_id` | Direct (or transitive via `depth`) callers of a symbol by walking `calls` edges in reverse. |
 | `weld_references` | `symbol_name` | Callers and file-index references for a bare symbol name. |
-| `weld_export` | `format` | Export the graph (or a subgraph centered on `node_id`) to `mermaid`, `dot`, or `d2`. |
+| `weld_export` | `format` | Export the graph (or a subgraph centered on `node_id`) to `mermaid`, `dot`, or `d2`. The `mermaid` output clusters nodes into per-file/module `subgraph` blocks, styles each node type via `classDef`, keeps human-readable labels, and annotates truncation with a visible note node. |
 | `weld_trace` | `term` or `node_id` | Protocol-aware cross-boundary slice: service / interface / contract / boundary / verification. |
 | `weld_impact` | `target` | Reverse-dependency blast radius for a node id or file path. |
 | `weld_enrich` | -- | LLM-assisted semantic enrichment for a node or the full graph. See the [trust model](#trust-model) before enabling. |
@@ -230,14 +230,35 @@ the text as JSON.
 Shapes are tool-specific and follow the same envelopes the CLI emits:
 
 - `weld_query`, `weld_context`, `weld_path` return `{matches, neighbors,
-  edges, ...}` shapes produced by `weld.graph.Graph`.
+  edges, ...}` shapes produced by `weld.graph.Graph`. `weld_query` also drops
+  `origin=unresolved` sentinel *matches* by default so its `matches` equal `wd
+  query`'s (the shared `weld.read.read_query` command);
+  `include_speculative: true` restores them. `weld_query` and
+  `weld_context` additionally **bound the read envelope by default** (the
+  product read command, `weld.read`, shared byte-for-byte with the CLI):
+  neighbors whose `props.origin` is `stdlib` or `unresolved`, plus speculative
+  external *symbols*, are dropped (external *package* nodes are kept), edges
+  that would then dangle are removed, and the surviving fan-out is capped at 50
+  with a deterministic sort; then a **byte budget** prunes the lowest-priority
+  survivors (same total order) until the serialized envelope fits the agent tool
+  cap. Omissions are never silent -- the envelope carries `neighbors_filtered:
+  true` and `omitted_neighbors: {stdlib, unresolved, external_symbol,
+  fanout_capped, size_capped}` counts. Pass `full_neighborhood: true` for the
+  full, raw neighborhood (no annotation), or `full_size: true` to keep the diet
+  but skip the byte budget.
 - `weld_find` returns `{files: [{path, score, tokens}, ...]}`.
-- `weld_brief` returns a versioned envelope (`BRIEF_VERSION=2`).
+- `weld_brief` returns a versioned envelope (`BRIEF_VERSION=2`), bounded by the
+  same read command: its edges are de-dangled to the nodes it emits and the byte
+  budget applies (a `warnings` entry records any node dropped for size). Pass
+  `full_size: true` for the unbounded brief.
 - `weld_stale` returns `{stale, reasons, ...}`.
 - `weld_callers` / `weld_references` return caller lists and, for
   references, a combined `files` list from the file index.
 - `weld_export` returns `{format, output}` where `output` is a string in
-  the requested graph-visualisation format.
+  the requested graph-visualisation format. The `mermaid` serializer
+  clusters nodes into `subgraph` blocks by file/module, applies per-type
+  `classDef` styling, and past a node cap truncates deterministically with
+  a visible note node (never a silent partial diagram).
 - `weld_trace`, `weld_impact`, `weld_enrich`, `weld_diff` return the same
   envelopes documented for their CLI counterparts.
 

@@ -83,6 +83,13 @@ class RegistryShapeTest(unittest.TestCase):
             )
 
     def test_expected_strategies_match_disk(self) -> None:
+        """Bundled registry must match the bundled strategies on disk.
+
+        Scoped to **bundled** strategies (``weld/strategies/``) per ADR
+        0087: project-local strategies register capabilities through a
+        declarative manifest, not this in-tree table, and are covered by
+        ``weld_capabilities_local_test.py`` instead of this drift check.
+        """
         repo_root = Path(_repo_root)
         on_disk = list_disk_strategies(repo_root)
         self.assertEqual(

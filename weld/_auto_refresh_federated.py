@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import IO
 
 from weld._auto_refresh import _env_disabled
+from weld._notice import emit
 
 __all__ = ["auto_refresh_federated_root", "select_stale_children"]
 
@@ -128,10 +129,11 @@ def _emit_no_refresh_warning(stderr: IO[str], stale_names: set[str]) -> None:
     extension of the ADR 0051 single-repo no-refresh warning.
     """
     names = ", ".join(sorted(stale_names))
-    stderr.write(
+    emit(
         "[weld] warning: stale federated children "
         f"({names}); --no-refresh in effect, cross-repo answers may not "
-        "reflect current child source\n",
+        "reflect current child source",
+        stream=stderr,
     )
 
 
@@ -296,12 +298,14 @@ def _emit_banner(
         return
     if refreshed:
         suffix = f"; {len(errors)} failed" if errors else ""
-        stderr.write(
+        emit(
             f"[weld] auto-refresh: refreshed {len(refreshed)} stale "
-            f"child(ren){suffix}\n",
+            f"child(ren){suffix}",
+            stream=stderr,
         )
     elif errors:
-        stderr.write(
+        emit(
             f"[weld] auto-refresh: {len(errors)} stale child(ren) failed to "
-            "refresh; serving last-known child graphs\n",
+            "refresh; serving last-known child graphs",
+            stream=stderr,
         )

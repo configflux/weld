@@ -19,6 +19,7 @@ from pathlib import Path
 
 
 from weld.graph import Graph  # noqa: E402
+from weld._graph_stats import meaningful_coverage_pct  # noqa: E402
 
 def _make_graph(nodes: dict, edges: list | None = None) -> Graph:
     """Create an in-memory Graph with the given nodes and edges."""
@@ -323,6 +324,34 @@ class TestDescriptionCoverageMeaningfulHeadline(unittest.TestCase):
         self.assertIn("tokens_per_node", cost)
         self.assertIn("usd_per_1k_tokens", cost)
         self.assertIn("nodes_per_minute", cost)
+
+
+class MeaningfulCoveragePctTest(unittest.TestCase):
+    """meaningful_coverage_pct restricts scoring to MEANINGFUL_DESCRIPTION_TYPES."""
+
+    @staticmethod
+    def _graph(nodes: dict) -> dict:
+        return {"nodes": nodes, "edges": []}
+
+    def test_nonzero_counts_meaningful_file_type(self) -> None:
+        # 'file' is a meaningful type; 1 of 4 described (missing props and a
+        # whitespace-only description do not count) -> 25%.
+        nodes = {
+            "file:a": {"type": "file", "props": {"description": "documented"}},
+            "file:b": {"type": "file", "props": {}},
+            "file:c": {"type": "file"},
+            "file:d": {"type": "file", "props": {"description": "   "}},
+        }
+        self.assertEqual(meaningful_coverage_pct(self._graph(nodes)), 25.0)
+
+    def test_zero_when_no_meaningful_node_described(self) -> None:
+        nodes = {"file:a": {"type": "file"}, "file:b": {"type": "file"}}
+        self.assertEqual(meaningful_coverage_pct(self._graph(nodes)), 0.0)
+
+    def test_symbol_nodes_excluded_from_denominator(self) -> None:
+        # A described call-graph symbol must not register as meaningful coverage.
+        nodes = {"symbol:x": {"type": "symbol", "props": {"description": "d"}}}
+        self.assertEqual(meaningful_coverage_pct(self._graph(nodes)), 0.0)
 
 
 if __name__ == "__main__":

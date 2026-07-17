@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from weld._capabilities_local import load_local_capabilities
 from weld._capabilities_registry import (
     EXPECTED_STRATEGIES,
     FRAMEWORK_EVIDENCE,
@@ -131,19 +132,42 @@ def _read_yaml_strategies(repo_root: Path) -> set[str]:
     return out
 
 
-def _active_strategies(repo_root: Path) -> set[str]:
-    """Strategies wired in this repo's ``discover.yaml`` AND in the registry.
+def _known_capabilities(repo_root: Path) -> dict[str, StrategyCapability]:
+    """Bundled registry merged with project-local declared capabilities.
 
-    The intersection ensures we never report capability for a strategy
-    name that exists in config but has been retired from the registry,
-    and never report capability for an unwired strategy. An empty
-    config (no ``.weld/discover.yaml``) falls back to the full registry
-    so consumers in fresh checkouts get the maximum honest answer.
+    Bundled entries win: a project-local manifest (ADR 0087) can add a
+    *new* stem's capability -- closing the bundled-vs-local asymmetry --
+    but never overrides an in-tree registry entry, so bundled strategy
+    behavior is unchanged. Reading the manifest imports no project code
+    (it is pure YAML data), so this stays correct under ``--safe``.
+    """
+    merged: dict[str, StrategyCapability] = dict(STRATEGY_CAPABILITIES)
+    try:
+        local = load_local_capabilities(repo_root)
+    except Exception:
+        local = {}
+    for stem, cap in local.items():
+        merged.setdefault(stem, cap)
+    return merged
+
+
+def _active_strategies(
+    repo_root: Path, known: dict[str, StrategyCapability],
+) -> set[str]:
+    """Strategies wired in this repo's ``discover.yaml`` AND *known*.
+
+    *known* is the bundled registry merged with project-local declared
+    capabilities (:func:`_known_capabilities`). The intersection ensures
+    we never report capability for a strategy name that exists in config
+    but has been retired, and never report capability for an unwired
+    strategy. An empty config (no ``.weld/discover.yaml``) falls back to
+    the full known set so consumers in fresh checkouts get the maximum
+    honest answer.
     """
     wired = _read_yaml_strategies(repo_root)
     if not wired:
-        return set(STRATEGY_CAPABILITIES.keys())
-    return wired & set(STRATEGY_CAPABILITIES.keys())
+        return set(known.keys())
+    return wired & set(known.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -263,13 +287,18 @@ def compute_capabilities(graph_data: dict, repo_root: Path) -> dict:
     appear -- with every flag ``False`` -- so consumers see the gap
     explicitly.
     """
-    active = _active_strategies(repo_root)
+    known = _known_capabilities(repo_root)
+    active = _active_strategies(repo_root, known)
     graph_files = _node_files_from_graph(graph_data)
 
     languages: dict[str, dict[str, bool]] = {}
     frameworks: dict[str, dict[str, bool]] = {}
 
-    for stem, cap in STRATEGY_CAPABILITIES.items():
+    # ``known`` is the bundled registry plus project-local declared
+    # capabilities (ADR 0087). Active project-local stems flow through the
+    # same evidence rule below: a declared flag is True only when a matching
+    # graph file is present, so a false declaration cannot spoof support.
+    for stem, cap in known.items():
         if stem not in active:
             continue
         present_in_graph = _strategy_has_evidence_in_graph(cap, graph_files)

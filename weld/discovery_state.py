@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from weld._incremental_purge import purge_edges_by_provenance
+from weld._notice import emit
 
 #: Current state file schema version.  Bump when the on-disk format changes.
 STATE_VERSION: int = 1
@@ -98,37 +98,33 @@ def load_state(root: Path) -> DiscoveryState | None:
     try:
         raw = json.loads(state_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        print(
+        emit(
             f"[weld] warning: corrupt discovery state file, "
-            f"falling back to full discovery: {exc}",
-            file=sys.stderr,
+            f"falling back to full discovery: {exc}"
         )
         return None
 
     if not isinstance(raw, dict):
-        print(
+        emit(
             "[weld] warning: discovery state file is not a JSON object, "
-            "falling back to full discovery",
-            file=sys.stderr,
+            "falling back to full discovery"
         )
         return None
 
     version = raw.get("version")
     if version != STATE_VERSION:
-        print(
+        emit(
             f"[weld] warning: discovery state version mismatch "
             f"(got {version}, expected {STATE_VERSION}), "
-            f"falling back to full discovery",
-            file=sys.stderr,
+            f"falling back to full discovery"
         )
         return None
 
     files = raw.get("files", {})
     if not isinstance(files, dict):
-        print(
+        emit(
             "[weld] warning: discovery state 'files' is not a dict, "
-            "falling back to full discovery",
-            file=sys.stderr,
+            "falling back to full discovery"
         )
         return None
 

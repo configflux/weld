@@ -303,7 +303,10 @@ aggregates across registered child repositories:
   endpoints remain unambiguous across repositories.
 - Cross-repo resolvers declared in `.weld/workspaces.yaml`
   (`cross_repo_strategies`, e.g. `grpc_service_binding`,
-  `compose_topology`, `service_graph`) run at root discovery time.
+  `compose_topology`, `service_graph`, `channel_binding`) run at root
+  discovery time. `channel_binding` emits `cross_repo:channel_flow` edges
+  from an event-channel producer in one child to a consumer in another
+  that reference the same `channel:<transport>:<topic>` node.
 
 ## Extension points
 

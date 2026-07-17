@@ -2,10 +2,23 @@
 
 Code half of the ``events`` strategy. Walks Python files for calls
 shaped ``<Root>.<verb>("literal", ...)`` where ``<Root>`` is a known
-async client identifier and ``<verb>`` is a known publish verb. As
-with :mod:`weld.strategies.http_client`, resolving assigned instances or
-attribute chains is out of scope; per ADR 0018, omission is preferred
-over guesswork.
+async client identifier and ``<verb>`` is a known publish *or* subscribe
+verb. As with :mod:`weld.strategies.http_client`, resolving assigned
+instances or attribute chains is out of scope; per ADR 0086, omission is
+preferred over guesswork.
+
+The ``channel:<transport>:<topic>`` node is minted at both producer
+(``send`` / ``produce`` / ``publish``) and consumer (``subscribe``)
+sites -- symmetric with :mod:`weld.strategies.events_mqtt`. Minting at
+consume sites keeps the channel node present in a *consumer-only* repo, so
+the ``consumes`` edge that :mod:`weld.strategies.events_bindings` emits
+there resolves rather than dangling (and being swept by the post-process
+dangling-edge pass). That is what lets ADR 0090's in-repo ``feeds_into``
+join and the ``channel_binding`` cross-repo resolver match a kafka/redis
+consumer that has no local producer or config declaration. Consumer topics
+use the same single-or-list literal extraction as ``events_bindings`` (the
+edge emitter), so the node minter and the edge emitter can never disagree
+on which topics a subscribe call declares.
 
 The config half lives in :mod:`weld.strategies.events_config`; the
 facade in :mod:`weld.strategies.events` dispatches between the two.
@@ -16,11 +29,19 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from weld.strategies._helpers import filter_glob_results
+from weld.strategies._ast_calls import (
+    classify_receiver_verb,
+    file_imports_root,
+    iter_call_nodes,
+    iter_python_asts,
+    literal_first_arg,
+    literal_str_or_list_arg,
+)
 from weld.strategies.events_shared import (
     channel_id,
     channel_node,
     contains_edge,
+    file_node_id,
 )
 
 _TRANSPORT_KAFKA = "kafka"
@@ -31,9 +52,11 @@ _TRANSPORT_TCP = "tcp"
 #
 # A rule fires when the receiver Name is in ``roots`` and the attribute
 # being called is in ``verbs``. Everything else -- assigned instances,
-# deep attribute chains -- is left alone.
+# deep attribute chains -- is left alone. Producer and consumer rules
+# mirror :mod:`weld.strategies.events_bindings` (the edge emitter), so the
+# minted channel nodes and the produces/consumes edges stay in lockstep.
 # ---------------------------------------------------------------------------
-_PY_RULES: tuple[tuple[frozenset[str], frozenset[str], str], ...] = (
+_PRODUCER_RULES: tuple[tuple[frozenset[str], frozenset[str], str], ...] = (
     (
         frozenset(["KafkaProducer", "kafka"]),
         frozenset(["send", "produce", "send_and_wait"]),
@@ -46,105 +69,65 @@ _PY_RULES: tuple[tuple[frozenset[str], frozenset[str], str], ...] = (
     ),
 )
 
+_CONSUMER_RULES: tuple[tuple[frozenset[str], frozenset[str], str], ...] = (
+    (
+        frozenset(["KafkaConsumer", "kafka"]),
+        frozenset(["subscribe"]),
+        _TRANSPORT_KAFKA,
+    ),
+    (
+        frozenset(["redis"]),
+        frozenset(["subscribe"]),
+        _TRANSPORT_TCP,
+    ),
+)
+
 #: Library root names that indicate an async client import. Cheap
 #: pre-filter so we only AST-walk files that could possibly match.
 _PY_IMPORT_ROOTS: frozenset[str] = frozenset(["kafka", "redis", "aiokafka"])
 
-def _literal_first_arg(call: ast.Call) -> str | None:
-    """Return the literal string first positional arg, or None.
-
-    Accepts plain constants and literal-only f-strings. A FormattedValue
-    part in the f-string (runtime substitution) disqualifies the arg.
-    """
-    if not call.args:
-        return None
-    node = call.args[0]
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.JoinedStr):
-        parts: list[str] = []
-        for value in node.values:
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                parts.append(value.value)
-            else:
-                return None
-        return "".join(parts)
-    return None
-
-def _classify_call(call: ast.Call) -> str | None:
-    """Return the transport for a matching call, or None."""
-    func = call.func
-    if not isinstance(func, ast.Attribute):
-        return None
-    if not isinstance(func.value, ast.Name):
-        return None
-    root = func.value.id
-    verb = func.attr
-    for roots, verbs, transport in _PY_RULES:
-        if root in roots and verb in verbs:
-            return transport
-    return None
-
-def _file_has_async_import(tree: ast.Module) -> bool:
-    """Cheap pre-filter: only walk files that import a known async lib."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.split(".")[0] in _PY_IMPORT_ROOTS:
-                    return True
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.split(".")[0] in _PY_IMPORT_ROOTS:
-                return True
-    return False
-
 def _collect_calls(tree: ast.Module) -> list[tuple[str, str]]:
-    """Walk *tree* and return ``(transport, name)`` for static call sites."""
-    found: list[tuple[str, str]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        transport = _classify_call(node)
-        if transport is None:
-            continue
-        name = _literal_first_arg(node)
-        if name is None or name == "":
-            continue
-        found.append((transport, name))
-    return found
+    """Walk *tree* and return ``(transport, topic)`` for static call sites.
 
-def _iter_sources(root: Path, pattern: str) -> list[Path]:
-    matches = sorted(root.glob(pattern))
-    return filter_glob_results(root, matches)
+    Producer sites (``send`` / ``produce`` / ``publish``) contribute their
+    single literal topic; consumer sites (``subscribe``) contribute each
+    literal topic in the single- or list-form argument. Both feed the same
+    node + ``contains``-edge emission, so the channel node is minted
+    symmetrically at publish and subscribe sites. Producer and consumer
+    verb sets are disjoint, so each call classifies at most once.
+    """
+    found: list[tuple[str, str]] = []
+    for node in iter_call_nodes(tree):
+        transport = classify_receiver_verb(node, _PRODUCER_RULES)
+        if transport is not None:
+            name = literal_first_arg(node)
+            if name:
+                found.append((transport, name))
+            continue
+        transport = classify_receiver_verb(node, _CONSUMER_RULES)
+        if transport is not None:
+            topics = literal_str_or_list_arg(node)
+            if topics:
+                found.extend((transport, topic) for topic in topics)
+    return found
 
 def extract_py_callsite(
     root: Path, pattern: str
 ) -> tuple[dict[str, dict], list[dict], list[str]]:
-    """Extract declared channels from Python publish/produce call sites."""
+    """Extract declared channels from Python publish/subscribe call sites."""
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
     discovered_from: list[str] = []
 
-    for py in _iter_sources(root, pattern):
-        if not py.is_file() or py.suffix != ".py":
+    for rel_path, tree in iter_python_asts(root, pattern):
+        if not file_imports_root(tree, _PY_IMPORT_ROOTS):
             continue
-        try:
-            text = py.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        try:
-            tree = ast.parse(text, filename=str(py))
-        except SyntaxError:
-            continue
-        if not _file_has_async_import(tree):
-            continue
-
-        rel_path = str(py.relative_to(root))
         calls = _collect_calls(tree)
         if not calls:
             continue
 
         discovered_from.append(rel_path)
-        file_id = f"file:{rel_path}"
+        file_id = file_node_id(rel_path)
 
         for transport, name in calls:
             nid = channel_id(transport, name)

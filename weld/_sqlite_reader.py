@@ -22,7 +22,6 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -35,6 +34,7 @@ from weld._sqlite_schema import (
     SIDECAR_FILENAME,
     SQLITE_SCHEMA_VERSION,
 )
+from weld._notice import emit
 
 __all__ = [
     "SIDECAR_FILENAME",
@@ -392,8 +392,7 @@ def warn_stale_sidecar(graph_json_path: Path) -> None:
     fresh, _meta = sidecar_freshness(graph_json_path)
     if fresh:
         return
-    print(
+    emit(
         f"[weld] notice: {db_path} is stale (source_json_sha mismatch);"
-        " run `wd graph index --rebuild` to refresh.",
-        file=sys.stderr,
+        " run `wd graph index --rebuild` to refresh."
     )

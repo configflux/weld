@@ -4,7 +4,10 @@ package(default_visibility = ["//visibility:public"])
 
 py_library(
     name = "helpers",
-    srcs = ["_helpers.py"],
+    srcs = [
+        "_ast_calls.py",
+        "_helpers.py",
+    ],
     deps = [
         "//weld:glob_match",
         "//weld:repo_boundary",
@@ -40,6 +43,7 @@ py_library(
         "_csharp_routes_helpers.py",
         "_csharp_syntax.py",
         "_csharp_tree_sitter.py",
+        "_dds_idl_parser.py",
         "_express_routes_helpers.py",
         "_gin_routes_helpers.py",
         "_go_inherits.py",
@@ -55,6 +59,7 @@ py_library(
         "_python_callgraph_incremental.py",
         "_python_callgraph_visitor.py",
         "_python_inherits.py",
+        "_python_module_incremental.py",
         "_python_origin.py",
         "_ros2_cpp.py",
         "_ros2_py.py",
@@ -94,12 +99,14 @@ py_library(
         "csharp_project.py",
         "csharp_solution.py",
         "csharp_test_framework.py",
+        "dds_idl.py",
         "deploy_surface.py",
         "dockerfile.py",
         "events.py",
         "events_bindings.py",
         "events_callsite.py",
         "events_config.py",
+        "events_mqtt.py",
         "events_shared.py",
         "express.py",
         "fastapi.py",

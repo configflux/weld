@@ -2,7 +2,7 @@
 
 The ``http_client`` strategy extracts outbound HTTP call sites where both
 the HTTP method and the URL/path argument are statically knowable from the
-parsed AST alone. Per ADR 0018, the extractor must prefer omission over
+parsed AST alone. Per ADR 0086, the extractor must prefer omission over
 guesswork: dynamic URLs (f-strings with variables, variable references,
 concatenation) and dynamic methods (``client.request(method, ...)`` with a
 non-literal method) are dropped.
@@ -187,7 +187,10 @@ class HttpClientModuleEdgeTest(unittest.TestCase):
             rpcs = [nid for nid, n in nodes.items() if n["type"] == "rpc"]
             self.assertEqual(len(rpcs), 1)
             rpc_id = rpcs[0]
-            file_id = "file:src/pkg/caller.py"
+            # Canonical extensionless ``file:`` endpoint (ADR 0041), matching
+            # the node ``python_module`` mints so the edge survives discovery's
+            # dangling-edge sweep.
+            file_id = "file:src/pkg/caller"
             matches = [
                 e for e in edges
                 if e["from"] == file_id

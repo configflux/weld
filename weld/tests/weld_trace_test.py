@@ -292,13 +292,17 @@ class TraceStartupFlowTest(unittest.TestCase):
         ]
         return _make_graph(nodes, edges)
 
-    def test_natural_language_startup_query_uses_or_fallback(self) -> None:
+    def test_natural_language_startup_query_resolves_on_content_tokens(self) -> None:
+        # After stopword filtering (bd 10ui), "how does this service start"
+        # reduces to the content tokens {service, start}; strict-AND resolves
+        # them directly and still surfaces the startup boundaries -- without
+        # degrading to the noisy or_fallback path the old behavior needed.
         result = trace(self._startup_graph(), term="how does this service start")
         boundary_ids = {n["id"] for n in result["boundaries"]}
         self.assertIn("entrypoint:services/api/main", boundary_ids)
         self.assertIn("boundary:services/api/app", boundary_ids)
         self.assertIn("deploy:docker_compose", boundary_ids)
-        self.assertTrue(any("or_fallback" in w for w in result["warnings"]))
+        self.assertFalse(any("or_fallback" in w for w in result["warnings"]))
 
     def test_trace_inert_anchor_warns(self) -> None:
         g = _make_graph({

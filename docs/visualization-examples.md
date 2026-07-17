@@ -144,18 +144,49 @@ output):
 
 ```mermaid
 flowchart LR
-    config_apps_web_package_json["package.json (@acme/web) (config)"]
-    config_libs_shared_types_package_json["package.json (@acme/shared-types) (config)"]
-    config_package_json["package.json (@acme/monorepo-demo) (config)"]
-    config_packages_api_package_json["package.json (@acme/api) (config)"]
-    config_packages_ui_package_json["package.json (@acme/ui) (config)"]
-    config_services_orders_api_package_json["package.json (@acme/orders-api) (config)"]
-    file_api_src_client["client (file)"]
-    file_orders_api_src_server["server (file)"]
-    file_shared_types_src_index["index (file)"]
-    file_ui_src_Button["Button (file)"]
-    file_web_src_App["App (file)"]
+%% weld graph export: 11 of 11 nodes shown
+    classDef weld_config fill:#e2e8f0,stroke:#475569,color:#1e293b;
+    classDef weld_file fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    subgraph grp_file_apps_web_package_json["apps/web/package.json"]
+        config_apps_web_package_json["package.json (@acme/web) (config)"]
+    end
+    subgraph grp_file_apps_web_src_App_tsx["apps/web/src/App.tsx"]
+        file_web_src_App["App (file)"]
+    end
+    subgraph grp_file_libs_shared_types_package_json["libs/shared-types/package.json"]
+        config_libs_shared_types_package_json["package.json (@acme/shared-types) (config)"]
+    end
+    subgraph grp_file_libs_shared_types_src_index_ts["libs/shared-types/src/index.ts"]
+        file_shared_types_src_index["index (file)"]
+    end
+    subgraph grp_file_package_json["package.json"]
+        config_package_json["package.json (@acme/monorepo-demo) (config)"]
+    end
+    subgraph grp_file_packages_api_package_json["packages/api/package.json"]
+        config_packages_api_package_json["package.json (@acme/api) (config)"]
+    end
+    subgraph grp_file_packages_api_src_client_ts["packages/api/src/client.ts"]
+        file_api_src_client["client (file)"]
+    end
+    subgraph grp_file_packages_ui_package_json["packages/ui/package.json"]
+        config_packages_ui_package_json["package.json (@acme/ui) (config)"]
+    end
+    subgraph grp_file_packages_ui_src_Button_tsx["packages/ui/src/Button.tsx"]
+        file_ui_src_Button["Button (file)"]
+    end
+    subgraph grp_file_services_orders_api_package_json["services/orders-api/package.json"]
+        config_services_orders_api_package_json["package.json (@acme/orders-api) (config)"]
+    end
+    subgraph grp_file_services_orders_api_src_server_ts["services/orders-api/src/server.ts"]
+        file_orders_api_src_server["server (file)"]
+    end
+    class config_apps_web_package_json,config_libs_shared_types_package_json,config_package_json,config_packages_api_package_json,config_packages_ui_package_json,config_services_orders_api_package_json weld_config;
+    class file_api_src_client,file_orders_api_src_server,file_shared_types_src_index,file_ui_src_Button,file_web_src_App weld_file;
 ```
+
+Each node is grouped into a `subgraph` named for its file, and coloured by
+type via `classDef` (config vs file here). Larger graphs -- where many
+symbols share a file -- cluster several nodes per subgraph.
 
 `wd export` also supports `--format dot` (Graphviz) and `--format d2`,
 plus `--node` / `--depth` to extract a subgraph centered on a specific
@@ -310,17 +341,26 @@ each endpoint to its child repo. `services-api`'s outbound HTTP call to
 
 ### `wd export --format mermaid` (polyrepo)
 
-The same federated graph as a Mermaid flowchart. (`wd export` emits
-the cross-repo edge endpoints with unit-separator bytes intact; some
-Markdown viewers strip those bytes when rendering, so the displayed
-identifiers may look run-together compared to the JSON form above.)
+The same federated graph as a Mermaid flowchart. The three `repo:` nodes
+are the root graph's own nodes; the cross-repo edge's endpoints live in
+child graphs, so they render as dashed `(external)` placeholder nodes
+rather than being silently dropped. The `repo`-to-local namespace
+separator (a unit-separator byte) is shown as `/`, so the endpoints read
+as `services-api/rpc:...` and `services-auth/route:...`.
 
 ```mermaid
 flowchart LR
+%% weld graph export: 3 of 3 nodes shown
+    classDef weld_repo fill:#f1f5f9,stroke:#94a3b8,color:#334155;
+    classDef weldmeta_external fill:#f8fafc,stroke:#94a3b8,color:#475569,stroke-dasharray:4 3;
     repo_libs_shared_models["libs-shared-models (repo)"]
     repo_services_api["services-api (repo)"]
     repo_services_auth["services-auth (repo)"]
-    services_apirpc_http_out_POST_http___services_auth_8080_tokens -->|cross_repo:calls| services_authroute_POST__tokens
+    services_api_rpc_http_out_POST_http___services_auth_8080_tokens["services-api/rpc:http:out:POST:http://services-auth:8080/tokens (external)"]
+    services_auth_route_POST__tokens["services-auth/route:POST:/tokens (external)"]
+    services_api_rpc_http_out_POST_http___services_auth_8080_tokens -->|cross_repo:calls| services_auth_route_POST__tokens
+    class repo_libs_shared_models,repo_services_api,repo_services_auth weld_repo;
+    class services_api_rpc_http_out_POST_http___services_auth_8080_tokens,services_auth_route_POST__tokens weldmeta_external;
 ```
 
 ---
@@ -458,9 +498,9 @@ The sidebar in `wd viz` carries two checkboxes under a **Hide** group:
 Each label carries a count, e.g. "Hide standard library (412)", read from
 the `nodes_by_origin` field in the `/api/summary` payload. Unchecked, the
 overview slice still hides `unresolved` nodes by default — the same
-default the pre-ADR-0042 adapter applied via its ad-hoc
-`symbol:unresolved:*` strip, now expressed uniformly through the same
-filter mechanism.
+default earlier adapters applied via an ad-hoc `symbol:unresolved:*`
+strip, now expressed uniformly through the same origin-aware filter
+mechanism.
 
 The same filter is reachable directly from the JSON API:
 
@@ -546,7 +586,7 @@ The full MCP install story (including the `[mcp]` extra) is covered in
 
 ## Reproducing locally
 
-Snippets on this page were captured against `wd 0.21.0` from a Linux
+Snippets on this page were captured against `wd 0.22.0` from a Linux
 host. To reproduce them on your own machine:
 
 ```bash

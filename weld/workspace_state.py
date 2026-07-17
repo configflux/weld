@@ -25,6 +25,7 @@ from weld._workspace_lock import (
     WORKSPACE_LOCK_FILENAME,
 )
 from weld.workspace import WorkspaceConfig, load_workspaces_yaml
+from weld._notice import emit
 
 # Re-export lock types so existing ``from weld.workspace_state import ...``
 # continues to work without touching every consumer.
@@ -306,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         state = load_workspace_state_json(args.root)
     except WorkspaceStateError as exc:
-        print(f"[weld] error: {exc}", file=sys.stderr)
+        emit(f"[weld] error: {exc}")
         return 2
 
     # ADR 0066 §2: derive child staleness at render time (read-only). The

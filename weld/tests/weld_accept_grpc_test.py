@@ -5,7 +5,7 @@ client linking) strategies against the ``grpc_accept`` fixture and
 verifies the resulting interaction graph: services, rpc methods,
 message contracts, enums, and server/client binding edges.
 
-Per ADR 0018, proto declarations are canonical (confidence=definite)
+Per ADR 0086, proto declarations are canonical (confidence=definite)
 while bindings are inferred (confidence=inferred).
 """
 

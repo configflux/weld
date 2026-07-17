@@ -24,7 +24,6 @@ import hashlib
 import hmac
 import json
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +35,7 @@ from weld._graph_meta_sidecar import (
 )
 from weld._warm_source import ArtifactSource, source_from_spec
 from weld.workspace_state import atomic_write_text
+from weld._notice import emit
 
 __all__ = [
     "WarmResult",
@@ -188,24 +188,21 @@ def _probe_and_land(
         data, expected = fetched
         if not verify_artifact(data, expected):
             rejected += 1
-            print(
+            emit(
                 f"[weld] warm: artifact for {sha[:12]} failed integrity check, "
-                "skipping",
-                file=sys.stderr,
+                "skipping"
             )
             continue
         if not _land_artifact(graph_path, data):
             rejected += 1
-            print(
+            emit(
                 f"[weld] warm: artifact for {sha[:12]} is not a valid graph, "
-                "skipping",
-                file=sys.stderr,
+                "skipping"
             )
             continue
         _write_sidecar(graph_path, sha)
-        print(
-            f"[weld] warm: fetched graph for {sha[:12]}; refreshing to HEAD",
-            file=sys.stderr,
+        emit(
+            f"[weld] warm: fetched graph for {sha[:12]}; refreshing to HEAD"
         )
         _refresh(root, full=False)
         return WarmResult(
@@ -248,10 +245,9 @@ def warm(
     graph_path = root / ".weld" / "graph.json"
 
     if _is_federated(root):
-        print(
+        emit(
             "[weld] warm: federated root -- artifact warm is not supported yet, "
-            "running a normal discover",
-            file=sys.stderr,
+            "running a normal discover"
         )
         if allow_fallback:
             _refresh(root, full=True)
@@ -266,16 +262,15 @@ def warm(
         if result is not None:
             probed = result
     elif source is None:
-        print(
+        emit(
             "[weld] warm: no artifact source configured "
-            f"(pass --source or set {ENV_SOURCE}); running a full discover",
-            file=sys.stderr,
+            f"(pass --source or set {ENV_SOURCE}); running a full discover"
         )
 
     if not allow_fallback:
         return probed
 
-    print("[weld] warm: building graph with a full local discover", file=sys.stderr)
+    emit("[weld] warm: building graph with a full local discover")
     _refresh(root, full=True)
     probed.refreshed = True
     return probed

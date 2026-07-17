@@ -38,7 +38,6 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +55,7 @@ from weld._sqlite_schema import (
     SIDECAR_FILENAME,
     SQLITE_SCHEMA_VERSION,
 )
+from weld._notice import emit
 
 __all__ = [
     "SIDECAR_FILENAME",
@@ -372,8 +372,7 @@ def safe_build_sidecar_for_bytes(
     try:
         return build_sidecar_for_bytes(graph, graph_json_bytes, target_path)
     except (OSError, sqlite3.Error) as exc:
-        print(
-            f"[weld] notice: failed to write sqlite sidecar at {target_path}: {exc}",
-            file=sys.stderr,
+        emit(
+            f"[weld] notice: failed to write sqlite sidecar at {target_path}: {exc}"
         )
         return None

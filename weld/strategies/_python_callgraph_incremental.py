@@ -23,37 +23,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from weld.strategies._incremental_hint import INCREMENTAL_HINT_KEY, IncrementalHint
-
-
-def get_incremental_hint(context: dict) -> IncrementalHint | None:
-    """Return the typed incremental hint stashed in *context*, if any."""
-    if not isinstance(context, dict):
-        return None
-    hint = context.get(INCREMENTAL_HINT_KEY)
-    return hint if isinstance(hint, IncrementalHint) else None
-
-
-def dirty_matched(
-    matched: list[Path],
-    root: Path,
-    dirty_files: frozenset[str],
-) -> list[Path]:
-    """Restrict *matched* to files whose repo-relative path is dirty.
-
-    Order is preserved from *matched* so the parse loop and any
-    order-sensitive downstream behaviour are unchanged relative to the
-    full-glob path for the surviving subset.
-    """
-    out: list[Path] = []
-    for py in matched:
-        try:
-            rel = str(py.relative_to(root))
-        except ValueError:
-            continue
-        if rel in dirty_files:
-            out.append(py)
-    return out
+# ``get_incremental_hint`` and ``dirty_matched`` are the strategy-agnostic hint
+# primitives; they live in ``_incremental_hint`` (the neutral home now shared
+# with ``python_module``, ADR 0084) and are re-exported here so
+# ``python_callgraph`` keeps importing them from this module unchanged.
+# ``reconstruct_project_modules`` below is the callgraph-specific piece --
+# ``python_module`` has no cross-file state and needs no equivalent.
+from weld.strategies._incremental_hint import (  # noqa: F401 -- re-export
+    dirty_matched,
+    get_incremental_hint,
+)
 
 
 def reconstruct_project_modules(

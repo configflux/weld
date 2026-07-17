@@ -225,7 +225,7 @@ def _route_node(
     method: str, path: str, *, rel_path: str, function: str | None,
     carrier: str, source: str,
 ) -> dict:
-    """Build a Flask route node payload (ADR 0018 inbound HTTP surface)."""
+    """Build a Flask route node payload (ADR 0086 inbound HTTP surface)."""
     return {
         "type": "route",
         "label": f"{method} {path}",

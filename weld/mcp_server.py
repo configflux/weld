@@ -25,10 +25,13 @@ from weld._mcp_guard import (
 )
 from weld._mcp_read import (
     FRESHNESS_TOOLS as _FRESHNESS_TOOLS,
-    load_graph_for_read as _load_graph_for_read,
+    load_graph_for_read as _load_graph,
     stamp_freshness as _stamp_freshness,
 )
 from weld.brief import brief as _brief
+from weld.read import read_query as _read_query
+from weld.read import shape_brief as _shape_brief
+from weld.read import shape_read_envelope as _shape_read_envelope
 from weld.diff import load_and_diff as _load_and_diff
 from weld.federation import FederatedGraph as _FederatedGraph
 from weld.federation_tools import (
@@ -43,6 +46,7 @@ from weld.mcp_helpers import weld_enrich as _weld_enrich
 from weld.mcp_helpers import weld_impact as _weld_impact
 from weld.mcp_helpers import weld_review_guarded as _weld_review_guarded
 from weld.mcp_helpers import weld_trace as _weld_trace
+from weld.workspace_state import find_workspaces_yaml as _find_workspaces_yaml
 
 # ---------------------------------------------------------------------------
 # Tool descriptors
@@ -56,20 +60,6 @@ class Tool:
     description: str
     input_schema: dict
     handler: Callable[..., Any] = field(repr=False)
-
-def _load_graph(root: Path) -> _Graph | _FederatedGraph:
-    """Return a loaded graph for a read tool, self-healing first (bd 85tb.3).
-
-    Delegates to :func:`weld._mcp_read.load_graph_for_read`, which mirrors the
-    CLI read path: it runs ``auto_refresh_if_stale`` (ADR 0051 -- honouring the
-    ``WELD_AUTO_REFRESH=0`` / ``--no-refresh`` opt-outs and the federated
-    auto-recurse delegation) *before* loading, and serves a single-repo graph
-    from an in-process sha-keyed cache so a repeated MCP call does not re-read
-    and re-parse the (large) ``graph.json``. Returns a ``FederatedGraph`` at a
-    workspace root so ``query`` / ``context`` / ``path`` span child repos.
-    """
-    return _load_graph_for_read(root)
-
 
 def _attach_children_status(
     graph: _Graph | _FederatedGraph, result: dict,
@@ -89,36 +79,58 @@ def _attach_children_status(
 # Tool implementations (pure adapters)
 # ---------------------------------------------------------------------------
 
-def weld_query(term: str, limit: int = 20, *, root: Path | str = ".") -> dict:
+def weld_query(
+    term: str, limit: int = 20, *,
+    full_neighborhood: bool = False, full_size: bool = False,
+    include_speculative: bool = False, root: Path | str = ".",
+) -> dict:
     """Tokenized ranked search. Delegates to ``Graph.query``; see
     :func:`_attach_children_status` for the federated-only extra field.
-    Missing-graph guard applies (single-repo root only)."""
+
+    Shaped by the shared :func:`weld.read.read_query`, so the answer is
+    identical to ``wd query`` (ADR 0083): the speculative-match filter drops
+    ``origin=unresolved`` sentinels from ``matches`` unless
+    ``include_speculative=True``, then the ADR 0078 diet + ADR 0082 byte budget
+    apply (all reported in ``omitted_neighbors``). ``full_neighborhood=True``
+    restores the raw neighborhood; ``full_size=True`` keeps the diet but skips
+    the byte budget. Missing-graph guard applies (single-repo root only)."""
     if not _graph_present(Path(root)):
         return _missing_graph_payload("weld_query")
     g = _load_graph(Path(root))
-    return _attach_children_status(g, g.query(term, limit=limit))
+    envelope = _read_query(
+        g.query(term, limit=limit), include_speculative=include_speculative,
+        full=full_neighborhood, full_size=full_size)
+    return _attach_children_status(g, envelope)
 
 def weld_find(term: str, limit: int | None = None, *, root: Path | str = ".") -> dict:
-    """File-index substring search. Delegates to ``weld.file_index.find_files``.
-
-    ``limit`` is forwarded to ``find_files``, which slices the ranked result
-    and emits a ``score`` field on every file entry (the number of matching
-    tokens, identical to the signal used for ordering). Negative ``limit``
-    values are ignored to preserve the pre-change tolerance at the MCP
-    boundary.
-    """
-    index = _load_file_index(Path(root))
+    """File-index substring search. Delegates to ``weld.file_index.find_files``;
+    at a federated root fans out across every child index (ADR 0089), matching
+    ``wd find``. Negative ``limit`` is ignored (pre-change MCP tolerance)."""
     effective_limit = limit if limit is None or limit >= 0 else None
-    return _find_files(index, term, limit=effective_limit)
+    root_path = Path(root)
+    if _find_workspaces_yaml(root_path) is not None:
+        from weld._federation_find import federated_find
+        return federated_find(root_path, term, limit=effective_limit)
+    return _find_files(_load_file_index(root_path), term, limit=effective_limit)
 
-def weld_context(node_id: str, *, root: Path | str = ".") -> dict:
+def weld_context(
+    node_id: str, *, full_neighborhood: bool = False, full_size: bool = False,
+    root: Path | str = ".",
+) -> dict:
     """Node + 1-hop neighborhood. Delegates to ``Graph.context``; see
     :func:`_attach_children_status` for the federated-only extra field.
-    Missing-graph guard applies (single-repo root only)."""
+
+    Bounded read shaping (ADR 0082) applies by default via the shared
+    :func:`weld.read.shape_read_envelope`; ``full_neighborhood=True`` restores
+    the raw neighborhood and ``full_size=True`` skips only the byte budget. A
+    node-not-found miss is returned unchanged. Missing-graph guard applies
+    (single-repo root only)."""
     if not _graph_present(Path(root)):
         return _missing_graph_payload("weld_context")
     g = _load_graph(Path(root))
-    return _attach_children_status(g, g.context(node_id))
+    envelope = _shape_read_envelope(
+        g.context(node_id), full=full_neighborhood, full_size=full_size)
+    return _attach_children_status(g, envelope)
 
 def weld_path(from_id: str, to_id: str, *, root: Path | str = ".") -> dict:
     """Shortest path between two nodes. Delegates to ``Graph.path``; see
@@ -129,18 +141,21 @@ def weld_path(from_id: str, to_id: str, *, root: Path | str = ".") -> dict:
     g = _load_graph(Path(root))
     return _attach_children_status(g, g.path(from_id, to_id))
 
-def weld_brief(area: str, limit: int = 20, *, root: Path | str = ".") -> dict:
-    """Stable brief JSON for *area*. Delegates to ``weld.brief.brief``.
-
-    In a federated workspace the underlying graph is a
-    :class:`~weld.federation.FederatedGraph` whose ``query`` and ``dump``
-    methods span child repos, so the brief transparently includes child
-    matches. Missing-graph guard applies (single-repo root only).
-    """
+def weld_brief(
+    area: str, limit: int = 20, *, full_size: bool = False,
+    root: Path | str = ".",
+) -> dict:
+    """Stable brief JSON for *area*. Delegates to ``weld.brief.brief``, then
+    bounds it via the shared :func:`weld.read.shape_brief` (ADR 0082):
+    edges are de-dangled to emitted bucket nodes and the ``weld_query`` byte
+    budget applies; ``full_size=True`` returns the unbounded brief. In a
+    federated workspace the graph is a
+    :class:`~weld.federation.FederatedGraph`, so the brief spans child repos.
+    Missing-graph guard applies (single-repo root only)."""
     if not _graph_present(Path(root)):
         return _missing_graph_payload("weld_brief")
     g = _load_graph(Path(root))
-    return _brief(g, area, limit=limit)
+    return _shape_brief(_brief(g, area, limit=limit), full_size=full_size)
 
 def weld_stale(*, root: Path | str = ".") -> dict:
     """Graph freshness vs git HEAD. Delegates to ``Graph.stale``.

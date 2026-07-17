@@ -335,7 +335,9 @@ def _parse_porcelain_v2_paths(stdout: str) -> list[str]:
     return paths
 
 
-def working_tree_dirty_sources(root: Path, tracked: list[str]) -> list[str]:
+def working_tree_dirty_sources(
+    root: Path, tracked: list[str], *, detect_renames: bool = True
+) -> list[str]:
     """Return uncommitted-change paths under *tracked* prefixes (ADR 0017).
 
     Refines the freshness signal: ``source_files_changed_since`` only
@@ -350,6 +352,10 @@ def working_tree_dirty_sources(root: Path, tracked: list[str]) -> list[str]:
     so that committing/touching the graph -- the only "dirt" present in
     the bookkeeping-only case -- never trips the signal.
 
+    *detect_renames* (bd o18k): ``False`` adds ``--no-renames`` so a rename
+    surfaces its vacated original as an explicit deletion -- needed by a caller
+    keying a content cache on the dirty *set* (:mod:`weld._refresh_cache`).
+
     Cheap by construction: an empty *tracked* short-circuits before any
     git call, and a clean tree returns the empty list after a single
     ``git status`` (no per-file hashing). ``-c core.quotePath=false``
@@ -363,20 +369,22 @@ def working_tree_dirty_sources(root: Path, tracked: list[str]) -> list[str]:
     """
     if not tracked:
         return []
+    argv = [
+        # ``--untracked-files=all`` lists every untracked file by its full
+        # path instead of collapsing a fully-untracked directory into a
+        # single ``dir/`` summary entry. The summary form would defeat the
+        # bookkeeping filter: an untracked ``.weld/`` (its files not yet
+        # committed) would arrive as the bare ``.weld/`` directory, which is
+        # not in ``_WELD_BOOKKEEPING_PATHS`` and would wrongly count as
+        # source drift under a broad ``./`` prefix.
+        "git", "-c", "core.quotePath=false",
+        "status", "--porcelain=v2", "--untracked-files=all", "-z",
+    ]
+    if not detect_renames:
+        argv.append("--no-renames")
     try:
         result = subprocess.run(
-            [
-                # ``--untracked-files=all`` lists every untracked file by
-                # its full path instead of collapsing a fully-untracked
-                # directory into a single ``dir/`` summary entry. The
-                # summary form would defeat the bookkeeping filter: an
-                # untracked ``.weld/`` (its files not yet committed) would
-                # arrive as the bare ``.weld/`` directory, which is not in
-                # ``_WELD_BOOKKEEPING_PATHS`` and would wrongly count as
-                # source drift under a broad ``./`` prefix.
-                "git", "-c", "core.quotePath=false",
-                "status", "--porcelain=v2", "--untracked-files=all", "-z",
-            ],
+            argv,
             capture_output=True, text=True, cwd=str(root), timeout=10,
             env={**os.environ, "LC_ALL": "C"},
         )

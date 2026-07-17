@@ -1,0 +1,91 @@
+{
+  "discovered_from": [
+    "src/pkg/consumers.py",
+    "src/pkg/producers.py",
+    "src/pkg/request_typed.py"
+  ],
+  "edges": [
+    {
+      "from": "file:src/pkg/consumers",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "channel:kafka:orders.events",
+      "type": "consumes"
+    },
+    {
+      "from": "file:src/pkg/consumers",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "channel:kafka:users.created",
+      "type": "consumes"
+    },
+    {
+      "from": "file:src/pkg/consumers",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "channel:tcp:notify:users",
+      "type": "consumes"
+    },
+    {
+      "from": "file:src/pkg/producers",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "channel:kafka:orders.events",
+      "type": "produces"
+    },
+    {
+      "from": "channel:kafka:orders.events",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "contract:OrderEvent",
+      "type": "implements"
+    },
+    {
+      "from": "file:src/pkg/producers",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "channel:kafka:raw.topic",
+      "type": "produces"
+    },
+    {
+      "from": "file:src/pkg/producers",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "channel:tcp:notify:users",
+      "type": "produces"
+    },
+    {
+      "from": "file:src/pkg/request_typed",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "channel:kafka:req.topic",
+      "type": "produces"
+    },
+    {
+      "from": "channel:kafka:req.topic",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "events_bindings"
+      },
+      "to": "contract:Request",
+      "type": "implements"
+    }
+  ],
+  "nodes": {}
+}

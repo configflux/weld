@@ -93,7 +93,8 @@ def _ensure_graph(repo_root: Path) -> bool:
         # crashing the adapter.
         pass
     try:
-        from weld.discover import _dumps_graph, discover as _discover
+        from weld.discover import discover as _discover
+        from weld.serializer import dumps_graph as _dumps_graph
         from weld.workspace_state import atomic_write_text
 
         graph_path.parent.mkdir(parents=True, exist_ok=True)

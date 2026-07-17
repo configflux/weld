@@ -182,12 +182,30 @@ class WeldMcpServerToolsTest(unittest.TestCase):
         match_ids = {m["id"] for m in result["matches"]}
         self.assertIn("entity:Store", match_ids)
 
-    def test_weld_query_matches_cli_helper(self) -> None:
+    def test_weld_query_full_neighborhood_matches_cli_helper(self) -> None:
+        # The escape hatch (full_neighborhood=True) restores byte-parity with
+        # the raw Graph.query envelope the CLI helper produces.
         g = Graph(self.root)
         g.load()
         expected = g.query("Store", limit=5)
+        result = mcp_server.weld_query(
+            "Store", limit=5, full_neighborhood=True, root=self.root
+        )
+        self.assertEqual(result, expected)
+
+    def test_weld_query_default_diets_neighborhood(self) -> None:
+        # By default weld_query routes through the shared read_query command
+        # (ADR 0083): the speculative-match filter, then the ADR 0078 diet plus
+        # the byte budget's size_capped annotation -- identical to wd query.
+        from weld.read import read_query
+
+        g = Graph(self.root)
+        g.load()
+        expected = read_query(g.query("Store", limit=5))
         result = mcp_server.weld_query("Store", limit=5, root=self.root)
         self.assertEqual(result, expected)
+        self.assertTrue(result["neighbors_filtered"])
+        self.assertIn("size_capped", result["omitted_neighbors"])
 
     def test_weld_query_respects_limit(self) -> None:
         result = mcp_server.weld_query("store", limit=1, root=self.root)
@@ -262,9 +280,14 @@ class WeldMcpServerToolsTest(unittest.TestCase):
         self.assertIn("warnings", result)
 
     def test_weld_brief_matches_cli_helper(self) -> None:
+        # weld_brief now routes the core brief through the shared read shaping
+        # (ADR 0082): edges are de-dangled to emitted bucket nodes and the byte
+        # budget applies, so the parity target is shape_brief(brief(...)).
+        from weld.read import shape_brief
+
         g = Graph(self.root)
         g.load()
-        expected = brief_helper(g, "Store", limit=20)
+        expected = shape_brief(brief_helper(g, "Store", limit=20))
         result = mcp_server.weld_brief("Store", root=self.root)
         self.assertEqual(result, expected)
 

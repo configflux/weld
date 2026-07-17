@@ -1,0 +1,160 @@
+{
+  "discovered_from": [
+    "src/pkg/dropped.py",
+    "src/pkg/full_urls.py",
+    "src/pkg/path_and_kw.py"
+  ],
+  "edges": [
+    {
+      "from": "file:src/pkg/dropped",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "http_client"
+      },
+      "to": "rpc:http:out:GET:https://example.com/lit",
+      "type": "invokes"
+    },
+    {
+      "from": "file:src/pkg/full_urls",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "http_client"
+      },
+      "to": "rpc:http:out:GET:https://example.com/api/v1/widgets",
+      "type": "invokes"
+    },
+    {
+      "from": "file:src/pkg/full_urls",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "http_client"
+      },
+      "to": "rpc:http:out:POST:https://api.example.com/v2/events",
+      "type": "invokes"
+    },
+    {
+      "from": "file:src/pkg/path_and_kw",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "http_client"
+      },
+      "to": "rpc:http:out:GET:/health",
+      "type": "invokes"
+    },
+    {
+      "from": "rpc:http:out:GET:/health",
+      "props": {
+        "confidence": "inferred",
+        "source_strategy": "http_client"
+      },
+      "to": "route:GET:/health",
+      "type": "invokes"
+    },
+    {
+      "from": "file:src/pkg/path_and_kw",
+      "props": {
+        "confidence": "definite",
+        "source_strategy": "http_client"
+      },
+      "to": "rpc:http:out:GET:https://kw.example/x",
+      "type": "invokes"
+    }
+  ],
+  "nodes": {
+    "rpc:http:out:GET:/health": {
+      "label": "GET /health",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "outbound",
+        "confidence": "definite",
+        "declared_in": "src/pkg/path_and_kw.py",
+        "method": "GET",
+        "protocol": "http",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "http_client",
+        "surface_kind": "request_response",
+        "transport": "http",
+        "url": "/health"
+      },
+      "type": "rpc"
+    },
+    "rpc:http:out:GET:https://example.com/api/v1/widgets": {
+      "label": "GET https://example.com/api/v1/widgets",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "outbound",
+        "confidence": "definite",
+        "declared_in": "src/pkg/full_urls.py",
+        "method": "GET",
+        "protocol": "http",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "http_client",
+        "surface_kind": "request_response",
+        "transport": "http",
+        "url": "https://example.com/api/v1/widgets"
+      },
+      "type": "rpc"
+    },
+    "rpc:http:out:GET:https://example.com/lit": {
+      "label": "GET https://example.com/lit",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "outbound",
+        "confidence": "definite",
+        "declared_in": "src/pkg/dropped.py",
+        "method": "GET",
+        "protocol": "http",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "http_client",
+        "surface_kind": "request_response",
+        "transport": "http",
+        "url": "https://example.com/lit"
+      },
+      "type": "rpc"
+    },
+    "rpc:http:out:GET:https://kw.example/x": {
+      "label": "GET https://kw.example/x",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "outbound",
+        "confidence": "definite",
+        "declared_in": "src/pkg/path_and_kw.py",
+        "method": "GET",
+        "protocol": "http",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "http_client",
+        "surface_kind": "request_response",
+        "transport": "http",
+        "url": "https://kw.example/x"
+      },
+      "type": "rpc"
+    },
+    "rpc:http:out:POST:https://api.example.com/v2/events": {
+      "label": "POST https://api.example.com/v2/events",
+      "props": {
+        "authority": "canonical",
+        "boundary_kind": "outbound",
+        "confidence": "definite",
+        "declared_in": "src/pkg/full_urls.py",
+        "method": "POST",
+        "protocol": "http",
+        "roles": [
+          "implementation"
+        ],
+        "source_strategy": "http_client",
+        "surface_kind": "request_response",
+        "transport": "http",
+        "url": "https://api.example.com/v2/events"
+      },
+      "type": "rpc"
+    }
+  }
+}

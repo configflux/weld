@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
 
 
@@ -314,3 +315,39 @@ def diagnostic(
     if raw is not None:
         result["raw"] = raw
     return result
+
+
+def weld_ignored_runtime_refs(root: Path) -> frozenset[str]:
+    """Repo-relative paths under ``.weld/`` that this repo's ``.weld/.gitignore``
+    marks as regenerable runtime artifacts (e.g. ``.weld/graph.json``).
+
+    A prose reference to one of these points at a gitignored, regenerable
+    artifact (ADR 0076 "Mode A"), not a missing source file -- so a checkout
+    that has not yet run ``wd discover`` must not report it as a broken
+    reference. Reading the repo's actual ``.weld/.gitignore`` (rather than a
+    hardcoded list) keeps the exclusion aligned with the repo's real policy,
+    including ``--track-graphs`` mode where the graph is intentionally tracked.
+
+    Conservative parse: comments, blanks, negations (``!``), and any entry
+    containing a slash or glob metacharacter are skipped, mirroring
+    :mod:`weld._gitignore_scan`. Missing/unreadable file -> empty set (no
+    suppression), so a non-weld checkout keeps the prior behavior.
+    """
+    try:
+        text = (root / ".weld" / ".gitignore").read_text(
+            encoding="utf-8", errors="replace",
+        )
+    except OSError:
+        return frozenset()
+    out: set[str] = set()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
+            continue
+        comment_idx = line.find(" #")
+        if comment_idx != -1:
+            line = line[:comment_idx].strip()
+        if not line or any(ch in line for ch in "*?[/"):
+            continue
+        out.add(f".weld/{line}")
+    return frozenset(out)

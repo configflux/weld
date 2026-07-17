@@ -15,8 +15,8 @@ repo's 400-line cap and so the guard can be unit-tested in isolation.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
+from weld._notice import emit
 
 __all__ = [
     "EmptyFederatedGraphRefusedError",
@@ -56,10 +56,9 @@ def existing_node_count(path: Path) -> int:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        print(
+        emit(
             f"[weld] warning: existing graph at {path} is unreadable "
-            f"({type(exc).__name__}); empty-graph guard inactive for this run",
-            file=sys.stderr,
+            f"({type(exc).__name__}); empty-graph guard inactive for this run"
         )
         return 0
     if not isinstance(payload, dict):
@@ -120,5 +119,5 @@ def enforce_nonempty_federated_write(
         f"[weld] If this is intentional (e.g. tearing down the workspace), "
         f"re-run with --allow-empty to bypass this guard."
     )
-    print(msg, file=sys.stderr)
+    emit(msg)
     raise EmptyFederatedGraphRefusedError(msg)

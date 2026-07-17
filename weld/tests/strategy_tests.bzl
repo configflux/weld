@@ -74,6 +74,12 @@ def strategy_tests():
     )
 
     py_test(
+        name = "weld_dds_idl_strategy_test",
+        srcs = ["weld_dds_idl_strategy_test.py"],
+        deps = ["//weld:contract", "//weld/strategies", "//weld/strategies:helpers"],
+    )
+
+    py_test(
         name = "weld_doc_authority_test",
         srcs = ["weld_doc_authority_test.py"],
         deps = ["//weld:contract", "//weld:runtime", "//weld:yaml", "//weld/strategies", "//weld/strategies:helpers"],

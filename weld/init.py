@@ -18,6 +18,7 @@ from weld._init_framework_sources import (
     _files_entry,
     _source_entry,
 )
+from weld._init_interfaces import detect_interfaces, interface_source_entries
 from weld._init_ros2 import ros2_source_entries
 from weld.init_workspace import init_workspace as _init_workspace
 from weld.init_workspace import maybe_bootstrap_polyrepo as _maybe_bootstrap_polyrepo
@@ -64,6 +65,11 @@ _YAML_HEADER = """\
 #   python_module     — AST: top-level classes and functions
 #   python_callgraph  — AST: function-level symbols + calls edges (ADR 0004)
 #   tree_sitter       — Tree-sitter AST: exports, types, imports (Go, Rust, TS, C#, Java, C/C++)
+#   grpc_proto        — AST: .proto service/rpc/message/enum extraction
+#   grpc_bindings     — AST: Python gRPC server/client bindings -> rpc edges
+#   events            — Async channels (Kafka/Celery/Redis; compose env + py call sites)
+#   events_bindings   — AST: Python channel producer/consumer/payload linkage
+#   runtime_contract  — runtime-contract.md healthchecks + boundary linkage
 #   csharp_solution        — XML: .sln contains -> .csproj
 #   csharp_project         — XML: .csproj ProjectReference, Directory.Build.*
 #   csharp_msbuild_targets — XML: <Target> BeforeTargets/AfterTargets ordering
@@ -129,6 +135,7 @@ def generate_yaml(
     ros2_pkg_roots: list[str] | None = None,
     csharp_flags: dict[str, bool] | None = None,
     cpp_bs: list[str] | None = None,
+    interface_sources: list[str] | None = None,
 ) -> str:
     """Generate the discover.yaml content using template strings.
 
@@ -206,6 +213,10 @@ def generate_yaml(
     # --- ROS2 (; helpers in weld/_init_ros2.py) ---
     if ros2_pkg_roots:
         buckets["code"].extend(ros2_source_entries(ros2_pkg_roots))
+
+    # --- Interface strategies (gRPC, events, runtime-contract; ADR 0080) ---
+    if interface_sources:
+        buckets["code"].extend(interface_sources)
 
     # --- docs ---
     for doc_dir in doc_dirs:
@@ -309,6 +320,8 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
     ros2_pkg_roots = detect_ros2(root, files)
     csharp_flags = detect_csharp_artifacts(files) if "csharp" in languages else None
     cpp_bs = cpp_buildsystem_source_entries(detect_cpp_buildsystem(files, root=root)) if "cpp" in languages else None
+    interface_sources = interface_source_entries(
+        detect_interfaces(root, files, compose_files), python_globs)
 
     print(f"Detecting project structure...\n  Structure: {structure}", file=sys.stderr)
     print("Scanning for Dockerfiles...", file=sys.stderr)
@@ -337,6 +350,7 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
         claude_commands=claude_commands, doc_dirs=doc_dirs,
         python_globs=python_globs, root_configs=root_configs,
         ros2_pkg_roots=ros2_pkg_roots, csharp_flags=csharp_flags, cpp_bs=cpp_bs,
+        interface_sources=interface_sources,
     )
 
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -131,7 +131,7 @@ def _validate_node_props(
     if "source_strategy" in props and not isinstance(props["source_strategy"], str):
         errors.append(ValidationError(path, "props.source_strategy", "must be a string"))
 
-    # Interaction-surface string-type checks (ADR 0018).
+    # Interaction-surface string-type checks (ADR 0086).
     bad: set[str] = set()
     for prop_name in _INTERACTION_STRING_PROPS:
         if _check_nonempty_string(props, prop_name, path, errors):
@@ -162,7 +162,7 @@ def _validate_node_props(
                 f"transport {transport!r} is not compatible with "
                 f"protocol {protocol!r}; valid transports for "
                 f"{protocol!r}: {sorted(ok)}. "
-                f"Per ADR 0018, omit the prop instead of guessing.",
+                f"Per ADR 0086, omit the prop instead of guessing.",
             ))
 
     if "roles" in props:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -13,12 +12,12 @@ from weld._enrich_safe import (SafeModeRefusedError, refuse_if_network_provider,
 from weld._first_run_enrich import cli_reset_prompt
 from weld._graph_cli import _build_retry_hint, ensure_graph_exists
 from weld._graph_cli_errors import load_graph_or_exit
+from weld.enrichment_persistence import enrichment_fingerprint, valid_enrichment
 from weld.graph import Graph
 from weld.providers import EnrichmentProvider, resolve_provider
 
 ENRICH_VERSION = 1
 _COMPLEXITY_HINTS = frozenset(["low", "medium", "high"])
-_FINGERPRINT_EXCLUDED_PROPS = frozenset(["description", "purpose", "enrichment"])
 
 
 def _now() -> str:
@@ -74,36 +73,6 @@ def _snapshot_neighbors(snapshot: dict, node_id: str) -> list[dict]:
     return neighbors
 
 
-def _enrichment_fingerprint(node: dict, neighbors: list[dict]) -> str:
-    def stable_props(entry: dict) -> dict:
-        props = entry.get("props") or {}
-        return {
-            key: value
-            for key, value in props.items()
-            if key not in _FINGERPRINT_EXCLUDED_PROPS
-        }
-
-    payload = {
-        "node": {
-            "id": node.get("id"),
-            "type": node.get("type"),
-            "label": node.get("label"),
-            "props": stable_props(node),
-        },
-        "neighbors": [
-            {
-                "id": neighbor.get("id"),
-                "type": neighbor.get("type"),
-                "label": neighbor.get("label"),
-                "props": stable_props(neighbor),
-            }
-            for neighbor in neighbors
-        ],
-    }
-    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _valid_cached_enrichment(
     node: dict,
     *,
@@ -111,15 +80,9 @@ def _valid_cached_enrichment(
     model: str,
     fingerprint: str,
 ) -> bool:
-    props = node.get("props") or {}
-    enrichment = props.get("enrichment")
-    if not isinstance(enrichment, dict):
+    enrichment = (node.get("props") or {}).get("enrichment")
+    if not valid_enrichment(enrichment):
         return False
-    required = ("provider", "model", "timestamp", "description")
-    for key in required:
-        value = enrichment.get(key)
-        if not isinstance(value, str) or not value.strip():
-            return False
     return (
         enrichment["provider"].strip().lower() == provider_name
         and enrichment["model"].strip() == model
@@ -243,7 +206,7 @@ def run_enrichment(
             result["partial"] = True
             continue
         neighbors = _snapshot_neighbors(baseline, current_id)
-        fingerprint = _enrichment_fingerprint(baseline_node, neighbors)
+        fingerprint = enrichment_fingerprint(baseline_node)
 
         if not force and _valid_cached_enrichment(
             live_node,

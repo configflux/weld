@@ -13,7 +13,7 @@ from dataclasses import dataclass
 #: v4: generalized interaction-surface vocabulary -- ``rpc`` and ``channel``
 #:     node types plus optional protocol metadata (``protocol``,
 #:     ``surface_kind``, ``transport``, ``boundary_kind``, ``declared_in``);
-#:     no new edges (ADR docs/adrs/0018, tracked project).
+#:     no new edges (ADR docs/adrs/0086, tracked project).
 #: v5: Agent Graph vocabulary for static AI customization assets:
 #:     subagent, skill, instruction, prompt, hook, mcp-server, permission,
 #:     platform, and scope nodes plus explicit agent-relationship edges
@@ -29,7 +29,7 @@ VALID_NODE_TYPES = frozenset([
     # ROS2 vocabulary (ADR 0016): package, interface, node, topic, service, action, parameter.
     "ros_package", "ros_interface", "ros_node",
     "ros_topic", "ros_service", "ros_action", "ros_parameter",
-    # Generalized interaction-surface vocabulary (ADR 0018, tracked project):
+    # Generalized interaction-surface vocabulary (ADR 0086, tracked project):
     # ``rpc`` is a request/response or stream method exposed or consumed by
     # a module (HTTP handler, gRPC method, ROS2 service/action). ``channel``
     # is a named pub/sub or stream endpoint (event topic, ROS2 topic, queue).
@@ -128,7 +128,7 @@ SECTION_KIND_VALUES: frozenset[str] = frozenset([
     "testing", "migration", "security", "contributing",
 ])
 
-# -- Interaction-surface metadata (ADR 0018, tracked project) --------------
+# -- Interaction-surface metadata (ADR 0086, tracked project) --------------
 #: Protocol family. ``http``/``grpc``/``event``/``ros2`` are the four
 #: Phase 7 families; ``inproc`` covers in-process calls that a strategy
 #: chooses to model as an interaction surface.
@@ -154,7 +154,7 @@ BOUNDARY_KIND_VALUES: frozenset[str] = frozenset(
 NODE_OPTIONAL_PROPS: tuple[str, ...] = (
     "source_strategy", "authority", "confidence", "roles", "file", "span",
     "doc_kind", "section_kind",
-    # Interaction-surface metadata (ADR 0018).
+    # Interaction-surface metadata (ADR 0086).
     "protocol", "surface_kind", "transport", "boundary_kind", "declared_in",
 )
 EDGE_OPTIONAL_PROPS: tuple[str, ...] = (
@@ -165,7 +165,7 @@ EDGE_OPTIONAL_PROPS: tuple[str, ...] = (
 #: Allowed ``transport`` values per ``protocol``. Drives the coherence
 #: check in :func:`validate_node` (tracked project): when a strategy or
 #: adapter stamps both props, the pair must be physically plausible
-#: per ADR 0018's static-truth policy. Omission of either prop skips
+#: per ADR 0086's static-truth policy. Omission of either prop skips
 #: the check -- partial coverage is honest.
 PROTOCOL_TRANSPORT_COMPATIBILITY: dict[str, frozenset[str]] = {
     "http": frozenset(["http", "http2", "tcp"]),

@@ -15,6 +15,20 @@ from weld.mcp_helpers import (
     build_trace_tool as _build_trace_tool,
 )
 
+#: Shared ``full_size`` schema property for the bounded read tools (ADR 0082).
+#: Skips the byte budget; the diet/edge-de-dangle still apply. Kept identical
+#: across weld_query / weld_context / weld_brief so the surface stays symmetric.
+_FULL_SIZE_PROPERTY: dict = {
+    "type": "boolean",
+    "description": (
+        "Skip the read byte budget (ADR 0082). Default false: the shaped "
+        "envelope is pruned to fit the agent tool cap, reported via "
+        "omitted_neighbors.size_capped (query/context) or a warnings entry "
+        "(brief). Set true to keep every dieted/de-dangled item."
+    ),
+    "default": False,
+}
+
 
 def build_tools(
     *,
@@ -70,6 +84,26 @@ def build_tools(
                         "default": 20,
                         "minimum": 1,
                     },
+                    "full_neighborhood": {
+                        "type": "boolean",
+                        "description": (
+                            "Restore the full 1-hop neighborhood. Default false: "
+                            "stdlib/unresolved/speculative-external neighbors are "
+                            "dropped and fan-out is capped, with counts reported "
+                            "in omitted_neighbors (no silent truncation)."
+                        ),
+                        "default": False,
+                    },
+                    "include_speculative": {
+                        "type": "boolean",
+                        "description": (
+                            "Include origin=unresolved sentinel matches that are "
+                            "dropped by default (parity with the wd query CLI "
+                            "default); restores the pre-filter match set."
+                        ),
+                        "default": False,
+                    },
+                    "full_size": _FULL_SIZE_PROPERTY,
                 },
                 "required": ["term"],
                 "additionalProperties": False,
@@ -111,6 +145,17 @@ def build_tools(
                         "type": "string",
                         "description": "Full node id, e.g. 'entity:Store'.",
                     },
+                    "full_neighborhood": {
+                        "type": "boolean",
+                        "description": (
+                            "Restore the full 1-hop neighborhood. Default false: "
+                            "stdlib/unresolved/speculative-external neighbors are "
+                            "dropped and fan-out is capped, with counts reported "
+                            "in omitted_neighbors (no silent truncation)."
+                        ),
+                        "default": False,
+                    },
+                    "full_size": _FULL_SIZE_PROPERTY,
                 },
                 "required": ["node_id"],
                 "additionalProperties": False,
@@ -153,6 +198,7 @@ def build_tools(
                         "minimum": 1,
                         "default": 20,
                     },
+                    "full_size": _FULL_SIZE_PROPERTY,
                 },
                 "required": ["area"],
                 "additionalProperties": False,

@@ -31,13 +31,13 @@ byte-identical across discover runs.
 from __future__ import annotations
 
 import hashlib
-import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from weld.workspace import UNIT_SEPARATOR
+from weld._notice import emit
 
 __all__ = [
     "CrossRepoEdge",
@@ -359,10 +359,9 @@ def run_resolvers(
             resolver = cls()
             produced = list(resolver.resolve(context))
         except Exception as exc:  # noqa: BLE001 -- isolation is the point
-            print(
+            emit(
                 f"[weld] warning: cross-repo resolver {name!r} raised "
-                f"{type(exc).__name__}: {exc}",
-                file=sys.stderr,
+                f"{type(exc).__name__}: {exc}"
             )
             continue
         all_edges.extend(produced)
@@ -389,9 +388,8 @@ def run_resolvers(
 
     if dropped:
         for child in sorted(drifted):
-            print(
+            emit(
                 f"[weld] warning: child {child!r} drifted during cross-repo "
-                f"resolution; dropping edges referencing it",
-                file=sys.stderr,
+                f"resolution; dropping edges referencing it"
             )
     return filtered

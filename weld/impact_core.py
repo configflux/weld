@@ -263,6 +263,7 @@ def impact(
     seed_kind: str | None = None,
     target_input: str | list[str] | None = None,
     input_paths: list[str] | None = None,
+    low_capability_inputs: list[str] | None = None,
     stale_graph: bool | None = None,
 ) -> dict:
     """Return the reverse-dependency blast radius for a target or seed set.
@@ -277,6 +278,9 @@ def impact(
     Exactly one of *target* or *seeds* must be provided. *unresolved_inputs*
     feeds ``warnings.out_of_scope_inputs``; *input_paths* (the original
     input paths, pre-resolution) feeds ``warnings.low_capability_inputs``.
+    *low_capability_inputs* overrides that warning verbatim when not ``None``;
+    the federated fan-out precomputes it per child because a flattened child's
+    ``props.file`` stays child-relative and a union match here would miss it.
     *stale_graph* is recorded in ``warnings.stale_graph`` and is set by the
     CLI after the staleness gate runs.
     """
@@ -338,7 +342,9 @@ def impact(
         seed_ids, dependents,
     )
     result["warnings"]["speculative_edges"] = _count_speculative_edges(edges)
-    if input_paths:
+    if low_capability_inputs is not None:  # precomputed per child (see docstring)
+        result["warnings"]["low_capability_inputs"] = sorted(set(low_capability_inputs))
+    elif input_paths:
         result["warnings"]["low_capability_inputs"] = _low_capability_inputs(
             graph, seed_ids, list(input_paths),
         )

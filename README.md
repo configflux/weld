@@ -13,7 +13,7 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.21.0 -->
+<!-- evaluator-note: latest=v0.22.0 -->
 > **Evaluators: start with v0.19.1.** v0.19.1 is the current
 > recommended starting point. Headline features added since v0.14.0:
 > a 14-tool MCP server for graph-backed agent context
@@ -26,8 +26,13 @@ a change touches, and what boundaries constrain the implementation.
 > edges; an end-to-end C# strategy stack (solution/project parsing,
 > MSBuild targets, test-framework detection, ASP.NET routes, EF Core,
 > inheritance edges, per-method call graphs) that auto-wires on
-> `wd init` when matching artifacts are present; multi-language
-> origin classification, Bazel `srcs` / `deps` edges, Dockerfile and
+> `wd init` when matching artifacts are present; `wd init`
+> auto-wiring of the interface strategies (gRPC `.proto` services and
+> Python bindings, Kafka / Celery / Redis event channels,
+> `runtime-contract.md` healthchecks, and generic DDS `.idl` data
+> contracts and topic channels) when matching artifacts are
+> present; multi-language origin classification, Bazel `srcs` /
+> `deps` edges, Dockerfile and
 > Compose copy edges, and multi-language test-peer edges across
 > Python, Go, TypeScript / JavaScript, Rust, Java, C#, and C++;
 > `wd communities` topic-level navigation of large graphs; opt-in
@@ -177,13 +182,36 @@ so an agent can weight strong hits over guesses. By default `wd query` also
 hides unresolved-symbol sentinels (call-graph callees that could not be
 linked to a definition, `origin=unresolved`) — they are noise in the result
 set. Pass `--include-speculative` to bring them back. The `--json` envelope
-applies the same default filter; the MCP `weld_query` tool is unfiltered and
-always carries `confidence` per node.
+applies the same default filter, and so does the MCP `weld_query` tool
+(`include_speculative: true` restores them there) — the two surfaces return the
+same matches by construction. Every match still carries its `confidence` so a
+client can weight or discount hits itself.
+
+`wd query` and `wd context` (and their MCP peers `weld_query` / `weld_context`)
+also **bound the read envelope** by default so a large graph stays usable on
+both surfaces. First the neighborhood is dieted: neighbors that are stdlib
+symbols, unresolved sentinels, or speculative external symbols are dropped (real
+external *package* dependencies are kept), dangling edges are removed, and the
+fan-out is capped so a hub node cannot blow up the envelope. Then a deterministic
+**byte budget** prunes the lowest-priority survivors until the serialized
+envelope fits the agent tool cap. Nothing is hidden silently — the `--json`
+envelope reports `neighbors_filtered: true` and an `omitted_neighbors` count by
+reason (`stdlib`, `unresolved`, `external_symbol`, `fanout_capped`, and
+`size_capped` for the byte budget). Pass `--full-neighborhood` (CLI) or
+`full_neighborhood: true` (MCP) to restore the full, unfiltered neighborhood, or
+`--full-size` / `full_size: true` to keep the diet but skip the byte budget.
+
+`wd brief` / `weld_brief` are bounded the same way: edges are de-dangled to the
+nodes the brief actually emits and the byte budget applies (a `warnings` entry
+records any node dropped for size); `--full-size` / `full_size: true` returns the
+unbounded brief.
 
 All `wd` retrieval commands default to human-readable text and accept
 `--json` for the stable JSON envelope. Pass `--json` when
-piping to `jq` or other scripted consumers — the schema is unchanged
-from the previous release. Sample `wd query "auth" --json`:
+piping to `jq` or other scripted consumers. `query` and `context`
+additionally carry the neighbor-diet annotation (`neighbors_filtered` +
+`omitted_neighbors`); the rest of the envelope is unchanged.
+Sample `wd query "auth" --json`:
 
 ```json
 {
@@ -203,7 +231,9 @@ from the previous release. Sample `wd query "auth" --json`:
   "neighbors": [{"id": "route:/login", "type": "route"}],
   "edges": [
     {"from": "route:/login", "to": "symbol:src/auth/handler.py:authenticate", "type": "calls"}
-  ]
+  ],
+  "neighbors_filtered": true,
+  "omitted_neighbors": {"stdlib": 0, "unresolved": 0, "external_symbol": 0, "fanout_capped": 0, "size_capped": 0}
 }
 ```
 
@@ -384,6 +414,7 @@ host language):
 | Framework | Host language | Extraction surface | Status |
 |---|---|---|---|
 | ROS2 | C++ / Python | packages, nodes, topics, services, actions, parameters | Preview |
+| DDS (CycloneDDS / FastDDS) | IDL (`.idl`) | data contracts (structs) with typed fields, enums, pub/sub topic channels | Preview |
 
 Discovery also adds deterministic closure edges from files to source-backed
 symbols and from import/include/use declarations to local files or external
@@ -493,9 +524,12 @@ wd graph stats
 wd graph communities --format markdown
 ```
 
-Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
-a later `wd discover --output .weld/graph.json`; refresh discovery before manual
-edits. Manual inferred edges should use explicit provenance such as
+Manual enrichment writes `.weld/graph.json` directly and is preserved across
+later `wd discover` runs: discovery re-attaches `props.enrichment` to the
+rebuilt node, keyed by node id. A record written by `wd enrich` is re-validated
+against a node source fingerprint and dropped only when that node's own source
+changes; manual enrichment carries no fingerprint, so it persists until you
+re-enrich it. Manual inferred edges should use explicit provenance such as
 `{"source": "manual"}` after the relationship is verified from source content.
 `wd graph communities --write` derives `.weld/graph-communities.json`,
 `.weld/graph-community-report.md`, and `.weld/graph-community-index.md`
@@ -689,6 +723,7 @@ in a single pass. This section walks the full lifecycle:
 | Onboard | `wd workspace bootstrap` | Init the root, scan and init every nested child, discover each child, build the root meta-graph |
 | Inspect | `wd workspace status` | Show every child's lifecycle state (present / missing / uninitialized / corrupt), the derived `stale` view when a present child has drifted past its graph, and git ref |
 | Query | `wd query <term>` | Search the federated graph from the root; surfaces `repo:<name>` nodes and child-namespaced symbols |
+| Read | `wd context` / `path` / `callers` / `references` / `find` / `communities` / `trace` / `impact` | Every read tool federates across children (the `wd` CLI and matching MCP tools alike); `trace`/`impact` reach child dependents via a read-time flatten, and `impact --from-diff`/`--working-tree` discover seeds from every present child's git repo |
 | Refresh | `wd discover --recurse` (or per-child `wd discover`) | Rebuild child graphs and the root meta-graph; you choose the cadence |
 
 ### Onboarding a workspace (one-shot bootstrap)
@@ -801,7 +836,9 @@ cross_repo_strategies: [service_graph]
   `services/api` becomes `services-api`). Optional `tags` provide
   category metadata; optional `remote` records a clone URL.
 - **cross_repo_strategies**: Ordered list of resolvers that produce
-  cross-repo edges in the root graph. Currently available: `service_graph`.
+  cross-repo edges in the root graph. Available resolvers include
+  `service_graph`, `grpc_service_binding`, `compose_topology`, and
+  `channel_binding`.
 
 ### Running discovery at the workspace root
 
@@ -858,8 +895,20 @@ wd query "services-auth"
 When cross-repo resolvers are declared, the same query surface also reaches
 the resolved endpoints in the target child (for example
 `services-auth::route:POST:/tokens`), letting one lookup follow a call from
-the caller's repo into the callee's. The MCP tools `weld_query`,
-`weld_context`, and `weld_path` operate on this same federated graph.
+the caller's repo into the callee's. Every read tool operates on this same
+federated graph -- `query`, `context`, and `path` plus `callers`,
+`references`, `communities`, `find`, `trace`, and `impact` -- on both the `wd`
+CLI and the matching MCP tools, so a federated read reaches child nodes
+identically on either surface. `trace` and `impact` flatten the workspace
+(root + every present child) on read, so their cross-boundary and
+reverse-dependency walks span child-internal edges as well as cross-repo ones.
+
+A `repo:<name>` node is also a navigable entry point into its child:
+`wd context repo:<name>` lists the child's top-level nodes, and `wd path
+repo:<name> <child-name>::<node-id>` descends from the root into any reachable
+child symbol. These root-to-child links are synthesized on read, so the
+persisted root `graph.json` stays byte-identical (federation still writes only
+`repo:<name>` nodes plus any declared cross-repo edges).
 
 ### Workspace status
 
@@ -1027,6 +1076,7 @@ repo boundaries. They are declared in the `cross_repo_strategies` list in
 | Resolver | Description |
 |---|---|
 | `service_graph` | Matches HTTP client call sites in one repo to API endpoint definitions in another. Emits `cross_repo:calls` edges carrying the matched host, port, path, and method. |
+| `channel_binding` | Matches event-channel producers in one repo to consumers in another that reference the same `channel:<transport>:<topic>` node. Emits `cross_repo:channel_flow` edges (producer -> consumer) carrying the matched channel, transport, and topic. |
 
 Resolvers are read-only with respect to child graphs -- they never modify
 a child's `.weld/graph.json`. Output edges are deterministic: identical
@@ -1111,9 +1161,9 @@ rm .weld/workspace-state.json
 | `wd workspace bootstrap --track-graphs` | Bootstrap and seed `.weld/.gitignore` in root and every child to track canonical graphs alongside config |
 | `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child; mutually exclusive with `--track-graphs` |
 | `wd build-index` | Regenerate file index |
-| `wd query <term>` | Hybrid-ranked tokenized graph search (strict-AND first; OR fallback when AND yields nothing on multi-word phrases — envelope is tagged with `degraded_match=or_fallback`). Shows `confidence` per match and hides `origin=unresolved` sentinels by default; `--include-speculative` restores them |
+| `wd query <term>` | Hybrid-ranked tokenized graph search (strict-AND first; OR fallback when AND yields nothing on multi-word phrases — envelope is tagged with `degraded_match=or_fallback`). Multi-word phrases have common function-word stopwords (`the`, `is`, `how`, `of`, `for`, WH-words, …) dropped before matching so content tokens drive the result (a natural-language phrase like `"how does auth work"` searches on `auth`/`work`); single-word and symbol-id queries are never altered. Shows `confidence` per match and hides `origin=unresolved` sentinels by default (`--include-speculative` restores them). Bounds the neighborhood by default (drops stdlib/unresolved/speculative-external neighbors, caps fan-out, then a byte budget prunes to fit the tool cap — all reported in `omitted_neighbors`, including `size_capped`); `--full-neighborhood` restores the raw neighborhood and `--full-size` skips only the byte budget |
 | `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`). A single word is a case-insensitive substring match; a multi-word phrase is tokenized on whitespace and ranks files by how many of the words their tokens hit (so `wd find "mcp server"` surfaces `mcp_server.py`) |
-| `wd context <id>` | Node + neighborhood |
+| `wd context <id>` | Node + neighborhood (bounded by default, same as `wd query`; `--full-neighborhood` restores the full neighborhood, `--full-size` skips the byte budget) |
 | `wd path <from> <to>` | Shortest path |
 | `wd trace <term>` | Startup/runtime and interaction slice around a term or node |
 | `wd impact <path-or-node>` | Reverse-dependency blast radius |
@@ -1353,7 +1403,7 @@ the CLI.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.21.0`.
+terminal snippets captured against `wd 0.22.0`.
 
 ## Install
 

@@ -12,6 +12,11 @@ const state = {
   // so subsequent toggles only flip visibility (no re-bind cost).
   minimap: false,
   nav: null,
+  // bd h6z0.17: saved views. `savedViewsEnabled` mirrors whether the opt-in
+  // server route answered (ADR 0092); `savedViews` caches the last list so
+  // the dropdown re-renders without a refetch.
+  savedViewsEnabled: false,
+  savedViews: [],
 };
 
 // State keys persisted in location.hash (bd h6z0.4). Order is stable so URLs
@@ -240,6 +245,10 @@ async function init() {
     rehydrateFromHash().catch((error) => setStatus(error.message || String(error)));
   });
   bindEvents();
+  // bd h6z0.17: probe the opt-in saved-views route and reveal the control
+  // only when the server has the write surface enabled. Failure (403 when
+  // off, or any error) leaves the control hidden.
+  initSavedViews().catch(() => {});
   // bd h6z0.15: apply the rehydrated minimap preference once the canvas
   // (state.cy) exists, before paint settles. No-op when minimap=false
   // so the panel never instantiates unless the user opens it.
@@ -584,6 +593,35 @@ function bindEvents() {
   });
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".export-wrap")) closeExportMenu();
+  });
+  // bd h6z0.17: saved views. The button toggles the dropdown; a single
+  // delegated handler resolves apply (data-view-hash) vs delete
+  // (data-view-delete) on the rendered items; "Save current view" prompts
+  // for a name and POSTs it; document clicks outside the wrap close the menu.
+  $("views-button").addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleViewsMenu();
+  });
+  $("views-save").addEventListener("click", (event) => {
+    event.preventDefault();
+    closeViewsMenu();
+    saveCurrentView();
+  });
+  $("views-menu").addEventListener("click", (event) => {
+    const del = event.target.closest("[data-view-delete]");
+    if (del) {
+      event.preventDefault();
+      deleteSavedView(del.getAttribute("data-view-delete"));
+      return;
+    }
+    const apply = event.target.closest("[data-view-hash]");
+    if (!apply) return;
+    event.preventDefault();
+    closeViewsMenu();
+    applySavedView(apply.getAttribute("data-view-hash"));
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".views-wrap")) closeViewsMenu();
   });
   // bd h6z0.15: minimap toggle. Flips state.minimap, applies visibility
   // through the single helper so init() and the toggle share a path,
@@ -1087,6 +1125,133 @@ function toggleExportMenu() {
 function closeExportMenu() {
   const menu = $("export-menu");
   const button = $("export-button");
+  if (menu) menu.hidden = true;
+  if (button) button.setAttribute("aria-expanded", "false");
+}
+
+// bd h6z0.17 / ADR 0092: the saved-views control is revealed only when the
+// opt-in server route answers. A 403 (feature off) or any error leaves the
+// whole wrap hidden so the read-only default never shows a write affordance.
+async function initSavedViews() {
+  let response;
+  try {
+    response = await fetch("/api/views");
+  } catch (_) {
+    return;
+  }
+  if (!response.ok) return;
+  const payload = await response.json().catch(() => ({ views: [] }));
+  state.savedViewsEnabled = true;
+  state.savedViews = Array.isArray(payload.views) ? payload.views : [];
+  const wrap = $("views-wrap");
+  if (wrap) wrap.hidden = false;
+  renderViewsMenu();
+}
+
+// Rebuild the dynamic portion of the dropdown from state.savedViews. Names are
+// written with textContent / setAttribute (never innerHTML) so a crafted name
+// is inert text and cannot inject markup.
+function renderViewsMenu() {
+  const menu = $("views-menu");
+  if (!menu) return;
+  menu.querySelectorAll(".views-item").forEach((el) => el.remove());
+  const empty = $("views-empty");
+  if (empty) empty.hidden = state.savedViews.length > 0;
+  for (const view of state.savedViews) {
+    const li = document.createElement("li");
+    li.className = "views-item";
+    li.setAttribute("role", "none");
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.setAttribute("role", "menuitem");
+    apply.className = "views-apply";
+    apply.textContent = view.name;
+    apply.setAttribute("data-view-hash", view.hash || "");
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "views-delete";
+    del.title = `Delete ${view.name}`;
+    del.setAttribute("aria-label", `Delete ${view.name}`);
+    del.setAttribute("data-view-delete", view.name);
+    del.textContent = "×";
+    li.appendChild(apply);
+    li.appendChild(del);
+    menu.appendChild(li);
+  }
+}
+
+async function saveCurrentView() {
+  const name = (window.prompt("Name this view") || "").trim();
+  if (!name) return;
+  // The stored hash is the live location.hash (h6z0.4 schema), opaque to the
+  // server. An empty hash represents the canonical/default view.
+  const body = JSON.stringify({ name, hash: window.location.hash || "" });
+  let response;
+  try {
+    response = await fetch("/api/views", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+  } catch (_) {
+    setStatus("Save view failed");
+    return;
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    setStatus(payload.error || `Save view failed (${response.status})`);
+    return;
+  }
+  state.savedViews = Array.isArray(payload.views) ? payload.views : state.savedViews;
+  renderViewsMenu();
+  setStatus(`Saved view ${name}`);
+}
+
+async function deleteSavedView(name) {
+  let response;
+  try {
+    response = await fetch(`/api/views?name=${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  } catch (_) {
+    setStatus("Delete view failed");
+    return;
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    setStatus(payload.error || `Delete view failed (${response.status})`);
+    return;
+  }
+  state.savedViews = Array.isArray(payload.views) ? payload.views : [];
+  renderViewsMenu();
+}
+
+// Navigate to a saved view's hash and re-apply it through the existing
+// h6z0.4 hash-state path: setting location.hash records a history entry (so
+// browser Back returns to the prior view), then rehydrateFromHash() pushes the
+// parsed state onto the controls and reloads the slice.
+function applySavedView(hash) {
+  const normalized = hash ? (hash.startsWith("#") ? hash : `#${hash}`) : "";
+  if (normalized) {
+    window.location.hash = normalized;
+  } else if (window.location.hash) {
+    history.pushState(null, "", window.location.pathname + window.location.search);
+  }
+  rehydrateFromHash().catch((error) => setStatus(error.message || String(error)));
+}
+
+function toggleViewsMenu() {
+  const menu = $("views-menu");
+  const button = $("views-button");
+  if (!menu || !button) return;
+  const isHidden = menu.hidden;
+  menu.hidden = !isHidden;
+  button.setAttribute("aria-expanded", isHidden ? "true" : "false");
+}
+
+function closeViewsMenu() {
+  const menu = $("views-menu");
+  const button = $("views-button");
   if (menu) menu.hidden = true;
   if (button) button.setAttribute("aria-expanded", "false");
 }

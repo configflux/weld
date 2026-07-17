@@ -169,6 +169,51 @@ def _stem_variants(token: str) -> list[str]:
     out.discard(t)
     return sorted(out)
 
+# Function-word stopwords dropped from MULTI-token queries before strict-AND so
+# the content-bearing tokens drive matching (and the leading content token
+# becomes the OR-fallback "subject", ``token_groups[0]``). Deliberately tight:
+# articles, a few prepositions, demonstratives, copula/auxiliary verbs, and WH
+# question words -- and NOTHING content-ish (``work``/``test``/``set`` name code
+# and must survive). All lowercase; the query paths lowercase before tokenizing.
+_QUERY_STOPWORDS: frozenset[str] = frozenset({
+    # articles
+    "a", "an", "the",
+    # common prepositions
+    "of", "to", "for", "in", "on",
+    # demonstratives / expletive pronouns
+    "it", "this", "that",
+    # copula / auxiliary verbs
+    "is", "are", "does", "do",
+    # WH question words
+    "how", "where", "what", "when", "why", "who", "which", "whose", "whom",
+})
+
+def filter_stopwords(tokens: list[str]) -> list[str]:
+    """Drop function-word stopwords from a MULTI-token query, order-preserved.
+
+    Removes only tokens in :data:`_QUERY_STOPWORDS` so natural-language /
+    conceptual queries ("how does auth work") match on their content tokens
+    instead of padding strict-AND with function words and dumping to the noisy
+    OR-fallback. Two guards keep already-good queries byte-identical:
+
+    * a single-token query is returned unchanged -- a lone token (even a
+      stopword like ``"the"``) is never stripped, and a bare symbol / lexical
+      query is exactly one token, so single-token/symbol results do not move;
+    * an all-stopword query (nothing content-bearing survives) is returned
+      unchanged, so a degenerate ``"how does it"`` keeps its prior behaviour
+      instead of collapsing to an empty, match-everything token set.
+
+    Applied at the single :func:`expand_token_groups` chokepoint (below) so
+    every query path -- the JSON ``Graph`` read path, its sqlite peer, and
+    federation -- filters identically and their rank/hit contracts cannot
+    drift. Deterministic: a fixed-set membership test over an order-preserving
+    comprehension. Expects the pre-lowercased tokens the query paths produce.
+    """
+    if len(tokens) <= 1:
+        return list(tokens)
+    kept = [tok for tok in tokens if tok not in _QUERY_STOPWORDS]
+    return kept if kept else list(tokens)
+
 def expand_token_groups(tokens: list[str]) -> list[list[str]]:
     """Expand each token into a group of [itself + synonym aliases + stems].
 
@@ -180,7 +225,13 @@ def expand_token_groups(tokens: list[str]) -> list[list[str]]:
     token (:func:`_stem_variants`) so a singular query (``strategy``) covers
     a plural path token (``strategies``) within the same group -- ADR 0075
     part 3.  Stems join the same group, so this never adds a new AND clause.
+
+    Function-word stopwords are dropped first (:func:`filter_stopwords`) so a
+    natural-language query ("how does auth work") yields groups only for its
+    content tokens. This is the single chokepoint all query paths route
+    through, so the JSON / sqlite / federation surfaces filter identically.
     """
+    tokens = filter_stopwords(tokens)
     groups: list[list[str]] = []
     for tok in tokens:
         group = [tok]

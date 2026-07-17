@@ -182,6 +182,32 @@ def compute_meaningful_coverage(
     }
 
 
+def meaningful_coverage_pct(data: Mapping[str, Any]) -> float:
+    """Return the meaningful description-coverage percent for a graph ``data`` map.
+
+    Restricts the calculation to :data:`MEANINGFUL_DESCRIPTION_TYPES` -- the
+    same node-type gate ``wd stats``/``wd prime`` use -- so call-graph
+    ``symbol`` nodes (almost never described) cannot drag the figure toward
+    ~0%. Scoring is delegated to :func:`compute_meaningful_coverage`, so this
+    is the single focused graph pass a caller needs to get the headline
+    percent. Returns ``0.0`` when there are no meaningful-type nodes at all.
+    """
+    nodes = data.get("nodes") or {}
+    nc: dict[str, int] = {}
+    dc: dict[str, int] = {}
+    for node in nodes.values():
+        if not isinstance(node, dict):
+            continue
+        node_type = node.get("type")
+        if node_type not in MEANINGFUL_DESCRIPTION_TYPES:
+            continue
+        nc[node_type] = nc.get(node_type, 0) + 1
+        desc = (node.get("props") or {}).get("description")
+        if isinstance(desc, str) and desc.strip():
+            dc[node_type] = dc.get(node_type, 0) + 1
+    return float(compute_meaningful_coverage(nc, dc)["coverage_pct"])
+
+
 def estimate_enrichment_cost(candidate_count: int) -> dict:
     """Return a best-effort cost estimate for enriching *candidate_count* nodes.
 

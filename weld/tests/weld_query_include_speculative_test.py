@@ -326,16 +326,24 @@ class DefaultJsonEnvelopeSelfConsistentTest(_EdgeBase):
             {(e["from"], e["to"]) for e in env["edges"]},
         )
 
-    def test_dropped_sentinel_demoted_to_neighbor_not_dangling(self) -> None:
-        # The survivor edge ``make_widget -> widget`` is kept, so the dropped
-        # sentinel reappears as a *neighbour* (incidental context) with its
-        # full node -- it must never be a dangling edge endpoint.
+    # The trim demotes the dropped sentinel ``widget`` to a neighbour (via the
+    # survivor edge ``make_widget -> widget``); the neighbor diet then drops it
+    # (origin=unresolved) and its now-dangling edge, annotating the loss.
+    # ``--full-neighborhood`` turns the diet off and restores both.
+    _SENTINEL_EDGE = ("symbol:py:pkg.mod:make_widget", "symbol:unresolved:widget")
+
+    def test_dropped_sentinel_neighbor_removed_by_diet_default(self) -> None:
         env = json.loads(self._run("query", "widget", "--json"))
-        kept = ("symbol:py:pkg.mod:make_widget", "symbol:unresolved:widget")
-        self.assertIn(kept, {(e["from"], e["to"]) for e in env["edges"]})
-        self.assertIn(
-            "symbol:unresolved:widget", {n["id"] for n in env["neighbors"]}
-        )
+        self.assertNotIn("symbol:unresolved:widget", {n["id"] for n in env["neighbors"]})
+        self.assertNotIn(self._SENTINEL_EDGE, {(e["from"], e["to"]) for e in env["edges"]})
+        self.assertTrue(env["neighbors_filtered"])
+        self.assertGreaterEqual(env["omitted_neighbors"]["unresolved"], 1)
+
+    def test_full_neighborhood_restores_demoted_sentinel(self) -> None:
+        env = json.loads(self._run("query", "widget", "--json", "--full-neighborhood"))
+        self.assertIn(self._SENTINEL_EDGE, {(e["from"], e["to"]) for e in env["edges"]})
+        self.assertIn("symbol:unresolved:widget", {n["id"] for n in env["neighbors"]})
+        self.assertNotIn("neighbors_filtered", env)
 
     def test_legit_neighbor_of_survivor_retained(self) -> None:
         env = json.loads(self._run("query", "widget", "--json"))

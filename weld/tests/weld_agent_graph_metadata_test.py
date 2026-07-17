@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 from weld.agent_graph_discovery import discover_agent_graph  # noqa: E402
+from weld.agent_graph_metadata_utils import weld_ignored_runtime_refs  # noqa: E402
 
 
 def _write(root: Path, rel_path: str, text: str = "content\n") -> None:
@@ -322,6 +323,59 @@ class AgentGraphMetadataTest(unittest.TestCase):
 
         codes = [d["code"] for d in graph["meta"]["diagnostics"]]
         self.assertIn("agent_graph_invalid_toml", codes)
+
+    def test_gitignored_weld_runtime_artifact_ref_is_not_broken(self) -> None:
+        # Regression (bd jum7): a prose reference to a gitignored, regenerable
+        # weld runtime artifact (.weld/graph.json, ADR 0076 Mode A) must NOT be
+        # flagged broken just because it is absent in a checkout that has not
+        # run `wd discover`. Genuinely-missing files stay flagged (audit not
+        # neutered), including a .weld/ path that is not itself gitignored.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, ".weld/.gitignore", "# managed by weld\ngraph.json\n")
+            _write(
+                root,
+                ".claude/agents/graphref.md",
+                textwrap.dedent(
+                    """\
+                    ---
+                    name: graphref
+                    description: Refers to graph artifacts.
+                    ---
+
+                    Refresh via wd discover --output .weld/graph.json when stale.
+                    Workspace config lives at .weld/workspaces.yaml here.
+                    See also docs/missing.md for context.
+                    """
+                ),
+            )
+            graph = discover_agent_graph(root, git_sha="a", updated_at="t")
+
+        broken = {
+            item["reference"]
+            for item in graph["meta"]["diagnostics"]
+            if item["code"] == "agent_graph_broken_reference"
+        }
+        self.assertNotIn(".weld/graph.json", broken)  # gitignored -> suppressed
+        self.assertIn("docs/missing.md", broken)  # genuine miss -> flagged
+        self.assertIn(".weld/workspaces.yaml", broken)  # .weld/ but not ignored
+
+    def test_weld_ignored_runtime_refs_conservative_parse(self) -> None:
+        # Comments/blanks/negations/globs/nested must NOT yield suppressions,
+        # so the fix can never silently mask a genuinely-broken reference.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(
+                root,
+                ".weld/.gitignore",
+                "# c\ngraph.json\n\n!keep.json\n*.tmp\nn/x.json\njob.jsonl  # note\n",
+            )
+            self.assertEqual(
+                weld_ignored_runtime_refs(root),
+                frozenset({".weld/graph.json", ".weld/job.jsonl"}),
+            )
+        with tempfile.TemporaryDirectory() as td:  # no .gitignore -> empty
+            self.assertEqual(weld_ignored_runtime_refs(Path(td)), frozenset())
 
 
 if __name__ == "__main__":

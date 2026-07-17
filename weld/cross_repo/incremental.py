@@ -26,7 +26,6 @@ results through the existing federation write path.
 
 from __future__ import annotations
 
-import sys
 from typing import Any, Mapping
 
 from weld.cross_repo.base import (
@@ -35,6 +34,7 @@ from weld.cross_repo.base import (
     run_resolvers,
 )
 from weld.workspace import UNIT_SEPARATOR
+from weld._notice import emit
 
 
 __all__ = [
@@ -214,15 +214,13 @@ def run_resolvers_incremental(
     for name in sorted(context.children):
         if name in affected:
             log[name] = "resolved"
-            print(
-                f"[weld] incremental: child {name!r} drifted, re-resolving",
-                file=sys.stderr,
+            emit(
+                f"[weld] incremental: child {name!r} drifted, re-resolving"
             )
         else:
             log[name] = "skipped"
-            print(
-                f"[weld] incremental: child {name!r} unchanged, skipping",
-                file=sys.stderr,
+            emit(
+                f"[weld] incremental: child {name!r} unchanged, skipping"
             )
 
     # Collect fresh edges that touch any affected child.

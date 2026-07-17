@@ -11,9 +11,9 @@ from __future__ import annotations
 import errno
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
+from weld._notice import emit
 
 WORKSPACE_LOCK_FILENAME = "workspace.lock"
 
@@ -84,10 +84,9 @@ class WorkspaceLock:
                 os.link(tmp_path, self._path)
             except FileExistsError as exc:
                 if _is_lock_stale(self._path):
-                    print(
+                    emit(
                         f"[weld] warning: stale workspace.lock at {self._path}; "
-                        "previous holder is no longer running, cleaning up.",
-                        file=sys.stderr,
+                        "previous holder is no longer running, cleaning up."
                     )
                     try:
                         self._path.unlink()

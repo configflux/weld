@@ -29,6 +29,7 @@ from pathlib import Path
 from weld._query_sidecar import write_sidecar_for_bytes as _write_query_sidecar_bytes
 from weld.serializer import dumps_graph as _dumps_graph
 from weld.serializer import dumps_graph_canonical as _dumps_graph_canonical
+from weld._notice import emit
 
 
 def _query_sidecar_already_fresh(
@@ -105,9 +106,8 @@ def persist_query_state_sidecar(
         state = build_query_state(nodes, edges)
         _write_query_sidecar_bytes(weld_dir, graph_bytes, nodes, edges, state)
     except Exception as exc:  # noqa: BLE001 -- sidecar is best-effort.
-        print(
-            f"[weld] notice: skipped query-state sidecar write: {exc}",
-            file=sys.stderr,
+        emit(
+            f"[weld] notice: skipped query-state sidecar write: {exc}"
         )
 
 
@@ -182,9 +182,8 @@ def persist_sqlite_sidecar(
             return
         safe_build_sidecar_for_bytes(graph, graph_bytes, target)
     except Exception as exc:  # noqa: BLE001 -- sidecar is best-effort.
-        print(
-            f"[weld] notice: skipped sqlite sidecar write: {exc}",
-            file=sys.stderr,
+        emit(
+            f"[weld] notice: skipped sqlite sidecar write: {exc}"
         )
 
 
@@ -212,10 +211,49 @@ def persist_file_index(root: Path) -> None:
         if refresh_file_index(root) is None:
             reindex_full(root)
     except Exception as exc:  # noqa: BLE001 -- index refresh is best-effort.
-        print(
-            f"[weld] notice: skipped file-index refresh: {exc}",
-            file=sys.stderr,
+        emit(
+            f"[weld] notice: skipped file-index refresh: {exc}"
         )
+
+
+def persist_cli_graph(
+    root_path: Path,
+    output_path: Path | None,
+    result: dict,
+    *,
+    is_federated: bool,
+    no_sqlite: bool,
+) -> None:
+    """Persist the discovered graph for the ``wd discover`` CLI and echo stdout.
+
+    Three write shapes, all preserving the ADR 0019 stdout contract:
+
+    * ``--output PATH`` (single-repo): atomic canonical write to PATH plus the
+      paired sqlite sidecar when PATH is ``graph.json`` (ADR 0058/0065); stdout
+      stays empty.
+    * no ``--output`` (single-repo): persist the canonical ``.weld/graph.json``
+      so ``query`` / ``context`` / ``stats`` resolve after a bare discover.
+      :func:`finalize_single_repo` already wrote the derived sidecars keyed to
+      it (graph.db, query_state.bin, file-index); without the canonical JSON
+      those are orphaned and every graph read returns 0 nodes -- the
+      linked-worktree / fresh-checkout dogfood gap (bd ck0w), which
+      auto-refresh cannot bootstrap because it skips when graph.json is
+      absent. The bytes here are byte-coherent with the sidecar's
+      ``source_json_sha``, so the sidecar stays fresh and no re-persist is
+      needed; stdout still carries the JSON.
+    * federated: :func:`weld.discover.discover` writes the meta-graph inside the
+      workspace lock, so here we only echo stdout.
+    """
+    from weld._graph_meta_sidecar import write_graph_with_meta
+
+    if output_path is not None and not is_federated:
+        write_graph_with_meta(output_path, result)  # ADR 0065: volatile meta split
+        if not no_sqlite and output_path.name == "graph.json":  # ADR 0058: pair by name
+            persist_sqlite_sidecar(output_path.parent, result)
+    elif output_path is None:
+        if not is_federated:
+            write_graph_with_meta(root_path / ".weld" / "graph.json", result)
+        sys.stdout.write(_dumps_graph(result))
 
 
 def _canonical_on_disk_bytes(

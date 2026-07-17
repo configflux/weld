@@ -137,11 +137,16 @@ select {
    menu mirrors the search-suggest dropdown chrome for visual
    consistency, but anchors right-aligned so it doesn't escape the
    topbar's right margin. */
-.export-wrap {
+/* bd h6z0.17: the saved-views dropdown reuses the export-menu chrome so both
+   controls read as one system; only the per-item delete affordance and the
+   empty-state row are views-specific. */
+.export-wrap,
+.views-wrap {
   position: relative;
 }
 
-.export-menu {
+.export-menu,
+.views-menu {
   position: absolute;
   top: calc(100% + 2px);
   right: 0;
@@ -156,15 +161,18 @@ select {
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
 }
 
-.export-menu[hidden] {
+.export-menu[hidden],
+.views-menu[hidden] {
   display: none;
 }
 
-.export-menu li {
+.export-menu li,
+.views-menu li {
   margin: 0;
 }
 
-.export-menu button {
+.export-menu button,
+.views-menu button {
   display: block;
   width: 100%;
   padding: 6px 12px;
@@ -177,9 +185,40 @@ select {
 }
 
 .export-menu button:hover,
-.export-menu button:focus-visible {
+.export-menu button:focus-visible,
+.views-menu button:hover,
+.views-menu button:focus-visible {
   background: var(--surface);
   outline: none;
+}
+
+/* Each saved view is an apply-button plus a small delete button on one row. */
+.views-menu .views-item {
+  display: flex;
+  align-items: center;
+}
+
+.views-menu .views-item button.views-apply {
+  flex: 1;
+}
+
+.views-menu .views-item button.views-delete {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  color: var(--muted, #667085);
+}
+
+.views-menu .views-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+
+.views-menu .views-empty {
+  padding: 6px 12px;
+  color: var(--muted, #667085);
+  font-size: 0.9em;
 }
 
 /* bd h6z0.15: minimap toggle + corner panel. The toggle reuses the

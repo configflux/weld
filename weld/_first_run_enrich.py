@@ -30,7 +30,7 @@ from __future__ import annotations
 import os
 import shutil
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Final
 
@@ -41,6 +41,8 @@ from weld._first_run_render import (
     branch_b_message,
     branch_c_message,
 )
+from weld._graph_stats import meaningful_coverage_pct
+from weld._notice import emit
 
 # Provider detection ─────────────────────────────────────────────────
 
@@ -94,6 +96,8 @@ class FirstRunDecision:
         agent: Detected agent host slug for Branch B; ``None`` else.
         node_count: Total nodes in the graph this flow saw.
         within_cap: ``True`` when the auto-flow's 2k-node cap is met.
+        coverage_pct: Meaningful description-coverage percent; drives the
+            Branch C tip wording (``0.0`` for the other branches).
         skipped_reason: When ``branch == "skip"``, a short reason
             slug (``"safe"``, ``"flag"``, ``"env"``, ``"prompted"``)
             so callers can log without re-evaluating.
@@ -104,6 +108,7 @@ class FirstRunDecision:
     agent: str | None = None
     node_count: int = 0
     within_cap: bool = True
+    coverage_pct: float = 0.0
     skipped_reason: str | None = None
 
 
@@ -277,21 +282,13 @@ def evaluate_first_run(
     *env*, *ollama_probe*, and *which* are injection points for tests.
     """
     if safe:
-        return FirstRunDecision(
-            branch="skip", node_count=node_count, skipped_reason="safe"
-        )
+        return FirstRunDecision(branch="skip", node_count=node_count, skipped_reason="safe")
     if no_enrich_flag:
-        return FirstRunDecision(
-            branch="skip", node_count=node_count, skipped_reason="flag"
-        )
+        return FirstRunDecision(branch="skip", node_count=node_count, skipped_reason="flag")
     if _env_no_enrich(env):
-        return FirstRunDecision(
-            branch="skip", node_count=node_count, skipped_reason="env"
-        )
+        return FirstRunDecision(branch="skip", node_count=node_count, skipped_reason="env")
     if has_been_prompted(root):
-        return FirstRunDecision(
-            branch="skip", node_count=node_count, skipped_reason="prompted"
-        )
+        return FirstRunDecision(branch="skip", node_count=node_count, skipped_reason="prompted")
 
     provider = detect_provider(env, ollama_probe=ollama_probe, which=which)
     if provider is not None:
@@ -327,15 +324,14 @@ def render_decision(decision: FirstRunDecision) -> str:
     if decision.branch == "B":
         return branch_b_message(decision.agent or "")
     if decision.branch == "C":
-        return branch_c_message()
+        return branch_c_message(decision.coverage_pct)
     return ""  # skip branches print nothing
 
 
 def cli_reset_prompt(root: Path) -> int:
     """Implement ``wd enrich --reset-prompt``: clear sentinel, exit 0."""
-    import sys
     msg = "cleared" if reset_prompted(root) else "no sentinel file to clear"
-    sys.stderr.write(f"[weld] first-run enrichment prompt: {msg}\n")
+    emit(f"[weld] first-run enrichment prompt: {msg}")
     return 0
 
 
@@ -359,11 +355,13 @@ def maybe_propose_enrichment(
             root=root, node_count=node_count,
             safe=safe, no_enrich_flag=no_enrich_flag,
         )
+        if decision.branch == "C":
+            decision = replace(decision, coverage_pct=meaningful_coverage_pct(graph))
         if run_first_run(decision, root=root, stderr=sys.stderr):
             from weld._first_run_invoke import run_enrichment_on_accept
             run_enrichment_on_accept(root, decision.provider)
     except Exception as exc:  # noqa: BLE001 -- discover already succeeded
-        print(f"[weld] first-run enrichment notice failed: {exc}", file=sys.stderr)
+        emit(f"[weld] first-run enrichment notice failed: {exc}")
 
 
 def run_first_run(

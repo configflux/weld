@@ -78,14 +78,15 @@ class WriteGraphWithMetaTest(unittest.TestCase):
             self.assertIn("discovered_from", disk_meta)
 
             sidecar = json.loads(sidecar_path_for(graph_path).read_text())
-            self.assertEqual(
-                sidecar,
-                {
-                    "version": 1,
-                    "git_sha": "deadbeef",
-                    "updated_at": "2026-06-12T00:00:00+00:00",
-                },
-            )
+            # Volatile keys (ADR 0065) plus the bd aqqa staleness mirror.
+            self.assertEqual(sidecar["version"], 1)
+            self.assertEqual(sidecar["git_sha"], "deadbeef")
+            self.assertEqual(sidecar["updated_at"], "2026-06-12T00:00:00+00:00")
+            # Mirror: discovered_from copied, stat pinned to the on-disk graph.
+            st = graph_path.stat()
+            self.assertEqual(sidecar["discovered_from"], ["weld/"])
+            self.assertEqual(sidecar["graph_size"], st.st_size)
+            self.assertEqual(sidecar["graph_mtime_ns"], st.st_mtime_ns)
 
     def test_non_canonical_target_keeps_full_meta_no_sidecar(self) -> None:
         with tempfile.TemporaryDirectory() as d:

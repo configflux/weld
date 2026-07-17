@@ -11,8 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from weld._discover_origin_reconcile import reconcile_intra_repo_origins
+from weld._events_join import link_producers_consumers
 from weld._git import get_git_sha
 from weld.contract import SCHEMA_VERSION
+from weld.enrichment_persistence import reattach_enrichment
 from weld.graph import _schema_version_for
 from weld.graph_closure import close_graph
 from weld.serializer import _edge_sort_key
@@ -25,6 +27,8 @@ def post_process(
     config: dict,
     root: Path,
     discovered_from: list[str],
+    *,
+    previous_graph: dict | None = None,
 ) -> dict:
     """Run post-processing and build the final graph dict.
 
@@ -33,6 +37,14 @@ def post_process(
     ``definite`` confidence even if the strategy emitted them as
     ``speculative`` again. The import is local so this hot path does
     not pay the cost when no review-state has been written.
+
+    ADR 0079: with node props final, re-attach any enrichment persisted in
+    *previous_graph* onto the freshly built nodes (keyed by node id, gated by
+    a node-only source fingerprint) *before* the single canonicalization pass,
+    so re-attached fields are canonicalized for free. Both the full and
+    incremental discover paths funnel through here, so running it in one place
+    is what preserves the incremental==full byte-identity contract when
+    enrichment is present.
     """
     _resolve_fk_edges(edges, context)
     _detect_agent_invocations(nodes, edges, context)
@@ -45,9 +57,17 @@ def post_process(
     # owning batch walked. Promote those back to ``project`` using the
     # run-level project module set. No-op on an already-correct graph.
     reconcile_intra_repo_origins(nodes, context)
+    # ADR 0090: with nodes final, derive the one-hop producer->consumer
+    # ``feeds_into`` edges from ``produces``/``consumes`` bindings that meet
+    # at a shared ``channel`` node. Runs before the dedup/dangle sweep so
+    # the derived edges are cleaned uniformly; idempotent (strips its own
+    # prior output first) so the incremental path stays byte-identical to a
+    # full discover.
+    link_producers_consumers(nodes, edges)
     _clean_and_dedup_edges(nodes, edges)
     from weld._review import apply_review_state as _apply_review_state
     edges[:] = _apply_review_state(root, edges)
+    reattach_enrichment(nodes, previous_graph)
     unique_from = _dedup_discovered_from(discovered_from)
 
     meta: dict = {

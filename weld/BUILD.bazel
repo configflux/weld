@@ -38,6 +38,14 @@ py_library(
     srcs = ["_node_ids.py"],
 )
 
+# Stdlib-only stderr notice chokepoint. Its own target so leaf packages
+# (//weld/cross_repo, :contract) can emit notices without a cycle
+# through :runtime.
+py_library(
+    name = "notice",
+    srcs = ["_notice.py"],
+)
+
 # Low-level registries imported by leaf strategy modules (weld/strategies/*)
 # as well as by runtime. They are their own micro-libraries so the strategies
 # library can depend on them without a cycle through //weld:runtime.
@@ -81,6 +89,7 @@ py_library(
         "_validate_diagnostics.py",
         "contract.py",
     ],
+    deps = [":notice"],
 )
 
 py_library(
@@ -112,6 +121,7 @@ py_library(
         "_bootstrap_adapters.py",
         "_bootstrap_hosts.py",
         "_capabilities_cli.py",
+        "_capabilities_local.py",
         "_cli_render.py",
         "_cli_render_trust.py",
         "_coverage_admission.py",
@@ -139,12 +149,19 @@ py_library(
         "_doctor_trust.py",
         "_enrich_safe.py",
         "_enrichment_cost.py",
+        "_envelope_diet.py",
         "_errors.py",
+        "_events_join.py",
         "_export_cli.py",
+        "_export_mermaid.py",
+        "_federation_descent.py",
         "_federation_eager_bm25.py",
         "_federation_eager_flags.py",
         "_federation_eager_index.py",
         "_federation_eager_or_fallback.py",
+        "_federation_find.py",
+        "_federation_flatten.py",
+        "_federation_path.py",
         "_federation_query.py",
         "_federation_staleness.py",
         "_file_index_incremental.py",
@@ -155,9 +172,11 @@ py_library(
         "_gitignore_writer.py",
         "_graph_cli.py",
         "_graph_cli_errors.py",
+        "_graph_cli_federated.py",
         "_graph_cli_parser.py",
         "_graph_closure_invariants.py",
         "_graph_closure_package_origin.py",
+        "_graph_digest.py",
         "_graph_meta_sidecar.py",
         "_graph_migrate.py",
         "_graph_origin.py",
@@ -166,6 +185,8 @@ py_library(
         "_graph_stats_cli.py",
         "_graph_stats_trust.py",
         "_graph_strategy_pair.py",
+        "_impact_git.py",
+        "_impact_git_federated.py",
         "_incremental_purge.py",
         "_init_classify.py",
         "_init_cpp.py",
@@ -173,6 +194,7 @@ py_library(
         "_init_framework_scan.py",
         "_init_framework_sources.py",
         "_init_go_imports.py",
+        "_init_interfaces.py",
         "_init_ros2.py",
         "_mcp_guard.py",
         "_mcp_read.py",
@@ -182,6 +204,8 @@ py_library(
         "_prime_coverage.py",
         "_query_envelope.py",
         "_query_sidecar.py",
+        "_query_surface.py",
+        "_refresh_cache.py",
         "_review.py",
         "_review_cli.py",
         "_review_pattern.py",
@@ -217,6 +241,7 @@ py_library(
         "agent_graph_inventory.py",
         "agent_graph_materialize.py",
         "agent_graph_metadata.py",
+        "agent_graph_metadata_diagnostics.py",
         "agent_graph_metadata_permissions.py",
         "agent_graph_metadata_toml.py",
         "agent_graph_metadata_utils.py",
@@ -249,6 +274,7 @@ py_library(
         "embeddings.py",
         "enrich.py",
         "enrich_edges.py",
+        "enrichment_persistence.py",
         "export.py",
         "federation.py",
         "federation_child_loader.py",
@@ -285,6 +311,7 @@ py_library(
         "query_index.py",
         "query_state.py",
         "ranking.py",
+        "read.py",
         "scaffold.py",
         "security.py",
         "serializer.py",
@@ -299,6 +326,7 @@ py_library(
         "viz/_export_route.py",
         "viz/_git_remote.py",
         "viz/_search.py",
+        "viz/_views.py",
         "viz/adapter.py",
         "viz/agent_api.py",
         "viz/api.py",
@@ -336,6 +364,7 @@ py_library(
         ":git",
         ":glob_match",
         ":graph_node_registry",
+        ":notice",
         ":repo_boundary",
         ":yaml",
         "//weld/cross_repo",

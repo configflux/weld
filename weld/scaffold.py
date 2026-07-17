@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 from pathlib import Path
+from weld._notice import emit
 
 _TEMPLATE_FILES = {
     "external-adapter": "external_adapter.py",
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> None:
             force=args.force,
         )
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
-        print(f"[weld] error: {exc}", file=sys.stderr)
+        emit(f"[weld] error: {exc}")
         raise SystemExit(1) from exc
 
     cwd = Path.cwd().resolve()

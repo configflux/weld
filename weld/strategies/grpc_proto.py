@@ -1,6 +1,6 @@
 """Strategy: proto service, rpc, message, and enum extraction (tracked project).
 
-Parses declared ``.proto`` files into weld nodes per ADR 0018's static-truth
+Parses declared ``.proto`` files into weld nodes per ADR 0086's static-truth
 policy. The heavy lifting lives in :mod:`weld.strategies.grpc_proto_parser`;
 this module is the thin facade that turns a parsed ``ProtoFile`` into weld
 nodes and edges and exposes the strategy ``extract()`` entry point.
@@ -16,7 +16,7 @@ Supported shapes:
   (including nested ``Outer.Inner`` messages).
 - ``enum Foo { ... }`` — emits ``enum:grpc:<ns>.<Name>`` nodes.
 
-Emitted rpc nodes are stamped with ADR 0018 interaction metadata::
+Emitted rpc nodes are stamped with ADR 0086 interaction metadata::
 
     protocol="grpc"
     surface_kind="request_response" | "stream"
@@ -146,7 +146,7 @@ def _emit_services(
                     "confidence": "definite",
                     "roles": ["implementation"],
                     "aliases": aliases,
-                    # ADR 0018 interaction metadata.
+                    # ADR 0086 interaction metadata.
                     "protocol": "grpc",
                     "surface_kind": surface,
                     "transport": "http2",

@@ -22,6 +22,20 @@ _NO_REFRESH_HELP = (
 )
 
 
+_FULL_NEIGHBORHOOD_HELP = (
+    "Restore the full, unfiltered 1-hop neighborhood. By default "
+    "stdlib/unresolved/speculative-external neighbors are dropped and "
+    "fan-out is capped (omissions are reported in the ``omitted_neighbors`` "
+    "JSON field); this flag turns the diet off."
+)
+
+_FULL_SIZE_HELP = (
+    "Skip the read byte budget (ADR 0082). By default the shaped envelope is "
+    "pruned to fit the agent tool cap, reported via ``omitted_neighbors."
+    "size_capped``; this flag keeps the diet but returns every dieted neighbor."
+)
+
+
 def _add_no_refresh(parser: argparse.ArgumentParser) -> None:
     """Add ``--no-refresh`` to a read-command subparser (ADR 0051)."""
     parser.add_argument(
@@ -30,6 +44,28 @@ def _add_no_refresh(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=False,
         help=_NO_REFRESH_HELP,
+    )
+
+
+def _add_full_neighborhood(parser: argparse.ArgumentParser) -> None:
+    """Add ``--full-neighborhood`` (envelope-diet escape hatch, bd d1oc)."""
+    parser.add_argument(
+        "--full-neighborhood",
+        dest="full_neighborhood",
+        action="store_true",
+        default=False,
+        help=_FULL_NEIGHBORHOOD_HELP,
+    )
+
+
+def _add_full_size(parser: argparse.ArgumentParser) -> None:
+    """Add ``--full-size`` (read byte-budget escape hatch, ADR 0082)."""
+    parser.add_argument(
+        "--full-size",
+        dest="full_size",
+        action="store_true",
+        default=False,
+        help=_FULL_SIZE_HELP,
     )
 
 
@@ -126,6 +162,8 @@ def _add_query(sub) -> None:
     p.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_full_neighborhood(p)
+    _add_full_size(p)
     _add_no_refresh(p)
 
 
@@ -135,6 +173,8 @@ def _add_context(sub) -> None:
     p.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_full_neighborhood(p)
+    _add_full_size(p)
     _add_no_refresh(p)
 
 

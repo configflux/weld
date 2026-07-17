@@ -10,11 +10,13 @@ Thin facade that dispatches to one of two conservative extractors:
 
 - :mod:`weld.strategies.events_callsite` walks Python files for calls
   shaped ``<Root>.<verb>("literal", ...)`` where ``<Root>`` is a known
-  async client identifier (``KafkaProducer``, ``kafka``, ``redis``)
-  and ``<verb>`` is a known publish verb. Dynamic first args are
-  dropped per ADR 0018's static-truth policy.
+  async client identifier (``KafkaProducer``, ``KafkaConsumer``,
+  ``kafka``, ``redis``) and ``<verb>`` is a known publish (``send`` /
+  ``produce`` / ``publish``) or subscribe (``subscribe``) verb, so the
+  channel node is minted at both producer and consumer sites. Dynamic
+  first args are dropped per ADR 0086's static-truth policy.
 
-Both halves emit ``channel`` nodes stamped with ADR 0018 /
+Both halves emit ``channel`` nodes stamped with ADR 0086 /
 tracked project metadata::
 
     protocol="event", surface_kind="pub_sub",

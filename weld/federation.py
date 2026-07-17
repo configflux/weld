@@ -9,19 +9,20 @@ sidecars fall back via :meth:`_load_child_for_query`.
 
 from __future__ import annotations
 
-from collections import deque
 from pathlib import Path
 
+from weld._federation_descent import descent_edges_for as _descent
 from weld._federation_eager_index import (
     EagerFederationIndex,
     build_eager_index_for,
     resolve_eager_flag,
 )
+from weld._federation_path import path_federated as _path_federated
 from weld._federation_query import query_federated as _query_federated
 from weld._sqlite_reader import SqliteBackedGraph
 from weld.federation_child_loader import (
-    child_edges_for as _child_edges_for,
     child_local_context as _child_local_context,
+    graph_rel_path,
     load_child as _load_child_impl,
     load_child_for_query as _load_child_for_query_impl,
 )
@@ -103,7 +104,7 @@ class FederatedGraph:
                 entry = self._children[name]
                 status[name] = {
                     "status": "present",
-                    "graph_path": self._graph_rel_path(entry),
+                    "graph_path": graph_rel_path(entry),
                 }
                 if entry.remote is not None:
                     status[name]["remote"] = entry.remote
@@ -165,7 +166,7 @@ class FederatedGraph:
                 for edge in local_edges:
                     prefixed_edge = self._prefix_edge(child_name, edge)
                     edges.setdefault(edge_key(prefixed_edge), prefixed_edge)
-        for edge in self._root_edges_for(canonical_id):
+        for edge in self._root_edges_for(canonical_id) + _descent(self, canonical_id):
             other_id = edge["to"] if edge["from"] == canonical_id else edge["from"]
             other = self.get_node(other_id)
             if other is None:
@@ -195,44 +196,13 @@ class FederatedGraph:
         )
 
     def path(self, from_id: str, to_id: str) -> dict:
-        """Return the shortest path across child graphs and root cross edges."""
-        start = self._canonicalize_node_id(from_id)
-        goal = self._canonicalize_node_id(to_id)
-        if self.get_node(start) is None or self.get_node(goal) is None:
-            return {"path": None, "reason": "node not found"}
+        """Return the shortest path across child graphs and root cross edges.
 
-        queue: deque[str] = deque([start])
-        visited = {start}
-        prev: dict[str, tuple[str, dict]] = {}
-
-        while queue:
-            current = queue.popleft()
-            if current == goal:
-                break
-            for neighbor_id, edge in self._adjacent(current):
-                if neighbor_id in visited:
-                    continue
-                visited.add(neighbor_id)
-                prev[neighbor_id] = (current, edge)
-                queue.append(neighbor_id)
-        else:
-            return {"path": None, "reason": "no path found"}
-
-        path_ids: list[str] = [goal]
-        edges: list[dict] = []
-        current = goal
-        while current != start:
-            parent, edge = prev[current]
-            path_ids.append(parent)
-            edges.append(edge)
-            current = parent
-        path_ids.reverse()
-        edges.reverse()
-        nodes = [self.get_node(node_id) for node_id in path_ids]
-        return {
-            "path": [node for node in nodes if node is not None],
-            "edges": edges,
-        }
+        BFS body lives in :func:`weld._federation_path.path_federated`, which
+        drives :func:`~weld._federation_path.adjacent_nodes` over this
+        federation to keep ``federation.py`` within the 400-line cap.
+        """
+        return _path_federated(self, from_id, to_id)
 
     def dump(self) -> dict:
         """Return the root graph data for provenance and meta access."""
@@ -279,46 +249,6 @@ class FederatedGraph:
             "neighbors": [neighbors[nid] for nid in sorted(neighbors)],
             "edges": sorted_edges(edges.values()),
         }
-
-    def _adjacent(self, node_id: str) -> list[tuple[str, dict]]:
-        adjacent: dict[str, tuple[str, dict]] = {}
-
-        for edge in self._root_edges_for(node_id):
-            other_id = edge["to"] if edge["from"] == node_id else edge["from"]
-            if self.get_node(other_id) is None:
-                continue
-            decorated = self._decorate_edge(edge)
-            adjacent.setdefault(
-                f"{other_id}|{edge_key(decorated)}",
-                (other_id, decorated),
-            )
-
-        parts = split_prefixed_id(node_id)
-        if parts is None:
-            return [adjacent[key] for key in sorted(adjacent)]
-
-        child_name, local_id = parts
-        child = self._load_child(child_name)
-        if not isinstance(child, (Graph, SqliteBackedGraph)):
-            return [adjacent[key] for key in sorted(adjacent)]
-
-        for edge in _child_edges_for(child, local_id):
-            if edge["from"] == local_id:
-                other_local = edge["to"]
-            elif edge["to"] == local_id:
-                other_local = edge["from"]
-            else:
-                continue
-            other_id = prefix_node_id(child_name, other_local)
-            if self.get_node(other_id) is None:
-                continue
-            prefixed = self._prefix_edge(child_name, edge)
-            adjacent.setdefault(
-                f"{other_id}|{edge_key(prefixed)}",
-                (other_id, prefixed),
-            )
-
-        return [adjacent[key] for key in sorted(adjacent)]
 
     def _load_child(self, name: str) -> LoadedChild:
         """Return a child handle, preferring the lazy sqlite path (ADR 0058).
@@ -391,9 +321,6 @@ class FederatedGraph:
         decorated["from_display"] = render_display_id(str(decorated["from"]))
         decorated["to_display"] = render_display_id(str(decorated["to"]))
         return decorated
-
-    def _graph_rel_path(self, entry: ChildEntry) -> str:
-        return (Path(entry.path) / ".weld" / "graph.json").as_posix()
 
     def _read_graph_bytes(self, graph_path: Path) -> bytes:
         """Read JSON bytes for *graph_path* (test seam for TOCTOU/cache patches)."""

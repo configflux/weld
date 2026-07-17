@@ -1,7 +1,7 @@
 """Proto text parser for the grpc_proto strategy (tracked project).
 
 Parses ``.proto`` declarations into small in-memory dataclasses. Per
-ADR 0018's static-truth policy, parsing is text-only: no ``protoc``
+ADR 0086's static-truth policy, parsing is text-only: no ``protoc``
 invocation, no cross-file resolution, no runtime inspection. When a
 declaration's brace balance is malformed the affected block is dropped
 rather than guessed at.
@@ -251,7 +251,7 @@ def parse_proto_text(text: str) -> ProtoFile:
     """Parse raw proto text into a ``ProtoFile`` structure.
 
     Unknown or malformed constructs are skipped rather than guessed
-    at, matching the static-truth policy in ADR 0018. A file with
+    at, matching the static-truth policy in ADR 0086. A file with
     zero recognised declarations is still returned as an empty
     ``ProtoFile``.
     """

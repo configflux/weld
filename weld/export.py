@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
+from weld import _export_mermaid as _mermaid
 from weld.graph import Graph
 
 
@@ -54,15 +55,34 @@ class MultiFileExporter(Protocol):
 def _safe_id(node_id: str) -> str:
     """Convert a node ID to a diagram-safe identifier.
 
-    Replaces colons, slashes, dashes, and dots with underscores so the ID
-    is valid in Mermaid, DOT, and D2.
+    Any character outside ``[A-Za-z0-9_]`` (colons, slashes, dashes, dots,
+    spaces, and control bytes such as the cross-repo unit separator) is
+    mapped to ``_`` so the result is a valid identifier in Mermaid, DOT,
+    and D2 -- including federated ``repo<US>local-id`` node ids.
     """
-    return (
-        node_id.replace(":", "_")
-        .replace("/", "_")
-        .replace("-", "_")
-        .replace(".", "_")
+    return "".join(
+        c if c == "_" or (c.isascii() and c.isalnum()) else "_" for c in node_id
     )
+
+
+def _collision_safe_ids(
+    nodes: dict[str, dict], edges: list[dict]
+) -> Callable[[str], str]:
+    """Return an *injective* id sanitizer over this render's id universe.
+
+    :func:`_safe_id` maps every illegal character to ``_``, so distinct source
+    ids (``a:b`` vs ``a-b``) can collapse to the same identifier and silently
+    merge. This wraps it with :func:`weld._export_mermaid._disambiguate`, which
+    appends a short deterministic hash suffix *only* on real collisions -- every
+    non-colliding id keeps its bare :func:`_safe_id` form, so output for graphs
+    without collisions is unchanged.
+    """
+    ids: set[str] = set(nodes)
+    for edge in edges:
+        ids.update((edge.get("from"), edge.get("to")))
+    ids.discard(None)
+    id_map = _mermaid._disambiguate((nid, _safe_id(nid)) for nid in ids)
+    return lambda nid: id_map.get(nid, _safe_id(nid))
 
 
 # ---------------------------------------------------------------------------
@@ -128,39 +148,22 @@ def to_mermaid(
     *,
     nodes: dict[str, dict] | None = None,
     edges: list[dict] | None = None,
+    max_nodes: int | None = _mermaid.DEFAULT_MAX_NODES,
 ) -> str:
-    """Serialize graph data to a Mermaid flowchart string.
+    """Serialize graph data to a clustered, styled Mermaid flowchart string.
 
-    If *nodes* and *edges* are provided, uses those (subgraph mode).
-    Otherwise serializes the full graph.
+    If *nodes* and *edges* are provided, uses those (subgraph mode);
+    otherwise serializes the full graph. Nodes are grouped into
+    ``subgraph`` blocks by file/module/package, styled per type via
+    ``classDef``, given human-readable (escaped) labels, and truncation is
+    annotated explicitly past *max_nodes*. See :mod:`weld._export_mermaid`.
     """
     if nodes is None or edges is None:
         data = graph.dump()
         nodes = data.get("nodes", {})
         edges = data.get("edges", [])
 
-    lines: list[str] = ["flowchart LR"]
-
-    # Node definitions
-    for node_id, node_data in sorted(nodes.items()):
-        sid = _safe_id(node_id)
-        label = node_data.get("label", node_id)
-        ntype = node_data.get("type", "")
-        display = f"{label} ({ntype})" if ntype else label
-        # Use square brackets for all nodes
-        lines.append(f"    {sid}[\"{display}\"]")
-
-    # Edge definitions
-    for edge in edges:
-        src = _safe_id(edge["from"])
-        dst = _safe_id(edge["to"])
-        etype = edge.get("type", "")
-        if etype:
-            lines.append(f"    {src} -->|{etype}| {dst}")
-        else:
-            lines.append(f"    {src} --> {dst}")
-
-    return "\n".join(lines) + "\n"
+    return _mermaid.render(nodes, edges, safe_id=_safe_id, max_nodes=max_nodes)
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +183,13 @@ def to_dot(
         nodes = data.get("nodes", {})
         edges = data.get("edges", [])
 
+    safe_id = _collision_safe_ids(nodes, edges)
     lines: list[str] = ["digraph weld {"]
     lines.append("    rankdir=LR;")
 
     # Node definitions
     for node_id, node_data in sorted(nodes.items()):
-        sid = _safe_id(node_id)
+        sid = safe_id(node_id)
         label = node_data.get("label", node_id)
         ntype = node_data.get("type", "")
         display = f"{label}\\n({ntype})" if ntype else label
@@ -193,8 +197,8 @@ def to_dot(
 
     # Edge definitions
     for edge in edges:
-        src = _safe_id(edge["from"])
-        dst = _safe_id(edge["to"])
+        src = safe_id(edge["from"])
+        dst = safe_id(edge["to"])
         etype = edge.get("type", "")
         if etype:
             lines.append(f'    {src} -> {dst} [label="{etype}"];')
@@ -222,11 +226,12 @@ def to_d2(
         nodes = data.get("nodes", {})
         edges = data.get("edges", [])
 
+    safe_id = _collision_safe_ids(nodes, edges)
     lines: list[str] = []
 
     # Node definitions
     for node_id, node_data in sorted(nodes.items()):
-        sid = _safe_id(node_id)
+        sid = safe_id(node_id)
         label = node_data.get("label", node_id)
         ntype = node_data.get("type", "")
         display = f"{label} ({ntype})" if ntype else label
@@ -234,8 +239,8 @@ def to_d2(
 
     # Edge definitions
     for edge in edges:
-        src = _safe_id(edge["from"])
-        dst = _safe_id(edge["to"])
+        src = safe_id(edge["from"])
+        dst = safe_id(edge["to"])
         etype = edge.get("type", "")
         if etype:
             lines.append(f"{src} -> {dst}: {etype}")

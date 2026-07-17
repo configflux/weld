@@ -7,7 +7,7 @@ where ``brief`` ranks classification buckets across a tokenized search,
 service / interface / contract / boundary / verification slice that
 agents can consume directly.
 
-Per ADR 0018 and tracked project this surface MUST:
+Per ADR 0086 and tracked project this surface MUST:
 
   - reuse the existing graph semantics -- node classification is
     delegated to ``weld.brief._classify_node`` so we never invent a second
@@ -348,14 +348,30 @@ def main(argv: list[str] | None = None) -> None:
         json_output=True,
     )
 
-    # Corrupt/unsupported graph -> one-line structured error, not a traceback.
-    g = load_graph_or_exit(Graph(args.root))
-    result = trace(
-        g,
-        term=args.term,
-        node_id=args.node_id,
-        depth=args.depth,
-        seed_limit=args.seed_limit,
-    )
+    from weld.workspace_state import load_workspace_config
+
+    if load_workspace_config(args.root) is not None:
+        # Federated root: flatten root + children so the trace reaches child
+        # nodes and cross-child interaction edges (ADR 0089).
+        from weld.federation import FederatedGraph
+        from weld.federation_tools import federated_trace
+
+        result = federated_trace(
+            FederatedGraph(args.root),
+            term=args.term,
+            node_id=args.node_id,
+            depth=args.depth,
+            seed_limit=args.seed_limit,
+        )
+    else:
+        # Corrupt/unsupported graph -> one-line structured error, not a traceback.
+        g = load_graph_or_exit(Graph(args.root))
+        result = trace(
+            g,
+            term=args.term,
+            node_id=args.node_id,
+            depth=args.depth,
+            seed_limit=args.seed_limit,
+        )
     json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")

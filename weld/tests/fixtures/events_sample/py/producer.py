@@ -11,7 +11,7 @@ def broadcast():
     redis.publish("notify:users", "hello")
 
 def dynamic_topic(topic):
-    # Dynamic first arg -- must be dropped per ADR 0018.
+    # Dynamic first arg -- must be dropped per ADR 0086.
     KafkaProducer.send(topic, b"payload")
 
 def fstring_topic(name):

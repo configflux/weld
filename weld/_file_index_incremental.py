@@ -50,12 +50,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 
 from weld._git import get_git_sha
 from weld.repo_boundary import iter_repo_files
+from weld._notice import emit
 
 #: Schema version for ``file-index-state.json``. Bump on any change to
 #: the on-disk shape; an older companion is then treated as absent and a
@@ -332,10 +332,9 @@ def refresh_file_index(root: Path) -> dict[str, list[str]] | None:
         _save_state_hashes(root, authoritative_hashes)
         return new_index
     except Exception as exc:  # noqa: BLE001 -- best-effort; fall back to full.
-        print(
+        emit(
             f"[weld] notice: incremental file-index refresh fell back to "
-            f"full rebuild: {exc}",
-            file=sys.stderr,
+            f"full rebuild: {exc}"
         )
         return None
 

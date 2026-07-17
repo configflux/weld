@@ -2,7 +2,7 @@
 
 Links Python server implementations and client stub call sites back
 to the ``rpc:grpc:<package>.<Service>.<Method>`` nodes emitted by the
-``grpc_proto`` strategy. Per ADR 0018's static-truth policy, detection
+``grpc_proto`` strategy. Per ADR 0086's static-truth policy, detection
 is purely structural: no runtime, no data-flow, no stub execution.
 
 Supported shapes:
@@ -26,7 +26,7 @@ cross-reference. Edges intentionally dangle against declared rpc ids;
 discovery's dangling-edge sweep resolves or drops them depending on
 whether the ``grpc_proto`` fragment is present in the graph.
 
-Out of scope (ADR 0018): following stub instances through ``self``
+Out of scope (ADR 0086): following stub instances through ``self``
 assignments or across functions, generated ``*_pb2_grpc.py`` parsing
 (proto text is authoritative), and any shape that requires data flow.
 """
@@ -37,6 +37,7 @@ import ast
 from pathlib import Path
 
 from weld._node_ids import entity_id, file_id
+from weld.strategies._ast_calls import iter_python_asts
 from weld.strategies._helpers import StrategyResult, filter_glob_results
 from weld.strategies.grpc_proto_parser import parse_proto_text
 
@@ -55,7 +56,7 @@ class ProtoIndex:
     under ``proto_glob``. ``qualified_service`` returns the dotted
     ``<package>.<Service>`` for a bare simple name, or ``None`` when
     unknown or ambiguous (declared in more than one package --
-    ambiguity is a silent drop per ADR 0018). ``methods`` returns the
+    ambiguity is a silent drop per ADR 0086). ``methods`` returns the
     declared rpc method names for a qualified service.
     """
 
@@ -205,7 +206,7 @@ def _stub_vars_in_function(
     """Return ``{stub_var_name: simple_service_name}`` for *func*.
 
     Only ``Name = Call(...)`` assignments are recognised; tuple
-    unpacking and attribute targets are out of scope per ADR 0018.
+    unpacking and attribute targets are out of scope per ADR 0086.
     """
     out: dict[str, str] = {}
     for node in ast.walk(func):
@@ -336,10 +337,6 @@ def _process_file(
 # Strategy entry point
 # ---------------------------------------------------------------------------
 
-def _iter_python_sources(root: Path, pattern: str) -> list[Path]:
-    matches = sorted(root.glob(pattern))
-    return filter_glob_results(root, matches)
-
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Link Python gRPC server/client code to declared rpc surfaces."""
     nodes: dict[str, dict] = {}
@@ -353,22 +350,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     proto_pattern = source.get("proto_glob", "proto/**/*.proto")
     index = _build_proto_index(root, proto_pattern)
 
-    for py in _iter_python_sources(root, py_pattern):
-        if not py.is_file() or py.suffix != ".py":
-            continue
-        if py.name.startswith("_"):
-            continue
-        try:
-            text = py.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        try:
-            tree = ast.parse(text, filename=str(py))
-        except SyntaxError:
-            continue
+    for rel_path, tree in iter_python_asts(root, py_pattern, skip_underscore=True):
         if not _file_has_pb2_grpc_import(tree):
             continue
-        rel_path = str(py.relative_to(root))
         if _process_file(tree, rel_path, index, edges):
             discovered_from.append(rel_path)
 

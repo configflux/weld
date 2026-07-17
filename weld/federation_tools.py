@@ -149,3 +149,50 @@ def federated_references(
         "callers": list(all_callers.values()),
         "edges": all_edges,
     }
+
+
+def federated_trace(
+    fg: FederatedGraph,
+    *,
+    term: str | None = None,
+    node_id: str | None = None,
+    depth: int = 2,
+    seed_limit: int = 5,
+) -> dict:
+    """Run ``trace`` over the read-time flattened federation (ADR 0089).
+
+    Whole-graph interaction BFS needs every child's internal edges, which
+    ``FederatedGraph.dump()`` (root meta-graph only) never surfaces. We flatten
+    the federation into one in-memory ``Graph`` (child ids prefixed) and hand it
+    to the unchanged pure engine, so a child anchor and cross-child interaction
+    edges are both in scope. Prefixed federated ids are already canonical, so no
+    ADR 0041 alias rewrite is needed here.
+    """
+    from weld._federation_flatten import flatten_federation
+    from weld.trace import trace as _trace
+
+    return _trace(
+        flatten_federation(fg),
+        term=term,
+        node_id=node_id,
+        depth=depth,
+        seed_limit=seed_limit,
+    )
+
+
+def federated_impact(fg: FederatedGraph, target: str, depth: int = 3) -> dict:
+    """Run ``impact`` over the read-time flattened federation (ADR 0089).
+
+    Reverse-dependency BFS ("who points at this?") must span child-internal
+    edges plus the root's cross-repo edges. The flattened graph unions both, so a
+    child-internal dependent and a cross-repo dependent land in the same
+    reverse-adjacency map. ``build_index=False``: ``impact`` never queries.
+    """
+    from weld._federation_flatten import flatten_federation
+    from weld.impact_core import impact as _impact
+
+    flat = flatten_federation(fg, build_index=False)
+    try:
+        return _impact(flat, target=target, depth=depth)
+    except ValueError as exc:
+        return {"error": str(exc)}

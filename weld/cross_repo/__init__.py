@@ -53,6 +53,8 @@ from weld.cross_repo import service_graph as _service_graph  # noqa: F401
 # Concrete resolvers -- imported for their registration side effect.
 from weld.cross_repo import compose_topology as _compose_topology  # noqa: F401
 from weld.cross_repo import package_import_resolver as _package_import_resolver  # noqa: F401
+# ADR 0090: event-channel producer/consumer cross-repo binding.
+from weld.cross_repo import channel_binding as _channel_binding  # noqa: F401
 
 __all__ = [
     "CrossRepoEdge",

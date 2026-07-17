@@ -12,11 +12,11 @@ sources:
    the first positional literal are structurally clear in the source
    text (``KafkaProducer.send("topic", ...)``,
    ``redis.publish("chan", ...)``). Dynamic first args -- variables or
-   f-strings with substitutions -- are silently dropped per ADR 0018's
+   f-strings with substitutions -- are silently dropped per ADR 0086's
    static-truth policy.
 
 Every emitted node is a ``channel`` node stamped with protocol metadata
-per ADR 0018 / tracked project:
+per ADR 0086 / tracked project:
 
     protocol="event", surface_kind="pub_sub",
     transport=<kafka|tcp|amqp>, boundary_kind="internal",
@@ -122,7 +122,7 @@ class ComposeEnvExtractionTest(unittest.TestCase):
         channel_ids = {
             nid for nid, n in nodes.items() if n["type"] == "channel"
         }
-        file_id = "file:docker-compose.yml"
+        file_id = "file:docker-compose"
         contains = [
             e
             for e in edges
@@ -176,13 +176,109 @@ class PyCallsiteExtractionTest(unittest.TestCase):
         channel_ids = {
             nid for nid, n in nodes.items() if n["type"] == "channel"
         }
-        file_id = "file:producer.py"
+        file_id = "file:producer"
         contains = [
             e
             for e in edges
             if e["from"] == file_id
             and e["to"] in channel_ids
             and e["type"] == "contains"
+        ]
+        self.assertEqual(len(contains), 2)
+
+class PyCallsiteConsumerExtractionTest(unittest.TestCase):
+    """Subscribe call sites mint channel nodes too (symmetric w/ events_mqtt).
+
+    The node must be minted at consume sites so a consumer-only repo
+    retains it and the ``consumes`` edge ``events_bindings`` emits there
+    resolves instead of dangling -- the precondition for ADR 0090's
+    ``feeds_into`` join and ``channel_binding`` cross-repo match.
+    """
+
+    def _run_src(self, body: str, name: str = "sub.py") -> tuple[dict, list]:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pkg = root / "pkg"
+            pkg.mkdir()
+            (pkg / name).write_text(textwrap.dedent(body))
+            return _run_py(root, glob="pkg/*.py")
+
+    def test_kafka_consumer_list_subscribe_mints_nodes(self) -> None:
+        nodes, edges = self._run_src("""\
+            from kafka import KafkaConsumer
+            def consume():
+                KafkaConsumer.subscribe(["orders.events", "users.created"])
+        """)
+        by_name = {
+            n["props"]["name"]: n
+            for n in nodes.values()
+            if n["type"] == "channel"
+        }
+        self.assertIn("orders.events", by_name)
+        self.assertIn("users.created", by_name)
+        node = by_name["orders.events"]
+        self.assertEqual(node["props"]["transport"], "kafka")
+        self.assertEqual(node["props"]["surface_kind"], "pub_sub")
+        self.assertEqual(node["props"]["declared_in"], "pkg/sub.py")
+        # One contains edge per subscribed topic, from the consumer file.
+        contains = sorted(
+            e["to"]
+            for e in edges
+            if e["from"] == "file:pkg/sub" and e["type"] == "contains"
+        )
+        self.assertEqual(
+            contains,
+            ["channel:kafka:orders.events", "channel:kafka:users.created"],
+        )
+
+    def test_redis_single_subscribe_mints_node(self) -> None:
+        nodes, _edges = self._run_src("""\
+            import redis
+            def listen():
+                redis.subscribe("notify:users")
+        """)
+        by_name = {
+            n["props"]["name"]: n
+            for n in nodes.values()
+            if n["type"] == "channel"
+        }
+        self.assertIn("notify:users", by_name)
+        self.assertEqual(by_name["notify:users"]["props"]["transport"], "tcp")
+
+    def test_dynamic_subscribe_dropped(self) -> None:
+        nodes, edges = self._run_src("""\
+            from kafka import KafkaConsumer
+            def consume(topics):
+                KafkaConsumer.subscribe(topics)
+        """)
+        self.assertEqual((nodes, edges), ({}, []))
+
+    def test_list_with_dynamic_element_dropped(self) -> None:
+        """A single non-literal element drops the whole subscribe list."""
+        nodes, edges = self._run_src("""\
+            from kafka import KafkaConsumer
+            def consume(extra):
+                KafkaConsumer.subscribe(["orders.events", extra])
+        """)
+        self.assertEqual((nodes, edges), ({}, []))
+
+    def test_publish_and_subscribe_same_topic_collapse_one_node(self) -> None:
+        nodes, edges = self._run_src(
+            """\
+            from kafka import KafkaProducer, KafkaConsumer
+            def roundtrip():
+                KafkaProducer.send("bus.x", b"p")
+                KafkaConsumer.subscribe(["bus.x"])
+            """,
+            name="both.py",
+        )
+        channels = [nid for nid, n in nodes.items() if n["type"] == "channel"]
+        self.assertEqual(channels, ["channel:kafka:bus.x"])
+        # Publish + subscribe both contain the single collapsed node.
+        contains = [
+            e
+            for e in edges
+            if e["type"] == "contains" and e["to"] == "channel:kafka:bus.x"
         ]
         self.assertEqual(len(contains), 2)
 
@@ -216,7 +312,7 @@ class ChannelNodeIdIsStableTest(unittest.TestCase):
             sources = sorted(e["from"] for e in contains)
             self.assertEqual(
                 sources,
-                ["file:pkg/a.py", "file:pkg/b.py"],
+                ["file:pkg/a", "file:pkg/b"],
             )
 
 class EventsFragmentValidatesTest(unittest.TestCase):

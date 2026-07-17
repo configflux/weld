@@ -8,6 +8,7 @@ from pathlib import Path
 from weld._node_ids import file_id as _canonical_file_id
 from weld.file_index import _module_constant_names
 from weld.strategies._helpers import StrategyResult, should_skip
+from weld.strategies._python_module_incremental import dirty_scoped_matched
 
 def _looks_like_sibling_module(name: str) -> bool:
     """Heuristic: does *name* look like a private sibling module?
@@ -189,7 +190,17 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not matched:
         return StrategyResult(nodes, edges, discovered_from)
 
-    for py in matched:
+    # ADR 0084: incremental dirty-scoping. When the orchestrator hands a
+    # dirty-file hint (``context[INCREMENTAL_HINT_KEY]``), parse only the
+    # dirty subset of this glob instead of re-parsing every sibling to keep
+    # one. ``python_module`` has zero cross-file state, so the narrowed node
+    # set is byte-identical to a full parse's -- the orchestrator discards
+    # the non-dirty siblings' nodes anyway (``discover.py`` merge). ``hint is
+    # None`` (full discover + every non-incremental caller) returns ``matched``
+    # unchanged, preserving whole-glob behaviour byte-for-byte.
+    parse_files = dirty_scoped_matched(matched, root, context)
+
+    for py in parse_files:
         # ADR 0041 § Layer 3: the ``_*``-skip rule was a unilateral
         # decision in this strategy that drifted from the paired
         # ``python_callgraph`` strategy and produced file anchors with

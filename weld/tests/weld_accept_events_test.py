@@ -5,7 +5,7 @@ events_bindings (producer/consumer linking) strategies against the
 ``events_accept`` fixture. Verifies channel nodes, protocol metadata,
 and producer/consumer edges.
 
-Per ADR 0018, compose-declared channels are canonical
+Per ADR 0086, compose-declared channels are canonical
 (confidence=definite) while binding edges are inferred.
 """
 

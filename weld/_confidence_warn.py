@@ -16,9 +16,8 @@ sites without an intermediate adapter.
 
 from __future__ import annotations
 
-import sys
-
 from weld.contract import CONFIDENCE_VALUES
+from weld._notice import emit
 
 
 def edge_confidence_finding(edge: dict) -> str | None:
@@ -78,7 +77,7 @@ def warn_edge_confidence(edge: dict) -> bool:
     finding = edge_confidence_finding(edge)
     if finding is None:
         return False
-    print(finding, file=sys.stderr)
+    emit(finding)
     return True
 
 

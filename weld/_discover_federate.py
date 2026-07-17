@@ -36,7 +36,6 @@ Invariants:
 from __future__ import annotations
 
 import hashlib
-import sys
 from pathlib import Path
 
 from weld._discover_federate_origin import (
@@ -54,6 +53,7 @@ from weld.federation_support import edge_key, sorted_edges
 from weld.graph import Graph
 from weld.workspace import WorkspaceConfig
 from weld.workspace_state import WorkspaceState
+from weld._notice import emit
 
 __all__ = [
     "federated_cpp_project_modules",
@@ -88,19 +88,17 @@ def _load_present_child_graph(
         # ``status == "present"`` children, but belt-and-braces guards
         # against a race where the child's graph file is removed between
         # ``build_workspace_state`` and here.
-        print(
-            f"[weld] federate: child at {child_root} has no graph.json; skipping",
-            file=sys.stderr,
+        emit(
+            f"[weld] federate: child at {child_root} has no graph.json; skipping"
         )
         return None
 
     try:
         raw = graph_path.read_bytes()
     except OSError as exc:
-        print(
+        emit(
             f"[weld] federate: failed to read {graph_path}: "
-            f"{type(exc).__name__}: {exc}",
-            file=sys.stderr,
+            f"{type(exc).__name__}: {exc}"
         )
         return None
 
@@ -108,10 +106,9 @@ def _load_present_child_graph(
     try:
         graph.load()
     except Exception as exc:  # noqa: BLE001 -- one bad child must not sink the pass
-        print(
+        emit(
             f"[weld] federate: failed to parse {graph_path}: "
-            f"{type(exc).__name__}: {exc}",
-            file=sys.stderr,
+            f"{type(exc).__name__}: {exc}"
         )
         return None
 

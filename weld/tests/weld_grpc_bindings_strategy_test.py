@@ -2,7 +2,7 @@
 
 The ``grpc_bindings`` strategy statically links Python server
 implementations and client stub call sites back to rpc node ids
-declared by the ``grpc_proto`` strategy. Per ADR 0018's static-truth
+declared by the ``grpc_proto`` strategy. Per ADR 0086's static-truth
 policy, detection is structural only:
 
 - Server binding: a Python class that subclasses any ``*Servicer``

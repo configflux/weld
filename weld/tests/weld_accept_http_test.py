@@ -5,7 +5,7 @@ against the ``http_accept`` fixture and verifies the resulting
 interaction graph nodes, edges, and protocol metadata are correct.
 
 Both inbound (route) and outbound (rpc) surfaces must carry full
-ADR 0018 interaction metadata, and the fragment must validate cleanly.
+ADR 0086 interaction metadata, and the fragment must validate cleanly.
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ class HttpClientAcceptanceTest(unittest.TestCase):
         )
 
     def test_dynamic_fstring_url_not_extracted(self) -> None:
-        """f-string with substitution should be dropped per ADR 0018."""
+        """f-string with substitution should be dropped per ADR 0086."""
         for nid in self.nodes:
             self.assertNotIn("{product_id}", nid)
 
@@ -127,8 +127,11 @@ class HttpClientAcceptanceTest(unittest.TestCase):
         invokes = [e for e in self.edges if e["type"] == "invokes"]
         self.assertGreaterEqual(len(invokes), 4)
         from_files = {e["from"] for e in invokes}
-        self.assertIn("file:src/client/product_client.py", from_files)
-        self.assertIn("file:src/client/order_client.py", from_files)
+        # Canonical extensionless ``file:`` endpoints (ADR 0041), matching
+        # the nodes ``python_module`` mints so the edges survive discovery's
+        # dangling-edge sweep.
+        self.assertIn("file:src/client/product_client", from_files)
+        self.assertIn("file:src/client/order_client", from_files)
 
     def test_client_fragment_validates(self) -> None:
         errs = validate_fragment(

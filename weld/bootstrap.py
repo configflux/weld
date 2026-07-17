@@ -37,7 +37,6 @@ template matrix.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from weld._bootstrap_hosts import (
@@ -48,6 +47,7 @@ from weld._bootstrap_hosts import (
 )
 from weld.bootstrap_writer import process_template_dest
 from weld.workspace_state import find_workspaces_yaml
+from weld._notice import emit
 
 # Federation guidance appended in-code (rather than a 4x template matrix) to
 # every topology-dependent markdown asset when the bootstrap target root has
@@ -379,7 +379,7 @@ def main(argv: list[str] | None = None) -> None:
             include_unmanaged=args.include_unmanaged,
         )
     except (FileNotFoundError, ValueError) as exc:
-        print(f"[weld] error: {exc}", file=sys.stderr)
+        emit(f"[weld] error: {exc}")
         raise SystemExit(1) from exc
 
     if args.diff:

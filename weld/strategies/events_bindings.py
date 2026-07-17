@@ -2,7 +2,7 @@
 
 Links Python producer and consumer call sites back to the
 ``channel:<transport>:<name>`` nodes emitted by the ``events`` strategy
-(tracked project). Per ADR 0018's static-truth policy, detection is
+(tracked project). Per ADR 0086's static-truth policy, detection is
 purely structural: no runtime, no data-flow, no instance tracking.
 
 Supported shapes:
@@ -29,7 +29,7 @@ All edges carry ``source_strategy="events_bindings"`` and
 node ids; discovery's dangling-edge sweep resolves or drops them
 depending on whether the ``events`` fragment is present in the graph.
 
-Out of scope (ADR 0018): following assigned instances (``p = Producer();
+Out of scope (ADR 0086): following assigned instances (``p = Producer();
 p.send(...)``), decorator-based bindings (``@celery.task``), and any
 shape requiring data-flow analysis.
 """
@@ -39,8 +39,16 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results
-from weld.strategies.events_shared import channel_id
+from weld.strategies._ast_calls import (
+    classify_receiver_verb,
+    file_imports_root,
+    iter_call_nodes,
+    iter_python_asts,
+    literal_first_arg,
+    literal_str_or_list_arg,
+)
+from weld.strategies._helpers import StrategyResult, _annotation_name
+from weld.strategies.events_shared import channel_id, file_node_id
 
 # ---------------------------------------------------------------------------
 # Call-site vocabulary — mirrors events_callsite but adds consumer verbs.
@@ -97,77 +105,6 @@ _PRIMITIVE_ANNOTATIONS: frozenset[str] = frozenset(
 # AST helpers
 # ---------------------------------------------------------------------------
 
-def _file_has_async_import(tree: ast.Module) -> bool:
-    """Cheap pre-filter: only walk files that import a known async lib."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.split(".")[0] in _IMPORT_ROOTS:
-                    return True
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.split(".")[0] in _IMPORT_ROOTS:
-                return True
-    return False
-
-def _literal_first_arg(call: ast.Call) -> str | None:
-    """Return the literal string first positional arg, or None."""
-    if not call.args:
-        return None
-    node = call.args[0]
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.JoinedStr):
-        parts: list[str] = []
-        for value in node.values:
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                parts.append(value.value)
-            else:
-                return None
-        return "".join(parts)
-    return None
-
-def _literal_list_arg(call: ast.Call) -> list[str] | None:
-    """Return literal strings from a list first arg, or None.
-
-    Handles ``subscribe(["topic1", "topic2"])``. Non-literal elements
-    cause the entire list to be dropped (conservative).
-    """
-    if not call.args:
-        return None
-    node = call.args[0]
-    # Single string arg (``subscribe("topic")``)
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return [node.value] if node.value else None
-    # List arg (``subscribe(["topic1", "topic2"])``)
-    if not isinstance(node, ast.List):
-        return None
-    result: list[str] = []
-    for elt in node.elts:
-        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-            if elt.value:
-                result.append(elt.value)
-        else:
-            return None  # Any non-literal element kills the list.
-    return result or None
-
-def _annotation_name(anno: ast.expr | None) -> str | None:
-    """Return the trailing identifier of an annotation, or None."""
-    if anno is None:
-        return None
-    if isinstance(anno, ast.Name):
-        return anno.id
-    if isinstance(anno, ast.Attribute):
-        return anno.attr
-    if isinstance(anno, ast.Subscript):
-        slice_node = anno.slice
-        if isinstance(slice_node, ast.Tuple) and slice_node.elts:
-            slice_node = slice_node.elts[0]
-        inner = _annotation_name(slice_node)
-        if inner is not None:
-            return inner
-        return _annotation_name(anno.value)
-    return None
-
 def _enclosing_function_contracts(
     tree: ast.Module, target_lineno: int
 ) -> list[str]:
@@ -223,51 +160,20 @@ def _edge(src: str, dst: str, etype: str) -> dict:
 # Per-file processing
 # ---------------------------------------------------------------------------
 
-def _classify_producer(call: ast.Call) -> str | None:
-    """Return the transport when *call* matches a producer verb."""
-    func = call.func
-    if not isinstance(func, ast.Attribute):
-        return None
-    if not isinstance(func.value, ast.Name):
-        return None
-    root = func.value.id
-    verb = func.attr
-    for roots, verbs, transport in _PRODUCER_RULES:
-        if root in roots and verb in verbs:
-            return transport
-    return None
-
-def _classify_consumer(call: ast.Call) -> str | None:
-    """Return the transport when *call* matches a consumer verb."""
-    func = call.func
-    if not isinstance(func, ast.Attribute):
-        return None
-    if not isinstance(func.value, ast.Name):
-        return None
-    root = func.value.id
-    verb = func.attr
-    for roots, verbs, transport in _CONSUMER_RULES:
-        if root in roots and verb in verbs:
-            return transport
-    return None
-
 def _process_file(
     tree: ast.Module,
     rel_path: str,
     edges: list[dict],
 ) -> bool:
     """Process one parsed Python module. Returns True if any edge emitted."""
-    file_id = f"file:{rel_path}"
+    file_id = file_node_id(rel_path)
     emitted = False
 
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-
+    for node in iter_call_nodes(tree):
         # --- Producer ---
-        transport = _classify_producer(node)
+        transport = classify_receiver_verb(node, _PRODUCER_RULES)
         if transport is not None:
-            topic = _literal_first_arg(node)
+            topic = literal_first_arg(node)
             if topic and topic != "":
                 cid = channel_id(transport, topic)
                 edges.append(_edge(file_id, cid, "produces"))
@@ -282,9 +188,9 @@ def _process_file(
             continue
 
         # --- Consumer ---
-        transport = _classify_consumer(node)
+        transport = classify_receiver_verb(node, _CONSUMER_RULES)
         if transport is not None:
-            topics = _literal_list_arg(node)
+            topics = literal_str_or_list_arg(node)
             if topics:
                 for topic in topics:
                     cid = channel_id(transport, topic)
@@ -308,20 +214,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    for py in filter_glob_results(root, sorted(root.glob(pattern))):
-        if not py.is_file() or py.suffix != ".py":
+    for rel_path, tree in iter_python_asts(root, pattern):
+        if not file_imports_root(tree, _IMPORT_ROOTS):
             continue
-        try:
-            text = py.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        try:
-            tree = ast.parse(text, filename=str(py))
-        except SyntaxError:
-            continue
-        if not _file_has_async_import(tree):
-            continue
-        rel_path = str(py.relative_to(root))
         if _process_file(tree, rel_path, edges):
             discovered_from.append(rel_path)
 

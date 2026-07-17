@@ -3,7 +3,7 @@
 The ``events_bindings`` strategy statically links Python producer and
 consumer call sites back to ``channel:<transport>:<name>`` node ids
 emitted by the ``events`` strategy (tracked project). Detection is
-structural only per ADR 0018's static-truth policy:
+structural only per ADR 0086's static-truth policy:
 
 - Producer binding: a call shaped ``<Root>.<verb>("literal", ...)``
   where ``<Root>`` is a known async client and ``<verb>`` is a known
@@ -67,7 +67,7 @@ class EventsProducerBindingTest(unittest.TestCase):
             _, edges, discovered = _run(root, "svc/*.py")
             produces = [e for e in edges if e["type"] == "produces"]
             self.assertEqual(len(produces), 1)
-            self.assertEqual(produces[0]["from"], "file:svc/pub.py")
+            self.assertEqual(produces[0]["from"], "file:svc/pub")
             self.assertEqual(produces[0]["to"], "channel:kafka:orders.events")
             self.assertEqual(produces[0]["props"]["confidence"], "inferred")
             self.assertEqual(
@@ -125,7 +125,7 @@ class EventsConsumerBindingTest(unittest.TestCase):
             _, edges, discovered = _run(root, "svc/*.py")
             consumes = [e for e in edges if e["type"] == "consumes"]
             self.assertEqual(len(consumes), 1)
-            self.assertEqual(consumes[0]["from"], "file:svc/sub.py")
+            self.assertEqual(consumes[0]["from"], "file:svc/sub")
             self.assertEqual(consumes[0]["to"], "channel:kafka:orders.events")
             self.assertEqual(consumes[0]["props"]["confidence"], "inferred")
             self.assertIn("svc/sub.py", discovered)

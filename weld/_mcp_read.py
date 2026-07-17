@@ -33,7 +33,6 @@ Scope / safety:
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 from weld._auto_refresh import auto_refresh_if_stale
@@ -84,18 +83,17 @@ def _graph_path(root: Path) -> Path:
 def _file_sha(path: Path) -> str | None:
     """Return a content sha for *path*, or ``None`` when it cannot be read.
 
-    Uses a streamed sha-256 over the raw bytes -- the digest is an opaque
-    cache key only; it is never surfaced to a client, so the choice of hash is
-    a performance/collision tradeoff, not a security boundary.
+    Delegates to the process-local :func:`weld._graph_digest.file_sha256` memo
+    (bd aqqa) so the (~16 MB) ``graph.json`` is hashed once per cold read rather
+    than again here after :mod:`weld._query_sidecar` already hashed it for its
+    envelope check. The digest is an opaque cache key only; it is never
+    surfaced to a client, so the memo's (path, mtime, size) key -- which busts
+    on any write -- is a performance/collision tradeoff, not a security
+    boundary.
     """
-    try:
-        h = hashlib.sha256()
-        with path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except OSError:
-        return None
+    from weld._graph_digest import file_sha256
+
+    return file_sha256(path)
 
 
 def _is_federated(root: Path) -> bool:

@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
-from weld._git import is_git_repo
+from weld._impact_git import (
+    _git_diff_files,
+    _git_status_files,
+    _require_git_repo,
+)
 from weld.graph import Graph
 from weld.impact_core import (
     IMPACT_VERSION,
@@ -132,180 +135,77 @@ def _validate_seed_inputs(args: argparse.Namespace) -> None:
         )
 
 
-def _require_git_repo(root: Path, *, flag: str) -> None:
-    """Fail fast with a dedicated message when *root* is not a git repo.
-
-    The ``--from-diff`` and ``--working-tree`` paths shell out to ``git
-    diff`` and ``git status``. When *root* is not inside a git working
-    tree, those subprocesses leak git's own ``fatal: not a git
-    repository`` (or, worse, the multi-page ``--no-index`` usage banner
-    on newer git) verbatim into the user-visible error -- functionally
-    correct but useless for diagnosing the actual problem. This guard
-    detects the condition once, names the offending flag, and points at
-    the resolved root so the user knows exactly which directory to fix
-    or which ``--root`` to pass instead.
-    """
-    if is_git_repo(root):
-        return
-    raise SystemExit(
-        f"wd impact: {flag} requires {root} to be a git repository",
-    )
-
-
-def _git_diff_files(root: Path, ref: str) -> list[str]:
-    """Return ``git diff --name-only`` output as a list of paths.
-
-    Accepts ``REF`` (compared against the working tree) or
-    ``REF1..REF2``-style ranges -- ``git`` parses both transparently.
-
-    Uses ``-c core.quotePath=false`` and ``-z`` so filenames with non-ASCII
-    characters round-trip as UTF-8 instead of git's default C-quoted
-    octal-escape form, and so embedded whitespace/newlines in filenames
-    cannot collide with the record separator.
-
-    Hardens against argument injection: a ``ref`` starting with ``-``
-    (e.g. ``--upload-pack=evil``) would otherwise be parsed by git as
-    an option flag and surface git's multi-page ``usage: git diff``
-    banner -- functionally not RCE because the user owns their own CLI
-    invocation, but a confusing failure mode for callers and
-    automation. We reject the leading-dash form up front with a clear
-    weld-prefixed error, and additionally pass ``--end-of-options`` so
-    even a future code path that bypasses this check forces git to
-    treat the value as a revision rather than a flag.
-    """
-    if ref.startswith("-"):
-        raise SystemExit(
-            f"wd impact: --from-diff ref cannot start with '-' "
-            f"(got: {ref!r}); refs starting with '-' are rejected to "
-            f"prevent them from being parsed as git options",
-        )
-    cmd = [
-        "git", "-c", "core.quotePath=false", "-C", str(root),
-        "diff", "--name-only", "-z", "--end-of-options", ref,
-    ]
-    try:
-        proc = subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        raise SystemExit("wd impact: 'git' executable not found") from exc
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        raise SystemExit(
-            f"wd impact: git diff failed for '{ref}': "
-            f"{stderr or 'no stderr output'}"
-        ) from exc
-    # ``-z`` emits NUL-separated records; trailing NUL after the last entry
-    # yields an empty tail token that the truthy filter drops.
-    return [path for path in proc.stdout.split("\0") if path]
-
-
-def _git_status_files(root: Path) -> list[str]:
-    """Return staged + unstaged file paths from ``git status --porcelain=v2 -z``.
-
-    Untracked files (status ``?``) are intentionally included: if the user
-    is asking for the working-tree blast radius, brand-new files are part
-    of the answer as long as they resolve to graph nodes.
-
-    Uses ``--porcelain=v2 -z`` (NUL-separated, machine-readable) plus
-    ``-c core.quotePath=false`` so unicode/quoted filenames round-trip as
-    UTF-8 instead of C-quoted octal escapes, and so a filename that
-    happens to contain ``" -> "`` is not misclassified as a rename.
-    """
-    cmd = [
-        "git", "-c", "core.quotePath=false", "-C", str(root),
-        "status", "--porcelain=v2", "-z",
-    ]
-    try:
-        proc = subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        raise SystemExit("wd impact: 'git' executable not found") from exc
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        raise SystemExit(
-            f"wd impact: git status failed: {stderr or 'no stderr output'}",
-        ) from exc
-
-    # NUL-separated records; trailing NUL after last record yields an empty
-    # tail token that we drop with the truthy filter below. Record types
-    # (porcelain v2): ``1`` ordinary changed entry, ``2`` rename/copy
-    # (followed by an extra NUL-separated original-path token we discard),
-    # ``u`` unmerged, ``?`` untracked, ``!`` ignored. Header lines start
-    # with ``#`` and are skipped.
-    tokens = [tok for tok in proc.stdout.split("\0") if tok]
-    paths: list[str] = []
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        i += 1
-        if tok[0] == "#":
-            continue
-        prefix = tok[0]
-        if prefix == "1":
-            # ``1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`` -- 9 fields.
-            parts = tok.split(" ", 8)
-            if len(parts) == 9:
-                paths.append(parts[8])
-        elif prefix == "2":
-            # ``2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>``;
-            # original-path follows in the next NUL-separated token, which
-            # we consume and discard.
-            parts = tok.split(" ", 9)
-            if len(parts) == 10:
-                paths.append(parts[9])
-            i += 1
-        elif prefix == "u":
-            # ``u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>``.
-            parts = tok.split(" ", 10)
-            if len(parts) == 11:
-                paths.append(parts[10])
-        elif prefix in ("?", "!"):
-            # ``? <path>`` or ``! <path>``.
-            parts = tok.split(" ", 1)
-            if len(parts) == 2:
-                paths.append(parts[1])
-    return paths
-
-
 def _resolve_seeds_from_args(
     graph: Graph,
+    fg,
     args: argparse.Namespace,
-) -> tuple[str, list[str], list[str], str | list[str]]:
-    """Resolve CLI args into ``(kind, seed_ids, unresolved_inputs, target_input)``.
+) -> tuple[str, list[str], list[str], str | list[str], list[str] | None]:
+    """Resolve CLI args into ``(kind, seeds, unresolved, target_input, low_cap)``.
 
     ``kind`` is one of ``"node" | "path" | "from-diff" | "files" |
     "working-tree"``. Seed lists and unresolved-input lists are sorted for
     determinism. ``target_input`` is what gets recorded in the JSON envelope
-    under ``target.input``.
+    under ``target.input``. ``low_cap`` is a precomputed
+    ``warnings.low_capability_inputs`` list for the federated git-seed fan-out,
+    or ``None`` everywhere else -- ``None`` lets ``impact()`` compute the warning
+    locally from ``input_paths`` (byte-identical single-repo path).
+
+    *fg* is the :class:`~weld.federation.FederatedGraph` for a polyrepo root,
+    or ``None`` for a single repo. When set, the git-seeded modes
+    (``--from-diff`` / ``--working-tree``) fan out per present child so seeds
+    resolve from the children's git repos (ADR 0089); when ``None`` the
+    unchanged single-repo root-git path runs (byte-identical).
     """
     if args.target is not None:
         # Existing single-positional behaviour. Seeds and unresolved inputs
         # are derived inside ``impact()`` itself.
-        return "target", [], [], args.target
+        return "target", [], [], args.target, None
     if args.from_diff is not None:
+        if fg is not None:
+            seeds, unresolved, paths, low_cap = _federated_git_seeds(
+                fg, args.root, diff_ref=args.from_diff,
+            )
+            return "from-diff", seeds, unresolved, paths, low_cap
         _require_git_repo(args.root, flag="--from-diff")
         paths = _git_diff_files(args.root, args.from_diff)
         seeds, unresolved = _resolve_paths_to_seeds(graph, paths)
-        return "from-diff", seeds, unresolved, sorted(paths)
+        return "from-diff", seeds, unresolved, sorted(paths), None
     if args.files is not None:
         paths = list(args.files)
         seeds, unresolved = _resolve_paths_to_seeds(graph, paths)
-        return "files", seeds, unresolved, sorted(paths)
+        return "files", seeds, unresolved, sorted(paths), None
     if args.working_tree:
+        if fg is not None:
+            seeds, unresolved, paths, low_cap = _federated_git_seeds(
+                fg, args.root, diff_ref=None,
+            )
+            return "working-tree", seeds, unresolved, paths, low_cap
         _require_git_repo(args.root, flag="--working-tree")
         paths = _git_status_files(args.root)
         seeds, unresolved = _resolve_paths_to_seeds(graph, paths)
-        return "working-tree", seeds, unresolved, sorted(paths)
+        return "working-tree", seeds, unresolved, sorted(paths), None
     # Should be unreachable: _validate_seed_inputs ran before this.
     raise SystemExit("wd impact: no seed input selected")
+
+
+def _federated_git_seeds(
+    fg,
+    root: Path,
+    *,
+    diff_ref: str | None,
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Fan ``--from-diff`` / ``--working-tree`` out across a federation.
+
+    Thin seam over :func:`weld._impact_git_federated.federated_seed_resolution`
+    (kept in its own module for the 400-line cap). Returns
+    ``(seed_ids, unresolved_inputs, display_paths, low_capability_inputs)`` --
+    all sorted. ``low_capability_inputs`` is precomputed per child so
+    ``impact()`` records it verbatim (a flattened child's child-relative
+    ``props.file`` can never match a child-prefixed display path in the union).
+    """
+    from weld._impact_git_federated import federated_seed_resolution
+
+    return federated_seed_resolution(fg, root, diff_ref=diff_ref)
 
 
 def _stale_gate(graph: Graph, *, allow_stale: bool) -> bool | None:
@@ -328,6 +228,42 @@ def _stale_gate(graph: Graph, *, allow_stale: bool) -> bool | None:
     raise SystemExit(_STALE_EXIT_CODE)
 
 
+def _federation_or_none(root: Path):
+    """Return a :class:`~weld.federation.FederatedGraph` for a polyrepo root.
+
+    ``None`` marks a single repo (no ``.weld/workspaces.yaml``): the caller
+    then takes the unchanged single-repo graph load and root-git seed paths,
+    byte-identical to pre-federation behavior. The one instance is reused for
+    both the flattened read graph and, for ``--from-diff`` / ``--working-tree``,
+    the per-child git fan-out -- so children are loaded once (cache-warmed).
+    """
+    from weld.workspace_state import load_workspace_config
+
+    if load_workspace_config(root) is None:
+        return None
+    from weld.federation import FederatedGraph
+
+    return FederatedGraph(root)
+
+
+def _load_impact_graph(root: Path, fg) -> Graph:
+    """Return the graph ``impact()`` analyzes for *root*.
+
+    Federated root (*fg* set) -> the read-time flattened union of root + every
+    present child (ADR 0089), so the reverse-dependency BFS spans child-internal
+    and cross-repo edges. Single repo (*fg* is ``None``) -> the loaded
+    single-repo ``Graph`` with a corrupt/unsupported graph converted to a
+    structured error, not a traceback.
+    """
+    if fg is not None:
+        from weld._federation_flatten import flatten_federation
+
+        return flatten_federation(fg, build_index=False)
+    from weld._graph_cli_errors import load_graph_or_exit
+
+    return load_graph_or_exit(Graph(root))
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point for ``wd impact``."""
     parser = _build_parser()
@@ -336,7 +272,6 @@ def main(argv: list[str] | None = None) -> int:
 
     from weld._auto_refresh import auto_refresh_if_stale
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
-    from weld._graph_cli_errors import load_graph_or_exit
 
     # Surface the friendly first-run message if the graph has not been
     # built. Mirrors trace/diff/enrich behaviour.
@@ -348,13 +283,17 @@ def main(argv: list[str] | None = None) -> int:
         args.root, no_refresh=args.no_refresh, json_output=args.json,
     )
 
-    # Corrupt/unsupported graph -> one-line structured error, not a traceback.
-    graph = load_graph_or_exit(Graph(args.root))
+    # Federated root -> flattened union so the reverse-BFS reaches child
+    # dependents (ADR 0089); single repo (fg is None) -> the loaded graph (a
+    # corrupt / unsupported single-repo graph becomes a structured error, not a
+    # traceback). The one FederatedGraph is reused for the git seed fan-out.
+    fg = _federation_or_none(args.root)
+    graph = _load_impact_graph(args.root, fg)
 
     stale_graph = _stale_gate(graph, allow_stale=args.allow_stale)
 
-    kind, seed_ids, unresolved_inputs, target_input = _resolve_seeds_from_args(
-        graph, args,
+    kind, seed_ids, unresolved_inputs, target_input, low_capability = (
+        _resolve_seeds_from_args(graph, fg, args)
     )
 
     if kind == "target":
@@ -382,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
             seed_kind=kind,
             target_input=target_input,
             input_paths=input_paths,
+            low_capability_inputs=low_capability,
             depth=args.depth,
             stale_graph=stale_graph,
         )

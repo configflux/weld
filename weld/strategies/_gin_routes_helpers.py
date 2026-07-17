@@ -58,7 +58,7 @@ def route_id(verb: str, path: str) -> str:
 
 
 def route_node(*, verb: str, path: str, rel_path: str, source: str) -> dict:
-    """Build a gin route-node payload (ADR 0018 inbound HTTP surface).
+    """Build a gin route-node payload (ADR 0086 inbound HTTP surface).
 
     Mirrors the flask route-node prop set so cross-language route
     queries see a uniform shape. ``authority`` is the plain

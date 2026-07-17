@@ -38,13 +38,13 @@ the loader returns an empty list and the merge is a no-op.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
 from weld._yaml import parse_yaml
 from weld.cross_repo.base import CrossRepoEdge
+from weld._notice import emit
 
 __all__ = [
     "Override",
@@ -269,10 +269,9 @@ def apply_overrides(
             skip = False
             for child_name in (from_child, to_child):
                 if child_name is not None and child_name not in known_children:
-                    print(
+                    emit(
                         f"[weld] warning: override references unknown "
-                        f"child {child_name!r}; skipping",
-                        file=sys.stderr,
+                        f"child {child_name!r}; skipping"
                     )
                     skip = True
                     break

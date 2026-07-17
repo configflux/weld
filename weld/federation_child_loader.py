@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -35,10 +34,12 @@ from weld.federation_support import (
 )
 from weld.graph import CHILD_SCHEMA_VERSION, Graph, SchemaVersionError
 from weld.workspace import ChildEntry
+from weld._notice import emit
 
 __all__ = [
     "child_edges_for",
     "child_local_context",
+    "graph_rel_path",
     "load_child",
     "load_child_for_query",
     "load_child_from_json",
@@ -91,7 +92,7 @@ def load_child(
 
     child_root = workspace_root / entry.path
     graph_path = child_root / ".weld" / "graph.json"
-    graph_rel = _graph_rel_path(entry)
+    graph_rel = graph_rel_path(entry)
 
     early = _maybe_sentinel(name, entry, child_root, graph_path, graph_rel)
     if early is not None:
@@ -143,7 +144,7 @@ def load_child_for_query(
 
     child_root = workspace_root / entry.path
     graph_path = child_root / ".weld" / "graph.json"
-    graph_rel = _graph_rel_path(entry)
+    graph_rel = graph_rel_path(entry)
 
     early = _maybe_sentinel(name, entry, child_root, graph_path, graph_rel)
     if early is not None:
@@ -219,9 +220,8 @@ def load_child_from_json(
 
     observed = _graph_digest(graph_path, read_bytes)
     if observed is not None and observed != digest:
-        print(
-            f"[weld] warning: child graph changed during load: {graph_path}",
-            file=sys.stderr,
+        emit(
+            f"[weld] warning: child graph changed during load: {graph_path}"
         )
 
     graph = Graph(child_root)
@@ -286,7 +286,7 @@ def child_edges_for(child: ChildHandle, local_id: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _graph_rel_path(entry: ChildEntry) -> str:
+def graph_rel_path(entry: ChildEntry) -> str:
     return (Path(entry.path) / ".weld" / "graph.json").as_posix()
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from weld._notice import emit
 
 __all__ = ["add_bootstrap_subparser", "run_bootstrap"]
 
@@ -97,7 +98,7 @@ def run_bootstrap(args: argparse.Namespace) -> int:
             track_graphs=args.track_graphs,
         )
     except FileNotFoundError as exc:
-        print(f"[weld] error: {exc}", file=sys.stderr)
+        emit(f"[weld] error: {exc}")
         return 2
 
     if args.json:

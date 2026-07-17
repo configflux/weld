@@ -246,10 +246,13 @@ What changed (bd 85tb.2):
 The genuine-content-change rows are now bounded by re-serializing a 14 MB
 canonical `graph.json` (~0.9 s) plus the global query-state rebuild and the
 global post-process -- inherent to writing a changed graph of this size. The
-per-source `python_callgraph` re-extraction (parsing) lever has landed:
-a dirty glob parses only its changed files and reconstructs the
-`project_modules` origin set from the prior graph instead of re-parsing every
-sibling. The remaining levers (post-process scoping, partial/delta
+per-source language-strategy re-extraction (parsing) lever has landed for both
+Python strategies: on a dirty glob, `python_callgraph` parses only its changed
+files and reconstructs the `project_modules` origin set from the prior graph
+instead of re-parsing every sibling, and `python_module` likewise parses only
+the dirty files (it has no cross-file state, so it needs no reconstruction --
+a warm ~370 ms/glob saving on this repo). The remaining levers (post-process
+scoping, partial/delta
 serialization) are tracked separately.
 
 Determinism is the hard bar: the incrementally-refreshed graph and every

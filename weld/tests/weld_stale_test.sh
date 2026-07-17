@@ -36,6 +36,25 @@ topology:
   edges: []
 YAML
 
+# Mirror the `wd init` config-only default: ignore rebuildable weld
+# artifacts so `git add -A` never tracks them. Without this, bare
+# discover's canonical graph.json persist shows up as an uncommitted
+# edit to a tracked file and flips the working-tree staleness
+# dimension (ADR 0017), breaking the stale=false assertions.
+cat > "${ROOT}/.weld/.gitignore" <<'GITIGNORE'
+discovery-state.json
+graph-previous.json
+workspace-state.json
+workspace.lock
+query_state.bin
+graph.json
+graph.db
+graph-meta.json
+file-index.json
+file-index-state.json
+telemetry.jsonl
+GITIGNORE
+
 echo "# hello" > "${ROOT}/README.md"
 git add -A
 git commit -m "initial" --quiet
@@ -43,18 +62,28 @@ git commit -m "initial" --quiet
 HEAD_SHA="$(cd "${ROOT}" && git rev-parse HEAD)"
 
 # --- Test 1: discover output includes meta.git_sha ---
+# Bare discover also persists a canonical .weld/graph.json itself (volatile
+# meta stripped to the graph-meta sidecar), so stdout must be captured to a
+# separate file: redirecting onto .weld/graph.json would let the canonical
+# write clobber the capture and drop git_sha.
 echo "--- Test 1: discover output includes meta.git_sha ---"
-weld_in_root "${REPO_ROOT}" "${ROOT}" discover > "${ROOT}/.weld/graph.json"
+weld_in_root "${REPO_ROOT}" "${ROOT}" discover > "${TMPDIR}/discover_stdout.json"
 
 python3 -c "
 import json, sys
-with open('${ROOT}/.weld/graph.json') as f:
+with open('${TMPDIR}/discover_stdout.json') as f:
     data = json.load(f)
 sha = data.get('meta', {}).get('git_sha')
 assert sha is not None, f'meta.git_sha missing from discover output; meta={data.get(\"meta\")}'
 assert sha == '${HEAD_SHA}', f'expected SHA ${HEAD_SHA}, got {sha}'
 print('PASS: discover output includes meta.git_sha')
 "
+
+# Bare discover must have persisted the canonical graph on its own.
+test -s "${ROOT}/.weld/graph.json" || {
+  echo "FAIL: bare discover did not persist .weld/graph.json" >&2
+  exit 1
+}
 
 # --- Test 2: wd stale shows stale=false after fresh discover ---
 echo "--- Test 2: wd stale shows stale=false after fresh discover ---"
@@ -90,7 +119,7 @@ print('PASS: wd stale shows stale=true and commits_behind=1')
 # --- Test 4: wd stale shows stale=false after re-discover ---
 echo "--- Test 4: wd stale shows stale=false after re-discover ---"
 cd "${ROOT}"
-weld_in_root "${REPO_ROOT}" "${ROOT}" discover > "${ROOT}/.weld/graph.json"
+weld_in_root "${REPO_ROOT}" "${ROOT}" discover > /dev/null
 
 out="$(weld_in_root "${REPO_ROOT}" "${ROOT}" stale --json)"
 echo "${out}" | python3 -c "

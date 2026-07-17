@@ -241,6 +241,7 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
     "grpc_proto": _fw("proto", ("nodes_emitted", "deps_edges"), (".proto",)),
     "grpc_proto_parser": _fw("proto", ("nodes_emitted",), (".proto",)),
     "grpc_bindings": _fw("proto", ("nodes_emitted",), (".py",)),
+    "dds_idl": _fw("dds", ("nodes_emitted",), (".idl",)),
     "fastapi": _fw("fastapi", ("nodes_emitted",), (".py",)),
     "flask": _fw("flask", ("nodes_emitted",), (".py",)),
     "gin": _fw("gin", ("nodes_emitted",), (".go",)),  # ADR 0071: Go routes
@@ -252,6 +253,7 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
     "events": _fw("events", ("nodes_emitted",), (".py",)),
     "events_bindings": _fw("events", ("nodes_emitted",), (".py",)),
     "events_callsite": _fw("events", ("nodes_emitted",), (".py",)),
+    "events_mqtt": _fw("events", ("nodes_emitted",), (".py",)),
     "events_config": _fw("events", ("nodes_emitted",), (".yml", ".yaml", ".toml")),
     "boundary_entrypoint": _fw("boundary", ("nodes_emitted",)),
     "runtime_contract": _fw("runtime_contract", ("nodes_emitted",)),

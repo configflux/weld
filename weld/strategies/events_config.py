@@ -19,6 +19,7 @@ from weld.strategies.events_shared import (
     channel_id,
     channel_node,
     contains_edge,
+    file_node_id,
 )
 
 # ---------------------------------------------------------------------------
@@ -179,7 +180,7 @@ def extract_compose_env(
             nodes[nid] = channel_node(
                 transport=transport, name=value, rel_path=rel_path
             )
-            edges.append(contains_edge(f"file:{rel_path}", nid))
+            edges.append(contains_edge(file_node_id(rel_path), nid))
             matched = True
         if matched:
             discovered_from.append(rel_path)

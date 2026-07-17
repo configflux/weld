@@ -30,7 +30,7 @@ class Ros2SchemaTest(unittest.TestCase):
 
     def test_schema_version_at_least_three(self) -> None:
         # ROS2 vocabulary landed in v3; later bumps (e.g. v4 for the
-        # interaction-surface vocabulary under ADR 0018) must preserve it.
+        # interaction-surface vocabulary under ADR 0086) must preserve it.
         self.assertGreaterEqual(SCHEMA_VERSION, 3)
 
     def test_ros2_node_types_in_vocabulary(self) -> None:

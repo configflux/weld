@@ -13,6 +13,7 @@ from weld.agent_graph_authority import (
     frontmatter_authority_props,
     generated_marker_props,
 )
+from weld.agent_graph_metadata_diagnostics import broken_file_diagnostics
 from weld.agent_graph_metadata_permissions import permission_references_with_lines
 from weld.agent_graph_metadata_utils import (
     AgentGraphReference,
@@ -126,7 +127,7 @@ def _parse_markdown_asset(
     if node_type == "instruction" and not any(r.edge_type == "applies_to_path" for r in references):
         references.append(ref("scope", "**", "applies_to_path", 1, "**", confidence="inferred"))
     references = dedupe_references(references)
-    diagnostics = _broken_file_diagnostics(root, rel_path, references)
+    diagnostics = broken_file_diagnostics(root, rel_path, references)
     return ParsedAgentGraphAsset(
         props=props,
         references=tuple(dedupe_references(references)),
@@ -156,9 +157,9 @@ def _parse_json_asset(
     # AFTER dedupe so multiple Bash(...) patterns survive; the
     # materializer's per-edge dedupe is keyed on raw.
     final_refs = dedupe_references(refs) + permission_references_with_lines(payload, text)
-    diagnostics = _broken_file_diagnostics(root, rel_path, final_refs)
+    diagnostics = broken_file_diagnostics(root, rel_path, final_refs)
     for node in derived:
-        diagnostics.extend(_broken_file_diagnostics(root, rel_path, node.references))
+        diagnostics.extend(broken_file_diagnostics(root, rel_path, node.references))
     return ParsedAgentGraphAsset(
         props=props, references=tuple(final_refs),
         derived_nodes=tuple(derived), diagnostics=tuple(diagnostics),
@@ -352,39 +353,3 @@ def _append_file_ref(refs: list[AgentGraphReference], raw: str, line: int) -> No
     if not target or is_external_ref(target) or any(ch in target for ch in _GLOB_CHARS):
         return
     refs.append(ref("file", target, "references_file", line, raw, target_path=target))
-
-
-def _broken_file_diagnostics(
-    root: Path,
-    source_rel: str,
-    refs: list[AgentGraphReference] | tuple[AgentGraphReference, ...],
-) -> list[dict[str, Any]]:
-    diagnostics: list[dict[str, Any]] = []
-    for reference in refs:
-        if reference.target_type != "file":
-            continue
-        if _resolve_file(root, source_rel, reference.target_path or reference.target_name) is None:
-            diagnostics.append(_diagnostic(
-                "agent_graph_broken_reference",
-                source_rel,
-                f"Referenced file does not exist: {reference.target_name}",
-                line=reference.line,
-                reference=reference.target_name,
-                raw=reference.raw,
-            ))
-    return diagnostics
-
-
-def _resolve_file(root: Path, source_rel: str, target: str) -> str | None:
-    candidates = []
-    if not target.startswith("/"):
-        candidates.append(root / target)
-        candidates.append((root / source_rel).parent / target)
-    for candidate in candidates:
-        try:
-            rel = candidate.resolve().relative_to(root.resolve()).as_posix()
-        except ValueError:
-            continue
-        if (root / rel).is_file():
-            return rel
-    return None

@@ -3,6 +3,63 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.22.0 - 2026-07-17
+
+### Added
+
+- MQTT channel discovery: a new `events_mqtt` strategy extracts MQTT
+  publish and subscribe topics as channel nodes, so message-driven flows
+  surface in `wd query` and `wd context` alongside HTTP routes and
+  function calls.
+  <!-- verify: file=weld/strategies/events_mqtt.py grep="mqtt" -->
+- DDS/IDL discovery: a new `dds_idl` strategy parses IDL interface
+  definitions and surfaces DDS topics, structs, and interfaces as graph
+  nodes. `wd init` auto-wires the strategy for `.idl` files.
+  <!-- verify: file=weld/strategies/dds_idl.py grep="idl" -->
+- Producer-to-consumer channel linking: discovery now joins the site that
+  publishes to a message channel with the sites that consume it, emitting
+  explicit producer-to-consumer edges both within a repository and, in a
+  polyrepo workspace, across child repositories, so an event can be traced
+  from where it is produced to everywhere it is handled.
+  <!-- verify: file=weld/cross_repo/channel_binding.py grep="channel" -->
+- Full read-tool federation: in a polyrepo workspace the remaining
+  cross-repo read tools, such as callers, references, find, trace, and
+  impact, now resolve across child repositories, so cross-repo questions
+  return complete results instead of stopping at a single repository
+  boundary.
+  <!-- verify: file=weld/federation_tools.py grep="federat" -->
+- Project-local capability registration: a project can register its own
+  discovery-strategy capabilities through a declarative manifest, so
+  project-local strategies participate in discovery without changing the
+  bundled strategy set.
+  <!-- verify: file=weld/_capabilities_local.py grep="capabilit" -->
+- Saved views in `wd viz`: the interactive visualizer can now save named
+  views and restore them later, behind an opt-in write flag so the graph
+  and its saved-view store are written only when you ask.
+  <!-- verify: file=weld/viz/_views.py grep="saved" -->
+
+### Changed
+
+- Bounded read envelope: read commands and MCP tools now return a
+  size-bounded result envelope (neighbor spray is filtered and fan-out is
+  capped against a byte budget), so large graphs return focused,
+  predictable context instead of oversized payloads.
+  <!-- verify: file=weld/_envelope_diet.py grep="envelope" -->
+- CLI and MCP now return identical results: `weld_query` and the other
+  read paths route through a single shared read implementation, so a `wd`
+  command with `--json` and the equivalent MCP tool call produce the same
+  output.
+  <!-- verify: file=weld/read.py grep="read_query" -->
+- Faster incremental refresh: on-read graph refresh re-parses only the
+  modules whose source actually changed and caches the dirty-tree result
+  by working-tree signature, so repeated reads between edits stay fast on
+  large repositories.
+  <!-- verify: file=weld/_refresh_cache.py grep="signature" -->
+- The bundled tree-sitter grammars are pinned to the 0.25.x line
+  (tree-sitter 0.25.2), keeping parser behavior consistent across
+  platforms.
+  <!-- verify: file=third_party/python/requirements_lock.txt grep="tree-sitter==0.25.2" -->
+
 ## v0.21.0 - 2026-06-17
 
 ### Added

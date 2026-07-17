@@ -15,8 +15,8 @@ discover.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+from weld._notice import emit
 
 
 def run_enrichment_on_accept(root: Path, provider: str | None) -> None:
@@ -38,7 +38,6 @@ def run_enrichment_on_accept(root: Path, provider: str | None) -> None:
     try:
         _enrich(graph_obj, provider_name=provider, persist=True)
     except Exception as exc:  # noqa: BLE001 -- enrichment is opportunistic
-        print(
-            f"[weld] enrichment after first-run prompt failed: {exc}",
-            file=sys.stderr,
+        emit(
+            f"[weld] enrichment after first-run prompt failed: {exc}"
         )

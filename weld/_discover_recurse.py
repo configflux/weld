@@ -10,13 +10,13 @@ directory.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from weld._workspace_inspect import resolve_child_root
 from weld.workspace import WorkspaceConfig
 from weld.workspace_state import WorkspaceState
+from weld._notice import emit
 
 
 @dataclass
@@ -79,9 +79,8 @@ def recurse_children(
         entry = state.children.get(child.name)
         status = entry.status if entry else "unknown"
         if status not in ("present", "uninitialized"):
-            print(
-                f"[weld] recurse: skipping {child.name} (status: {status})",
-                file=sys.stderr,
+            emit(
+                f"[weld] recurse: skipping {child.name} (status: {status})"
             )
             continue
 
@@ -128,18 +127,17 @@ def _discover_child(
     """
     from weld.discover import _discover_single_repo
 
-    print(f"[weld] recurse: discovering {name} ...", file=sys.stderr)
+    emit(f"[weld] recurse: discovering {name} ...")
     (child_root / ".weld").mkdir(parents=True, exist_ok=True)
     try:
         _discover_single_repo(
             child_root, incremental=incremental, safe=safe, write_graph=True,
         )
     except Exception as exc:  # noqa: BLE001 -- per-child isolation
-        print(
-            f"[weld] recurse: {name} failed: {exc}",
-            file=sys.stderr,
+        emit(
+            f"[weld] recurse: {name} failed: {exc}"
         )
         return exc
 
-    print(f"[weld] recurse: {name} done", file=sys.stderr)
+    emit(f"[weld] recurse: {name} done")
     return None

@@ -12,7 +12,6 @@ import json
 import os
 import shlex
 import subprocess
-import sys
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
@@ -20,6 +19,7 @@ from weld.strategies._incremental_hint import (  # noqa: F401 -- re-export
     INCREMENTAL_HINT_KEY,
     IncrementalHint,
 )
+from weld._notice import emit
 
 # ---------------------------------------------------------------------------
 # Strategy loader
@@ -44,9 +44,8 @@ def load_strategy(name: str, root: Path, *, safe: bool = False):
             # Safe mode: refuse to execute project-local code. Fall back to
             # the bundled implementation if one exists; otherwise treat the
             # strategy as missing.
-            print(
-                f"[weld] safe mode: skipped project-local strategy '{name}'",
-                file=sys.stderr,
+            emit(
+                f"[weld] safe mode: skipped project-local strategy '{name}'"
             )
             if bundled.is_file():
                 resolved_path = bundled
@@ -54,10 +53,9 @@ def load_strategy(name: str, root: Path, *, safe: bool = False):
             # Unsafe mode: project-local Python is about to be imported and
             # executed. Surface a stable, grep-friendly warning so operators
             # can see what local code ran. ADR 0024.
-            print(
+            emit(
                 f"[weld] warning: project-local strategy '{name}' "
-                f"will execute local code; pass --safe to refuse",
-                file=sys.stderr,
+                f"will execute local code; pass --safe to refuse"
             )
             resolved_path = project_local
             if bundled.is_file():
@@ -66,13 +64,12 @@ def load_strategy(name: str, root: Path, *, safe: bool = False):
         resolved_path = bundled
 
     if resolved_path is None:
-        print(f"[weld] warning: strategy '{name}' not found", file=sys.stderr)
+        emit(f"[weld] warning: strategy '{name}' not found")
         return None
 
     if is_shadow:
-        print(
-            f"[weld] notice: project-local strategy '{name}' shadows bundled one",
-            file=sys.stderr,
+        emit(
+            f"[weld] notice: project-local strategy '{name}' shadows bundled one"
         )
 
     spec = importlib.util.spec_from_file_location(
@@ -80,9 +77,8 @@ def load_strategy(name: str, root: Path, *, safe: bool = False):
         resolved_path,
     )
     if spec is None or spec.loader is None:
-        print(
-            f"[weld] warning: could not load strategy '{name}' from {resolved_path}",
-            file=sys.stderr,
+        emit(
+            f"[weld] warning: could not load strategy '{name}' from {resolved_path}"
         )
         return None
 
@@ -91,9 +87,8 @@ def load_strategy(name: str, root: Path, *, safe: bool = False):
 
     fn = getattr(mod, "extract", None)
     if fn is None:
-        print(
-            f"[weld] warning: strategy '{name}' has no extract() function",
-            file=sys.stderr,
+        emit(
+            f"[weld] warning: strategy '{name}' has no extract() function"
         )
         return None
 
@@ -119,30 +114,28 @@ def run_external_json(root: Path, source: dict, *, safe: bool = False) -> Strate
     empty = StrategyResult(nodes={}, edges=[], discovered_from=[])
     cmd_str = source.get("command", "")
     if not cmd_str:
-        print("[weld] warning: external_json source missing 'command' key", file=sys.stderr)
+        emit("[weld] warning: external_json source missing 'command' key")
         return empty
 
     if safe:
-        print(
-            f"[weld] safe mode: skipped external_json '{cmd_str}'",
-            file=sys.stderr,
+        emit(
+            f"[weld] safe mode: skipped external_json '{cmd_str}'"
         )
         return empty
 
     # Unsafe mode: a configured subprocess is about to run. Surface a
     # stable, grep-friendly warning so operators can see what local code
     # ran. ADR 0024.
-    print(
+    emit(
         f"[weld] warning: external_json '{cmd_str}' "
-        f"will execute local code; pass --safe to refuse",
-        file=sys.stderr,
+        f"will execute local code; pass --safe to refuse"
     )
 
     timeout = int(source.get("timeout", _EXTERNAL_JSON_TIMEOUT))
     try:
         argv = shlex.split(cmd_str)
     except ValueError as exc:
-        print(f"[weld] warning: external_json bad command string: {exc}", file=sys.stderr)
+        emit(f"[weld] warning: external_json bad command string: {exc}")
         return empty
 
     env = {**os.environ, "LC_ALL": "C"}
@@ -152,42 +145,39 @@ def run_external_json(root: Path, source: dict, *, safe: bool = False) -> Strate
             timeout=timeout, env=env,
         )
     except FileNotFoundError:
-        print(f"[weld] warning: external_json command not found: {argv[0]}", file=sys.stderr)
+        emit(f"[weld] warning: external_json command not found: {argv[0]}")
         return empty
     except subprocess.TimeoutExpired:
-        print(
-            f"[weld] warning: external_json command timed out after {timeout}s",
-            file=sys.stderr,
+        emit(
+            f"[weld] warning: external_json command timed out after {timeout}s"
         )
         return empty
 
     if proc.returncode != 0:
         snippet = (proc.stderr or "").strip()[:200]
-        print(
+        emit(
             f"[weld] warning: external_json command exited {proc.returncode}"
-            + (f": {snippet}" if snippet else ""),
-            file=sys.stderr,
+            + (f": {snippet}" if snippet else "")
         )
         return empty
 
     try:
         data = json.loads(proc.stdout)
     except (json.JSONDecodeError, ValueError) as exc:
-        print(
-            f"[weld] warning: external_json command emitted invalid JSON: {exc}",
-            file=sys.stderr,
+        emit(
+            f"[weld] warning: external_json command emitted invalid JSON: {exc}"
         )
         return empty
 
     if not isinstance(data, dict):
-        print("[weld] warning: external_json output must be a JSON object", file=sys.stderr)
+        emit("[weld] warning: external_json output must be a JSON object")
         return empty
 
     label = f"external_json:{cmd_str.split()[0] if cmd_str else '?'}"
     errs = validate_fragment(data, source_label=label, allow_dangling_edges=True)
     if errs:
         for e in errs:
-            print(f"[weld] validation: {e}", file=sys.stderr)
+            emit(f"[weld] validation: {e}")
         return empty
 
     return StrategyResult(

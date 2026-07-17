@@ -11,7 +11,10 @@ import sys
 from pathlib import Path
 
 from weld._graph_cli_parser import build_parser
+from weld._query_surface import apply_context_envelope
+from weld._query_surface import apply_query_envelope as _query_envelope
 from weld.graph import Graph
+from weld._notice import emit
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -46,43 +49,6 @@ def _emit_node_lookup(args, data: dict, renderer) -> None:
     from weld._graph_cli_errors import emit_node_lookup
 
     emit_node_lookup(args, data, renderer, _emit)
-
-
-def _query_envelope(args, envelope: dict) -> dict:
-    """Apply the default ``wd query`` speculative filter to *envelope*.
-
-    Unresolved-symbol sentinels (``origin=unresolved``) are noise an agent
-    cannot discount, so the CLI hides them by default and exposes them via
-    ``--include-speculative``. Filtering happens here, at the CLI boundary,
-    rather than in ``Graph.query`` so the MCP surface and direct API callers
-    keep receiving the full, unfiltered envelope.
-
-    Two projections, both gated on ``--include-speculative`` being off (the
-    flag restores the full, untrimmed window):
-
-    * ``matches`` drops the sentinels. The filter runs *after* ``--limit``
-      truncation, so a noisy query may return fewer than ``--limit`` matches.
-      That is intended: the result is the genuinely-resolved subset of the
-      top-``limit`` ranked window, not a re-padded list pulling in
-      lower-ranked matches the user never would have seen.
-    * ``neighbors``/``edges`` are re-derived for the surviving matches via
-      :func:`weld._query_envelope.trim_envelope_to_matches` so the ``--json``
-      envelope stays self-consistent (no edge dangling on a dropped sentinel,
-      no orphaned neighbour). Text output never renders edges, so this is
-      invisible there but load-bearing for strict ``--json`` consumers.
-    """
-    if getattr(args, "include_speculative", False):
-        return envelope
-    from weld._query_envelope import trim_envelope_to_matches
-    from weld.ranking import filter_speculative_matches
-
-    matches = envelope.get("matches")
-    if not matches:
-        return envelope
-    surviving_ids = {
-        m["id"] for m in filter_speculative_matches(matches) if "id" in m
-    }
-    return trim_envelope_to_matches(envelope, surviving_ids)
 
 
 # Graph-backed read commands. A missing `.weld/graph.json` here yields an
@@ -191,20 +157,16 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
         parser.print_help()
         sys.exit(1)
     cmd = args.command
-    if cmd in {"query", "context", "path"}:
+    from weld._graph_cli_federated import FEDERATED_CLI_COMMANDS
+    if cmd in FEDERATED_CLI_COMMANDS:
         from weld.workspace_state import load_workspace_config
 
         if load_workspace_config(args.root) is not None:
-            from weld.federation import FederatedGraph
-            from weld._cli_render import (
-                render_context, render_path, render_query,
-            )
-
             # ADR 0066 part 3: auto-recurse stale children before serving a
             # federated read. Refreshes only the stale-or-uninitialized
-            # subset and rebuilds the root meta-graph, so FederatedGraph
-            # (constructed next) loads fresh root + child bytes. Honours
-            # WELD_AUTO_REFRESH=0 / --no-refresh (the gate freeze, bd 19tw).
+            # subset and rebuilds the root meta-graph, so the FederatedGraph
+            # constructed by the dispatcher loads fresh root + child bytes.
+            # Honours WELD_AUTO_REFRESH=0 / --no-refresh (the gate freeze).
             from weld._auto_refresh import auto_refresh_if_stale
             auto_refresh_if_stale(
                 args.root,
@@ -212,17 +174,13 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
                 json_output=getattr(args, "as_json", False),
             )
 
-            fg = FederatedGraph(args.root)
-            if cmd == "query":
-                _emit(
-                    args,
-                    _query_envelope(args, fg.query(args.term, args.limit)),
-                    render_query,
-                )
-            elif cmd == "context":
-                _emit(args, fg.context(args.node_id), render_context)
-            else:
-                _emit(args, fg.path(args.from_id, args.to_id), render_path)
+            # query/context/path navigate the FederatedGraph; callers/
+            # references fan out per child; communities runs over the flattened
+            # union; find fans out across child file-indexes (ADR 0089).
+            from weld._graph_cli_federated import run_federated_cli
+            run_federated_cli(
+                cmd, args, emit=_emit, emit_node_lookup=_emit_node_lookup,
+            )
             return
     if cmd == "index":
         _run_graph_index(args)
@@ -259,7 +217,11 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
         )
     elif cmd == "context":
         from weld._cli_render import render_context
-        _emit_node_lookup(args, g.context(args.node_id), render_context)
+        _emit_node_lookup(
+            args,
+            apply_context_envelope(args, g.context(args.node_id)),
+            render_context,
+        )
     elif cmd == "callers":
         from weld._cli_render import render_callers
         _emit_node_lookup(
@@ -333,7 +295,7 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
         if warnings:
             result["warnings"] = warnings
             for warning in warnings:
-                print(f"[weld] warning: {warning}", file=sys.stderr)
+                emit(f"[weld] warning: {warning}")
         _out(result)
         mutates = True
     elif cmd == "validate":
@@ -386,7 +348,7 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
             "warnings": warnings,
         })
         for warning in warnings:
-            print(f"[weld] warning: {warning}", file=sys.stderr)
+            emit(f"[weld] warning: {warning}")
         if errs:
             source = "<stdin>" if str(args.file) == "-" else str(args.file)
             sys.stderr.write(format_validation_report(errs, source=source))

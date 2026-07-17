@@ -2,7 +2,7 @@
 
 Extracts outbound HTTP call sites where both the HTTP method and the
 target URL (or path template) are statically knowable from the parsed
-AST alone. Per ADR 0018's static-truth policy, the extractor prefers
+AST alone. Per ADR 0086's static-truth policy, the extractor prefers
 omission over guesswork: dynamic URLs (variables, f-strings with
 substitutions, concatenation) and dynamic methods are silently dropped.
 
@@ -18,7 +18,7 @@ Supported shapes:
 Out of scope (by design):
 
 - Following assignments, imports, or class attributes to resolve the
-  receiver of a call. That requires data-flow analysis which ADR 0018
+  receiver of a call. That requires data-flow analysis which ADR 0086
   rules out for Phase 7.
 - Resolving ``base_url=`` plus path-only arguments to a full URL. We
   record the path literal as-is; when it matches a same-repo FastAPI
@@ -28,7 +28,7 @@ Out of scope (by design):
   ``axios`` extraction under the same vocabulary.
 
 Every emitted ``rpc`` node is stamped with protocol metadata per
-ADR 0018 and tracked project:
+ADR 0086 and tracked project:
 
     protocol="http", surface_kind="request_response",
     transport="http", boundary_kind="outbound",
@@ -46,7 +46,15 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results
+from weld._node_ids import file_id as _canonical_file_id
+from weld.strategies._ast_calls import (
+    attribute_call_target,
+    file_imports_root,
+    iter_call_nodes,
+    iter_python_asts,
+    literal_string,
+)
+from weld.strategies._helpers import StrategyResult
 
 # ---------------------------------------------------------------------------
 # Known HTTP client roots.
@@ -55,7 +63,7 @@ from weld.strategies._helpers import StrategyResult, filter_glob_results
 # these identifiers (e.g. ``httpx.get(...)``). Anything more indirect --
 # an assigned client instance, a method on ``self._client`` -- is left
 # alone, because resolving it statically requires data-flow work that
-# ADR 0018 explicitly rules out for this phase.
+# ADR 0086 explicitly rules out for this phase.
 # ---------------------------------------------------------------------------
 _HTTP_LIBRARY_ROOTS: frozenset[str] = frozenset(["httpx", "requests"])
 
@@ -66,25 +74,6 @@ _HTTP_METHOD_ATTRS: frozenset[str] = frozenset(
     ["get", "post", "put", "delete", "patch", "head", "options"]
 )
 
-def _literal_url(node: ast.AST) -> str | None:
-    """Return the statically-knowable string form of *node*, else None.
-
-    Accepts plain string constants and f-strings whose parts are *all*
-    string constants (literal-only f-strings). Any ``FormattedValue``
-    part indicates a runtime substitution and disqualifies the url.
-    """
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.JoinedStr):
-        parts: list[str] = []
-        for value in node.values:
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                parts.append(value.value)
-            else:
-                return None
-        return "".join(parts)
-    return None
-
 def _method_from_call(call: ast.Call) -> str | None:
     """Extract the HTTP method name from a call, or None if not static.
 
@@ -93,16 +82,15 @@ def _method_from_call(call: ast.Call) -> str | None:
     produce a method name. This guarantees both halves -- receiver and
     verb -- are structurally clear in the source text.
     """
-    func = call.func
-    if not isinstance(func, ast.Attribute):
+    target = attribute_call_target(call)
+    if target is None:
         return None
-    if not isinstance(func.value, ast.Name):
+    root, verb = target
+    if root not in _HTTP_LIBRARY_ROOTS:
         return None
-    if func.value.id not in _HTTP_LIBRARY_ROOTS:
+    if verb not in _HTTP_METHOD_ATTRS:
         return None
-    if func.attr not in _HTTP_METHOD_ATTRS:
-        return None
-    return func.attr.upper()
+    return verb.upper()
 
 def _url_from_call(call: ast.Call) -> str | None:
     """Return the literal URL argument from a call, or None.
@@ -112,33 +100,19 @@ def _url_from_call(call: ast.Call) -> str | None:
     treated as not statically knowable.
     """
     if call.args:
-        literal = _literal_url(call.args[0])
+        literal = literal_string(call.args[0])
         if literal is not None:
             return literal
         return None
     for kw in call.keywords:
         if kw.arg == "url":
-            return _literal_url(kw.value)
+            return literal_string(kw.value)
     return None
-
-def _file_has_http_library_import(tree: ast.Module) -> bool:
-    """Cheap pre-filter: only walk files that import a known HTTP library."""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.split(".")[0] in _HTTP_LIBRARY_ROOTS:
-                    return True
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.split(".")[0] in _HTTP_LIBRARY_ROOTS:
-                return True
-    return False
 
 def _collect_calls(tree: ast.Module) -> list[tuple[str, str]]:
     """Walk *tree* and return ``(method, url)`` pairs for static call sites."""
     found: list[tuple[str, str]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
+    for node in iter_call_nodes(tree):
         method = _method_from_call(node)
         if method is None:
             continue
@@ -179,12 +153,6 @@ def _edge(src: str, dst: str, *, confidence: str) -> dict:
         },
     }
 
-def _iter_sources(root: Path, pattern: str) -> list[Path]:
-    """Expand *pattern* against *root* and apply the repo-boundary filter."""
-    # ``Path.glob`` handles both ``src/*.py`` and ``src/**/*.py``.
-    matches = sorted(root.glob(pattern))
-    return filter_glob_results(root, matches)
-
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract static HTTP client call sites into rpc nodes and edges."""
     nodes: dict[str, dict] = {}
@@ -195,29 +163,23 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    for py in _iter_sources(root, pattern):
-        if not py.is_file() or py.suffix != ".py":
-            continue
-        if py.name.startswith("_"):
-            continue
-        try:
-            text = py.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        try:
-            tree = ast.parse(text, filename=str(py))
-        except SyntaxError:
-            continue
-        if not _file_has_http_library_import(tree):
+    for rel_path, tree in iter_python_asts(root, pattern, skip_underscore=True):
+        if not file_imports_root(tree, _HTTP_LIBRARY_ROOTS):
             continue
 
-        rel_path = str(py.relative_to(root))
         calls = _collect_calls(tree)
         if not calls:
             continue
 
         discovered_from.append(rel_path)
-        file_id = f"file:{rel_path}"
+        # Mint the file endpoint through the canonical minter (ADR 0041),
+        # the same one ``python_module`` uses for its ``file:`` nodes, so
+        # the id is the *extensionless* POSIX path (``file:pkg/mod`` for
+        # ``pkg/mod.py``). Building it as ``f"file:{rel_path}"`` kept the
+        # ``.py`` and made the file->rpc edge dangle against the canonical
+        # node -- pruned by ``_discover_postprocess._clean_and_dedup_edges``
+        # (exact endpoint match, no extension normalization).
+        file_id = _canonical_file_id(rel_path)
 
         for method, url in calls:
             nid = _rpc_id(method, url)
@@ -235,7 +197,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "authority": "canonical",
                     "confidence": "definite",
                     "roles": ["implementation"],
-                    # Interaction-surface metadata (ADR 0018,
+                    # Interaction-surface metadata (ADR 0086,
                     # tracked project). Every entry is a client-side
                     # request/response over HTTP; boundary_kind is
                     # outbound because the call leaves the module.
@@ -247,11 +209,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 },
             }
 
-            # Edge from the declaring file. ``file:<rel>`` is the id
-            # scheme python_module uses for file nodes; the edge is
-            # dropped by discovery's dangling-edge sweep when the file
-            # node itself is not in the graph (e.g. fixture repos that
-            # do not run python_module). Either way this is conservative.
+            # Edge from the declaring file to its rpc node. ``file_id`` is
+            # the canonical extensionless id (see the minting note above),
+            # so it shares an exact endpoint with the ``file:`` node
+            # ``python_module`` mints. When python_module does not run over
+            # the same file (e.g. fixture repos that skip it), the edge is
+            # dropped by discovery's dangling-edge sweep -- conservative by
+            # design.
             edges.append(_edge(file_id, nid, confidence="definite"))
 
             # Optional client -> server link: only when the URL is a

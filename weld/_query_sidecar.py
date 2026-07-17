@@ -30,12 +30,12 @@ from __future__ import annotations
 
 import hashlib
 import pickle
-import sys
 from pathlib import Path
 
 from weld.contract import SCHEMA_VERSION
 from weld.query_state import QueryState
 from weld.workspace_state import atomic_write_bytes
+from weld._notice import emit
 
 __all__ = [
     "SIDECAR_FILENAME",
@@ -67,16 +67,18 @@ def _sidecar_path(graph_path: Path) -> Path:
 
 
 def _hash_graph_bytes(graph_path: Path) -> str | None:
-    """Return the sha256 of ``graph_path``'s bytes, or ``None`` on read failure."""
-    try:
-        digest = hashlib.sha256()
-        # Stream in 1 MiB chunks so we never hold the whole file twice.
-        with graph_path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
-    except OSError:
-        return None
+    """Return the sha256 of ``graph_path``'s bytes, or ``None`` on read failure.
+
+    Delegates to the process-local :func:`weld._graph_digest.file_sha256` memo
+    (bd aqqa) so a cold read that both validates this sidecar's envelope and
+    keys the MCP graph cache streams the (~16 MB) ``graph.json`` through sha256
+    once, not twice. The memo key includes the file's mtime and size, so it
+    self-invalidates on any rewrite -- the envelope's freshness contract (a
+    changed ``graph.json`` must miss the sidecar) is unchanged.
+    """
+    from weld._graph_digest import file_sha256
+
+    return file_sha256(graph_path)
 
 
 def read_sidecar(
@@ -216,10 +218,9 @@ def _write_sidecar_with_digest(
         # Best-effort cache: log and move on. ADR 0031 (e) -- the sidecar
         # is purely additive; missing it just means the next cold load
         # rebuilds.
-        print(
+        emit(
             f"[weld] notice: failed to write query-state sidecar at "
-            f"{target}: {exc}",
-            file=sys.stderr,
+            f"{target}: {exc}"
         )
 
 
