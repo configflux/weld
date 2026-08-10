@@ -185,6 +185,7 @@ py_library(
         "_graph_stats_cli.py",
         "_graph_stats_trust.py",
         "_graph_strategy_pair.py",
+        "_graph_write_lock.py",
         "_impact_git.py",
         "_impact_git_federated.py",
         "_incremental_purge.py",

@@ -16,9 +16,10 @@ pure-Python adapter surface) by also covering:
 
 This test is intentionally strict: any renamed, added, or removed tool
 fails the expected-name-set assertion. Wire-protocol coverage is skipped
-(not faked) when the optional SDK is absent, so the test stays green in
-the default bazel environment while still catching any regression the
-moment ``mcp`` lands in the runfiles.
+(not faked) when no supported SDK is importable -- absent, or older than
+the 2.x handler API weld targets -- so the test stays green in the
+default bazel environment while still catching any regression the moment
+a supported ``mcp`` lands in the runfiles.
 """
 
 from __future__ import annotations
@@ -52,12 +53,19 @@ from mcp_expected_tools import EXPECTED_TOOL_NAMES as _EXPECTED_TOOL_NAMES  # no
 
 
 def _mcp_sdk_available() -> bool:
-    """Return True if the optional ``mcp`` SDK can be imported."""
+    """Return True if a *supported* optional ``mcp`` SDK can be imported.
+
+    weld targets the SDK 2.x low-level handler API, so a pre-2.0 SDK is
+    treated the same as no SDK at all: the server degrades to the install
+    hint + exit 2 path rather than serving the wire protocol. Keying both
+    subprocess tests off this single predicate keeps them mutually
+    exclusive on every environment.
+    """
     try:
-        import mcp  # type: ignore  # noqa: F401
+        from mcp.server import Server  # type: ignore
     except ImportError:
         return False
-    return True
+    return hasattr(Server, "add_request_handler")
 
 
 class WeldMcpModuleLoadTest(unittest.TestCase):
@@ -151,7 +159,9 @@ class WeldMcpSubprocessSmokeTest(unittest.TestCase):
 
     def test_subprocess_without_sdk_exits_with_install_hint(self) -> None:
         if _mcp_sdk_available():
-            self.skipTest("mcp SDK installed; SDK-absent path is not exercised here")
+            self.skipTest(
+                "supported mcp SDK installed; SDK-absent path is not exercised here"
+            )
 
         proc = subprocess.run(
             [sys.executable, "-m", "weld.mcp_server"],
@@ -189,7 +199,9 @@ class WeldMcpSubprocessSmokeTest(unittest.TestCase):
 
     def test_subprocess_with_sdk_lists_expected_tools(self) -> None:
         if not _mcp_sdk_available():
-            self.skipTest("mcp SDK not installed; wire-protocol path is not exercisable")
+            self.skipTest(
+                "mcp SDK >= 2 not installed; wire-protocol path is not exercisable"
+            )
 
         proc = subprocess.Popen(
             [sys.executable, "-m", "weld.mcp_server"],
@@ -264,6 +276,14 @@ class WeldMcpSubprocessSmokeTest(unittest.TestCase):
         )
         init_reply = self._recv(proc)
         self.assertEqual(init_reply.get("id"), 1, f"bad initialize reply: {init_reply}")
+        # The server must advertise the tools capability during initialize;
+        # a client that does not see it will never send tools/list at all.
+        capabilities = (init_reply.get("result") or {}).get("capabilities") or {}
+        self.assertIn(
+            "tools",
+            capabilities,
+            f"initialize reply does not advertise the tools capability: {init_reply}",
+        )
 
         # Notify initialized. Notifications take no reply.
         self._send(

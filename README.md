@@ -13,7 +13,7 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.22.0 -->
+<!-- evaluator-note: latest=v0.22.1 -->
 > **Evaluators: start with v0.19.1.** v0.19.1 is the current
 > recommended starting point. Headline features added since v0.14.0:
 > a 14-tool MCP server for graph-backed agent context
@@ -534,6 +534,15 @@ re-enrich it. Manual inferred edges should use explicit provenance such as
 `wd graph communities --write` derives `.weld/graph-communities.json`,
 `.weld/graph-community-report.md`, and `.weld/graph-community-index.md`
 from the existing graph without modifying `.weld/graph.json`.
+
+Graph mutations are safe to run in parallel: every mutating command
+(`add-node`, `add-edge`, `rm-node`, `rm-edge`, `import`, `migrate`,
+`touch`, and `wd enrich`) serializes on an exclusive lock at
+`.weld/graph.write.lock`, so concurrent writers queue instead of
+overwriting each other's changes. A writer that cannot get the lock
+within 60 seconds fails with an explicit error; set
+`WELD_GRAPH_LOCK_TIMEOUT` (seconds) to wait longer, e.g. while a long
+provider-backed `wd enrich` run holds the lock.
 
 Without tree-sitter, the built-in Python module strategy and non-language
 strategies (markdown, YAML, config, frontmatter) still work.
@@ -1403,7 +1412,7 @@ the CLI.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.22.0`.
+terminal snippets captured against `wd 0.22.1`.
 
 ## Install
 

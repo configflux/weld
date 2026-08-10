@@ -52,6 +52,7 @@ discovery-state.json
 graph-previous.json
 workspace-state.json
 workspace.lock
+graph.write.lock
 query_state.bin
 graph.json
 graph.db
@@ -75,6 +76,7 @@ discovery-state.json
 graph-previous.json
 workspace-state.json
 workspace.lock
+graph.write.lock
 query_state.bin
 graph.db
 graph-meta.json

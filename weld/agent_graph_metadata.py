@@ -36,9 +36,14 @@ from weld.agent_graph_metadata_utils import (
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _AT_FILE_RE = re.compile(r"(?<![\w/])@([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)")
+# The trailing (?!\w) anchors the extension at a word boundary; without it,
+# greedy backtracking lets a shorter known extension match as a prefix of a
+# longer one (.tsv reported as .ts, .jsonl as .json) and the truncated path
+# is then flagged as a broken reference.
 _PATH_RE = re.compile(
     r"(?<![\w@./-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
-    r"\.(?:md|mdc|json|ya?ml|toml|txt|py|js|jsx|ts|tsx|sh|bash))"
+    r"\.(?:md|mdc|json|jsonl|ya?ml|toml|txt|tsv|py|js|jsx|ts|tsx|sh|bash))"
+    r"(?!\w)"
 )
 _NAMED_REF_RE = re.compile(
     r"\b(skill|agent|command|mcp|mcp-server):([A-Za-z0-9_.-]+)\b"

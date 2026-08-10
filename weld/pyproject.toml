@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "configflux-weld"
-version = "0.22.0"
+version = "0.22.1"
 description = "Local codebase and agent graph for AI coding workflows"
 readme = "README.md"
 license = "Apache-2.0"
@@ -15,7 +15,7 @@ dependencies = []
 wd = "weld.cli:main"
 
 [project.optional-dependencies]
-mcp = ["mcp"]
+mcp = ["mcp>=2,<3"]
 tree-sitter = [
     "tree-sitter>=0.25",
     "tree-sitter-c-sharp",

@@ -3,6 +3,30 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.22.1 - 2026-08-10
+
+### Fixed
+
+- Broken-reference diagnostics no longer truncate file extensions that
+  extend a shorter known one: paths ending in `.tsv` were checked as
+  `.ts` and `.jsonl` as `.json`, producing spurious `broken_reference`
+  reports for files that exist. `.tsv` and `.jsonl` references are now
+  extracted with their full extension and checked correctly.
+  <!-- verify: file=weld/agent_graph_metadata.py grep="jsonl" -->
+- Concurrent graph mutations no longer lose writes: every mutating
+  command (`wd add-node`, `add-edge`, `rm-node`, `rm-edge`, `import`,
+  `migrate`, `touch`, `wd enrich`, and the enrichment MCP tool) now
+  serializes on an exclusive `.weld/graph.write.lock`, so parallel
+  writers queue instead of silently overwriting each other's nodes. Set
+  `WELD_GRAPH_LOCK_TIMEOUT` (seconds, default 60) to wait longer than
+  the default before a contended writer gives up.
+  <!-- verify: file=weld/_graph_write_lock.py grep="WELD_GRAPH_LOCK_TIMEOUT" -->
+- The optional MCP stdio server now targets MCP SDK 2.0, and the `[mcp]`
+  extra requires `mcp>=2,<3`. Fresh installs of `configflux-weld[mcp]` no
+  longer crash at startup on the latest SDK: the server completes the
+  handshake, advertises its tools, and serves tool calls as before.
+  <!-- verify: file=weld/_mcp_stdio.py grep=add_request_handler -->
+
 ## v0.22.0 - 2026-07-17
 
 ### Added

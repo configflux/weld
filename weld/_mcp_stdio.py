@@ -6,6 +6,10 @@ transport: it imports the optional ``mcp`` SDK lazily so importing
 ``weld.mcp_server`` never requires it, and every tool call is routed through
 :func:`weld.mcp_server.dispatch_to_text_payload` so a corrupt graph or a bad
 call can never tear down the long-lived stdio session.
+
+Targets the MCP SDK 2.x low-level ``Server.add_request_handler`` API (the
+1.x ``@server.list_tools()`` / ``@server.call_tool()`` decorators were
+removed in 2.0.0); the ``mcp`` extra is pinned to ``mcp>=2`` accordingly.
 """
 
 from __future__ import annotations
@@ -36,7 +40,23 @@ def run_stdio(root: Path | str = ".") -> int:
     try:
         from mcp.server import Server  # type: ignore
         from mcp.server.stdio import stdio_server  # type: ignore
-        from mcp.types import TextContent, Tool as McpTool  # type: ignore
+        from mcp.types import (  # type: ignore
+            CallToolRequestParams,
+            CallToolResult,
+            ListToolsResult,
+            PaginatedRequestParams,
+            TextContent,
+            Tool as McpTool,
+        )
+
+        if not hasattr(Server, "add_request_handler"):
+            # An SDK older than 2.0 still exports every type used above but
+            # not the handler-registration API, so surface it as the same
+            # install-hint path instead of an AttributeError mid-startup.
+            raise ImportError(
+                "the installed 'mcp' SDK predates 2.0 "
+                "(Server.add_request_handler is missing); weld requires mcp>=2"
+            )
     except ImportError as exc:  # pragma: no cover - exercised only with extras
         sys.stderr.write(
             "weld.mcp_server: the 'mcp' Python SDK is not installed. "
@@ -51,31 +71,43 @@ def run_stdio(root: Path | str = ".") -> int:
     server: Server = Server("weld")
     tools = build_tools()
 
-    @server.list_tools()  # type: ignore[misc]
-    async def _list_tools() -> list[McpTool]:  # pragma: no cover - requires sdk
-        return [
-            McpTool(
-                name=t.name,
-                description=t.description,
-                inputSchema=t.input_schema,
-            )
-            for t in tools
-        ]
+    async def _list_tools(
+        ctx: object, params: PaginatedRequestParams
+    ) -> ListToolsResult:  # pragma: no cover - requires sdk
+        # Registering "tools/list" is also what advertises the ``tools``
+        # capability during initialize, so this handler must stay wired even
+        # if the tool registry is ever empty.
+        return ListToolsResult(
+            tools=[
+                McpTool(
+                    name=t.name,
+                    description=t.description,
+                    input_schema=t.input_schema,
+                )
+                for t in tools
+            ]
+        )
 
-    @server.call_tool()  # type: ignore[misc]
     async def _call_tool(
-        name: str, arguments: dict | None
-    ) -> list[TextContent]:  # pragma: no cover - requires sdk
+        ctx: object, params: CallToolRequestParams
+    ) -> CallToolResult:  # pragma: no cover - requires sdk
         # dispatch_to_text_payload converts every failure -- unknown tool,
         # corrupt/unsupported graph, or any unexpected exception -- into a
         # JSON error payload so a single bad call can never crash the
         # long-lived stdio transport (previously a JSONDecodeError escaped).
-        return [
-            TextContent(
-                type="text",
-                text=dispatch_to_text_payload(name, arguments, root=root),
-            )
-        ]
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=dispatch_to_text_payload(
+                        params.name, dict(params.arguments or {}), root=root
+                    ),
+                )
+            ]
+        )
+
+    server.add_request_handler("tools/list", PaginatedRequestParams, _list_tools)
+    server.add_request_handler("tools/call", CallToolRequestParams, _call_tool)
 
     async def _main() -> None:  # pragma: no cover - requires sdk
         async with stdio_server() as (read, write):

@@ -332,19 +332,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.reset_prompt:
         return cli_reset_prompt(args.root)
     ensure_graph_exists(args.root, _build_retry_hint("enrich", node=args.node_id) if args.node_id else _build_retry_hint("enrich"))
-    graph = load_graph_or_exit(Graph(args.root))
+    from weld._graph_write_lock import graph_write_lock
     try:
-        result = enrich(
-            graph,
-            provider_name=args.provider,
-            model=args.model,
-            node_id=args.node_id,
-            force=args.force,
-            max_tokens=args.max_tokens,
-            max_cost=args.max_cost,
-            persist=True,
-            safe=args.safe,
-        )
+        # ADR 0094: enrichment is load -> mutate -> save, so the whole span
+        # holds the graph write lock to serialize with concurrent mutators.
+        with graph_write_lock(args.root):
+            graph = load_graph_or_exit(Graph(args.root))
+            result = enrich(
+                graph,
+                provider_name=args.provider,
+                model=args.model,
+                node_id=args.node_id,
+                force=args.force,
+                max_tokens=args.max_tokens,
+                max_cost=args.max_cost,
+                persist=True,
+                safe=args.safe,
+            )
     except SafeModeRefusedError:
         # refuse_if_network_provider already wrote a "[weld] safe mode:
         # refused ..." line to stderr. Exit non-zero without echoing it.

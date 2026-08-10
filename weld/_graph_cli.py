@@ -61,6 +61,13 @@ _READ_COMMANDS = frozenset(
     {"query", "context", "path", "callers", "references", "communities"}
 )
 
+# Commands that rewrite .weld/graph.json. Each runs load -> mutate -> save,
+# so the whole span must hold the exclusive graph write lock (ADR 0094) --
+# unlocked concurrent mutators silently lose each other's writes.
+_MUTATING_COMMANDS = frozenset(
+    {"add-node", "add-edge", "rm-node", "rm-edge", "import", "migrate", "touch"}
+)
+
 
 def _build_retry_hint(cmd: str, *positional: str, **flags: str) -> str:
     """Format a copy-paste ``wd <cmd> ...`` retry hint.
@@ -200,6 +207,15 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
             no_refresh=getattr(args, "no_refresh", False),
             json_output=getattr(args, "as_json", False),
         )
+    if cmd in _MUTATING_COMMANDS:
+        from weld._graph_write_lock import graph_write_lock
+        with graph_write_lock(args.root):
+            _run_single_repo(cmd, args)
+        return
+    _run_single_repo(cmd, args)
+
+
+def _run_single_repo(cmd: str, args) -> None:  # noqa: C901 -- CLI dispatch chain
     from weld._graph_cli_errors import load_graph_or_exit
     g = load_graph_or_exit(Graph(args.root))
     mutates = False

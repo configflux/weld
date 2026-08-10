@@ -121,19 +121,23 @@ def weld_enrich(
 
     Alias-aware per ADR 0041 for the optional *node_id* argument.
     """
-    g = _load_graph(Path(root))
-    node_id = resolve_node_id_via_alias(g, node_id)
+    from weld._graph_write_lock import graph_write_lock
     try:
-        return _enrich(
-            g,
-            provider_name=provider,
-            model=model,
-            node_id=node_id,
-            force=force,
-            max_tokens=max_tokens,
-            max_cost=max_cost,
-            persist=True,
-        )
+        # ADR 0094: same lock span as the wd enrich CLI (load -> mutate ->
+        # save) so MCP and CLI writers serialize with each other.
+        with graph_write_lock(Path(root)):
+            g = _load_graph(Path(root))
+            node_id = resolve_node_id_via_alias(g, node_id)
+            return _enrich(
+                g,
+                provider_name=provider,
+                model=model,
+                node_id=node_id,
+                force=force,
+                max_tokens=max_tokens,
+                max_cost=max_cost,
+                persist=True,
+            )
     except (RuntimeError, ValueError) as exc:
         return {"error": str(exc)}
 
