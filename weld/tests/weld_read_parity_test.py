@@ -1,10 +1,12 @@
 """CLI == MCP parity for the read surface (ADR 0083 thin-wrapper invariant).
 
-All five agent-facing read commands must return the same answer on the CLI
+All six agent-facing read commands must return the same answer on the CLI
 (``--json``) and the MCP tool handler. ``query`` / ``context`` / ``brief`` route
 through the one product read command (:mod:`weld.read`); ``callers`` / ``path``
-call the same ``Graph`` method on both surfaces with no shaping. This pins the
-byte-identity of the answer fields the ADR promises.
+call the same ``Graph`` method on both surfaces with no shaping; ``stale``
+routes through :func:`weld._stale_payload.stale_payload`, the shaping
+the CLI has always used. This pins the byte-identity of the answer fields the
+ADR promises.
 
 Scope notes:
 
@@ -21,6 +23,21 @@ Scope notes:
 * Every shaped ``query`` / ``context`` envelope must carry the
   ``size_capped`` omission reason, proving both surfaces went through
   :mod:`weld.read` (and not the bare ADR 0078 diet).
+* :class:`PerRequestRootParityTest` is the one case that goes through the
+  full MCP ``dispatch`` rather than a handler, because the thing it pins --
+  a request naming its own checkout (ADR 0096 §4) -- only exists there. It
+  strips the transport stamps named above before comparing.
+* Every fixture here sets ``WELD_AUTO_REFRESH=0``, which pins *shape* parity
+  against a frozen graph and says nothing about whether either surface
+  refreshes. Refresh behavior is pinned separately, with the variable
+  explicitly **on**, in :mod:`weld.tests.weld_stale_refresh_exemption_test`
+  (ADR 0102): the freshness oracle measures and never heals.
+* ``stale`` is deliberately compared *whole*, not answer-fields-only:
+  ``weld_stale`` is the freshness surface, so it is excluded from
+  :data:`weld._mcp_read.FRESHNESS_TOOLS` and carries no ``freshness`` stamp
+  to whitelist. Its branch-identity pair (ADR 0096 §3) is the field that
+  tells an agent *which checkout* answered, so an MCP payload missing it is
+  the wrong-branch failure the pair exists to expose.
 """
 
 from __future__ import annotations
@@ -28,6 +45,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -118,6 +137,15 @@ class CliMcpReadParityTest(unittest.TestCase):
             brief_main(["--root", str(self.root), *args, "--no-refresh"])
         return json.loads(buf.getvalue())
 
+    def _cli_stale(self) -> dict:
+        # ``stale`` takes no --no-refresh: it is not a _READ_COMMANDS member
+        # and never auto-refreshes, so the flag the other helpers pass would
+        # be an argparse error rather than a no-op here.
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli_main(["--root", str(self.root), "stale", "--json"])
+        return json.loads(buf.getvalue())
+
     def test_query_default_drops_speculative_on_both_surfaces(self) -> None:
         # The recorded behavior change (ADR 0083): with default flags the
         # unresolved sentinel leaves ``matches`` on the MCP surface too, so the
@@ -180,9 +208,12 @@ class CliMcpReadParityTest(unittest.TestCase):
         self.assertEqual(cli_env, mcp_env)
 
     def test_callers_cli_equals_mcp_handler(self) -> None:
-        # callers has no shaping on either surface: both call Graph.callers, so
-        # the answer must be identical. getcwd is called by Store (a `calls`
-        # edge), so the result is non-degenerate.
+        # Both surfaces call Graph.callers and then the one shared shaper
+        # (weld.read_traversal.shape_callers), so the answer must be identical.
+        # This fixture is far under the byte budget, so nothing is dropped and
+        # the assertion is about parity, not about capping -- the cap itself is
+        # exercised in weld_read_traversal_parity_test. getcwd is called by
+        # Store (a `calls` edge), so the result is non-degenerate.
         cli_env = self._cli("callers", "symbol:py:os:getcwd", "--json")
         mcp_env = mcp_server.weld_callers(
             "symbol:py:os:getcwd", root=str(self.root),
@@ -203,6 +234,127 @@ class CliMcpReadParityTest(unittest.TestCase):
         )
         self.assertEqual(cli_env, mcp_env)
         self.assertNotIn("children_status", mcp_env)
+
+    def test_stale_cli_equals_mcp_handler(self) -> None:
+        # Both surfaces must go through stale_payload, so the ADR 0096 §3
+        # branch-identity pair is present on MCP as well. Keys, not values:
+        # this fixture root is not a repository, so both fields are None here
+        # -- PerRequestRootParityTest pins the non-degenerate values.
+        cli_env = self._cli_stale()
+        mcp_env = mcp_server.weld_stale(root=str(self.root))
+        self.assertEqual(cli_env, mcp_env)
+        # stale_sources/stale_sources_omitted are additive on the same
+        # shaper, so parity is automatic -- assert presence too.
+        for key in (
+            "branch", "graph_branch", "stale_sources", "stale_sources_omitted",
+        ):
+            self.assertIn(key, mcp_env)
+
+
+class PerRequestRootParityTest(unittest.TestCase):
+    """``--root <checkout>`` and ``{"root": "<checkout>"}`` answer alike.
+
+    ADR 0083 lets MCP re-expose CLI capability and nothing more, so the
+    per-request root added in ADR 0096 §4 has to land on the same bytes the
+    flag already produces. Unlike the rest of this module the comparison runs
+    through ``dispatch``: resolving and bounding the requested root is what is
+    under test, and that lives above the handlers.
+
+    A real ``git worktree add`` is required, not a bare temp directory --
+    the request-root bound is repository identity, so a checkout with no
+    repository behind it would be refused before any answer is shaped.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._tmp, True)
+        tmp = Path(self._tmp)
+        self.server_root = tmp / "repo"
+        self._init_repo(self.server_root)
+        self.checkout = tmp / "feature"
+        self._git(self.server_root, "worktree", "add", "-q", "-b", "f", str(self.checkout))
+        # Only the linked checkout gets the fixture graph: an answer shaped
+        # from the server's own root would be visibly empty, not merely equal.
+        _write_graph(self.checkout)
+        self._prev = os.environ.get("WELD_AUTO_REFRESH")
+        os.environ["WELD_AUTO_REFRESH"] = "0"
+        self.addCleanup(self._restore)
+        from weld._mcp_read import clear_graph_cache
+        clear_graph_cache()
+        self.addCleanup(clear_graph_cache)
+
+    def _restore(self) -> None:
+        if self._prev is None:
+            os.environ.pop("WELD_AUTO_REFRESH", None)
+        else:
+            os.environ["WELD_AUTO_REFRESH"] = self._prev
+
+    @staticmethod
+    def _git(root: Path, *args: str) -> None:
+        subprocess.run(
+            ["git", *args], cwd=str(root), check=True, capture_output=True,
+            env={"LC_ALL": "C", "PATH": "/usr/bin:/usr/local/bin:/bin"},
+        )
+
+    def _init_repo(self, root: Path) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        self._git(root, "init", "-q")
+        self._git(root, "config", "user.email", "test@example.com")
+        self._git(root, "config", "user.name", "Weld Test")
+        (root / "models.py").write_text("class Store:\n    pass\n", encoding="utf-8")
+        self._git(root, "add", "models.py")
+        self._git(root, "commit", "-q", "-m", "seed")
+
+    def test_cli_root_flag_equals_mcp_root_argument(self) -> None:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli_main([
+                "--root", str(self.checkout), "query", _TERM, "--limit", "20",
+                "--json", "--no-refresh",
+            ])
+        cli_env = json.loads(buf.getvalue())
+
+        served = mcp_server.dispatch(
+            "weld_query", {"term": _TERM, "limit": 20, "root": str(self.checkout)},
+            root=str(self.server_root),
+        )
+
+        # Transport-only stamps (see the module docstring) are not part of
+        # the shaped answer; asserting they were present keeps this from
+        # quietly becoming a comparison of two error payloads.
+        self.assertIn("freshness", served)
+        served.pop("freshness")
+        self.assertEqual(cli_env, served)
+        self.assertIn("entity:Store", {m["id"] for m in served["matches"]})
+
+    def test_stale_root_flag_equals_mcp_root_argument(self) -> None:
+        """``branch``/``graph_branch`` survive the MCP path with real values.
+
+        The recorded branch is seeded to something the checkout is *not* on,
+        so the pair disagrees -- the silent wrong-branch answer ADR 0096 §3
+        exists to expose. A test where both fields were ``None`` would pass
+        against a handler that hard-coded them.
+        """
+        (self.checkout / ".weld" / "graph-meta.json").write_text(
+            json.dumps({"version": 1, "git_branch": "recorded"}) + "\n",
+            encoding="utf-8",
+        )
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli_main(["--root", str(self.checkout), "stale", "--json"])
+        cli_env = json.loads(buf.getvalue())
+
+        served = mcp_server.dispatch(
+            "weld_stale", {"root": str(self.checkout)}, root=str(self.server_root),
+        )
+
+        # weld_stale is the freshness surface itself, so it is not in
+        # FRESHNESS_TOOLS and carries no transport stamp to strip.
+        self.assertNotIn("freshness", served)
+        self.assertEqual(cli_env, served)
+        self.assertEqual(served["branch"], "f")
+        self.assertEqual(served["graph_branch"], "recorded")
 
 
 if __name__ == "__main__":

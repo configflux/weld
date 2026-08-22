@@ -191,9 +191,19 @@ field, or when you are looking for files by name pattern.
 
 Provider-backed `wd enrich` is optional. If provider extras or API keys are
 unavailable, an agent can manually enrich a node after reading the underlying
-content.
+content. You are the provider — no credentials are needed for this path.
 
-Start by checking freshness and loading the node:
+Ask the product for the work plan first. `wd enrich --agent-direct` lists the
+nodes still missing enrichment, the record contract, the exact write command,
+and the verification steps; `--json` returns the same plan as data, and
+`--type` / `--limit` size a batch without hiding what was left out:
+
+```bash
+wd enrich --agent-direct
+wd enrich --agent-direct --type entity --limit 25 --json
+```
+
+Then, per node, check freshness and load it:
 
 ```bash
 wd stale
@@ -225,9 +235,14 @@ should be lowercase strings. Manual inferred edges must use explicit
 provenance such as `{"source": "manual"}` and only be added after verifying
 the relationship from source content.
 
-Manual enrichment writes `.weld/graph.json` directly and can be overwritten by
-a later `wd discover --output .weld/graph.json`. Refresh discovery before manual
-edits, then validate after writing:
+`wd add-node` refuses a record missing any of `provider`, `model`, `timestamp`,
+or `description`, and names the gaps — write the record whole every time,
+including under `--merge`.
+
+Manual enrichment writes `.weld/graph.json` directly and survives a later
+`wd discover`: discovery re-attaches `props.enrichment` to the rebuilt node,
+keyed by node id. A manual record carries no source fingerprint, so it stays
+until you re-enrich it. Validate after writing:
 
 ```bash
 wd graph validate

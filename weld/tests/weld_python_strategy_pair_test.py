@@ -135,6 +135,42 @@ class PythonStrategyPairTest(unittest.TestCase):
         self.assertNotIn("excluded/skip_me.py", module_files)
         self.assertNotIn("excluded/skip_me.py", callgraph_files)
 
+    def test_pair_honours_directory_form_exclude(self) -> None:
+        """The bare *directory* form must skip the subtree in both halves.
+
+        ``test_pair_honours_same_exclude`` above only ever used the
+        ``<dir>/**`` subtree form, which matches the file path directly --
+        so it stayed green through bd 3abf, where ``python_callgraph``
+        resolved its glob with no excludes at all and filtered per file
+        through ``should_skip`` -> ``matches_exclude`` (no
+        ancestor-directory check). ``excluded`` never matched
+        ``excluded/skip_me.py``, and the whole subtree was parsed anyway
+        while ``python_module`` -- which prunes the directory during
+        descent -- correctly dropped it. Pinning the directory form is
+        what makes this test able to see that class of drift.
+        """
+        root = self._materialise()
+        glob = "**/*.py"
+        excludes = ["excluded"]
+        module_result = python_module.extract(
+            root, {"glob": glob, "exclude": excludes, "package": ""}, {}
+        )
+        callgraph_result = python_callgraph.extract(
+            root, {"glob": glob, "exclude": excludes}, {}
+        )
+        module_files = _module_files(module_result.nodes)
+        callgraph_files = _callgraph_files(callgraph_result.nodes)
+        self.assertNotIn("excluded/skip_me.py", callgraph_files)
+        self.assertEqual(
+            module_files,
+            callgraph_files,
+            (
+                "strategy-pair drift on a directory-form exclude: "
+                f"only in python_module: {module_files - callgraph_files}; "
+                f"only in python_callgraph: {callgraph_files - module_files}"
+            ),
+        )
+
     def test_underscore_module_appears_in_module_strategy(self) -> None:
         """The historically dropped ``_*`` files now surface as file
         anchors in ``python_module`` (closing the ``_ros2_py`` symptom).

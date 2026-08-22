@@ -85,7 +85,7 @@ def or_fallback_child_matches(
         return []
     bm25_scores = bm25_scores_for(matched)
 
-    def _key(item: tuple[str, dict]) -> tuple[int, int, float, str]:
+    def _key(item: tuple[str, dict]) -> tuple[int, int, int, float, str]:
         node_id, node = item
         return or_fallback_sort_key(
             node_id,

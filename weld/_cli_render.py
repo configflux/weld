@@ -15,6 +15,9 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
 
+from weld._cli_render_freshness import stale_sources_lines
+from weld._cli_render_prose import prose_line
+from weld._cli_render_seeds import callers_seeds_lines
 from weld._cli_render_trust import stats_trust_lines
 
 
@@ -93,9 +96,9 @@ def render_context(payload: Mapping[str, Any]) -> str:
     label = node.get("label")
     if label and label != nid_display:
         lines.append(f"  label: {label}")
-    desc = ((node.get("props") or {}).get("description") or "").strip()
-    if desc:
-        lines.append(f"  description: {_short(desc, 200)}")
+    prose = prose_line(node.get("props") or {}, 200)
+    if prose:
+        lines.append(f"  {prose}")
     resolved = payload.get("resolved_from") or {}
     if resolved:
         matched = resolved.get("matched_id")
@@ -151,6 +154,7 @@ def render_callers(payload: Mapping[str, Any]) -> str:
     if "error" in payload:
         lines.append(f"  error: {payload['error']}")
         return _join(lines)
+    lines.extend(callers_seeds_lines(payload))
     callers = list(payload.get("callers") or [])
     if not callers:
         lines.append("  no callers")
@@ -162,13 +166,33 @@ def render_callers(payload: Mapping[str, Any]) -> str:
 
 
 def render_references(payload: Mapping[str, Any]) -> str:
-    """Render a ``wd references`` envelope as graph + textual sections."""
+    """Render a ``wd references`` envelope as graph + textual sections.
+
+    ``error`` is surfaced first, the way :func:`render_callers` surfaces
+    it. ``Graph.references`` learned to distinguish "weld does not know
+    this name" from "weld knows it and nothing points at it" -- the
+    envelope has carried an ``error`` key for the first case since bd
+    nywd -- but this renderer read neither key and printed ``no
+    references`` for both, so the human surface the defect was reported
+    from still gave an unknown id the answer that means "nothing uses
+    this" (bd ily7). A JSON-only fix leaves the default output lying.
+
+    ``error`` no longer *returns*, though (bd 2peg): it means no graph node
+    carries the name, while ``files`` is attached by the CLI from the file
+    index regardless, so returning early threw away hits the envelope already
+    held -- ``wd references created_at`` printed a bare "node not found" while
+    ``--json`` returned twelve. A dataclass field is exactly that shape.
+    """
     name = str(payload.get("symbol", ""))
     lines: list[str] = [_header(f"references: {name}")]
     matches = list(payload.get("matches") or [])
     callers = list(payload.get("callers") or [])
     files = list(payload.get("files") or [])
-    if not matches and not callers and not files:
+    if "error" in payload:
+        lines.append(f"  error: {payload['error']}")
+        if not files:
+            return _join(lines)
+    elif not matches and not callers and not files:
         lines.append("  no references")
         return _join(lines)
     if matches:
@@ -196,15 +220,21 @@ def render_stale(payload: Mapping[str, Any]) -> str:
     array; the renderer adds a one-line child summary plus one line per
     stale child (fresh children are counted, not enumerated, so output
     stays bounded on large workspaces).
+
+    ``branch`` / ``graph_branch`` (ADR 0096 §3) sit beside their SHA
+    counterparts: live checkout identity next to recorded graph identity,
+    so a wrong-branch answer is readable without ``--json``. ``stale_sources``
+    names the diverging path(s) and why (:mod:`weld._cli_render_freshness`).
     """
     lines = [_header("stale")]
     keys = (
         "stale", "source_stale", "sha_behind", "graph_sha",
-        "current_sha", "commits_behind", "reason",
+        "current_sha", "commits_behind", "graph_branch", "branch", "reason",
     )
     for key in keys:
         if key in payload:
             lines.append(f"  {key}: {_format_scalar(payload[key])}")
+    lines.extend(stale_sources_lines(payload))
     children = payload.get("children")
     if isinstance(children, list):
         stale = [c for c in children if isinstance(c, Mapping) and c.get("state") == "stale"]
@@ -273,13 +303,6 @@ def _join(lines: Sequence[str]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _short(value: str, limit: int) -> str:
-    flat = " ".join(value.split())
-    if len(flat) <= limit:
-        return flat
-    return flat[: max(limit - 3, 0)] + "..."
-
-
 def _node_display_id(node: Mapping[str, Any]) -> str:
     """Pick the user-facing ID for a node payload.
 
@@ -313,18 +336,19 @@ def _match_block(idx: int, match: Mapping[str, Any]) -> list[str]:
     score = match.get("score")
     if score is not None:
         out.append(f"       score: {score}")
-    desc = (props.get("description") or "").strip()
-    if desc:
-        out.append(f"       description: {_short(desc, 160)}")
+    targets = match.get("targets")
+    if targets:
+        out.append(f"       targets: {', '.join(str(t) for t in targets)}")
+    prose = prose_line(props, 160)
+    if prose:
+        out.append(f"       {prose}")
     return out
 
 
 def _node_one_line(node: Mapping[str, Any]) -> str:
     nid = _node_display_id(node)
     ntype = node.get("type") or ""
-    if ntype:
-        return f"{nid}  [type: {ntype}]"
-    return nid
+    return f"{nid}  [type: {ntype}]" if ntype else nid
 
 
 def _format_scalar(value: object) -> str:

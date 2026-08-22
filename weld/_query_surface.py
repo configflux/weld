@@ -9,7 +9,10 @@ cap. Two boundary projections layer on top of the raw ``Graph.query`` /
   gated on ``--include-speculative``, then the neighbor diet, gated on
   ``--full-neighborhood``);
 * :func:`apply_context_envelope` -- the neighbor diet on a context envelope
-  (context has no ``matches`` to filter).
+  (context has no ``matches`` to filter);
+* :func:`apply_callers_envelope` / :func:`apply_references_envelope` -- the
+  ADR 0082 byte budget on the two traversal reads the CLI serves, delegating
+  to :mod:`weld.read_traversal`.
 
 Both keep the diet a *surface* concern: the core ``Graph`` methods, and direct
 API callers such as ``brief`` / ``trace`` / ``impact``, still receive the full
@@ -58,3 +61,38 @@ def apply_context_envelope(args, envelope: dict) -> dict:
         full=getattr(args, "full_neighborhood", False),
         full_size=getattr(args, "full_size", False),
     )
+
+
+def _bounded_json(args, envelope: dict, shaper) -> dict:
+    """Apply *shaper* only when the CLI is emitting JSON (ADR 0082).
+
+    The byte budget exists to fit the *agent tool-result cap*, and on these
+    traversal reads only ``--json`` crosses it -- the MCP tools apply the same
+    shaper unconditionally, so ``wd <cmd> --json`` and the tool still agree
+    (ADR 0083). The human renderers are left with the full result on purpose:
+    they list or count what was found, so bounding them would silently
+    under-report the answer to a reader who has no tool cap to respect.
+    ``--full-size`` skips the budget on the JSON path too.
+    """
+    if not getattr(args, "as_json", False):
+        return envelope
+    return shaper(envelope, full_size=getattr(args, "full_size", False))
+
+
+def apply_callers_envelope(args, envelope: dict) -> dict:
+    """Bound a ``wd callers`` envelope for the JSON surface (ADR 0082)."""
+    from weld.read_traversal import shape_callers
+
+    return _bounded_json(args, envelope, shape_callers)
+
+
+def apply_references_envelope(args, envelope: dict) -> dict:
+    """Bound a ``wd references`` envelope for the JSON surface (ADR 0082).
+
+    Call this *after* ``files`` has been attached: the file-index hits are the
+    largest and lowest-priority part of the payload, so a budget that ran
+    before them would bound the wrong thing.
+    """
+    from weld.read_traversal import shape_references
+
+    return _bounded_json(args, envelope, shape_references)

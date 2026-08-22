@@ -77,6 +77,9 @@ Values:
 - `entrypoint` -- application startup file (Program.cs, `__main__.py`,
   `cli.py`, etc.); exempts `file:*` nodes from the
   `file-anchor-symmetry` lint rule
+- `package` -- a grouping container rather than a code artifact; stamped
+  on the `package:` nodes the `python_package` and `csharp_package`
+  strategies mint
 - `test` -- test code and test infrastructure
 - `config` -- configuration files
 - `doc` -- documentation

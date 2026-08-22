@@ -4,7 +4,11 @@ Pins the behavior of the four MCP tool handlers that were extended to
 work across federated children via :mod:`weld.federation_tools`:
 
 * ``weld_brief`` -- includes child matches via ``FederatedGraph.query``.
-* ``weld_stale`` -- reports per-child staleness or graceful degradation.
+* ``weld_stale`` -- reports per-child staleness or graceful degradation. Since
+  ADR 0100 it delegates to the product shaper the CLI uses rather than to a
+  helper here, so what this module pins is the *contract* -- the projection and
+  its lifecycle passthrough. Byte-identity against ``wd stale --json`` is
+  pinned separately, in :mod:`weld.tests.weld_read_parity_federated_test`.
 * ``weld_callers`` -- resolves prefixed symbol IDs within children.
 * ``weld_references`` -- fans out bare-name search across all children.
 
@@ -191,11 +195,27 @@ class McpStaleFederationTest(unittest.TestCase):
             _git(root, "add", "m.txt")
             _git(root, "commit", "-q", "-m", "m")
             result = mcp_server.dispatch("weld_stale", {}, root=root)
-            self.assertIn("stale", result)
-            self.assertIn("children", result)
-            for name in ("lib-core", "lib-auth"):
-                self.assertIn(name, result["children"])
-                self.assertIn("stale", result["children"][name])
+            # ADR 0100: ``children`` is the CLI projection -- a name-sorted
+            # list of {name, state, reason, commits_behind} -- not the map of
+            # raw per-child Graph.stale() results this tool used to return.
+            children = result["children"]
+            self.assertEqual([c["name"] for c in children],
+                             ["lib-auth", "lib-core"])
+            for child in children:
+                self.assertEqual(
+                    set(child), {"name", "state", "reason", "commits_behind"})
+                # These fixture graphs record no discovered-from SHA, so the
+                # oracle cannot date them and conservatively reports stale.
+                self.assertEqual(child["state"], "stale")
+                self.assertEqual(child["reason"], "unknown_sha")
+            # ADR 0066 §2: a stale child raises the top-level agent gate.
+            self.assertTrue(result["stale"])
+            # Branch identity (ADR 0096 §3) is reported on every weld_stale
+            # return path, federated included -- a root whose answer spans
+            # child repos is precisely one worth naming the checkout of.
+            self.assertEqual(result["branch"], _git(root, "rev-parse",
+                                                    "--abbrev-ref", "HEAD"))
+            self.assertIn("graph_branch", result)
 
     def test_stale_single_repo_unchanged(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -217,12 +237,16 @@ class McpStaleFederationTest(unittest.TestCase):
             _init_repo(root)
             _build_sentinel_workspace(root)
             result = mcp_server.dispatch("weld_stale", {}, root=root)
-            ch = result["children"]
-            self.assertEqual(ch["repo-missing"]["status"], "missing")
-            self.assertEqual(ch["repo-uninitialized"]["status"],
-                             "uninitialized")
-            self.assertEqual(ch["repo-corrupt"]["status"], "corrupt")
-            self.assertIn("stale", ch["repo-present"])
+            by_name = {c["name"]: c for c in result["children"]}
+            # ADR 0100: the lifecycle sentinels survive the projection -- the
+            # token that used to arrive as {"status": ...} now arrives in
+            # ``state``/``reason``. ADR 0066 §1 rule 1 still holds: an absent
+            # or unreadable child is not "behind", so none of them is stale.
+            for name in ("missing", "uninitialized", "corrupt"):
+                entry = by_name[f"repo-{name}"]
+                self.assertEqual(entry["state"], name)
+                self.assertEqual(entry["reason"], name)
+            self.assertEqual(by_name["repo-present"]["state"], "stale")
 
 
 # -- Callers -----------------------------------------------------------------
@@ -241,6 +265,27 @@ class McpCallersFederationTest(unittest.TestCase):
             expected = (f"lib-core{UNIT_SEPARATOR}"
                         "symbol:py:lib_core:load_config")
             self.assertIn(expected, caller_ids)
+
+    def test_callers_federated_seeds_and_targets_are_prefixed(self) -> None:
+        """bd jz65r: ``seeds`` (top-level) and per-caller ``targets``
+        (depth 1) must carry the same child prefix as ``id`` -- the exact
+        gap bd nyoks found in ``_prefix_node`` for ``references()``'s
+        ``targets``, checked here for ``callers()``'s own new fields from
+        the start. ``federated_callers``'s prefixed-child branch rebuilds
+        the envelope key-by-key rather than reusing ``raw`` wholesale, so a
+        field it does not explicitly copy silently disappears."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _build_symbol_workspace(root)
+            prefixed_seed = f"lib-auth{UNIT_SEPARATOR}symbol:unresolved:validate"
+            result = mcp_server.dispatch(
+                "weld_callers",
+                {"symbol_id": prefixed_seed, "depth": 1}, root=root)
+            self.assertEqual([prefixed_seed], result["seeds"])
+            auth_caller = (
+                f"lib-auth{UNIT_SEPARATOR}symbol:py:lib_auth:authenticate")
+            by_id = {c["id"]: c for c in result["callers"]}
+            self.assertEqual([prefixed_seed], by_id[auth_caller]["targets"])
 
     def test_callers_single_repo_unchanged(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -292,6 +337,31 @@ class McpReferencesFederationTest(unittest.TestCase):
             self.assertIn(
                 f"lib-auth{UNIT_SEPARATOR}"
                 "symbol:py:lib_auth:authenticate", caller_ids)
+
+    def test_references_federated_callers_target_their_own_prefixed_match(
+        self,
+    ) -> None:
+        """Each federated caller's ``targets`` (bd nyoks) names its OWN
+        child's match, prefixed the same way the caller's own ``id`` is --
+        a caller row mixing a prefixed ``id`` with an unprefixed target id
+        would be self-inconsistent with the top-level ``matches`` list."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _build_symbol_workspace(root)
+            result = mcp_server.dispatch(
+                "weld_references", {"symbol_name": "validate"},
+                root=root)
+            by_id = {c["id"]: c for c in result["callers"]}
+            auth_caller = (
+                f"lib-auth{UNIT_SEPARATOR}symbol:py:lib_auth:authenticate")
+            core_caller = (
+                f"lib-core{UNIT_SEPARATOR}symbol:py:lib_core:load_config")
+            self.assertEqual(
+                [f"lib-auth{UNIT_SEPARATOR}symbol:unresolved:validate"],
+                by_id[auth_caller]["targets"])
+            self.assertEqual(
+                [f"lib-core{UNIT_SEPARATOR}symbol:py:lib_core:validate"],
+                by_id[core_caller]["targets"])
 
     def test_references_single_repo_unchanged(self) -> None:
         with TemporaryDirectory() as tmp:

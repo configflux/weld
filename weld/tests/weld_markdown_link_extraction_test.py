@@ -186,6 +186,48 @@ class InterDocLinkExtractionTest(unittest.TestCase):
             )
 
 
+class EdgeProvenanceTest(unittest.TestCase):
+    """Every relates_to edge names the file whose body held the link.
+
+    ADR 0074 keys the incremental edge purge on ``props.provenance.file``,
+    "the file that produced the edge". For this strategy that is always the
+    *mentioning* doc, never the target it resolved -- see
+    ``incremental_markdown_provenance_purge_test`` for why the direction is
+    the load-bearing part. Asserted from a fixture where the two differ and
+    a second where one file mints two edges, so a stamp accidentally lifted
+    from the loop's target variable cannot pass.
+    """
+
+    def test_provenance_is_the_mentioning_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _setup(d, {
+                "a.md": "See [the guide](b.md).\n",
+                "b.md": "# B\n\nBody.\n",
+            })
+            edges = _relates_edges(extract(root, _SOURCE, {}))
+            self.assertEqual(len(edges), 1, f"expected one edge: {edges}")
+            self.assertEqual(
+                edges[0]["props"].get("provenance"), {"file": "docs/a.md"},
+                "provenance.file must be the mentioning doc (docs/a.md), "
+                "not the target it resolved",
+            )
+
+    def test_every_edge_from_one_doc_shares_that_docs_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _setup(d, {
+                "a.md": "See [b](b.md) and [c](c.md).\n",
+                "b.md": "# B\n",
+                "c.md": "# C\n",
+            })
+            edges = _relates_edges(extract(root, _SOURCE, {}))
+            self.assertEqual(len(edges), 2, f"expected two edges: {edges}")
+            self.assertEqual(
+                [e["props"].get("provenance") for e in edges],
+                [{"file": "docs/a.md"}] * 2,
+                "both edges are produced by docs/a.md and must say so",
+            )
+
+
 class EdgeContractValidationTest(unittest.TestCase):
     """Emitted relates_to edges pass the contract validator."""
 
@@ -202,6 +244,45 @@ class EdgeContractValidationTest(unittest.TestCase):
             for edge in result.edges:
                 errors = validate_edge(edge, node_ids)
                 self.assertEqual(errors, [], f"edge {edge}: {errors}")
+
+
+class FencedLinkMintsNoEdgeTest(unittest.TestCase):
+    """A link that renders as code is not a reference (bd w624).
+
+    Sibling of bd ve41 on the heading scan, one scan later. The regex ran
+    over the whole document with no fence state, so a doc that *shows* a
+    markdown link in a sample minted a real ADR 0074 provenance-stamped
+    ``relates_to`` edge from it. Measures zero on this repository's indexed
+    globs, which is why ve41 left it: the fix is preventive, for any repo
+    whose docs quote links.
+    """
+
+    def test_link_inside_a_fenced_block_emits_no_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _setup(d, {
+                "a.md": "How to link:\n\n```markdown\n[the guide](b.md)\n```\n",
+                "b.md": "# B\n",
+            })
+            result = extract(root, _SOURCE, {})
+            # Both doc nodes still exist -- only the phantom edge is gone.
+            self.assertIn("doc:docs/b", result.nodes)
+            self.assertEqual([], _relates_edges(result))
+
+    def test_a_real_link_beside_a_sampled_one_still_emits_its_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _setup(d, {
+                "a.md": (
+                    "See [the guide](b.md).\n\n"
+                    "```markdown\n[not a reference](c.md)\n```\n"
+                ),
+                "b.md": "# B\n",
+                "c.md": "# C\n",
+            })
+            result = extract(root, _SOURCE, {})
+            self.assertEqual(
+                [("doc:docs/a", "doc:docs/b")],
+                [(e["from"], e["to"]) for e in _relates_edges(result)],
+            )
 
 
 if __name__ == "__main__":

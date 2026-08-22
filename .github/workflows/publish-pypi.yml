@@ -121,6 +121,16 @@ jobs:
           wd --help >/dev/null
           wd discover --help >/dev/null
           python -c "import weld"
+          # Both published launch forms. `wd mcp serve` is what clients are
+          # pointed at; the banner check proves dispatch reached the transport
+          # rather than exiting 2 at the `wd mcp` subcommand table. Written to
+          # a file rather than piped into grep, because `grep -q` exits on
+          # first match and under `set -o pipefail` that reports the
+          # producer's SIGPIPE as a failure. The file lands in /tmp, not the
+          # smoke repo -- the verify-install step `git add -A`s its own repo
+          # and then discovers it, so a stray artefact there would be graphed.
+          wd mcp serve --help > /tmp/wd-mcp-serve-help.txt
+          grep -q '^Usage: wd mcp serve' /tmp/wd-mcp-serve-help.txt
           python -m weld.mcp_server --help >/dev/null
           python - "${workspace}/weld/pyproject.toml" <<'PYCHECK'
           import importlib
@@ -368,6 +378,8 @@ jobs:
           wd discover --help > /dev/null
           python -c "import os; from importlib.metadata import version; expected = os.environ['PKG_VERSION']; v = version('configflux-weld'); print(f'configflux-weld {v}'); assert v == expected, f'version mismatch: expected {expected}, got {v}'"
           wd --help >/dev/null
+          wd mcp serve --help > /tmp/wd-mcp-serve-help.txt
+          grep -q '^Usage: wd mcp serve' /tmp/wd-mcp-serve-help.txt
           python -m weld.mcp_server --help >/dev/null
 
           git init --quiet

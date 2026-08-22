@@ -2,7 +2,7 @@
 
 Two layers, both required:
 
-* :func:`weld._git.git_main_checkout_path` and the
+* :func:`weld._git_worktree.git_main_checkout_path` and the
   :func:`weld._workspace_inspect.resolve_child_root` helper that uses it
   resolve a child repo via the main worktree's checkout when the
   current worktree does not contain it.
@@ -33,7 +33,7 @@ from weld._discover_empty_guard import (
     existing_node_count,
     missing_child_names,
 )
-from weld._git import git_main_checkout_path
+from weld._git_worktree import git_main_checkout_path
 from weld._workspace_inspect import inspect_child, resolve_child_root
 from weld.contract import SCHEMA_VERSION
 from weld.discover import discover
@@ -91,7 +91,7 @@ def _write_workspaces(root: Path, children: list[ChildEntry]) -> WorkspaceConfig
 # Layer 1 -- unit tests for git_main_checkout_path()
 
 class GitMainCheckoutPathTest(unittest.TestCase):
-    """Direct coverage for :func:`weld._git.git_main_checkout_path`."""
+    """Direct coverage for :func:`weld._git_worktree.git_main_checkout_path`."""
 
     def test_returns_none_outside_a_git_repo(self) -> None:
         with TemporaryDirectory() as tmp:

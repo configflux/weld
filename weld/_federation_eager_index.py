@@ -22,7 +22,6 @@ from weld._coverage_admission import (
     _COVERAGE_MIN_GROUPS,
     coverage_admissions,
     hydrate_union,
-    partial_coverage_subject_miss,
     strip_match,
     tag_match,
 )
@@ -38,13 +37,10 @@ from weld._federation_eager_flags import (
     env_var_truthy,
     resolve_eager_flag,
 )
+from weld._match_surface import count_group_hits
+from weld._query_candidacy import relaxed_or_none
+from weld._rank_strict_and import strict_and_sort_key
 from weld._sqlite_reader import SqliteBackedGraph
-from weld.ranking import (
-    authority_score,
-    confidence_score,
-    exact_symbol_match_rank,
-    resolution_penalty,
-)
 from weld.synonyms import expand_token_groups
 
 __all__ = [
@@ -192,6 +188,16 @@ class EagerFederationIndex:
                 matched_ids.add(node_id)
         if not matched:
             return self._or_fallback(graph_view, child_name, tokens, limit)
+        # ADR 0113 candidacy parity: a strict-AND result made entirely of
+        # demoted material (a bd issue title, or a test) is not evidence the
+        # query was answered, so it must not suppress the fallback.
+        relaxed = relaxed_or_none(
+            matched,
+            token_groups,
+            lambda: self._or_fallback(graph_view, child_name, tokens, limit),
+        )
+        if relaxed is not None:
+            return relaxed
 
         # ADR 0075 part 1 (8rm0.4 parity): admit high-coverage non-doc nodes the
         # strict-AND intersection dropped, from the per-group UNION restricted to
@@ -211,26 +217,10 @@ class EagerFederationIndex:
 
         bm25_scores = self._bm25_scores(child_name, matched, token_groups)
 
-        def _key(
-            item: tuple[str, dict]
-        ) -> tuple[int, int, int, int, float, int, int, str]:
+        def _key(item: tuple[str, dict]) -> tuple:
             node_id, node = item
-            node_with_id = {"id": node_id, **node}
-            return (
-                resolution_penalty(node_with_id),
-                exact_symbol_match_rank(node_with_id, token_groups),
-                # ADR 0075 diffuse-doc demotion: pre-tagged ``_diffuse`` docs
-                # (N>=3 only) sort AFTER non-diffuse nodes (0 < 1), below the
-                # bounded-coverage code/entity nodes admitted alongside them.
-                # Mirrors rank_query_matches; placed ahead of -bm25.
-                int(bool(node.get("_diffuse"))),
-                # ADR 0075 subject tie-break (8rm0.4 parity with impl #1); see
-                # partial_coverage_subject_miss docstring. Ahead of -bm25.
-                partial_coverage_subject_miss(node_with_id, token_groups),
-                -bm25_scores.get(node_id, 0.0),
-                authority_score(node_with_id),
-                confidence_score(node_with_id),
-                node_id,
+            return strict_and_sort_key(
+                node_id, node, token_groups, bm25_scores.get(node_id, 0.0)
             )
 
         scored = sorted(matched, key=_key)
@@ -315,7 +305,7 @@ class EagerFederationIndex:
             token_groups=token_groups,
             avg_length=self.avg_length,
             total_docs=self.total_docs,
-            inverted_tokens=self.inverted,
+            postings=self.inverted,
         )
 
 
@@ -360,37 +350,12 @@ def _match_token_groups(
     token_groups: list[list[str]], nid: str, node: dict) -> int:
     """Field-AND check identical to :func:`weld._sqlite_query._match_token_groups`.
 
-    Duplicated locally to keep this module independent of the
-    sqlite_query module's internal helper. The contract is small and
-    stable; the lazy and eager paths must agree on field semantics for
-    the match-set parity test to hold.
-
-    8rm0.4 field-set unification: ``props.headings`` is now part of the
-    surface (it previously was not -- the pre-existing drift ADR 0075 noted).
-    Omitting it made the eager path silently disagree with the lazy/sqlite
-    path on heading-only doc matches (a confirmed parity divergence), so the
-    parity contract and ADR 0075's diffuse-doc demotion both require it here.
+    Identical now by construction rather than by maintenance: both read the
+    field set from :mod:`weld._match_surface`. The local copy this replaces had
+    already had to be repaired once (8rm0.4 added ``props.headings`` after the
+    eager path was found disagreeing with the lazy path on heading-only doc
+    matches), and was still missing ``props.keywords`` when bd ph1g came to add
+    ``props.summary`` -- which is the argument against a sixth copy stated as
+    history rather than opinion.
     """
-    nid_l = nid.lower()
-    label_l = node.get("label", "").lower()
-    props = node.get("props") or {}
-    file_l = (props.get("file") or "").lower()
-    qualname_l = str(props.get("qualname") or "").lower()
-    exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
-    constants_l = [c.lower() for c in props.get("constants", []) if isinstance(c, str)]
-    headings_l = [h.lower() for h in props.get("headings", []) if isinstance(h, str)]
-    desc_l = (props.get("description") or "").lower()
-    hits = 0
-    for group in token_groups:
-        if any(
-            t in nid_l or t in label_l or t in file_l or t in desc_l
-            or t in qualname_l
-            or any(t in e for e in exports_l)
-            or any(t in c for c in constants_l)
-            or any(t in h for h in headings_l)
-            for t in group
-        ):
-            hits += 1
-        else:
-            return 0
-    return hits
+    return count_group_hits(token_groups, nid, node, short_circuit=True)

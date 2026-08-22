@@ -16,68 +16,57 @@ import json
 import time
 from pathlib import Path
 
+from weld._discover_basis import (config_fingerprint,
+                                  incremental_basis_valid as _incremental_basis_valid,
+                                  sources_needing_retry as _sources_needing_retry,
+                                  strategy_fingerprint as _strategy_fingerprint)
 from weld._discover_empty_guard import (
     EmptyFederatedGraphRefusedError,
     enforce_nonempty_federated_write as _enforce_nonempty_federated_write,
 )
 from weld._discover_empty_warn import warn_if_no_sources as _warn_if_no_sources
 from weld._discover_federate import merge_cross_repo_edges, retag_federated_origins_on_disk
+from weld._discover_incremental_merge import run_incremental_merge
+from weld._discover_inputs import plan_delta, stale_directory_marker as _stale_directory_marker
 from weld._discover_no_change import no_change_refresh as _no_change_refresh
+from weld._discover_node_merge import claim_supersedes
 from weld._discover_postprocess import post_process as _post_process
 from weld._discover_sidecar import (finalize_single_repo as _finalize_single_repo,
                                     persist_cli_graph as _persist_cli_graph,
                                     persist_sqlite_sidecar as _persist_sqlite_sidecar)
-from weld._discover_state_check import (files_missing_from_graph,
-                                         graph_files_with_nodes)
 from weld._discover_strategies import (
-    IncrementalHint,
     load_strategy as _load_strategy,  # noqa: F401 -- re-export for test consumers
     run_external_json as _run_external_json,  # noqa: F401 -- re-export for test consumers
     run_source as _run_source,
 )
-from weld._discover_summary import emit_summary as _emit_summary
+from weld._discover_summary import (drain_context_warnings as _drain_context_warnings,
+                                    emit_summary as _emit_summary)
 from weld._yaml import parse_yaml
 from weld.contract import SCHEMA_VERSION  # noqa: F401 -- re-export for consumers
-from weld.discovery_state import (StateDiff, build_file_hashes, diff_state,
-                                   files_missing_strategy_outputs, load_state,
-                                   purge_stale_nodes, resolve_source_file_map)
+from weld.discovery_state import load_state
+from weld._source_resolve import resolve_source_file_map
+from weld._graph_anchors import (files_missing_from_graph,
+                                 files_missing_strategy_outputs,
+                                 graph_files_with_nodes)
 from weld._graph_meta_sidecar import write_graph_with_meta as _write_graph_with_meta
 from weld.federation_root import build_root_meta_graph
 from weld.workspace import WorkspaceConfigError
 from weld.workspace_state import (WorkspaceLock, WorkspaceLockedError,
                                   build_workspace_state, load_workspace_config,
                                   save_workspace_state)
-from weld.strategies._helpers import filter_glob_results
+from weld.glob_match import glob_scope
+from weld.repo_boundary import repo_boundary_scope
+from weld.strategies._strategy_failure import (drain_source_failures,
+                                               drain_strategy_failures)
 from weld._notice import emit
 
 
-def _drain_context_warnings(context: dict) -> None:
-    """Print unique strategy warnings to stderr, one line each.
-
-    Strategies append diagnostic messages to ``context["_warnings"]``
-    when they degrade gracefully (e.g. tree-sitter installed but the
-    per-language grammar package missing). Without an explicit drain at
-    the end of discovery, those entries die with the in-memory context
-    and the user sees a silently-successful ``wd discover`` with zero
-    nodes for the affected language.
-
-    Output uses the existing ``[weld] warning:`` prefix established by
-    the unsafe-mode strategy warnings so operators can grep for either
-    source uniformly. Deduplication is by full message text to keep the
-    output bounded when a strategy emits the same line per matched file.
-    """
-    raw = context.get("_warnings", [])
-    if not raw:
-        return
-    seen: set[str] = set()
-    for msg in raw:
-        text = str(msg)
-        if text in seen:
-            continue
-        seen.add(text)
-        emit(f"[weld] warning: {text}")
-
-
+# bd jbpb: one run observes one repo-boundary snapshot, taken here and dropped
+# on return -- the warm-refresh entry (ADR 0074) runs this per read in a
+# long-lived host, which must never inherit an earlier run's file listing. The
+# scope is a ContextDecorator; see repo_boundary.repo_boundary_scope.
+@repo_boundary_scope()
+@glob_scope()  # bd cjij: walk each distinct glob once per run, same lifetime.
 def _discover_single_repo(
     root: Path,
     *,
@@ -108,6 +97,10 @@ def _discover_single_repo(
     config_path = root / ".weld" / "discover.yaml"
     config = parse_yaml(config_path.read_text(encoding="utf-8")) if config_path.exists() else {"sources": [], "topology": {}}
     sources = config.get("sources", [])
+    # Fingerprinted once, from the mapping this run actually ran (bd 4fpj):
+    # both the basis gate below and the state this run writes must name the
+    # same config, or the state would vouch for a config nothing ran under.
+    config_fp = config_fingerprint(config)
     _warn_if_no_sources(root, sources)  # loud signal for a forgotten `wd init`
 
     # Load the previous graph and snapshot it for `wd diff` -- but only after
@@ -132,7 +125,7 @@ def _discover_single_repo(
             pass  # best-effort; diff will report "no previous"
 
     # Resolve all globs -> current file set (duplicate globs walk once).
-    source_file_map = resolve_source_file_map(root, sources, filter_glob_results)
+    source_file_map = resolve_source_file_map(root, sources)
     current_file_set = sorted({f for files in source_file_map for f in files})
 
     # State tracking
@@ -140,26 +133,31 @@ def _discover_single_repo(
     if incremental is None:
         incremental = old_state is not None
 
-    if incremental:
-        if old_state is None:
-            emit("[weld] notice: no discovery state file, running full discovery")
-            incremental = False
-        elif not graph_path.is_file():
-            emit("[weld] notice: no graph.json found, running full discovery")
-            incremental = False
-        elif existing_graph is None:
-            emit("[weld] warning: corrupt graph.json, falling back to full discovery")
-            incremental = False
+    if incremental and not _incremental_basis_valid(
+        old_state, graph_path, existing_graph, config_fp,
+        _strategy_fingerprint(root),
+    ):
+        incremental = False
 
-    current_hashes = build_file_hashes(root, current_file_set)
-    state_diff = diff_state(old_state, current_hashes) if incremental else StateDiff(added=set(current_hashes.keys()))
-
+    # The delta covers every file the graph reads, not only the glob-resolved
+    # ones (a loaded ``.bzl`` is an input no source entry resolves), and a dirty
+    # path no entry claims re-decides *incremental* (weld._discover_inputs).
+    current_hashes, state_diff, incremental = plan_delta(
+        root, existing_graph, current_file_set, old_state, incremental,
+    )
     if not incremental:
         # Full discovery
         context, nodes, edges, df = {}, {}, [], []  # type: dict, dict[str, dict], list[dict], list[str]
-        for s in sources:
-            r = _run_source(root, s, context, safe=safe)
-            nodes.update(r.nodes)
+        for i, s in enumerate(sources):
+            r = _run_source(root, s, context, safe=safe,
+                            source_files=source_file_map[i])
+            # ADR 0103: not ``nodes.update`` -- a later entry's evidence-free
+            # stub must not overwrite the definite, file-bearing definition an
+            # earlier entry walked, or graph_closure loses the anchor it
+            # derives ``contains`` from (bd 4ux4).
+            for nid, node in r.nodes.items():
+                if claim_supersedes(nodes.get(nid), node):
+                    nodes[nid] = node
             edges.extend(r.edges)
             df.extend(r.discovered_from)
         graph = _post_process(
@@ -168,6 +166,9 @@ def _discover_single_repo(
         )
         _finalize_single_repo(
             root, current_hashes, graph, with_sqlite, write_graph,
+            config_fingerprint=config_fp,
+            strategy_failed=drain_strategy_failures(context),
+            source_failed=drain_source_failures(context),
         )
         _drain_context_warnings(context)
         return graph
@@ -191,8 +192,13 @@ def _discover_single_repo(
     )
     dirty = state_diff.dirty | missing_outputs | missing_per_file
     stale = dirty | state_diff.deleted
+    # Entry-keyed counterpart to the two audits above, for source entries no
+    # file-hash delta can ever mark dirty because they resolve no files at
+    # all (a command-only ``external_json`` adapter, bd um00).
+    retry_entry_ids = _sources_needing_retry(sources, old_state)
 
-    if not state_diff.has_changes and not missing_outputs and not missing_per_file:
+    if (not state_diff.has_changes and not missing_outputs
+            and not missing_per_file and not retry_entry_ids):
         # No content change: refresh volatile meta only, no strategy re-run.
         # The loaded ``existing_graph`` stays byte-pristine (see
         # discover_no_changes_does_not_mutate_loaded_graph_test).
@@ -200,48 +206,50 @@ def _discover_single_repo(
             root, existing_graph, existing_graph_bytes,
             current_file_set, current_hashes,
             with_sqlite=with_sqlite, write_graph=write_graph,
+            config_fingerprint=config_fp,
         )
 
-    # Purge stale nodes; edges purge by ADR 0074 provenance (clean-caller
-    # inbound edges into dirty-file symbols survive, dirty re-parse re-mints
-    # the endpoint) so parse-only-dirty stays byte-identical to a full run.
-    ex_nodes, ex_edges = purge_stale_nodes(
-        dict(existing_graph.get("nodes", {})),
-        list(existing_graph.get("edges", [])),
-        stale,
+    # Purge stale nodes/edges and re-run dirty sources; widen once for any
+    # surviving edge a purge left dangling -- a clean file's edge into a node
+    # the purge removed and the dirty pass never re-minted (a deleted import
+    # target, or a symbol edited away without reusing its id). ADR 0074
+    # fourth amendment, bd znzu.
+    ex_nodes, ex_edges, context, dirty, ran_df = run_incremental_merge(
+        root, sources, source_file_map, existing_graph, dirty, stale, safe=safe,
+        retry_entry_ids=retry_entry_ids,
     )
 
-    # ADR 0074: hand python_callgraph the dirty scope + POST-PURGE prior node
-    # set (snapshot before dirty re-runs mutate ``ex_nodes``) so it parses
-    # only dirty files and reconstructs cross-glob ``project_modules`` from
-    # surviving prior symbols instead of re-globbing every sibling.
-    incremental_hint = IncrementalHint(
-        dirty_files=frozenset(dirty), prior_nodes=dict(ex_nodes),
-    )
-
-    # Run strategies for source entries with dirty files
-    context = {}
-    for i, source in enumerate(sources):
-        if not set(source_file_map[i]).intersection(dirty):
-            continue
-        r = _run_source(
-            root, source, context, safe=safe, incremental_hint=incremental_hint,
-        )
-        for nid, node in r.nodes.items():
-            nf = node.get("props", {}).get("file", "")
-            if not nf or nf in dirty:
-                ex_nodes[nid] = node
-        ex_edges.extend(r.edges)
-
-    # Merge discovered_from
-    old_df = [p for p in existing_graph.get("meta", {}).get("discovered_from", []) if p not in state_diff.deleted]
-    new_df = [str(p) for files in source_file_map for p in files if p in dirty]
+    # Merge discovered_from: union of what survives from the previous graph
+    # (minus deleted files) with what every re-run source just reported.
+    # ADR 0008 section 5.6's original contract is "the union of all files
+    # that contributed to the current graph" -- ``ran_df`` is collected
+    # straight from each source's ``StrategyResult``, not re-derived from
+    # ``source_file_map``, so a footprint-less source (bd um00) or a
+    # directory-anchored provenance entry (ADR 0017's amendment) is never
+    # silently dropped just because it has no membership in a glob-resolved
+    # file list (bd 8084). ``state_diff.deleted`` only ever holds literal
+    # FILE paths (keys of ``old_state.files``), so a directory-provenance
+    # marker (``python_package``'s ``"weld/strategies/"`` shape) is never a
+    # member of it even when every file under that directory is gone --
+    # ``stale_directory_marker`` catches that case by checking the
+    # directory itself against disk (bd 0t5p).
+    old_df = [
+        p for p in existing_graph.get("meta", {}).get("discovered_from", [])
+        if p not in state_diff.deleted and not _stale_directory_marker(root, p)
+    ]
     graph = _post_process(
-        ex_nodes, ex_edges, context, config, root, old_df + new_df,
+        ex_nodes, ex_edges, context, config, root, old_df + ran_df,
         previous_graph=existing_graph,
     )
+    # The drained failure set is complete even though only dirty sources ran:
+    # a file recorded as failed is exempt from nothing ``files_missing_from_graph``
+    # consults, so it is in ``missing_per_file`` above, so it is dirty, so its
+    # source is among the ones this loop just re-ran (bd hch4).
     _finalize_single_repo(
         root, current_hashes, graph, with_sqlite, write_graph,
+        config_fingerprint=config_fp,
+        strategy_failed=drain_strategy_failures(context),
+        source_failed=drain_source_failures(context),
     )
     _drain_context_warnings(context)
     return graph
@@ -390,7 +398,3 @@ def main(argv: list[str] | None = None) -> int:
             root_path, result, safe=args.safe, no_enrich_flag=args.no_enrich,
         )
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

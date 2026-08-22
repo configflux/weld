@@ -40,6 +40,14 @@ The script is intentionally self-contained: stdlib only, plus the
 The expected name list is embedded sorted at the top of the file so
 public readers can audit what is being asserted without consulting
 any other source.
+
+Implementation note (teardown): every exit path is bounded and closes
+all three pipes -- see :func:`_shutdown`. A wedged server has to fail
+this check rather than hang it, because the check gates an
+irreversible upload. The teardown is spelled out here rather than
+shared with the package under test: this script must stay trustworthy
+even when the wheel it is checking is broken, so it depends on nothing
+beyond the standard library.
 """
 
 from __future__ import annotations
@@ -78,6 +86,14 @@ _EXPECTED_TOOL_NAMES = [
 # publish pipeline snappy while still tolerating cold-import latency
 # on slow CI runners.
 _RESPONSE_TIMEOUT_S = 30.0
+
+# Seconds the server gets to exit on its own once stdin is closed.
+_SHUTDOWN_TIMEOUT_S = 10.0
+
+# Separate, generous grace for a *killed* child to be reaped. Not
+# derived from the budget above: the polite exit may be bounded
+# tightly, and reaping after SIGKILL should still never be raced.
+_KILL_GRACE_S = 5.0
 
 
 def _initialize_msg() -> dict:
@@ -158,8 +174,82 @@ def _read_response_with_id(
     return result["msg"]
 
 
+def _close_pipes(proc: subprocess.Popen) -> None:
+    """Close every pipe object, whatever state the child is in.
+
+    Leaving stdout/stderr to the garbage collector is what emits
+    ``ResourceWarning: unclosed file`` on every run and leaks an fd
+    pair per handshake -- log noise here, but an unreaped fd pair on a
+    loaded release runner.
+    """
+    for pipe in (proc.stdin, proc.stdout, proc.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except (OSError, ValueError):
+                pass
+
+
+def _kill(proc: subprocess.Popen) -> None:
+    """SIGKILL the child, tolerating one that is already gone.
+
+    Called from failure and teardown paths, where an exception raised
+    here would mask the failure that sent us there.
+    """
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _shutdown(
+    proc: subprocess.Popen, timeout_s: float = _SHUTDOWN_TIMEOUT_S
+) -> None:
+    """Close stdin, bound the wait, kill if it elapses, close every pipe.
+
+    Closing stdin is the server's EOF signal. Every branch below is
+    bounded, including the one after ``kill()``: an unbounded final
+    ``wait()`` is how a wedged child hangs the release pipeline instead
+    of failing it, which costs a release window rather than a log line.
+
+    ``wait()`` rather than ``communicate()`` because a reader thread
+    from :func:`_read_response_with_id` may still own stdout, and two
+    concurrent readers on one pipe is its own failure. The cost is that
+    a child blocked writing a stderr pipe full will not exit politely;
+    it is then killed on the timeout, which is bounded and correct.
+
+    The trailing close runs unconditionally, so whichever branch was
+    taken, every pipe object ends closed.
+    """
+    try:
+        if proc.stdin is not None and not proc.stdin.closed:
+            proc.stdin.close()
+    except (OSError, ValueError):
+        pass
+    try:
+        proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _kill(proc)
+        try:
+            proc.wait(timeout=_KILL_GRACE_S)
+        except subprocess.TimeoutExpired:
+            pass
+    finally:
+        _close_pipes(proc)
+
+
 def _format_diagnostic(stdout_lines: list[str], proc: subprocess.Popen) -> str:
-    """Render captured output for a failure message."""
+    """Render captured output for a failure message.
+
+    Kills the child *first*. This is only ever called on a terminal
+    failure path, and ``read()`` on a live child's stderr blocks until
+    that child exits -- which is precisely the wedged-server case the
+    diagnostic exists to report, so building the report would hang the
+    release instead of failing it. SIGKILL turns that unbounded read
+    into an EOF. The stdout snapshot is taken for the same reason: the
+    reader thread may still be appending as we join.
+    """
+    _kill(proc)
     stderr = ""
     if proc.stderr is not None:
         try:
@@ -168,7 +258,7 @@ def _format_diagnostic(stdout_lines: list[str], proc: subprocess.Popen) -> str:
             stderr = "<stderr drain failed>"
     return (
         "--- stdout ---\n"
-        + "\n".join(stdout_lines)
+        + "\n".join(list(stdout_lines))
         + "\n--- stderr ---\n"
         + stderr
     )
@@ -234,19 +324,7 @@ def run_handshake(work_dir: str) -> int:
             )
             return 1
     finally:
-        # Close stdin to signal end-of-input, then drain. The server
-        # will tear down on EOF; communicate() collects whatever is
-        # left and reaps the child.
-        try:
-            if proc.stdin is not None and not proc.stdin.closed:
-                proc.stdin.close()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+        _shutdown(proc)
 
     names = sorted(t["name"] for t in resp.get("result", {}).get("tools", []))
     if names != expected:

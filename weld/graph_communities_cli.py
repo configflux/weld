@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from weld._safe_text import sanitize_json_text, sanitize_terminal_text
 from weld.graph import Graph
 from weld.graph_communities import build_graph_communities
 from weld.graph_communities_render import (
@@ -31,9 +32,11 @@ def run_graph_communities(args: Any, graph: Graph) -> None:
         write_community_artifacts(output_dir, payload)
     fmt = _resolve_format(args)
     if fmt == "json":
-        sys.stdout.write(dumps_communities(payload))
+        # Escape at the tty, not in dumps_communities: the same text is
+        # written to graph-communities.json, which keeps its exact bytes.
+        sys.stdout.write(sanitize_json_text(dumps_communities(payload)))
     else:
-        sys.stdout.write(render_community_report(payload))
+        sys.stdout.write(sanitize_terminal_text(render_community_report(payload)))
 
 
 def _resolve_format(args: Any) -> str:

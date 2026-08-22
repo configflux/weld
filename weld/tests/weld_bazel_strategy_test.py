@@ -227,6 +227,41 @@ py_library(
                 self.assertIsInstance(props["roles"], list)
                 self.assertGreater(len(props["roles"]), 0)
 
+    def test_external_dep_node_metadata(self) -> None:
+        """``external-dep`` nodes carry the strategy's usual provenance (ADR 0121).
+
+        Deliberately not covered by ``test_node_metadata_contract`` above,
+        which asserts a non-empty ``roles`` on every node this strategy
+        emits: an external dependency gets no ``roles`` at all, on purpose
+        -- none of ``weld.contract.ROLE_VALUES`` honestly describes "a
+        dependency this repo declares but never analyzes", and the
+        project's "omit instead of guess" rule wins over stamping the
+        closest wrong word.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "BUILD.bazel").write_text('''\
+py_library(
+    name = "root_lib",
+    srcs = ["main.py"],
+    deps = ["@pypi//tree_sitter_cpp"],
+)
+''')
+            source = {"glob": "BUILD.bazel"}
+            result = extract(root, source, {})
+
+            ext_node = result.nodes["external-dep:pypi:tree_sitter_cpp"]
+            self.assertEqual(ext_node["type"], "external-dep")
+            self.assertEqual(ext_node["label"], "@pypi//tree_sitter_cpp")
+            props = ext_node["props"]
+            self.assertEqual(props["source_strategy"], "bazel")
+            self.assertEqual(props["authority"], "canonical")
+            self.assertEqual(props["confidence"], "definite")
+            self.assertEqual(props["ecosystem"], "pypi")
+            self.assertEqual(props["package"], "tree_sitter_cpp")
+            self.assertEqual(props["bazel_label"], "@pypi//tree_sitter_cpp")
+            self.assertNotIn("roles", props)
+
     def test_edge_metadata_contract(self) -> None:
         """Every edge must include source_strategy and confidence."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -245,6 +280,57 @@ py_test(
                 self.assertIn("source_strategy", edge["props"])
                 self.assertEqual(edge["props"]["source_strategy"], "bazel")
                 self.assertIn("confidence", edge["props"])
+
+    def test_every_edge_kind_carries_build_file_provenance(self) -> None:
+        """ADR 0074: every emitted edge names the BUILD file that declared it.
+
+        Not decoration -- the incremental purge attributes an edge to a file
+        or falls back to endpoint membership, and every edge this strategy
+        emits crosses out of the BUILD file into something another source
+        entry owns. Unstamped, editing a declared source dropped its inbound
+        ``contains`` edge for good, because the clean BUILD file never re-ran
+        to re-mint it (bd cpkp). The fixture below emits all five shapes:
+        ``contains`` (srcs), ``depends_on`` (deps, data, and the loaded
+        ``.bzl``) and ``tests``.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pkg = root / "pkg"
+            pkg.mkdir()
+            (pkg / "srcs.bzl").write_text('LIB_SRCS = ["lib.py"]\n')
+            (pkg / "BUILD.bazel").write_text('''\
+load(":srcs.bzl", "LIB_SRCS")
+
+py_library(
+    name = "lib",
+    srcs = LIB_SRCS,
+)
+
+py_test(
+    name = "lib_test",
+    srcs = ["lib_test.py"],
+    deps = [":lib"],
+    data = ["fixture.txt"],
+)
+''')
+            result = extract(root, {"glob": "**/BUILD.bazel"}, {})
+
+            self.assertTrue(result.edges)
+            for edge in result.edges:
+                self.assertEqual(
+                    edge["props"].get("provenance"), {"file": "pkg/BUILD.bazel"},
+                    f"edge {edge['from']} -{edge['type']}-> {edge['to']} is "
+                    "unattributable to its producing BUILD file",
+                )
+            self.assertEqual(
+                {e["type"] for e in result.edges}, {"contains", "depends_on", "tests"},
+            )
+            targets = {e["to"] for e in result.edges}
+            self.assertIn("file:pkg/srcs", targets)  # the loaded .bzl
+            # The deferred ``data`` entry, in the ADR 0111 referrer spelling a
+            # ``.txt`` resolves to -- what it resolves to does not matter here,
+            # only that the second pass emitted it and it carries provenance.
+            self.assertIn("config:pkg_fixture_txt", targets)
 
     def test_bazel_label_in_props(self) -> None:
         """Targets must have a bazel_label prop for tooling lookup."""

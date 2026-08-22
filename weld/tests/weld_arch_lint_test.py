@@ -359,6 +359,14 @@ class StrategyCoverageRuleTest(unittest.TestCase):
         from weld.arch_lint import available_rule_ids
         self.assertIn("strategy-coverage", available_rule_ids())
 
+    def test_cross_source_edge_provenance_listed_in_available_rules(self) -> None:
+        # ADR 0074 (sixth amendment): weld._graph_edge_provenance_lint's
+        # rule logic has its own dedicated test suite
+        # (weld_graph_edge_provenance_lint_test.py); this just pins that it
+        # is actually reachable through the `wd lint` rule registry.
+        from weld.arch_lint import available_rule_ids
+        self.assertIn("cross-source-edge-provenance", available_rule_ids())
+
     def test_recursive_glob_unmatched(self) -> None:
         r = self._lint_coverage(
             'sources:\n  - glob: "deep/**/*.rs"\n'

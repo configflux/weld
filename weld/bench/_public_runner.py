@@ -23,6 +23,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
 
+# Aliased: ``PublicRunReport`` carries a ``weld_version`` field and is built
+# with a ``weld_version=`` keyword, so one name must not mean two things here.
+from weld._version import weld_version as resolve_weld_version
+
 # Re-export manifest types so callers continue to use one import surface.
 from weld.bench._public_corpus import (  # noqa: F401
     CorpusSource,
@@ -358,14 +362,22 @@ def _skip_reason_for(repo: PublicRepo) -> str:
 
 
 def _weld_version() -> str:
-    """Best-effort weld version for the report header (deterministic)."""
-    version_file = (
-        Path(__file__).resolve().parent.parent.parent / "VERSION"
-    )
-    try:
-        return version_file.read_text(encoding="utf-8").strip()
-    except OSError:
-        return "unknown"
+    """Return the weld version for the report header, or ``"unknown"``.
+
+    :mod:`weld._version` owns resolution, so a published report cannot
+    disagree with ``wd --version`` about the same install. Resolving it
+    here is what caused the bug this replaced: reading only
+    ``<package>/../../VERSION`` finds the repo root in a source checkout
+    but site-packages in an installed wheel -- where none exists -- so
+    every installed run headered ``"unknown"``.
+
+    The fallback stays prose rather than the sqlite sidecar's
+    version-shaped ``"0"``: this is the first line a reader of a
+    published report sees. Determinism is unaffected -- the resolver is a
+    pure function of the environment, so the two runs ``--verify``
+    compares answer identically.
+    """
+    return resolve_weld_version() or "unknown"
 
 
 __all__ = [

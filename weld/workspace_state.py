@@ -24,6 +24,7 @@ from weld._workspace_lock import (
     WorkspaceLockedError,
     WORKSPACE_LOCK_FILENAME,
 )
+from weld._safe_text import dumps_safe_json, sanitize_terminal_text
 from weld.workspace import WorkspaceConfig, load_workspaces_yaml
 from weld._notice import emit
 
@@ -197,7 +198,28 @@ def build_workspace_state(
 
 
 def save_workspace_state(root: Path | str, state: WorkspaceState) -> None:
-    """Write ``workspace-state.json`` atomically via :func:`atomic_write_text`."""
+    """Write ``workspace-state.json`` atomically via :func:`atomic_write_text`.
+
+    Refuses any *root* with no workspace registry. The ledger describes
+    registered children, so at a single-repo root it can only ever be the empty
+    ``{"children": {}, "version": 1}`` -- a stray file that says nothing, in a
+    directory a contributor expects to hold config. Callers already check
+    :func:`load_workspace_config` first, but that is a convention each caller
+    has to remember; enforcing it here means a transient ``workspaces.yaml`` or
+    a caller added later cannot produce the file at all.
+
+    Resolution goes through :func:`find_workspaces_yaml`, so **both**
+    ``_WORKSPACES_CANDIDATES`` locations count as a registry. This is a
+    write-time refusal, not a cleanup: an existing ledger at a root that has
+    stopped being a workspace is left untouched.
+    """
+    if find_workspaces_yaml(root) is None:
+        raise WorkspaceStateError(
+            f"refusing to write {WORKSPACE_STATE_FILENAME} at {Path(root)}: no "
+            f"workspace registry found ({' or '.join(_WORKSPACES_CANDIDATES)}). "
+            f"The child ledger only describes registered children; run "
+            f"`wd init` or `wd workspace bootstrap` to declare them first",
+        )
     state_path = Path(root) / ".weld" / WORKSPACE_STATE_FILENAME
     text = json.dumps(state.to_dict(), indent=2, sort_keys=True) + "\n"
     atomic_write_text(state_path, text)
@@ -292,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     status_parser.add_argument(
         "--json", action="store_true",
         help="Emit the workspace-state.json payload (present children gain a "
-        "derived 'freshness' object; ADR 0066)",
+        "derived 'freshness' object)",
     )
 
     add_bootstrap_subparser(subparsers, _WS_DEFAULT_MAX_DEPTH)
@@ -317,8 +339,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         payload = augment_status_json(args.root, state)
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                payload, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
     else:
         fresh = freshness_by_name(args.root, state)
-        sys.stdout.write(format_workspace_status(state, fresh) + "\n")
+        # Child names are directory names from the scanned workspace.
+        sys.stdout.write(
+            sanitize_terminal_text(format_workspace_status(state, fresh)) + "\n"
+        )
     return 0

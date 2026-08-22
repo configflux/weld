@@ -12,6 +12,8 @@ alternative is tried independently (OR semantics within a synonym group).
 
 from __future__ import annotations
 
+from weld.query_index import SEPARATOR_CHARS
+
 # ---------------------------------------------------------------------------
 # Synonym table: conceptual term -> list of aliases
 #
@@ -214,6 +216,80 @@ def filter_stopwords(tokens: list[str]) -> list[str]:
     kept = [tok for tok in tokens if tok not in _QUERY_STOPWORDS]
     return kept if kept else list(tokens)
 
+def _separator_variants(token: str) -> list[str]:
+    """Return same-alphabet re-spellings of *token* (bd pxjc, widened bd 2xoj).
+
+    Humans type a name the way its project spells it; code spells it the way
+    the language allows. ``wd query "tree-sitter availability gate"`` returned
+    no tree-sitter node at all -- not a ranking failure, a *match* failure:
+    every node is spelled ``tree_sitter``, and ``tree-sitter`` is not a
+    substring of it, so nothing was ever a candidate. The same query with an
+    underscore returns ``file:weld/strategies/tree_sitter`` first.
+
+    bd pxjc's fix swapped only ``-``/``_``, two of the six characters
+    ``weld.query_index.SEPARATOR_CHARS`` actually splits an indexed field on.
+    A query token spelled with ``.``, ``/``, ``:`` or ``·`` inherited the same
+    match failure one separator further out (``'graph.json'`` could not reach
+    a node spelled ``graph_json``, and vice versa -- bd 2xoj). This widens the
+    rule to the whole alphabet, imported from :mod:`weld.query_index` rather
+    than re-declared here, so the two cannot drift apart silently again.
+
+    THE RULE -- canonical-form join, bounded, deterministic. A token with no
+    separator character yields nothing (the overwhelming majority -- the
+    early return keeps that case free). Otherwise: replace every separator
+    character in the token with one pivot character to get a canonical form,
+    then, for each of the alphabet's characters in turn, respell that
+    canonical form using it in place of the pivot. Whichever respelling
+    reproduces the input verbatim is the token itself and is dropped, not
+    returned. The output is therefore at most ``len(SEPARATOR_CHARS)`` entries
+    -- *always*, regardless of how many separators or how many distinct
+    separator characters the input token contains, which is what keeps this
+    O(1) per token instead of combinatorial (a token with k separator
+    occurrences does not get more variants than a token with one).
+
+    Variants join the *same* group, so they are OR-ed with the raw token and
+    never add an AND clause. They are re-spellings of the WHOLE token only --
+    never the punctuation-split parts (``'graph.json'`` never yields ``'graph'``
+    or ``'json'`` on their own). Adding the parts would let a token match a
+    subject that merely mentions one fragment in passing (``weld/serializer``
+    exports ``dumps_graph``, which contains ``'graph'``), which is the
+    cosmetic-match shape ADR 0113 rejects for a sibling mechanism -- the index
+    already carries those parts for nodes genuinely about just one fragment,
+    and widening the query side to match them too would turn a compound-token
+    query into an unrelated bag-of-words query.
+
+    A token that is NOTHING BUT separator characters (``'_'``, ``'---'``) is
+    not a compound name and is also skipped, returning ``[]``: the canonical
+    form of an all-punctuation token collapses to a run of one repeated
+    character, so respelling it would hand back single-character "variants"
+    like ``'/'`` or ``'.'`` -- and a lone punctuation character is a substring
+    of nearly every indexed token in a real graph (any file path contains
+    ``'/'``, any node id contains ``':'``), so trying it as a query token
+    widens toward matching everything. ``weld_sqlite_query_test.py``'s
+    injection-probe suite pins the observable contract this guards
+    (``wd query "_"`` must stay empty, the same as the sibling ``'%'`` probe)
+    -- SQL ``LIKE`` metacharacter escaping was never the mechanism here, so
+    widening candidacy could reopen it by a different door.
+
+    The token itself is never returned.
+    """
+    t = token.lower()
+    if not any(ch in t for ch in SEPARATOR_CHARS):
+        return []
+    if all(ch in SEPARATOR_CHARS for ch in t):
+        return []
+    pivot = SEPARATOR_CHARS[0]
+    canonical = t
+    for ch in SEPARATOR_CHARS[1:]:
+        canonical = canonical.replace(ch, pivot)
+    out: list[str] = []
+    for sep in SEPARATOR_CHARS:
+        variant = canonical.replace(pivot, sep)
+        if variant != t and variant not in out:
+            out.append(variant)
+    return out
+
+
 def expand_token_groups(tokens: list[str]) -> list[list[str]]:
     """Expand each token into a group of [itself + synonym aliases + stems].
 
@@ -226,6 +302,17 @@ def expand_token_groups(tokens: list[str]) -> list[list[str]]:
     a plural path token (``strategies``) within the same group -- ADR 0075
     part 3.  Stems join the same group, so this never adds a new AND clause.
 
+    It likewise gains the ``-``/``_`` re-spellings (:func:`_separator_variants`)
+    so a query typed the way a project spells its name (``tree-sitter``) covers
+    the way the language spells it (``tree_sitter``) -- bd pxjc.
+
+    Element 0 of every returned group is the raw token the user typed, before
+    any alias, stem or separator variant. :func:`weld._test_paths.
+    query_names_tests` and :func:`weld._issue_concepts.query_names_backlog`
+    both read that position to decide whether their demotion applies, so the
+    ordering here is load-bearing rather than incidental: appending is what
+    keeps one synonym table from silently widening those guards.
+
     Function-word stopwords are dropped first (:func:`filter_stopwords`) so a
     natural-language query ("how does auth work") yields groups only for its
     content tokens. This is the single chokepoint all query paths route
@@ -236,7 +323,11 @@ def expand_token_groups(tokens: list[str]) -> list[list[str]]:
     for tok in tokens:
         group = [tok]
         seen = {tok}
-        for alias in list(SYNONYMS.get(tok, [])) + _stem_variants(tok):
+        for alias in (
+            list(SYNONYMS.get(tok, []))
+            + _stem_variants(tok)
+            + _separator_variants(tok)
+        ):
             a = alias.lower()
             if a not in seen:
                 seen.add(a)

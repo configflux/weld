@@ -24,6 +24,13 @@ Two design constraints from ADR 0066 are load-bearing here:
 * The oracle is **read-only and failure-isolated**: any exception probing
   one child yields ``state="unknown"`` for that child and never raises into
   the caller. One unreadable child must not blind the root to the others.
+
+This module answers only "what do I know about this child", never "what does
+a staleness answer look like". Shaping the ``wd stale`` / MCP ``weld_stale``
+payload -- including the non-federated single-repo case, which has no children
+to ask about -- lives in :mod:`weld._stale_payload`, which imports from here.
+That direction is one-way on purpose: the oracle must stay usable without
+knowing which payload its answers end up in.
 """
 
 from __future__ import annotations
@@ -43,7 +50,6 @@ __all__ = [
     "augment_status_json",
     "child_status_token",
     "aggregate_root_stale",
-    "stale_payload",
 ]
 
 # Stored lifecycle states that already carry their own meaning and must
@@ -337,33 +343,3 @@ def aggregate_root_stale(root: Path | str, root_info: dict, state: dict) -> dict
     payload["children"] = children_payload
     payload["stale"] = root_stale or any_child_stale
     return payload
-
-
-def stale_payload(root: Path | str, root_info: dict) -> dict:
-    """Return the ``wd stale`` payload, federated-aware (ADR 0066 §2).
-
-    *root_info* is the root graph's own :func:`compute_stale_info` result
-    (i.e. ``Graph.stale()``). At a **single repo** it is returned unchanged.
-    At a **federated root** (``workspaces.yaml`` present) the child oracle
-    is folded in via :func:`aggregate_root_stale`.
-
-    The ledger is rebuilt live from the workspace config rather than read
-    from a possibly-stale ``workspace-state.json``, so a child that just
-    appeared or whose graph just changed is seen immediately. Building it is
-    read-only (git + file-stat per child). Any failure rebuilding the ledger
-    is isolated: the plain root payload is returned so ``wd stale`` never
-    crashes on a federated root with an unreadable child registry.
-    """
-    from weld.workspace_state import build_workspace_state, load_workspace_config
-
-    try:
-        config = load_workspace_config(root)
-    except Exception:  # noqa: BLE001 -- a broken registry must not crash stale
-        return root_info
-    if config is None:
-        return root_info
-    try:
-        state = build_workspace_state(root, config).to_dict()
-    except Exception:  # noqa: BLE001 -- failure isolation (ADR 0066 part 1)
-        return root_info
-    return aggregate_root_stale(root, root_info, state)

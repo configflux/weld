@@ -37,12 +37,13 @@ Output envelope (stable contract)::
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections import deque
 from pathlib import Path
 from typing import Any
 
+from weld._root_resolver import ROOT_HELP, resolve_weld_root
+from weld._safe_text import dumps_safe_json
 from weld.ranking import rank_key as _rank_key
 from weld.trace_contract import (
     TRACE_EDGE_TYPES,
@@ -300,10 +301,7 @@ def main(argv: list[str] | None = None) -> None:
         "--node", dest="node_id", default=None,
         help="Anchor by node id instead of a term",
     )
-    parser.add_argument(
-        "--root", type=Path, default=Path("."),
-        help="Project root directory",
-    )
+    parser.add_argument("--root", type=Path, default=None, help=ROOT_HELP)
     parser.add_argument(
         "--depth", type=int, default=_DEFAULT_DEPTH,
         help=f"BFS depth from each anchor seed (default {_DEFAULT_DEPTH})",
@@ -318,11 +316,19 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--no-refresh", dest="no_refresh", action="store_true", default=False,
         help=(
-            "Skip the auto-refresh that runs when the graph is stale "
-            "(ADR 0051). A warning is emitted to stderr."
+            "Skip the auto-refresh that runs when the graph is stale. "
+            "A warning is emitted to stderr."
+        ),
+    )
+    parser.add_argument(
+        "--full-size", dest="full_size", action="store_true", default=False,
+        help=(
+            "Skip the read byte budget and emit the whole slice, "
+            "however large"
         ),
     )
     args = parser.parse_args(argv)
+    args.root = resolve_weld_root(args.root)  # ADR 0096
 
     if (args.term is None) == (args.node_id is None):
         parser.error("provide either a term or --node, not both")
@@ -340,7 +346,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.term is not None
         else _build_retry_hint("trace", node=args.node_id)
     )
-    ensure_graph_exists(args.root, retry_cmd)
+    ensure_graph_exists(args.root, retry_cmd, no_refresh=args.no_refresh)
     auto_refresh_if_stale(
         args.root,
         no_refresh=args.no_refresh,
@@ -373,5 +379,13 @@ def main(argv: list[str] | None = None) -> None:
             depth=args.depth,
             seed_limit=args.seed_limit,
         )
-    json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-    sys.stdout.write("\n")
+    # ADR 0082: ``wd trace`` has no human renderer -- this payload always goes
+    # out as JSON -- so the byte budget applies unconditionally here, matching
+    # ``weld_trace`` (ADR 0083). A slice under budget is returned untouched.
+    from weld.read_traversal import shape_trace
+
+    sys.stdout.write(
+        dumps_safe_json(
+            shape_trace(result, full_size=args.full_size), indent=2,
+        ) + "\n"
+    )

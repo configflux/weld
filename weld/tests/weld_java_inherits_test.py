@@ -291,6 +291,11 @@ class EmitInheritanceEdgesTest(unittest.TestCase):
         self.assertEqual(edge["type"], "inherits")
         self.assertTrue(edge["props"]["resolved"])
         self.assertEqual(edge["props"]["confidence"], "definite")
+        # ADR 0074 / bd rifzk: the edge is attributed to the file whose
+        # extends/implements clause produced it, so an incremental purge
+        # can tell "this file is stale" apart from "this edge's endpoint
+        # node happens to be gone".
+        self.assertEqual(edge["props"]["provenance"], {"file": "src/circle.java"})
 
     def test_unresolved_base_mints_sentinel(self) -> None:
         """Edge targets symbol:unresolved:<base_short> when base not in project."""

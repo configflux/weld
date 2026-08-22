@@ -130,6 +130,56 @@ class ClassifyGraphLoadErrorTest(unittest.TestCase):
         )
         self.assertIsNone(code)
 
+    def test_graph_shape_error_maps_to_graph_corrupt(self) -> None:
+        # bd 5038-1c7o: a syntactically valid graph.json missing (or with
+        # the wrong type for) "nodes"/"edges" used to reach
+        # Graph._build_inverted_index and raise an uncaught KeyError
+        # instead of classifying like every other malformed-graph case.
+        from weld._graph_schema import GraphShapeError
+
+        exc = GraphShapeError(
+            "graph payload 'nodes' must be an object, got NoneType"
+        )
+        code, message = _errors.classify_graph_load_error(
+            exc, Path("/repo/.weld/graph.json")
+        )
+        self.assertEqual(code, _errors.GRAPH_CORRUPT)
+        self.assertIn("nodes", message)
+        # GraphShapeError IS a ValueError -- confirms it stays caught by
+        # every existing `except (..., ValueError)` tuple with no changes
+        # to those tuples, while still being classified more precisely than
+        # a blanket ValueError. The sibling test right below this one pins
+        # that a bare ValueError stays deliberately unclassified.
+        self.assertIsInstance(exc, ValueError)
+
+    def test_plain_value_error_is_still_not_classified(self) -> None:
+        # Guards against a regression that widens the GraphShapeError check
+        # into a blanket `isinstance(exc, ValueError)` -- that would
+        # mislabel an unrelated ValueError raised anywhere during a graph
+        # load as a corrupt graph instead of re-raising it.
+        code, _message = _errors.classify_graph_load_error(
+            ValueError("unrelated: not a graph-shape problem"),
+            Path("/repo/.weld/graph.json"),
+        )
+        self.assertIsNone(code)
+
+    def test_is_a_directory_error_maps_to_graph_corrupt(self) -> None:
+        # ``Graph.load`` gates on ``.exists()`` (true for a directory too),
+        # so a directory left at ``.weld/graph.json`` raises this from the
+        # ``path.read_text()`` call rather than from a JSON parse -- but the
+        # remedy is identical, so it is classified the same way (bd 9yc8).
+        secret_path = "/home/alice/work/.weld/graph.json"
+        exc = IsADirectoryError(21, "Is a directory", secret_path)
+        code, message = _errors.classify_graph_load_error(
+            exc, Path(secret_path)
+        )
+        self.assertEqual(code, _errors.GRAPH_CORRUPT)
+        # SAFETY: the message is a fixed, path-free string -- stronger than
+        # the JSON-decode case, which only echoes safe positional metadata.
+        self.assertNotIn(secret_path, message)
+        self.assertNotIn("/home/alice", message)
+        self.assertTrue(message.strip())
+
 
 class FormatErrorLineTest(unittest.TestCase):
     """The CLI one-line shape carries the code and the hint on one line."""

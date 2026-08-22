@@ -29,12 +29,14 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from weld._rel_path import rel_to_root
 from weld.strategies._helpers import (
     StrategyResult,
     extract_router_info,
     extract_routes,
     filter_glob_results,
 )
+from weld.strategies._strategy_failure import note_strategy_failure
 
 def _owning_service_id(rel_path: str) -> str | None:
     """Return ``service:<name>`` if ``rel_path`` sits under ``services/<name>/``.
@@ -69,7 +71,15 @@ def _detect_boundary_file(parent_dir: Path, root: Path) -> str | None:
             continue
         try:
             tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-        except (SyntaxError, OSError):
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            # bd o642: ``UnicodeDecodeError`` is a ``ValueError``, not an
+            # ``OSError``, so a latin-1 module sorting ahead of the real app
+            # file aborted the run here even though the read errors beside it
+            # were already caught. Nothing is recorded: a boundary candidate is
+            # not this strategy's input -- it never enters ``discovered_from``
+            # -- so ``python_module``, which owns that file, is the strategy
+            # that reports it (bd hch4). A file weld cannot read declares no
+            # app, which is the true answer to the only question asked here.
             continue
         if not _declares_fastapi_app(tree):
             continue
@@ -169,10 +179,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     discovered_from: list[str] = []
 
     pattern = source["glob"]
+    # ``routers_dir`` drives both the traversal below and the boundary
+    # lookup; it is not provenance. The old ``routers_dir``-derived entry was
+    # ``"./"`` for a root-anchored glob, which marks the whole tree as
+    # tracked source (bd 8ia5).
     routers_dir = (root / pattern).parent
     if not routers_dir.is_dir():
         return StrategyResult(nodes, edges, discovered_from)
-    discovered_from.append(str(routers_dir.relative_to(root)) + "/")
 
     # Resolve boundary file once per routers directory: every route under
     # the same directory shares the same declaring boundary.
@@ -181,11 +194,25 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for py in filter_glob_results(root, sorted(routers_dir.glob(Path(pattern).name))):
         if py.name.startswith("_"):
             continue
+        rel_path = rel_to_root(py, root)
+        # Recorded before the parse: a file that declares no router today
+        # must still be re-read once someone adds one (see StrategyResult).
+        discovered_from.append(rel_path)
         try:
             tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-        except SyntaxError:
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            # bd o642, applying bd pt38's fix here: ``read_text`` raises
+            # ``OSError`` -- never ``SyntaxError`` -- so guarding the parse
+            # alone let a file that vanished between the listing above and this
+            # read abort the entire run. ``UnicodeDecodeError`` is a
+            # ``ValueError``, so widening to ``OSError`` alone would still
+            # abort on non-UTF-8 bytes. Recorded as a *failure*, not as this
+            # strategy deciding the file declares no router: a decision is
+            # keyed on the path and exempts the file from the ADR 0008 per-file
+            # repair for good, so one that came back unchanged would never be
+            # re-read (bd hch4).
+            note_strategy_failure(context, [rel_path])
             continue
-        rel_path = str(py.relative_to(root))
         router_info = extract_router_info(tree)
         if not router_info:
             continue

@@ -11,6 +11,7 @@ import unittest
 from weld.enrichment_persistence import (
     enrichment_fingerprint,
     enrichment_records,
+    missing_enrichment_fields,
     reattach_enrichment,
     valid_enrichment,
 )
@@ -55,10 +56,51 @@ class EnrichmentFingerprintTest(unittest.TestCase):
         )
 
     def test_changes_when_structural_prop_changes(self) -> None:
-        before = _with_id("n1", _node("file", "n1", file="a.py", line=3))
-        after = _with_id("n1", _node("file", "n1", file="a.py", line=4))
+        before = _with_id("n1", _node("symbol", "n1", file="a.py", kind="function"))
+        after = _with_id("n1", _node("symbol", "n1", file="a.py", kind="method"))
         self.assertNotEqual(
             enrichment_fingerprint(before), enrichment_fingerprint(after)
+        )
+
+    def test_excludes_positional_props(self) -> None:
+        # ADR 0097: coordinates are not source identity. An edit ABOVE a node
+        # shifts its line/span and grows the file's line_count without touching
+        # the node itself -- the fingerprint must not move.
+        before = _with_id(
+            "n1",
+            _node(
+                "symbol", "n1", file="a.py", kind="function",
+                line=3, start_line=3, end_line=8,
+                span={"start_line": 3, "end_line": 8}, line_count=40,
+            ),
+        )
+        after = _with_id(
+            "n1",
+            _node(
+                "symbol", "n1", file="a.py", kind="function",
+                line=91, start_line=91, end_line=96,
+                span={"start_line": 91, "end_line": 96}, line_count=128,
+            ),
+        )
+        self.assertEqual(
+            enrichment_fingerprint(before), enrichment_fingerprint(after)
+        )
+
+    def test_file_node_api_change_still_invalidates(self) -> None:
+        # ADR 0097 file-node policy: line_count is excluded, but the file's
+        # semantic identity (exports/constants/imports_from) stays in the hash.
+        base = _node(
+            "file", "n1", file="a.py", exports=["a"], constants=[], line_count=10,
+        )
+        whitespace_only = _with_id("n1", dict(base, props=dict(base["props"], line_count=11)))
+        api_changed = _with_id("n1", dict(base, props=dict(base["props"], exports=["a", "b"])))
+        self.assertEqual(
+            enrichment_fingerprint(_with_id("n1", base)),
+            enrichment_fingerprint(whitespace_only),
+        )
+        self.assertNotEqual(
+            enrichment_fingerprint(_with_id("n1", base)),
+            enrichment_fingerprint(api_changed),
         )
 
     def test_is_node_only_identity_not_neighbor_sensitive(self) -> None:
@@ -83,6 +125,40 @@ class ValidEnrichmentTest(unittest.TestCase):
         broken = _record()
         del broken["model"]
         self.assertFalse(valid_enrichment(broken))
+
+    def test_missing_fields_enumerated_for_actionable_rejection(self) -> None:
+        # ADR 0097: the write-time rejection names exactly what is absent.
+        self.assertEqual(missing_enrichment_fields(_record()), [])
+        broken = _record()
+        del broken["model"]
+        self.assertEqual(missing_enrichment_fields(broken), ["model"])
+        self.assertEqual(
+            missing_enrichment_fields(_record(description="   ")), ["description"]
+        )
+        self.assertEqual(
+            missing_enrichment_fields(_record(model=7)), ["model"]
+        )
+        self.assertEqual(
+            missing_enrichment_fields({"description": "d"}),
+            ["provider", "model", "timestamp"],
+        )
+
+    def test_missing_fields_on_non_dict_lists_every_field(self) -> None:
+        for value in (None, "nope", ["provider"]):
+            self.assertEqual(
+                missing_enrichment_fields(value),
+                ["provider", "model", "timestamp", "description"],
+            )
+
+    def test_valid_enrichment_agrees_with_missing_fields(self) -> None:
+        # Single-sourced: the boolean gate and the rejection detail must never
+        # disagree about what "structurally complete" means.
+        for candidate in (
+            _record(), _record(description=""), {"provider": "p"}, None, "x",
+        ):
+            self.assertEqual(
+                valid_enrichment(candidate), not missing_enrichment_fields(candidate)
+            )
 
     def test_records_extracts_valid_only(self) -> None:
         previous = {
@@ -119,15 +195,16 @@ class ReattachEnrichmentTest(unittest.TestCase):
         self.assertEqual(props["purpose"], "Why it exists.")
 
     def test_mismatched_fingerprint_drops_enrichment(self) -> None:
-        # Node's own structural source changed (line 3 -> 9): the stored
-        # fingerprint no longer matches, so enrichment is invalidated and the
-        # fresh structural description stands.
+        # Node's own structural source changed (its exported API moved): the
+        # stored fingerprint no longer matches, so enrichment is invalidated and
+        # the fresh structural description stands.
         nodes = {
             "n1": _node(
-                "file", "n1", file="a.py", line=9, description="Fresh structural.",
+                "file", "n1", file="a.py", exports=["b"],
+                description="Fresh structural.",
             )
         }
-        record = _record(fingerprint="fingerprint-from-line-3")
+        record = _record(fingerprint="fingerprint-of-the-old-exports")
         previous = {"nodes": {"n1": _node("file", "n1", enrichment=record)}}
 
         reattach_enrichment(nodes, previous)

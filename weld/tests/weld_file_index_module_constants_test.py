@@ -20,6 +20,14 @@ Bounded resource use is part of the contract:
 
 Both caps live in ``weld.file_index`` and are exercised by the
 synthetic-overflow case below.
+
+Scope note: this file pins the *constant* rule only. A second rule now
+contributes class-level attribute names, keyword-argument names and
+identifier-shaped string literals -- the field surface, pinned by
+``weld_file_index_field_surface_test.py``. Where the two could be confused
+(a ``UPPER_CASE`` name in a class body) the assertion here addresses
+``_module_constant_names`` directly, so neither rule can be tightened by a
+test that was really describing the other.
 """
 
 from __future__ import annotations
@@ -95,13 +103,35 @@ class FileIndexModuleConstantsTest(unittest.TestCase):
                 f"surface; tighten the convention regex",
             )
 
-    def test_class_and_function_locals_excluded(self) -> None:
-        """Class-body and function-body assignments must not surface as
-        module-level constants -- only ``tree.body`` is in scope.
+    def test_constant_rule_sees_only_module_level_assignments(self) -> None:
+        """Neither a class body nor a function body is a module constant.
+
+        Asserted against ``_module_constant_names`` rather than the whole
+        extractor, because that is the rule this file is about and it is the
+        only way to keep the assertion honest now that a *second* rule also
+        reads class bodies: the field surface indexes class-level attribute
+        names on purpose (bd 2peg), so ``CLASS_LEVEL`` does reach the token
+        list -- as a field, never as a constant. Asserting its absence from
+        the merged token list would pin the union of two rules while claiming
+        to describe one.
         """
-        tokens = set(_extract_python_tokens(_FIXTURE))
-        self.assertNotIn("CLASS_LEVEL", tokens)
-        self.assertNotIn("FUNCTION_LEVEL", tokens)
+        import ast
+
+        from weld.file_index import _module_constant_names
+
+        constants = _module_constant_names(ast.parse(_FIXTURE))
+        self.assertNotIn("CLASS_LEVEL", constants)
+        self.assertNotIn("FUNCTION_LEVEL", constants)
+        self.assertIn("PUBLIC_CONST", constants)
+
+    def test_function_locals_reach_no_rule_at_all(self) -> None:
+        """A name bound inside a function is neither a constant nor a field.
+
+        The bound that keeps the field surface from becoming full-text
+        indexing: ``FUNCTION_LEVEL`` is assigned and returned in the fixture's
+        ``helper()`` and must still be absent from the whole token list.
+        """
+        self.assertNotIn("FUNCTION_LEVEL", set(_extract_python_tokens(_FIXTURE)))
 
     def test_per_file_cap_enforced(self) -> None:
         """A pathological module with thousands of UPPER_CASE assigns

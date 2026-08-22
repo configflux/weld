@@ -1,9 +1,10 @@
 """Load-time inverted index for fast wd query candidate lookup.
 
 Builds a token-to-node-IDs mapping from node ID, label, props.file,
-props.exports, props.qualname, props.constants, props.description, and
-props.headings so that ``Graph.query()`` can narrow candidates in O(1)
-per token instead of scanning every node linearly.
+props.exports, props.qualname, props.constants, props.description,
+props.summary, props.headings and props.keywords so that
+``Graph.query()`` can narrow candidates in O(1) per token instead of
+scanning every node linearly.
 
 The index is a plain ``dict[str, set[str]]`` — no external files or
 databases.  It is built once at graph load time and kept in sync by
@@ -13,7 +14,16 @@ incremental ``index_node`` / ``deindex_node`` calls on mutations.
 
 from __future__ import annotations
 
-_SEPARATORS = str.maketrans("/:.·-_", "      ")
+#: Characters the index treats as separators when splitting an indexed
+#: field. The single source of truth for the index's separator alphabet
+#: (bd 2xoj) -- ``weld.synonyms._separator_variants`` imports this rather
+#: than re-declaring its own subset, which is exactly how the two drifted
+#: apart before: the index split six characters, the query side re-spelled
+#: only two of them, so a query token spelled with ``.``, ``/``, ``:`` or
+#: ``·`` could only match a node carrying that exact punctuation verbatim.
+SEPARATOR_CHARS = "/:.·-_"
+
+_SEPARATORS = str.maketrans(SEPARATOR_CHARS, " " * len(SEPARATOR_CHARS))
 
 def _split_field(value: str) -> list[str]:
     """Lowercase *value* and split on common separators."""
@@ -27,7 +37,8 @@ def node_tokens(nid: str, node: dict) -> list[str]:
     """Extract lowercased tokens from a node for indexing.
 
     Sources: node ID, label, props.file, props.exports, props.qualname,
-    props.constants, props.description, props.headings.
+    props.constants, props.description, props.summary, props.headings,
+    props.keywords.
 
     ``props.constants`` carries module-level Python constants
     (``UPPER_CASE`` / ``_UPPER_CASE``) emitted by the ``python_module``
@@ -39,6 +50,27 @@ def node_tokens(nid: str, node: dict) -> list[str]:
     ``markdown`` strategy so the inverted index can narrow candidates
     by heading content for multi-token doc queries (e.g. ``wd query
     "language support"`` matching ``## Language support``).
+
+    ``props.summary`` carries the opening paragraph of a module's own
+    docstring (bd ph1g) -- the author's one-line statement of what the
+    module is, recorded by ``python_module`` on every discover. It is
+    what makes a name that appears *only* in that sentence reachable:
+    ``weld/serializer.py`` opens "Canonical serializer for
+    ``graph.json``", and before this field no node in the graph carried
+    the substring ``graph.json`` at all, so the token matched nothing.
+    Distinct from ``description`` on purpose -- that field is enrichment
+    *output*, written by an LLM pass, while a summary is structural
+    input re-read from source every run.
+
+    ``props.keywords`` is the generic, strategy-owned version of that
+    (ADR 0105): any strategy may declare short words that should reach
+    the fact it recorded, without a core edit here. It exists because
+    the alternative was misusing ``headings`` -- ``viz_frontend``
+    already files HTML element ids and CSS selectors under it, and a
+    build target's rule kind would have been the third thing named a
+    heading that is not one. Kept short by contract; prose belongs in
+    ``description``, since ``candidate_nodes`` scans every indexed
+    token per query token and index size is on the query hot path.
     """
     tokens: list[str] = _split_field(nid)
 
@@ -68,9 +100,17 @@ def node_tokens(nid: str, node: dict) -> list[str]:
     if desc_val:
         tokens.extend(_split_field(desc_val))
 
+    summary_val = props.get("summary") or ""
+    if summary_val:
+        tokens.extend(_split_field(str(summary_val)))
+
     for heading in props.get("headings", []):
         if isinstance(heading, str) and heading:
             tokens.extend(_split_field(heading))
+
+    for keyword in props.get("keywords", []):
+        if isinstance(keyword, str) and keyword:
+            tokens.extend(_split_field(keyword))
 
     return tokens
 

@@ -2,14 +2,36 @@ load("@rules_python//python:defs.bzl", "py_library")
 
 package(default_visibility = ["//visibility:public"])
 
+# Exported so //weld/tests:weld_subpackage_srcs_claim_test can stage this
+# package's own declarations in its runfiles and read them -- same reason
+# //weld:BUILD.bazel is exported (see that package's BUILD.bazel comment).
+exports_files([
+    "BUILD.bazel",
+])
+
+# Every .py file that EXISTS in this package, as opposed to every one some
+# target declares. //weld/tests:weld_subpackage_srcs_claim_test set-diffs the
+# two to catch a module that is on disk but claimed by no target -- the same
+# bd 73xa ModuleNotFoundError shape //weld:all_python_sources guards for
+# weld/BUILD.bazel. A glob is required rather than convenient: staging the
+# declared srcs instead would make the test enumerate exactly the set it is
+# supposed to be checking against, and it would pass vacuously.
+filegroup(
+    name = "all_python_sources",
+    srcs = glob(["*.py"]),
+)
+
 py_library(
     name = "helpers",
     srcs = [
         "_ast_calls.py",
+        "_glob_resolve.py",
         "_helpers.py",
+        "_provenance.py",
     ],
     deps = [
         "//weld:glob_match",
+        "//weld:rel_path",
         "//weld:repo_boundary",
     ],
 )
@@ -19,7 +41,13 @@ py_library(
     srcs = [
         "__init__.py",
         "_axum_routes_helpers.py",
+        "_bazel_eval.py",
+        "_bazel_glob.py",
         "_bazel_labels.py",
+        "_bazel_loads.py",
+        "_bazel_macro_args.py",
+        "_bazel_nodes.py",
+        "_bazel_starlark.py",
         "_cmake_lexer.py",
         "_cmake_packages.py",
         "_cmake_targets.py",
@@ -44,6 +72,7 @@ py_library(
         "_csharp_syntax.py",
         "_csharp_tree_sitter.py",
         "_dds_idl_parser.py",
+        "_doc_summary.py",
         "_express_routes_helpers.py",
         "_gin_routes_helpers.py",
         "_go_inherits.py",
@@ -55,17 +84,33 @@ py_library(
         "_java_origin.py",
         "_java_tree_sitter.py",
         "_language_origin.py",
+        "_markdown_code_refs.py",
+        "_markdown_fence.py",
+        "_markdown_section_kind.py",
+        "_mock_module_ts.py",
+        "_mock_patch_python.py",
+        "_mock_patch_resolve.py",
         "_msbuild_targets_parser.py",
+        "_python_anchor.py",
         "_python_callgraph_incremental.py",
         "_python_callgraph_visitor.py",
+        "_python_decorates.py",
+        "_python_expr_resolve.py",
         "_python_inherits.py",
         "_python_module_incremental.py",
         "_python_origin.py",
+        "_python_output_sink.py",
+        "_python_references.py",
+        "_python_scope_calls.py",
+        "_python_scope_walk.py",
         "_ros2_cpp.py",
         "_ros2_py.py",
         "_rust_inherits.py",
         "_rust_origin.py",
         "_rust_tree_sitter.py",
+        "_shell_refs.py",
+        "_strategy_failure.py",
+        "_target_ids.py",
         "_test_peer_csharp.py",
         "_test_peer_go.py",
         "_test_peer_java.py",
@@ -75,10 +120,13 @@ py_library(
         "_tree_sitter_ids.py",
         "_ts_call_graph.py",
         "_ts_definitions.py",
+        "_ts_doc_comments.py",
+        "_ts_file_doc_comments.py",
         "_ts_parse.py",
         "_typescript_inherits.py",
         "_typescript_origin.py",
         "_typescript_tree_sitter.py",
+        "_workflow_run_refs.py",
         "axum.py",
         "bazel.py",
         "boundary_entrypoint.py",
@@ -115,6 +163,7 @@ py_library(
         "frontmatter_md.py",
         "gh_workflow.py",
         "gin.py",
+        "go_package.py",
         "grpc_bindings.py",
         "grpc_proto.py",
         "grpc_proto_parser.py",
@@ -138,6 +187,7 @@ py_library(
         "tool_script.py",
         "tree_sitter.py",
         "typescript_exports.py",
+        "validator_targets.py",
         "viz_frontend.py",
         "worker_stage.py",
         "yaml_meta.py",
@@ -148,9 +198,12 @@ py_library(
     deps = [
         ":helpers",
         "//weld:capabilities_registry",
+        "//weld:discover_node_merge",
+        "//weld:discover_unresolved_symbol_purge",
         "//weld:glob_match",
         "//weld:graph_node_registry",
         "//weld:node_ids",
+        "//weld:rel_path",
         "//weld:repo_boundary",
         "//weld:yaml",
     ],

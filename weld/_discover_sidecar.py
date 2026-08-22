@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 from weld._query_sidecar import write_sidecar_for_bytes as _write_query_sidecar_bytes
+from weld._safe_text import sanitize_json_text
 from weld.serializer import dumps_graph as _dumps_graph
 from weld.serializer import dumps_graph_canonical as _dumps_graph_canonical
 from weld._notice import emit
@@ -244,16 +245,23 @@ def persist_cli_graph(
     * federated: :func:`weld.discover.discover` writes the meta-graph inside the
       workspace lock, so here we only echo stdout.
     """
+    from weld._discover_state_check import mark_state_published
     from weld._graph_meta_sidecar import write_graph_with_meta
 
     if output_path is not None and not is_federated:
         write_graph_with_meta(output_path, result)  # ADR 0065: volatile meta split
         if not no_sqlite and output_path.name == "graph.json":  # ADR 0058: pair by name
             persist_sqlite_sidecar(output_path.parent, result)
+        mark_state_published(root_path, output_path)
     elif output_path is None:
         if not is_federated:
-            write_graph_with_meta(root_path / ".weld" / "graph.json", result)
-        sys.stdout.write(_dumps_graph(result))
+            canonical = root_path / ".weld" / "graph.json"
+            write_graph_with_meta(canonical, result)
+            mark_state_published(root_path, canonical)
+        # Escape at the tty only: the canonical graph.json written just above
+        # keeps its exact bytes (ADR 0012 determinism + enrichment
+        # fingerprints), and this escape round-trips to the same value.
+        sys.stdout.write(sanitize_json_text(_dumps_graph(result)))
 
 
 def _canonical_on_disk_bytes(
@@ -299,6 +307,9 @@ def finalize_single_repo(
     *,
     prior_graph_bytes: bytes | None = None,
     content_unchanged: bool = False,
+    config_fingerprint: str | None = None,
+    strategy_failed: set[str] | None = None,
+    source_failed: dict[str, dict] | None = None,
 ) -> None:
     """Persist discovery-state, every derived sidecar, and (optionally)
     ``graph.json`` -- the single tail every ``_discover_single_repo`` exit
@@ -320,15 +331,42 @@ def finalize_single_repo(
     those bytes verbatim -- no serialize and no comparison parse -- and
     skip the graph.json body rewrite entirely.
 
+    *config_fingerprint* (bd 4fpj) names the ``discover.yaml`` this run ran,
+    so the state it writes can be refused as an incremental basis once that
+    config changes. Threaded from the caller rather than re-read here: a
+    re-read could name a config edited mid-run, which no strategy ran under.
+
+    *strategy_failed* (bd hch4) names the files no strategy spoke for, so the
+    state records them as a failure instead of a decision and the ADR 0008
+    per-file repair stays armed over them. ``None`` on the no-change path,
+    which runs no strategy and therefore learns nothing either way -- and
+    cannot be reached while a failure is outstanding, because an outstanding
+    failure is itself a change.
+
+    *source_failed* (bd um00) is the entry-keyed sibling of *strategy_failed*
+    for source entries with no file footprint at all (a command-only
+    ``external_json`` adapter). Same ``None``-on-no-change reasoning, and the
+    no-change path is unreachable while one is outstanding for the same
+    structural reason: see ``weld._discover_basis.sources_needing_retry``.
+
     When *write_graph* is set, ``graph.json`` and its ADR 0065 sidecar are
     written here from those same bytes -- no second serialization. The
     standalone ``wd discover`` CLI leaves it ``False`` and owns its own
     ``--output`` write, preserving the pure build-and-return shape.
+
+    The inventory this writes covers every file the graph names as an input,
+    not only the ones a source glob resolved (bd a4q8): *current_hashes* is
+    extended with the ``meta.discovered_from`` entries missing from it -- a
+    ``.bzl`` a BUILD file loads, which ADR 0109 evaluates into a target's real
+    ``srcs``. Extended here rather than by each caller because this is the one
+    tail every discovery path runs, and an input recorded on some paths but
+    not others would settle staleness on some runs and re-latch on the next.
+    See :mod:`weld._discover_inputs`.
     """
+    from weld._discover_inputs import graph_input_hashes
     from weld._discover_state_check import save_state_for_graph
     from weld._graph_meta_sidecar import write_graph_with_meta
 
-    save_state_for_graph(root, current_hashes, graph)
     if content_unchanged and prior_graph_bytes is not None:
         graph_bytes, reused = prior_graph_bytes, True
     else:
@@ -347,3 +385,16 @@ def finalize_single_repo(
             root / ".weld" / "graph.json", graph,
             on_disk_bytes=graph_bytes, body_matches_disk=reused,
         )
+    # Last, and only now: the state is the inventory *of* graph.json, so it is
+    # published after it. Ordering is the invariant -- an interruption can then
+    # only leave the state BEHIND the graph, which the next run re-discovers,
+    # never AHEAD of it, which nothing can see (bd esww/hfm6). When this run
+    # kept its graph to itself the flag says so; ``persist_cli_graph`` re-stamps
+    # once the CLI lands the canonical copy.
+    save_state_for_graph(
+        root, graph_input_hashes(root, graph, current_hashes), graph,
+        graph_published=write_graph,
+        config_fingerprint=config_fingerprint,
+        strategy_failed=strategy_failed,
+        source_failed=source_failed,
+    )

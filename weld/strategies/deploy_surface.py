@@ -15,7 +15,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 # -- Deploy signal detection -------------------------------------------------
 
@@ -101,23 +103,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    # Handle recursive globs
-    if "**" in pattern:
-        matched = sorted(root.glob(pattern))
-        matched = filter_glob_results(root, matched)
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return StrategyResult(nodes, edges, discovered_from)
-        matched = sorted(parent.glob(Path(pattern).name))
+    matched = resolve_glob(root, pattern, excludes)
 
     for cfg_file in matched:
         if not cfg_file.is_file():
             continue
-        if should_skip(cfg_file, excludes):
-            continue
 
-        rel_path = str(cfg_file.relative_to(root))
+        rel_path = rel_to_root(cfg_file, root)
         discovered_from.append(rel_path)
 
         try:

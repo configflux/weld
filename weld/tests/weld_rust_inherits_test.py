@@ -98,6 +98,7 @@ class CachesAndStagingTest(unittest.TestCase):
             records,
             [{
                 "module_path": "src.shapes",
+                "rel_path": "src/shapes.rs",
                 "type_short": "Circle",
                 "trait_short": "Shape",
                 "trait_full": "Shape",
@@ -150,7 +151,8 @@ class FinaliseTest(unittest.TestCase):
         nodes = self._base_nodes()
         edges: list = []
         caches = {"impl_records": [{
-            "module_path": "src.shapes", "type_short": "Circle",
+            "module_path": "src.shapes", "rel_path": "src/shapes.rs",
+            "type_short": "Circle",
             "trait_short": "Shape", "trait_full": "Shape",
         }]}
         finalise(nodes, edges, caches, "tree_sitter")
@@ -161,6 +163,22 @@ class FinaliseTest(unittest.TestCase):
         self.assertEqual(edge["type"], "implements")
         self.assertTrue(edge["props"]["resolved"])
         self.assertEqual(edge["props"]["confidence"], "definite")
+        # ADR 0074 / bd rifzk: attributed to the file whose ``impl Trait
+        # for Type`` block produced the edge.
+        self.assertEqual(edge["props"]["provenance"], {"file": "src/shapes.rs"})
+
+    def test_implements_edge_omits_provenance_when_rel_path_absent(self) -> None:
+        # A record with no rel_path (e.g. a hand-built cache, or a future
+        # caller that never had one) must not crash and must simply skip
+        # the stamp -- falling back to today's endpoint-membership purge.
+        nodes = self._base_nodes()
+        edges: list = []
+        caches = {"impl_records": [{
+            "module_path": "src.shapes", "type_short": "Circle",
+            "trait_short": "Shape", "trait_full": "Shape",
+        }]}
+        finalise(nodes, edges, caches, "tree_sitter")
+        self.assertNotIn("provenance", edges[0]["props"])
 
     def test_unresolved_trait_mints_sentinel(self) -> None:
         nodes = {"symbol:rust:src.geometry:Rectangle": _symbol("src.geometry", "Rectangle")}

@@ -12,17 +12,23 @@ exercised exactly as users hit it:
   ADR 0065 sidecar seam (``load_graph_meta``), not child graph ``meta``;
 * ledger-digest drift secondary (``reason="graph_drift"``);
 * failure isolation (a probe that raises yields ``state="unknown"``,
-  never propagates).
+  never propagates);
+* layering (the oracle never imports the ``wd stale`` payload shaper it
+  feeds -- :mod:`weld._stale_payload` depends on this module, not the
+  reverse).
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType
 
+from weld import _federation_staleness, _stale_payload
 from weld._federation_staleness import child_stale_info
 from weld.workspace import ChildEntry, WorkspaceConfig
 from weld.workspace_state import build_workspace_state
@@ -295,6 +301,57 @@ class FailureIsolationTest(unittest.TestCase):
         self.assertFalse(info["stale"], info)
         self.assertEqual(info["state"], "unknown")
         self.assertIn("disk on fire", info["reason"])
+
+
+def _imports_module(module: ModuleType, target: str) -> bool:
+    """Report whether *module*'s source imports *target*, in any import form.
+
+    Walks the whole AST rather than ``tree.body``: a function-local import is
+    exactly how a dependency sneaks back in without tripping Python's own
+    circular-import error -- the same lazy trick ``stale_payload``
+    legitimately uses for ``weld.workspace_state``.
+
+    All four spellings count, because any of them would rebuild the edge:
+    ``import weld.target``, ``from weld.target import name``, ``from weld
+    import target``, and the relative ``from . import target``. The last two
+    name the module in the *alias* rather than in ``node.module``, so the
+    leaf name is matched there.
+    """
+    leaf = target.rsplit(".", 1)[-1]
+    tree = ast.parse(Path(str(module.__file__)).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name == target for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == target:
+                return True
+            if any(alias.name == leaf for alias in node.names):
+                return True
+    return False
+
+
+class LayeringTest(unittest.TestCase):
+    """The oracle must not depend on the payload it feeds (k3l0).
+
+    ``weld._stale_payload`` shapes the ``wd stale`` / ``weld_stale`` answer and
+    imports this oracle to fold child drift in. The reverse edge would put the
+    oracle back in the business of knowing what payload it ends up in -- the
+    tangle the split removed -- and Python would not complain, because a
+    function-local import resolves lazily.
+    """
+
+    def test_oracle_does_not_import_the_shaping_module(self) -> None:
+        self.assertFalse(
+            _imports_module(_federation_staleness, "weld._stale_payload"),
+        )
+
+    def test_shaping_module_imports_the_oracle(self) -> None:
+        # Keeps the assertion above non-vacuous: the dependency really does
+        # exist, and it points the one permitted way.
+        self.assertTrue(
+            _imports_module(_stale_payload, "weld._federation_staleness"),
+        )
 
 
 if __name__ == "__main__":

@@ -213,15 +213,12 @@ def render_report(results: list[BenchResult], *, tokenizer: str | None = None) -
             )
     return "\n".join(lines).rstrip() + "\n"
 
-# -- CLI entry point: `wd bench` ----------------------------------------
-# Moved to weld.bench.bench_cli to keep runner.py under the 400-line limit.
-# Legacy ``main`` import for backward compat and ``__main__.py``.
-
-def main(argv: list[str] | None = None) -> int:
-    """Delegate to :func:`weld.bench.bench_cli.main`."""
-    from weld.bench.bench_cli import main as _cli_main
-
-    return _cli_main(argv)
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+# -- CLI entry point ----------------------------------------------------
+# `wd bench`'s argv parsing and mode dispatch moved to weld.bench.bench_cli
+# to keep this module under the 400-line limit (see that module's own
+# docstring). There is deliberately no ``main`` here to delegate to it any
+# more: mirroring the weld.discover / weld._discover_cli split (bd 5038-4le0k,
+# ADR 0130), the _cli module takes real imports from this one, never the
+# other way around. Both real external callers -- weld/cli.py's ``wd bench``
+# dispatch and weld/bench/__main__.py's py_binary entry point -- import
+# weld.bench.bench_cli.main directly instead of through here.

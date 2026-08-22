@@ -45,6 +45,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from weld._node_ids import entity_id, file_id
+from weld._rel_path import rel_to_root
 from weld.strategies._helpers import StrategyResult, filter_glob_results
 from weld.strategies.grpc_proto_parser import ProtoFile, parse_proto_text
 
@@ -264,7 +265,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         pf = parse_proto_text(text)
         if not (pf.services or pf.messages or pf.enums):
             continue
-        rel_path = str(proto_path.relative_to(root))
+        rel_path = rel_to_root(proto_path, root)
         if _build_fragment(pf, rel_path, nodes, edges):
             discovered_from.append(rel_path)
 

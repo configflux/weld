@@ -36,11 +36,8 @@ import re
 from pathlib import Path
 
 from weld._node_ids import file_id as _canonical_file_id
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 #: Suffix -> role. HTML carries documentation-shaped structure (the DOM),
 #: CSS/JS are implementation chrome. All three keep the generic ``file``
@@ -203,17 +200,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
-
-    matched = filter_glob_results(
-        root, sorted(parent.glob(Path(pattern).name)), excludes=excludes
-    )
+    matched = resolve_glob(root, pattern, excludes)
     for path in matched:
         if not path.is_file():
-            continue
-        if should_skip(path, excludes, root=root):
             continue
         try:
             rel = path.relative_to(root)

@@ -190,33 +190,48 @@ class BootstrapGitignoreTest(unittest.TestCase):
 
             bootstrap_workspace(root, track_graphs=True)
 
-            # Fabricate the canonical graph + per-machine state to confirm
-            # only the per-machine file is ignored.
-            (child / ".weld" / "discovery-state.json").write_text(
-                "{}\n", encoding="utf-8",
-            )
-            (child / ".weld" / "graph.json").write_text(
-                "{}\n", encoding="utf-8",
-            )
-            (child / ".weld" / "agent-graph.json").write_text(
-                "{}\n", encoding="utf-8",
-            )
+            # Fabricate the warm-checkout artifacts plus one genuinely
+            # per-machine file, to confirm the split falls where ADR 0110
+            # puts it: each artifact travels with the record that explains
+            # it, and only the per-machine state stays behind.
+            for name in (
+                "discovery-state.json",
+                "graph.json",
+                "agent-graph.json",
+                "file-index.json",
+                "file-index-state.json",
+                "graph-meta.json",
+            ):
+                (child / ".weld" / name).write_text("{}\n", encoding="utf-8")
 
             porcelain = _git(child, "status", "--porcelain", "--untracked-files=all")
             self.assertNotIn(
-                ".weld/discovery-state.json", porcelain,
-                "track-graphs must still ignore per-machine state. "
-                f"porcelain:\n{porcelain}",
+                ".weld/graph-meta.json", porcelain,
+                "track-graphs must still ignore per-machine state (ADR 0065 "
+                f"volatile sidecar). porcelain:\n{porcelain}",
             )
+            for name in (
+                "graph.json",
+                "agent-graph.json",
+                # ADR 0110: shipped with the graph, not derived from it in
+                # the clone. Without it a fresh Mode B checkout has no
+                # account of what its graph read and pays a full pass.
+                "discovery-state.json",
+                "file-index.json",
+                # ADR 0101 fifth amendment reads the index coverage claim
+                # only from here, so a tracked index without it has no
+                # coverage probe at all.
+                "file-index-state.json",
+            ):
+                self.assertIn(
+                    f".weld/{name}", porcelain,
+                    f"track-graphs: .weld/{name} must remain visible "
+                    f"to git for tracking. porcelain:\n{porcelain}",
+                )
             self.assertIn(
-                ".weld/graph.json", porcelain,
-                "track-graphs: .weld/graph.json must remain visible "
-                f"to git for tracking. porcelain:\n{porcelain}",
-            )
-            self.assertIn(
-                ".weld/agent-graph.json", porcelain,
-                "track-graphs: .weld/agent-graph.json must remain visible "
-                f"to git for tracking. porcelain:\n{porcelain}",
+                ".weld/.gitattributes", porcelain,
+                "track-graphs: the merge policy for those artifacts must be "
+                f"committed alongside them. porcelain:\n{porcelain}",
             )
 
 

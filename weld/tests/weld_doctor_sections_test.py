@@ -19,6 +19,19 @@ from unittest.mock import patch
 from weld.doctor import doctor, format_results
 
 
+# Version reported for a simulated ``mcp`` install. Tests that make every
+# optional dep "available" have to say *which* mcp SDK, because availability
+# alone no longer means usable: the probe holds an installed SDK below the
+# stdio server's floor to be a degraded state, not a satisfied dependency.
+# Without this the assertions below would read the host's own SDK and pass or
+# fail by accident (weld_doctor_optional_mcp_version_test covers the floor).
+_SUPPORTED_MCP = "2.1.0"
+
+
+def _supported_mcp_sdk():
+    return patch("weld._mcp_sdk.installed_version", return_value=_SUPPORTED_MCP)
+
+
 def _minimal_graph(nodes=None, edges=None, meta=None):
     data = {
         "meta": meta or {"schema_version": 4},
@@ -147,7 +160,7 @@ class DoctorOptionalDepsTest(unittest.TestCase):
             ), patch(
                 "weld._doctor_optional.shutil.which",
                 return_value=None,
-            ):
+            ), _supported_mcp_sdk():
                 results = doctor(root)
 
             optional = [r for r in results if r.section == "Optional"]
@@ -203,7 +216,7 @@ class DoctorOptionalDepsTest(unittest.TestCase):
             ), patch(
                 "weld._doctor_optional.shutil.which",
                 return_value="/usr/bin/copilot",
-            ):
+            ), _supported_mcp_sdk():
                 results = doctor(root)
             optional = [r for r in results if r.section == "Optional"]
             warns = [r for r in optional if r.level == "warn"]
@@ -296,7 +309,7 @@ class DoctorStatusLineTest(unittest.TestCase):
                  ), patch(
                      "weld._doctor_optional.shutil.which",
                      return_value="/usr/bin/copilot",
-                 ):
+                 ), _supported_mcp_sdk():
                 results = doctor(root)
             formatted = format_results(results)
             last_line = formatted.strip().splitlines()[-1]

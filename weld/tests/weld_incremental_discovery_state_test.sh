@@ -47,8 +47,10 @@ with open('${STATE_FILE}') as f:
 errors = []
 if state.get('version') != 1:
     errors.append(f'expected version 1, got {state.get(\"version\")}')
-if 'created_at' not in state:
-    errors.append('missing created_at')
+if 'created_at' in state:
+    errors.append('created_at is back: the inventory records claims about the '
+                  'tree, not when the run happened, so a no-change discover '
+                  'must not rewrite this tracked file (bd lrfu)')
 if 'files' not in state:
     errors.append('missing files')
 elif not isinstance(state['files'], dict):

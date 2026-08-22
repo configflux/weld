@@ -275,6 +275,24 @@ def _wiki_exporter_factory(graph: Graph) -> "MultiFileExporter":
 _MULTI_FILE_FORMATS["wiki"] = _wiki_exporter_factory
 
 
+def _resolve_graph(root: str | Path, graph: Graph | None) -> Graph:
+    """Return *graph* if supplied, else construct+load a fresh one from *root*.
+
+    Callers that already hold a loaded :class:`Graph` (the CLI, which loads
+    one to convert a corrupt/truncated ``graph.json`` into the structured
+    error contract before calling :func:`export`) pass it through here to
+    avoid reading and JSON-parsing ``graph.json`` a second time. Callers with
+    no pre-loaded graph (MCP, the viz HTTP route) pass ``graph=None`` and get
+    the original construct-and-load behavior unchanged -- including letting
+    their own exception classifiers see the raw load exception.
+    """
+    if graph is not None:
+        return graph
+    g = Graph(Path(root))
+    g.load()
+    return g
+
+
 def export(
     fmt: str,
     *,
@@ -282,6 +300,7 @@ def export(
     depth: int = 1,
     root: str | Path = ".",
     output: str | Path | None = None,
+    graph: Graph | None = None,
 ) -> str:
     """Export the graph (or a subgraph) to the requested format.
 
@@ -298,9 +317,17 @@ def export(
         BFS depth for subgraph extraction (default 1). Ignored when
         *node_id* is ``None``.
     root : str or Path
-        Project root containing ``.weld/graph.json``.
+        Project root containing ``.weld/graph.json``. Ignored when *graph*
+        is supplied.
     output : str or Path, optional
         Target directory for multi-file formats. Required for ``wiki``.
+    graph : Graph, optional
+        A pre-loaded :class:`Graph` to export instead of constructing and
+        loading one from *root*. Callers that already loaded a graph for
+        their own purposes (e.g. the CLI's structured-error guard) should
+        pass it here to avoid a second ``graph.json`` read+parse per
+        invocation. When ``None`` (the default), behavior is unchanged:
+        :func:`export` constructs ``Graph(root)`` and loads it itself.
 
     Returns
     -------
@@ -320,8 +347,7 @@ def export(
                 f"format {fmt!r} requires --output=<dir>; multi-file exporters "
                 "write to a directory rather than stdout."
             )
-        g = Graph(Path(root))
-        g.load()
+        g = _resolve_graph(root, graph)
         exporter = _MULTI_FILE_FORMATS[fmt](g)
         exporter.write(Path(output))
         return ""
@@ -332,8 +358,7 @@ def export(
             f"{', '.join(sorted(list(_FORMATS) + list(_MULTI_FILE_FORMATS)))})"
         )
 
-    g = Graph(Path(root))
-    g.load()
+    g = _resolve_graph(root, graph)
 
     serializer = _FORMATS[fmt]
 

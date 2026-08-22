@@ -20,9 +20,13 @@ from weld._file_index_incremental import (  # noqa: E402
     STATE_FILENAME,
     refresh_file_index,
     reindex_full,
+)
+from weld.file_index import (  # noqa: E402
+    build_file_index,
+    load_file_index,
+    save_file_index,
     tokens_for_file,
 )
-from weld.file_index import build_file_index, load_file_index, save_file_index  # noqa: E402
 
 
 def _seed(root: Path) -> None:
@@ -39,10 +43,9 @@ def _seed(root: Path) -> None:
 
 
 def _full_index_bytes(root: Path) -> bytes:
-    """Bytes a clean full rebuild would write (strip volatile git_sha)."""
+    """Bytes a clean full rebuild would write."""
     save_file_index(root, build_file_index(root))
     raw = json.loads((root / ".weld" / "file-index.json").read_text(encoding="utf-8"))
-    raw.get("meta", {}).pop("git_sha", None)
     return json.dumps(raw, sort_keys=True).encode("utf-8")
 
 
@@ -72,7 +75,6 @@ class FileIndexIncrementalEquivalenceTest(unittest.TestCase):
             got = json.loads(
                 (root / ".weld" / "file-index.json").read_text(encoding="utf-8"),
             )
-            got.get("meta", {}).pop("git_sha", None)
             got_bytes = json.dumps(got, sort_keys=True).encode("utf-8")
             self.assertEqual(got_bytes, _full_index_bytes(root))
             # Stale body-derived token dropped, new ones present. ``alpha``
@@ -93,7 +95,6 @@ class FileIndexIncrementalEquivalenceTest(unittest.TestCase):
             got = json.loads(
                 (root / ".weld" / "file-index.json").read_text(encoding="utf-8"),
             )
-            got.get("meta", {}).pop("git_sha", None)
             self.assertEqual(
                 json.dumps(got, sort_keys=True).encode("utf-8"),
                 _full_index_bytes(root),
@@ -112,7 +113,6 @@ class FileIndexIncrementalEquivalenceTest(unittest.TestCase):
             got = json.loads(
                 (root / ".weld" / "file-index.json").read_text(encoding="utf-8"),
             )
-            got.get("meta", {}).pop("git_sha", None)
             self.assertEqual(
                 json.dumps(got, sort_keys=True).encode("utf-8"),
                 _full_index_bytes(root),
@@ -143,7 +143,6 @@ class FileIndexIncrementalEquivalenceTest(unittest.TestCase):
             got = json.loads(
                 (root / ".weld" / "file-index.json").read_text(encoding="utf-8"),
             )
-            got.get("meta", {}).pop("git_sha", None)
             self.assertEqual(
                 json.dumps(got, sort_keys=True).encode("utf-8"),
                 _full_index_bytes(root),
@@ -285,7 +284,6 @@ class FileIndexIncrementalEquivalenceTest(unittest.TestCase):
                 inc_index = idx_path.read_bytes()
                 inc_state = state_path.read_bytes()
                 got = json.loads(inc_index.decode("utf-8"))
-                got.get("meta", {}).pop("git_sha", None)
                 self.assertEqual(
                     json.dumps(got, sort_keys=True).encode("utf-8"),
                     _full_index_bytes(root),

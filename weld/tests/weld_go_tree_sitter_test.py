@@ -25,6 +25,30 @@ class GoTreeSitterImportOriginTest(unittest.TestCase):
                 "example.com/myapi",
             )
 
+    def test_strip_import_quotes_removes_surrounding_quotes(self) -> None:
+        """bd bt5m: the raw tree-sitter capture keeps its source quotes.
+
+        ``interpreted_string_literal`` (the node ``weld/languages/go.yaml``
+        captures for ``imports``) yields the token text verbatim, quotes
+        included. ``props.imports_from`` must not: every other Tier-1
+        language's value is already a clean path/specifier string, and
+        an exact-string consumer like ``package_import_resolver`` can
+        only match against a clean string.
+        """
+        self.assertEqual(
+            _go_tree_sitter.strip_import_quotes(
+                ['"fmt"', '"github.com/spf13/cobra"'],
+            ),
+            ["fmt", "github.com/spf13/cobra"],
+        )
+
+    def test_strip_import_quotes_is_idempotent_on_clean_input(self) -> None:
+        """Already-unquoted entries pass through unchanged (order kept)."""
+        self.assertEqual(
+            _go_tree_sitter.strip_import_quotes(["fmt", "os"]),
+            ["fmt", "os"],
+        )
+
     def test_import_origin_map_classifies_raw_tree_sitter_imports(self) -> None:
         imports = [
             '"fmt"',
@@ -42,6 +66,21 @@ class GoTreeSitterImportOriginTest(unittest.TestCase):
         )
 
     def test_extract_adds_import_origin_map_to_go_file_node(self) -> None:
+        """``imports_from`` and ``imports_origin`` both use clean paths.
+
+        ``_parse_file_symbols`` is mocked to return the raw quoted
+        tree-sitter capture text (what the ``interpreted_string_literal``
+        node actually yields) so this exercises the real quote-stripping
+        step in :mod:`weld.strategies.tree_sitter`, not a pre-cleaned
+        fixture. Before bd bt5m, ``imports_from`` kept the quotes
+        (the one Tier-1 language whose value disagreed with every
+        sibling's clean-path shape, which silently defeated any
+        exact-string consumer such as
+        :mod:`weld.cross_repo.package_import_resolver`) while
+        ``imports_origin``'s keys were quoted too; both are asserted
+        unquoted here so a regression that reintroduces the quotes on
+        either prop fails this test.
+        """
         from weld.strategies import tree_sitter
 
         with tempfile.TemporaryDirectory() as td:
@@ -83,11 +122,15 @@ class GoTreeSitterImportOriginTest(unittest.TestCase):
 
             node = result.nodes["file:main"]
             self.assertEqual(
+                node["props"]["imports_from"],
+                ["fmt", "example.com/myapi/internal", "github.com/example/external"],
+            )
+            self.assertEqual(
                 node["props"]["imports_origin"],
                 {
-                    '"example.com/myapi/internal"': "project",
-                    '"fmt"': "stdlib",
-                    '"github.com/example/external"': "external",
+                    "example.com/myapi/internal": "project",
+                    "fmt": "stdlib",
+                    "github.com/example/external": "external",
                 },
             )
 

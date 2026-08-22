@@ -56,6 +56,15 @@ from weld._sqlite_schema import (
     SQLITE_SCHEMA_VERSION,
 )
 from weld._notice import emit
+# Aliased: the build functions below take a caller-supplied ``weld_version``
+# override, and one name must not mean two things in this file.
+from weld._version import weld_version as resolve_weld_version
+
+#: Stamped when weld's own version cannot be determined -- a partial
+#: checkout with neither distribution metadata nor a ``VERSION`` file. Not
+#: version-shaped on purpose: this field tells support which weld built an
+#: index, so "no answer" must not read as one.
+_UNRESOLVED_VERSION = "0"
 
 __all__ = [
     "SIDECAR_FILENAME",
@@ -88,23 +97,19 @@ def compute_source_json_sha(graph_json_bytes: bytes) -> str:
 
 
 def _weld_version() -> str:
-    """Return the installed weld version string, or ``"0"`` on failure.
+    """Return the weld version to stamp, or ``_UNRESOLVED_VERSION``.
 
-    The sidecar is best-effort; an unavailable version (e.g. running
-    from a partial checkout without metadata) must not fail the build.
+    :mod:`weld._version` owns resolution, so a sidecar cannot disagree with
+    what ``wd --version`` reports about the same install. Resolving it here
+    instead is what caused the bug this replaced: the lookup asked metadata
+    for the import name ``weld`` rather than the published distribution, so
+    it missed in every installed deployment.
+
+    Only the fallback is this module's own, because it is surface-specific:
+    the resolver reports an absent version as ``None``, and ``meta`` stores
+    text.
     """
-    try:
-        from importlib.metadata import version
-
-        return version("weld")
-    except Exception:  # noqa: BLE001 -- version lookup is best-effort.
-        try:
-            version_file = Path(__file__).resolve().parent.parent / "VERSION"
-            if version_file.is_file():
-                return version_file.read_text(encoding="utf-8").strip() or "0"
-        except OSError:
-            pass
-        return "0"
+    return resolve_weld_version() or _UNRESOLVED_VERSION
 
 
 def _now_iso() -> str:

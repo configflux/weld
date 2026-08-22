@@ -19,7 +19,8 @@ import unittest
 from pathlib import Path
 
 
-from weld._git import drift_is_graph_only, get_git_sha  # noqa: E402
+from weld._git import get_git_sha  # noqa: E402
+from weld._stale_reasons import CHANGED_SINCE_DISCOVERY  # noqa: E402
 from weld.contract import SCHEMA_VERSION  # noqa: E402
 from weld.graph import Graph  # noqa: E402
 
@@ -107,6 +108,8 @@ class GraphStaleSourceModelTest(unittest.TestCase):
         self.assertEqual(r["graph_sha"], self._sha0)
         self.assertEqual(r["current_sha"], self._sha0)
         self.assertEqual(r["commits_behind"], 0)
+        self.assertEqual(r["stale_sources"], [])
+        self.assertEqual(r["stale_sources_omitted"], 0)
 
     def test_enrichment_only_commit_keeps_stale_false(self) -> None:
         """add-node --merge stamps git_sha (touch_git_sha=True), so after
@@ -147,6 +150,12 @@ class GraphStaleSourceModelTest(unittest.TestCase):
         self.assertTrue(r["stale"])
         # sha_behind is also True because HEAD moved.
         self.assertTrue(r["sha_behind"])
+        # Names the committed diff.
+        self.assertEqual(
+            r["stale_sources"],
+            [{"path": "src/a.py", "reason": CHANGED_SINCE_DISCOVERY}],
+        )
+        self.assertEqual(r["stale_sources_omitted"], 0)
 
     def test_untracked_path_change_is_not_stale(self) -> None:
         """Changes outside `discovered_from` do not make the graph stale."""
@@ -160,6 +169,7 @@ class GraphStaleSourceModelTest(unittest.TestCase):
         self.assertTrue(r["sha_behind"])
         # 'stale' alias tracks source_stale
         self.assertFalse(r["stale"])
+        self.assertEqual(r["stale_sources"], [])
 
     def test_non_git_repo_keeps_legacy_shape(self) -> None:
         """Non-git roots continue to return stale=False with a reason."""
@@ -174,6 +184,8 @@ class GraphStaleSourceModelTest(unittest.TestCase):
             self.assertFalse(r["source_stale"])
             self.assertFalse(r["sha_behind"])
             self.assertIn("reason", r)
+            self.assertEqual(r["stale_sources"], [])
+            self.assertEqual(r["stale_sources_omitted"], 0)
         finally:
             import shutil
             shutil.rmtree(non_git, ignore_errors=True)
@@ -189,6 +201,9 @@ class GraphStaleSourceModelTest(unittest.TestCase):
         self.assertTrue(r["source_stale"])
         self.assertFalse(r["sha_behind"])
         self.assertIsNone(r["graph_sha"])
+        # No computable file-level diff without a basis to compare against --
+        # graph_sha/reason already say why.
+        self.assertEqual(r["stale_sources"], [])
 
 
 class GraphStaleBackcompatKeysTest(unittest.TestCase):
@@ -215,6 +230,7 @@ class GraphStaleBackcompatKeysTest(unittest.TestCase):
         for key in (
             "stale", "source_stale", "sha_behind",
             "graph_sha", "current_sha", "commits_behind",
+            "stale_sources", "stale_sources_omitted",
         ):
             self.assertIn(key, r, f"missing key {key} in stale() output")
 
@@ -287,6 +303,7 @@ class GraphOnlyCommitDriftTest(unittest.TestCase):
         for key in (
             "stale", "source_stale", "sha_behind",
             "graph_sha", "current_sha", "commits_behind",
+            "stale_sources", "stale_sources_omitted",
         ):
             self.assertIn(key, r, f"missing key {key}")
         # graph_sha is still the original recorded value; HEAD moved.
@@ -326,64 +343,6 @@ class GraphOnlyCommitDriftTest(unittest.TestCase):
             r["sha_behind"],
             f"non-graph-only drift must still set sha_behind: {r}",
         )
-
-
-class DriftIsGraphOnlyTest(unittest.TestCase):
-    """Direct unit coverage for ``drift_is_graph_only``.
-
-    The customer-reported 5-step repro in bd-...yb89 exercises this
-    helper end-to-end via ``wd prime``; this file pins the helper
-    against the cross product of the bookkeeping paths so a future
-    regression in the path set is caught locally.
-    """
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
-        _git_init(self.root)
-        # Seed: one source file committed at sha0.
-        (self.root / "app.py").write_text("x = 1\n", encoding="utf-8")
-        _run(["git", "add", "app.py"], self.root)
-        _run(["git", "commit", "--quiet", "-m", "seed"], self.root)
-        self._sha0 = get_git_sha(self.root)
-
-    def _commit(self, paths: list[str], message: str) -> None:
-        for rel in paths:
-            target = self.root / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("{}\n", encoding="utf-8")
-            _run(["git", "add", rel], self.root)
-        _run(["git", "commit", "--quiet", "-m", message], self.root)
-
-    def test_graph_only_commit_is_graph_only(self) -> None:
-        self._commit([".weld/graph.json"], "graph")
-        self.assertTrue(drift_is_graph_only(self.root, self._sha0))
-
-    def test_state_only_commit_is_graph_only(self) -> None:
-        self._commit([".weld/discovery-state.json"], "state")
-        self.assertTrue(drift_is_graph_only(self.root, self._sha0))
-
-    def test_both_bookkeeping_paths_is_graph_only(self) -> None:
-        self._commit(
-            [".weld/graph.json", ".weld/discovery-state.json"],
-            "graph and state",
-        )
-        self.assertTrue(drift_is_graph_only(self.root, self._sha0))
-
-    def test_source_change_is_not_graph_only(self) -> None:
-        self._commit(["app.py"], "edit source")
-        self.assertFalse(drift_is_graph_only(self.root, self._sha0))
-
-    def test_mixed_change_is_not_graph_only(self) -> None:
-        self._commit(
-            [".weld/graph.json", "app.py"], "graph plus source",
-        )
-        self.assertFalse(drift_is_graph_only(self.root, self._sha0))
-
-    def test_empty_diff_is_not_graph_only(self) -> None:
-        # No commit between sha0 and HEAD.
-        self.assertFalse(drift_is_graph_only(self.root, self._sha0))
 
 
 if __name__ == "__main__":

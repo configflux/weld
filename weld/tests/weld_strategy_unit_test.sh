@@ -367,7 +367,7 @@ assert len(paths) == 1, f'expected 1 result, got {len(paths)}: {paths}'
 print('PASS: filter_glob_results filters worktree copies and excluded dirs')
 " || { echo "FAIL: filter_glob_results test"; errors=$((errors + 1)); }
 
-# --- Test 12: Strategy _resolve_glob excludes worktree copies ---
+# --- Test 12: shared resolve_glob excludes worktree copies ---
 mkdir -p "${TMPDIR}/strat_glob_test/services/worker/src/pkg"
 echo "class Real: pass" > "${TMPDIR}/strat_glob_test/services/worker/src/pkg/real.py"
 mkdir -p "${TMPDIR}/strat_glob_test/.claude/worktrees/agent-1/services/worker/src/pkg"
@@ -378,10 +378,10 @@ mkdir -p "${TMPDIR}/strat_glob_test/.weld"
 python3 -c "
 import sys; sys.path.insert(0, '${ROOT}')
 from pathlib import Path
-from weld.strategies.python_module import _resolve_glob
+from weld.strategies._glob_resolve import resolve_glob_with_provenance
 
 root = Path('${TMPDIR}/strat_glob_test')
-matched, dirs = _resolve_glob(root, 'services/worker/src/**/*.py')
+matched, dirs = resolve_glob_with_provenance(root, 'services/worker/src/**/*.py')
 rel_paths = [str(p.relative_to(root)) for p in matched]
 
 assert any('services/worker/src/pkg/real.py' in p for p in rel_paths), \
@@ -389,8 +389,8 @@ assert any('services/worker/src/pkg/real.py' in p for p in rel_paths), \
 assert not any('.claude/worktrees' in p for p in rel_paths), \
     f'worktree copy should be filtered: {rel_paths}'
 
-print('PASS: strategy _resolve_glob excludes worktree copies')
-" || { echo "FAIL: strategy _resolve_glob exclusion test"; errors=$((errors + 1)); }
+print('PASS: shared resolve_glob excludes worktree copies')
+" || { echo "FAIL: shared resolve_glob exclusion test"; errors=$((errors + 1)); }
 
 if [[ "${errors}" -gt 0 ]]; then
   echo "FAIL: ${errors} test(s) failed"

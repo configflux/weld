@@ -10,11 +10,15 @@ filesystem decisions live in the writer module and all parsing of the
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
+from weld._safe_text import (
+    dumps_safe_json,
+    sanitize_terminal_line,
+    sanitize_terminal_text,
+)
 from weld.agent_graph_render_writer import (
     PlannedRender,
     apply_plan,
@@ -78,9 +82,13 @@ def _do_dry_run(plan: list[PlannedRender], *, as_json: bool) -> int:
     has_changes = any(entry.action != "skip" for entry in plan)
     has_errors = any(entry.action == "error" for entry in plan)
     if as_json:
-        sys.stdout.write(json.dumps(_plan_payload(plan), indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                _plan_payload(plan), indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
     else:
-        _print_dry_run(plan)
+        sys.stdout.write(sanitize_terminal_text(format_dry_run(plan)))
     return 1 if has_changes or has_errors else 0
 
 
@@ -98,28 +106,18 @@ def _do_write(
             "refusals": refusals,
             "summary": _summary(plan),
         }
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                payload, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
     else:
-        _print_write(applied, refusals)
+        sys.stdout.write(sanitize_terminal_text(format_write(applied, refusals)))
     if refusals:
         for refusal in refusals:
-            if refusal["reason"] == "exists_no_force":
-                print(
-                    f"refused: {refusal['rendered']} differs from canonical "
-                    f"{refusal['canonical']}; rerun with --force to overwrite.",
-                    file=sys.stderr,
-                )
-            elif refusal["reason"] == "missing_canonical":
-                print(
-                    f"error: canonical asset missing for {refusal['rendered']}: "
-                    f"{refusal['canonical']}",
-                    file=sys.stderr,
-                )
-            else:
-                print(
-                    f"refused: {refusal['rendered']} ({refusal['reason']})",
-                    file=sys.stderr,
-                )
+            # One-line contract: a path with a smuggled newline must not be
+            # able to forge a second refusal line.
+            print(sanitize_terminal_line(format_refusal(refusal)), file=sys.stderr)
         return 1
     return 0
 
@@ -127,36 +125,63 @@ def _do_write(
 # --- formatting ------------------------------------------------------------
 
 
-def _print_dry_run(plan: list[PlannedRender]) -> None:
+def format_dry_run(plan: list[PlannedRender]) -> str:
+    """Render the dry-run report.
+
+    Pure, so the escape can sit once at the write boundary. The declared
+    paths and ``entry.diff`` (raw file *content*) both come from the scanned
+    repository, so this block is fully attacker-influenced in a hostile repo.
+    """
     if not plan:
-        print("No canonical -> rendered pairs declared in .weld/agents.yaml.")
-        return
+        return "No canonical -> rendered pairs declared in .weld/agents.yaml.\n"
+    out: list[str] = []
     for entry in plan:
         marker = _action_marker(entry.action)
-        print(
+        out.append(
             f"{marker} {entry.pair.rendered} "
-            f"<- {entry.pair.canonical} ({entry.action}: {entry.reason})"
+            f"<- {entry.pair.canonical} ({entry.action}: {entry.reason})\n"
         )
         if entry.diff:
-            sys.stdout.write(entry.diff)
+            out.append(entry.diff)
             if not entry.diff.endswith("\n"):
-                print()
-    print()
-    print(_summary_line(plan))
-    print("Run with --write to apply, or --write --force to overwrite existing files.")
+                out.append("\n")
+    out.append("\n")
+    out.append(_summary_line(plan) + "\n")
+    out.append(
+        "Run with --write to apply, or --write --force to overwrite "
+        "existing files.\n"
+    )
+    return "".join(out)
 
 
-def _print_write(
+def format_write(
     applied: list[PlannedRender],
     refusals: list[dict[str, str]],
-) -> None:
+) -> str:
+    out: list[str] = []
     for entry in applied:
-        print(
+        out.append(
             f"wrote {entry.pair.rendered} <- {entry.pair.canonical} "
-            f"({entry.action})"
+            f"({entry.action})\n"
         )
     if not applied and not refusals:
-        print("Nothing to do; all rendered copies are in sync.")
+        out.append("Nothing to do; all rendered copies are in sync.\n")
+    return "".join(out)
+
+
+def format_refusal(refusal: dict[str, str]) -> str:
+    """Render one refusal as a single line (no trailing newline)."""
+    if refusal["reason"] == "exists_no_force":
+        return (
+            f"refused: {refusal['rendered']} differs from canonical "
+            f"{refusal['canonical']}; rerun with --force to overwrite."
+        )
+    if refusal["reason"] == "missing_canonical":
+        return (
+            f"error: canonical asset missing for {refusal['rendered']}: "
+            f"{refusal['canonical']}"
+        )
+    return f"refused: {refusal['rendered']} ({refusal['reason']})"
 
 
 def _summary_line(plan: list[PlannedRender]) -> str:

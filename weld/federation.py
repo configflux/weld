@@ -22,15 +22,17 @@ from weld._federation_query import query_federated as _query_federated
 from weld._sqlite_reader import SqliteBackedGraph
 from weld.federation_child_loader import (
     child_local_context as _child_local_context,
-    graph_rel_path,
     load_child as _load_child_impl,
     load_child_for_query as _load_child_for_query_impl,
 )
+from weld.federation_child_probe import probe_child_status as _probe_child_status_impl
 from weld.federation_support import (
     ChildGraphCache,
+    ChildStatusResult,
     DEFAULT_CACHE_MAXSIZE,
     LoadedChild,
     edge_key,
+    order_children_status_by_priority,
     prefix_node_id,
     render_display_id,
     sorted_edges,
@@ -91,34 +93,46 @@ class FederatedGraph:
     def children_status(self) -> dict[str, dict[str, object]]:
         """Return the current status of every registered child repo.
 
-        A child is "present" whenever ``_load_child`` returns any
-        readable handle -- either a JSON-backed :class:`Graph` or a
-        sqlite-backed :class:`SqliteBackedGraph` (ADR 0058). The
-        sentinel types (``MissingChild`` / ``UninitializedChild`` /
-        ``CorruptChild``) carry their own ``status`` field.
+        A child is "present" when its ``graph.json`` parses; the sentinel
+        states are ``missing`` (no child directory / no ``.git``),
+        ``uninitialized`` (child present, no ``graph.json`` yet) and
+        ``corrupt`` (``graph.json`` exists but fails to parse). Classified
+        via :func:`~weld.federation_child_probe.probe_child_status` (bd
+        sk3c) rather than :meth:`_load_child`: this method only needs the
+        classification, never a queryable handle, and probing is
+        materially cheaper -- see that function's docstring for the
+        measurement.
+
+        **Ordering (bd sk3c, ADR 0082 amendment 2026-08-21): non-present
+        entries (``missing`` / ``uninitialized`` / ``corrupt``) sort before
+        ``present`` ones; alphabetical by child name within each class.**
+        Plain alphabetical order (the pre-sk3c behavior) let a corrupt or
+        missing child whose name sorted late disappear once
+        :func:`weld._read_budget.bound_dict_to_budget` caps this map to
+        :data:`~weld._read_budget.CHILDREN_STATUS_RESERVE_BYTES` at a
+        federated root with more children than fit -- a workspace could show
+        35 unremarkable ``present`` entries and never surface the one
+        actionable child. Sorting here, at the one place every consumer
+        reads from (the MCP read tools via ``attach_children_status``, and
+        :mod:`weld.viz.api`), makes the fix apply everywhere with no second
+        implementation to keep in sync. See
+        :func:`~weld.federation_support.children_status_priority_key` for
+        the exact key. Still deterministic (ADR 0012): a pure function of
+        content, no wall-clock or randomness.
         """
         status: dict[str, dict[str, object]] = {}
         for name in sorted(self._children):
-            loaded = self._load_child(name)
-            if isinstance(loaded, (Graph, SqliteBackedGraph)):
-                entry = self._children[name]
-                status[name] = {
-                    "status": "present",
-                    "graph_path": graph_rel_path(entry),
-                }
-                if entry.remote is not None:
-                    status[name]["remote"] = entry.remote
-                continue
+            probed = self._probe_child_status(name)
             payload: dict[str, object] = {
-                "status": loaded.status,
-                "graph_path": loaded.graph_path,
+                "status": probed.status,
+                "graph_path": probed.graph_path,
             }
-            if loaded.remote is not None:
-                payload["remote"] = loaded.remote
-            if loaded.error is not None:
-                payload["error"] = loaded.error
+            if probed.remote is not None:
+                payload["remote"] = probed.remote
+            if probed.error is not None:
+                payload["error"] = probed.error
             status[name] = payload
-        return status
+        return order_children_status_by_priority(status)
 
     def query(self, term: str, limit: int = 20) -> dict:
         """Fan out tokenized search across root + present children.
@@ -263,6 +277,24 @@ class FederatedGraph:
             sentinel_cache=self._sentinel_cache,
             child_cache=self._child_cache,
             sqlite_cache=self._sqlite_cache,
+            read_bytes=self._read_graph_bytes,
+        )
+
+    def _probe_child_status(self, name: str) -> ChildStatusResult:
+        """Return *name*'s ``children_status()`` classification, cheaply.
+
+        Body lives in :mod:`weld.federation_child_probe` (bd sk3c); shares
+        :attr:`_sentinel_cache` with :meth:`_load_child` so a probe and a
+        real load for the same name in one request classify only once.
+        Deliberately does not touch :attr:`_child_cache` /
+        :attr:`_sqlite_cache` -- those hold real handles this probe is
+        built to avoid constructing.
+        """
+        return _probe_child_status_impl(
+            name=name,
+            entry=self._children[name],
+            workspace_root=self._root,
+            sentinel_cache=self._sentinel_cache,
             read_bytes=self._read_graph_bytes,
         )
 

@@ -61,12 +61,13 @@ from pathlib import Path
 
 from weld._node_ids import file_id as _canonical_file_id
 from weld._node_ids import package_id as _canonical_package_id
-from weld.glob_match import walk_glob
 from weld.strategies._csharp_origin import (
     load_project_namespace_roots_by_project,
 )
 from weld.strategies._csharp_syntax import namespace_spans
-from weld.strategies._helpers import StrategyResult, should_skip
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._provenance import file_provenance
 
 _STRATEGY = "csharp_package"
 
@@ -159,7 +160,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         Path glob for C# sources, e.g. ``"src/**/*.cs"`` or
         ``"**/*.cs"``. Same semantics as the C# tree-sitter source.
     ``exclude`` (optional)
-        List of patterns passed to ``should_skip`` (same semantics as
+        List of patterns passed to ``resolve_glob`` (same semantics as
         every other glob-driven strategy in the family).
     """
     nodes: dict[str, dict] = {}
@@ -172,7 +173,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    matched: list[Path] = list(walk_glob(root, pattern, excludes=excludes))
+    matched: list[Path] = resolve_glob(root, pattern, excludes)
     if not matched:
         return StrategyResult(nodes, edges, discovered_from)
 
@@ -186,8 +187,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     by_namespace: dict[str, list[Path]] = defaultdict(list)
     file_namespaces: dict[Path, str] = {}
     for cs in sorted(matched):
-        if should_skip(cs, excludes, root=root):
-            continue
         try:
             cs.relative_to(root)
         except ValueError:
@@ -230,7 +229,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not by_namespace:
         return StrategyResult(nodes, edges, discovered_from)
 
-    discovered_dirs: set[str] = set()
     # Deduplicate ``(pkg_nid, file_nid)`` edges across multiple
     # display-case namespace keys that collapse to the same canonical
     # package id (e.g. ``Newtonsoft.Json`` declared by both a source
@@ -266,8 +264,15 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             rel_path = cs.relative_to(root).as_posix()
             file_nid = _canonical_file_id(rel_path)
             children.append((file_nid, rel_path))
-            discovered_dirs.add(cs.parent.relative_to(root).as_posix() + "/")
         children.sort()
+        # Per-file provenance (bd od2a). Unlike ``python_package``, the node
+        # here is a *namespace* and carries no ``dir`` prop -- its members
+        # can sit in any directory -- so the parent directories were never
+        # the discovered thing, only a lossy stand-in for these files. That
+        # is also why the local ``!= "./"`` filter this replaces was not a
+        # fix: it suppressed the root marker by dropping the entry, leaving
+        # a namespace declared at the repo root with no provenance at all.
+        discovered_from.extend(file_provenance(root, files))
 
         for file_nid, _rel_path in children:
             key = (pkg_nid, file_nid)
@@ -286,6 +291,4 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 }
             )
 
-    discovered_from = sorted(d for d in discovered_dirs if d and d != "./")
-
-    return StrategyResult(nodes, edges, discovered_from)
+    return StrategyResult(nodes, edges, sorted(set(discovered_from)))

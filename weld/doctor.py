@@ -46,9 +46,11 @@ from weld._doctor_format import (
     format_results,
 )
 from weld._doctor_optional import check_optional_deps, check_tree_sitter
-from weld._doctor_strategies import check_strategies, check_trust_boundaries
+from weld._doctor_strategies import (check_failed_files, check_failed_sources,
+                                     check_strategies, check_trust_boundaries)
 from weld._doctor_suppressions import handle_ack_flags, load_suppressions
 from weld._doctor_trust import check_language_trust
+from weld._safe_text import sanitize_terminal_text
 from weld._yaml import parse_yaml
 
 
@@ -92,6 +94,11 @@ def _check_discover_yaml(weld_dir: Path) -> list[CheckResult]:
             "Config",
         )
     ]
+
+
+def _check_gitignore_resync(weld_dir: Path) -> list[CheckResult]:
+    from weld._doctor_gitignore import check_gitignore_resync
+    return check_gitignore_resync(weld_dir, CheckResult)
 
 
 def _check_graph_json(weld_dir: Path) -> list[CheckResult]:
@@ -156,26 +163,8 @@ def _check_optional_deps() -> list[CheckResult]:
 
 
 def _check_mcp_config(root: Path) -> list[CheckResult]:
-    repo_mcp = root / ".mcp.json"
-    codex_mcp = root / ".codex" / "config.toml"
-
-    found: list[str] = []
-    if repo_mcp.is_file():
-        found.append(".mcp.json")
-    if codex_mcp.is_file():
-        found.append(".codex/config.toml")
-
-    if found:
-        locations = " and ".join(found)
-        return [CheckResult("ok", f"MCP server config found in {locations}", "MCP")]
-    return [
-        CheckResult(
-            "note",
-            "MCP server config not found (.mcp.json or .codex/config.toml)",
-            "MCP",
-            note_id="mcp-config-missing",
-        )
-    ]
+    from weld._doctor_mcp import check_mcp_config
+    return check_mcp_config(root, CheckResult)
 
 
 def _check_trust_boundaries(weld_dir: Path) -> list[CheckResult]:
@@ -189,6 +178,14 @@ def _check_language_trust(weld_dir: Path) -> list[CheckResult]:
 def _check_strategies(weld_dir: Path, root: Path) -> list[CheckResult]:
     bundled_dir = Path(__file__).resolve().parent / "strategies"
     return check_strategies(weld_dir, root, bundled_dir, CheckResult)
+
+
+def _check_failed_sources(root: Path) -> list[CheckResult]:
+    return check_failed_sources(root, CheckResult)
+
+
+def _check_failed_files(root: Path) -> list[CheckResult]:
+    return check_failed_files(root, CheckResult)
 
 
 def _check_python_version() -> list[CheckResult]:
@@ -226,11 +223,14 @@ def doctor(root: Path) -> list[CheckResult]:
     results: list[CheckResult] = []
     results.extend(_check_python_version())
     results.extend(_check_discover_yaml(weld_dir))
+    results.extend(_check_gitignore_resync(weld_dir))
     results.extend(_check_graph_json(weld_dir))
     results.extend(_check_sqlite_sidecar(weld_dir))
     results.extend(_check_staleness(weld_dir, root))
     results.extend(_check_language_trust(weld_dir))
     results.extend(_check_strategies(weld_dir, root))
+    results.extend(_check_failed_sources(root))
+    results.extend(_check_failed_files(root))
     results.extend(_check_trust_boundaries(weld_dir))
     results.extend(check_agent_graph(weld_dir, CheckResult))
     results.extend(_check_tree_sitter(weld_dir))
@@ -290,7 +290,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         "--security",
         action="store_true",
-        help="Show the trust-posture report only (ADR 0025)",
+        help="Show the trust-posture report only",
     )
     mode.add_argument(
         "--agent-graph",
@@ -300,7 +300,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         "--cpp",
         action="store_true",
-        help="Show the C++ libclang readiness report only (ADR 0057 Wave 3).",
+        help="Show the C++ libclang readiness report only.",
     )
     mode.add_argument(
         "--ack",
@@ -361,14 +361,14 @@ def main(argv: list[str] | None = None) -> int:
             section = check_cpp(root, CheckResult)
         else:
             section = doctor_agent_graph(root)
-        sys.stdout.write(format_results(section) + "\n")
+        sys.stdout.write(sanitize_terminal_text(format_results(section)) + "\n")
         return 1 if any(r.level == "fail" for r in section) else 0
 
     results = doctor(root)
     weld_dir = root / ".weld"
     suppressed = load_suppressions(weld_dir) if weld_dir.is_dir() else set()
     visible = _apply_suppressions(results, suppressed)
-    output = format_results(visible)
+    output = sanitize_terminal_text(format_results(visible))
     sys.stdout.write(output + "\n")
 
     # Pointer line: surface the dedicated trust-posture view when we detect
@@ -386,7 +386,3 @@ def main(argv: list[str] | None = None) -> int:
 
     has_fail = any(r.level == "fail" for r in results)
     return 1 if has_fail else 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

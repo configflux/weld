@@ -5,17 +5,18 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies._helpers import (
     StrategyResult,
     base_names,
     enum_members,
     extract_columns,
     extract_fks,
-    filter_glob_results,
     module_name,
-    should_skip,
     tablename,
 )
+from weld.strategies._strategy_failure import note_strategy_failure
 
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract SQLAlchemy entities and StrEnum definitions."""
@@ -25,25 +26,42 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     pattern = source["glob"]
     excludes = source.get("exclude", [])
+    # ``domain_dir`` is passed to ``module_name`` below; it is not provenance.
+    # The old ``domain_dir``-derived provenance entry was ``"./"`` for a
+    # root-anchored glob, which marks the whole tree as tracked source
+    # (bd 8ia5). Its ``is_dir()`` early-return is gone (bd t06t): for a ``**``
+    # pattern the parent is a literal ``pkg/**`` path that is never a
+    # directory, so the guard made recursive globs emit nothing at all --
+    # and for a flat glob it only repeated what the walker already does.
     domain_dir = (root / pattern).parent
-    if not domain_dir.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
-    discovered_from.append(str(domain_dir.relative_to(root)) + "/")
 
     table_to_entity = context.setdefault("table_to_entity", {})
     pending_fk_edges: list = context.setdefault("pending_fk_edges", [])
 
-    for py in filter_glob_results(root, sorted(domain_dir.glob(Path(pattern).name))):
+    for py in resolve_glob(root, pattern, excludes):
         if py.name.startswith("_") and py.name != "__init__.py":
             continue
-        if should_skip(py, excludes):
-            continue
+        rel_path = rel_to_root(py, root)
+        # Recorded before the parse: a file that declares no entity today
+        # must still be re-read once someone adds one (see StrategyResult).
+        discovered_from.append(rel_path)
         try:
             tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-        except SyntaxError:
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            # bd o642, applying bd pt38's fix here: ``read_text`` raises
+            # ``OSError`` -- never ``SyntaxError`` -- so guarding the parse
+            # alone let a file that vanished between the walk above and this
+            # read abort the entire run. The window is the whole run, not the
+            # loop: ``walk_glob`` is served from the per-run glob memo
+            # (bd cjij), so the listing this loop reads was taken when the run
+            # began. ``UnicodeDecodeError`` is a ``ValueError``, so widening to
+            # ``OSError`` alone would still abort on non-UTF-8 bytes. Recorded
+            # as a *failure*, not as this strategy deciding the file declares
+            # no entity: a decision is keyed on the path and exempts the file
+            # from the ADR 0008 per-file repair for good (bd hch4).
+            note_strategy_failure(context, [rel_path])
             continue
         module = module_name(py, domain_dir)
-        rel_path = str(py.relative_to(root))
 
         for cls_node in (n for n in tree.body if isinstance(n, ast.ClassDef)):
             bases = base_names(cls_node)

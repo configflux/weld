@@ -105,10 +105,14 @@ class BriefClassificationTest(unittest.TestCase):
                 "props": {"roles": ["doc"]}}
         self.assertEqual(_classify_node(node), "doc")
 
-    def test_node_with_policy_role_classified_as_doc(self) -> None:
+    def test_node_with_policy_role_value_classified_as_primary(self) -> None:
+        # "policy" is not a ROLE_VALUES member (weld.contract) -- it is a
+        # node type/doc_kind. validate_node rejects it as a role, so a
+        # roles=["policy"] node can't occur from real discovery; when
+        # forced here it falls through to primary, not doc.
         node = {"id": "file:agents", "type": "file", "label": "AGENTS.md",
                 "props": {"roles": ["policy"]}}
-        self.assertEqual(_classify_node(node), "doc")
+        self.assertEqual(_classify_node(node), "primary")
 
     def test_node_with_adr_doc_kind_classified_as_doc(self) -> None:
         node = {"id": "file:adr", "type": "file", "label": "ADR",

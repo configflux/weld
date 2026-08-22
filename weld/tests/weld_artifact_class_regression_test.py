@@ -45,7 +45,14 @@ _GRAPH: dict | None = None
 def _graph() -> dict:
     global _GRAPH
     if _GRAPH is None:
-        _GRAPH = discover(Path(_repo_root), incremental=False)
+        # with_sqlite=False: this test only ever reads the returned dict, so
+        # the .weld/graph.db sidecar discover() would otherwise write
+        # unconditionally (tens of MB on this repo) is pure waste here, and
+        # dropping it shrinks this call's footprint on the shared, live
+        # .weld/ directory a concurrently-running sibling test also touches
+        # (bd 70he: weld_graph_integrity_regression_test trimmed the same
+        # waste first; this is the same fix applied to this sibling).
+        _GRAPH = discover(Path(_repo_root), incremental=False, with_sqlite=False)
     return _GRAPH
 
 def _configured_node_types() -> set[str]:

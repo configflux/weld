@@ -41,7 +41,7 @@ package_index: https://pypi.org/project/configflux-weld/
 install:
   command: |
     pip install configflux-weld
-    python -m weld.mcp_server
+    wd mcp serve
 
   # Alternate, equally supported install path. uv is the recommended
   # route in the project's own README.
@@ -49,11 +49,11 @@ install:
     - description: Install with the optional MCP SDK extra (typical user path)
       command: |
         pip install 'configflux-weld[mcp]'
-        python -m weld.mcp_server
+        wd mcp serve
     - description: Install via uv tool
       command: |
         uv tool install "configflux-weld[mcp]"
-        python -m weld.mcp_server
+        wd mcp serve
 
 # --- Runtime ------------------------------------------------------------------
 
@@ -61,7 +61,12 @@ runtime:
   language: python
   minimum_version: "3.10"
   transport: stdio
-  entrypoint: python -m weld.mcp_server
+  # Console script installed by the package. Chosen over the equally
+  # supported `python -m weld.mcp_server` because a script's sys.path[0] is
+  # its own directory: the repository a client launches the server in is
+  # never on the server's module search path, and the interpreter is fixed
+  # by the shebang rather than by the client's environment.
+  entrypoint: wd mcp serve
   network: false  # Stdio only. Server does not bind a socket or call out.
 
 # --- Capabilities (tools the server exposes) ---------------------------------
@@ -110,13 +115,19 @@ tags:
 
 # --- Evidence and verification -----------------------------------------------
 #
-# The install/launch contract this entry advertises is exercised by an
-# automated test that builds the wheel, installs it into an isolated
-# prefix, and confirms `python -m weld.mcp_server --help` works from the
-# installed copy. Point reviewers at this file -- if it fails, the
-# install command published in the registry is not safe.
+# The install/launch contract this entry advertises is exercised by
+# automated tests that build the wheel, install it, and run the server from
+# the installed copy. Point reviewers at these -- if they fail, the launch
+# command published in the registry is not safe. The release smoke run
+# before each version goes out additionally requires `wd mcp serve --help`
+# to print its usage banner against a venv install, so the advertised
+# entrypoint cannot ship unable to dispatch.
 evidence:
   install_smoke_test: weld/tests/weld_mcp_install_smoke_test.py
+  launch_form_test: weld/tests/weld_mcp_serve_launch_shadow_test.py
+  launch_form_assertions:
+    - Started from a directory carrying a shadow module for every name the server imports -- including the ones CPython's own module runner resolves before a `-m` target's first line -- `wd mcp serve` executes none of them.
+    - A control in the same test requires an empty `-m` target launched from that same directory to execute a non-empty set, so the zero above is a measured contrast rather than an inert fixture.
   install_smoke_assertions:
     - Wheel-installed `python -m weld.mcp_server --help` exits 0.
     - "--help" output contains the `Usage: python -m weld.mcp_server` banner.

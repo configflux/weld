@@ -12,13 +12,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from weld._graph_cli_parser_admin import add_import_validate, add_migrate
+from weld._root_resolver import ROOT_HELP
 from weld.contract import VALID_EDGE_TYPES, VALID_NODE_TYPES
 
-_JSON_HELP = "Emit JSON envelope instead of human text (ADR 0040)."
+_JSON_HELP = "Emit JSON envelope instead of human text."
 _NO_REFRESH_HELP = (
-    "Skip the auto-refresh that runs when the graph is stale. "
-    "A warning is printed to stderr; the answer is served from the "
-    "current (possibly stale) graph. (ADR 0051)"
+    "Skip the auto-refresh that runs when the graph is stale, and the "
+    "first-read seeding of a new worktree: no graph is built or "
+    "bootstrapped. A warning is printed to stderr; the answer is served "
+    "from the graph already there."
 )
 
 
@@ -30,9 +33,10 @@ _FULL_NEIGHBORHOOD_HELP = (
 )
 
 _FULL_SIZE_HELP = (
-    "Skip the read byte budget (ADR 0082). By default the shaped envelope is "
-    "pruned to fit the agent tool cap, reported via ``omitted_neighbors."
-    "size_capped``; this flag keeps the diet but returns every dieted neighbor."
+    "Skip the read byte budget. By default the JSON envelope is "
+    "pruned to fit the agent tool cap and reports what it dropped (under "
+    "``omitted_neighbors.size_capped`` for query/context, ``size_capped`` for "
+    "callers/references); this flag returns every item instead."
 )
 
 
@@ -93,12 +97,9 @@ def build_parser(prog: str = "wd") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog, description="Connected structure CLI",
     )
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("."),
-        help="Project root directory",
-    )
+    # default=None, not Path("."): the real default is computed from the
+    # caller's directory by weld._root_resolver in ``main`` (ADR 0096).
+    parser.add_argument("--root", type=Path, default=None, help=ROOT_HELP)
     sub = parser.add_subparsers(dest="command")
     _add_query(sub)
     _add_context(sub)
@@ -110,8 +111,8 @@ def build_parser(prog: str = "wd") -> argparse.ArgumentParser:
     _add_simple(sub)
     _add_stats(sub)
     _add_communities(sub)
-    _add_import_validate(sub)
-    _add_migrate(sub)
+    add_import_validate(sub)
+    add_migrate(sub)
     _add_index(sub)
     return parser
 
@@ -122,7 +123,7 @@ def _add_index(sub) -> None:
         "index",
         help=(
             "Rebuild the .weld/graph.db sqlite sidecar from the current "
-            "graph.json (ADR 0058)."
+            "graph.json."
         ),
     )
     p.add_argument(
@@ -277,15 +278,23 @@ def _add_callers_refs(sub) -> None:
     p_callers.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_full_size(p_callers)
     _add_no_refresh(p_callers)
     p_refs = sub.add_parser(
         "references",
-        help="Callers + textual file-index references for a symbol name",
+        help="What points at a symbol or node, + textual file-index hits",
     )
-    p_refs.add_argument("name", help="Bare symbol name, e.g. _load_strategy")
+    p_refs.add_argument(
+        "name",
+        help=(
+            "Bare symbol name (_load_strategy) or a full node id "
+            "(build-target://pkg:lib)"
+        ),
+    )
     p_refs.add_argument(
         "--json", dest="as_json", action="store_true", help=_JSON_HELP,
     )
+    _add_full_size(p_refs)
     _add_no_refresh(p_refs)
 
 
@@ -295,8 +304,23 @@ def _add_simple(sub) -> None:
     )
     p_stale.add_argument(
         "--json", dest="as_json", action="store_true",
-        help="Emit JSON envelope instead of human key:value pairs (ADR 0040).",
+        help="Emit JSON envelope instead of human key:value pairs.",
     )
+    p_stale.add_argument(
+        "--check", action="store_true",
+        help=(
+            "Exit 1 when the graph is stale (the report is printed either "
+            "way). The freshness gate for a repo that commits its graph: "
+            "`wd stale --check --no-refresh` in CI fails a commit whose "
+            "tracked graph is behind its source."
+        ),
+    )
+    # ``stale`` runs no auto-refresh -- a probe that fixed what it measures
+    # would never report anything. It does seed a fresh checkout though (bd
+    # 6osw), and seeding writes, so the surface that writes has to offer the
+    # opt-out ADR 0096 requires of every command that can (``find`` already
+    # does, below). With the flag, ``wd stale`` is a pure read again.
+    _add_no_refresh(p_stale)
     sub.add_parser(
         "touch",
         help=(
@@ -323,13 +347,13 @@ def _add_communities(sub) -> None:
     p.add_argument(
         "--format", choices=("json", "markdown"), default=None,
         help=(
-            "Output format. Default per ADR 0040 is the markdown report; "
+            "Output format. Default is the markdown report; "
             "passing 'json' (or --json) emits the JSON envelope."
         ),
     )
     p.add_argument(
         "--json", dest="as_json", action="store_true",
-        help="Alias for --format json; emits the JSON envelope (ADR 0040).",
+        help="Alias for --format json; emits the JSON envelope.",
     )
     p.add_argument(
         "--top", type=_positive_int, default=12, metavar="N",
@@ -345,48 +369,4 @@ def _add_communities(sub) -> None:
     p.add_argument(
         "--output-dir", type=Path, default=Path(".weld"),
         help="Artifact directory used with --write (default: .weld)",
-    )
-
-
-def _add_import_validate(sub) -> None:
-    p_imp = sub.add_parser("import", help="Import/merge from file")
-    p_imp.add_argument("file", type=Path, help="JSON file to import")
-    sub.add_parser(
-        "validate", help="Validate graph against the metadata contract",
-    )
-    p_vf = sub.add_parser(
-        "validate-fragment", help="Validate a JSON fragment",
-    )
-    p_vf.add_argument("file", type=Path, help="JSON fragment file")
-    p_vf.add_argument(
-        "--source-label", default="fragment", help="Diagnostic label",
-    )
-    p_vf.add_argument(
-        "--allow-dangling", action="store_true", help="Skip ref checks",
-    )
-
-
-def _add_migrate(sub) -> None:
-    """Register ``wd migrate`` -- ADR-driven graph migrations.
-
-    The first migration shipped under this command is
-    ``--add-confidence`` (ADR 0050): backfill missing ``confidence``
-    props on legacy graphs by classifying each edge's
-    ``source_strategy`` against the static map in
-    :mod:`weld._confidence_defaults`.
-    """
-    p = sub.add_parser(
-        "migrate",
-        help=(
-            "Apply ADR-driven graph migrations "
-            "(currently --add-confidence per ADR 0050)."
-        ),
-    )
-    p.add_argument(
-        "--add-confidence", action="store_true",
-        help=(
-            "Backfill missing edge confidence props using the "
-            "source_strategy -> confidence map from ADR 0050. "
-            "Strategies not in the map default to 'speculative'."
-        ),
     )

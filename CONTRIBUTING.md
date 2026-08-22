@@ -62,12 +62,48 @@ when developing Weld itself; end users should install via
 
 ```bash
 pip install -e "weld/[tree-sitter]"   # broader language extraction (Go, Rust, TypeScript, C++)
-pip install -e "weld/[mcp]"           # run python -m weld.mcp_server (stdio MCP server)
+pip install -e "weld/[mcp]"           # run the stdio MCP server (see note below)
 pip install -e "weld/[openai]"        # OpenAI enrichment provider
 pip install -e "weld/[anthropic]"     # Anthropic enrichment provider
 pip install -e "weld/[ollama]"        # Ollama enrichment provider
 pip install -e "weld/[llm]"           # llm-cli enrichment provider
 ```
+
+Users launch the MCP server as `wd mcp serve`, the console script installed
+with the package. Working on Weld itself, run it as `python -m
+weld.mcp_server` instead: that form serves the checkout you are in, whereas
+`wd` resolves to whatever copy is installed on your `PATH`. This repo's own
+`.mcp.json` and `.codex/config.toml` are pinned to the `python -m` form for
+that reason, and are deliberately not the shape `wd mcp config` generates.
+
+### Which weld is running
+
+The same split applies to every command, not just the MCP server, and it is
+the one that quietly wastes an afternoon: `wd discover` inside your checkout
+runs the *installed* build against your tree, so a change you just made is
+not exercised and the run still looks entirely successful. Weld tells you
+when that is happening — one line on stderr, before the command's own
+output:
+
+```text
+[weld] running weld 0.21.0 from ~/.local/share/uv/tools/configflux-weld/lib/python3.12/site-packages/weld -- not the checkout you are in (/repos/weld, VERSION 0.22.1), so changes in this tree are not exercised; use `python3 -m weld` from the checkout. Silence: WELD_SOURCE_CHECKOUT_NOTICE=off
+```
+
+Two ways to make it stop, and they mean different things. Run `python3 -m
+weld …` instead of `wd` — that always executes the checkout you are standing
+in, and is the form to use whenever you are verifying a change. Or point the
+installed console script at this checkout, after which `wd` and the tree are
+the same thing and the notice goes away on its own:
+
+```bash
+uv tool install --reinstall --editable ./weld   # or: pip install -e weld/
+```
+
+An editable install is pinned to *one* checkout, so it does not help in a
+second worktree of the same repository — there, `python3 -m weld` remains the
+only form that runs your code, and the notice keeps saying so.
+`WELD_SOURCE_CHECKOUT_NOTICE=off` silences the line without changing which
+build runs, so reach for it only when you know which one you are getting.
 
 ### Verify
 

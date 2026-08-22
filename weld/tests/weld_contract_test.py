@@ -121,6 +121,14 @@ class ValidateNodeTest(unittest.TestCase):
         errors = validate_node("file:api/main", node)
         self.assertTrue(any("roles" in e.field for e in errors))
 
+    def test_package_role_is_valid(self) -> None:
+        """``python_package`` / ``csharp_package`` stamp ``roles:["package"]``,
+        so the vocabulary must accept it or discovery fails its own check."""
+        node = _node()
+        node["props"]["roles"] = ["package"]
+        errors = validate_node("package:python:mypkg", node)
+        self.assertEqual(errors, [])
+
     def test_roles_must_be_list(self) -> None:
         node = _node()
         node["props"]["roles"] = "implementation"

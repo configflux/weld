@@ -54,8 +54,12 @@ class TestFirstlineMdEmptyAndMissing(unittest.TestCase):
             source = {"glob": "commands/*.md"}
             result = extract(root, source, {})
             self.assertEqual(result.nodes, {})
-            # Parent existed, so it is recorded as discovered_from.
-            self.assertEqual(result.discovered_from, ["commands/"])
+            # The parent directory existing is not itself provenance: this
+            # strategy records the files it read, and it read none. The old
+            # ``["commands/"]`` form came from ``(root / glob).parent``,
+            # which is ``"./"`` for a root-anchored glob -- the marker that
+            # makes every path in the repo count as tracked source (bd 8ia5).
+            self.assertEqual(result.discovered_from, [])
 
     def test_empty_file_yields_node_with_blank_description(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -94,6 +98,21 @@ class TestFirstlineMdHappyPath(unittest.TestCase):
             self.assertEqual(props["authority"], "canonical")
             self.assertEqual(props["confidence"], "definite")
             self.assertEqual(props["roles"], ["config"])
+            self.assertEqual(result.discovered_from, ["commands/push.md"])
+
+    def test_excluded_file_is_not_provenance(self) -> None:
+        # A file the strategy declined to read must not appear in
+        # ``discovered_from`` -- provenance is what was read, and an
+        # over-broad entry is what widens ``source_stale`` (bd 8ia5).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cmd_dir = root / "commands"
+            cmd_dir.mkdir()
+            (cmd_dir / "keep.md").write_text("Hello\n", encoding="utf-8")
+            (cmd_dir / "drop.md").write_text("Goodbye\n", encoding="utf-8")
+            source = {"glob": "commands/*.md", "exclude": ["drop.md"]}
+            result = extract(root, source, {})
+            self.assertEqual(result.discovered_from, ["commands/keep.md"])
 
     def test_context_records_full_command_text(self) -> None:
         # The strategy stashes the file's full text in the shared context

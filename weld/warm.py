@@ -33,6 +33,7 @@ from weld._graph_meta_sidecar import (
     sidecar_path_for,
     write_graph_with_meta,
 )
+from weld._safe_text import dumps_safe_json
 from weld._warm_source import ArtifactSource, source_from_spec
 from weld.workspace_state import atomic_write_text
 from weld._notice import emit
@@ -148,6 +149,7 @@ def _refresh(root: Path, *, full: bool) -> None:
     lock: warm asks for ``write_root_graph=True`` (and ``recurse=True`` so each
     child is refreshed) and must not double-write afterwards.
     """
+    from weld._discover_state_check import mark_state_published
     from weld.discover import discover as _discover
 
     incremental = False if full else None
@@ -160,7 +162,12 @@ def _refresh(root: Path, *, full: bool) -> None:
         )
         return
     graph = _discover(root, incremental=incremental)
-    write_graph_with_meta(root / ".weld" / "graph.json", graph)
+    graph_path = root / ".weld" / "graph.json"
+    write_graph_with_meta(graph_path, graph)
+    # Same tail as the ``wd discover`` CLI: discovery wrote an inventory it
+    # could not yet claim describes a readable graph, and the canonical copy
+    # has just landed from that very run (ADR 0101 amended, bd esww/hfm6).
+    mark_state_published(root, graph_path)
 
 
 def _probe_and_land(
@@ -279,7 +286,9 @@ def warm(
 def main(argv: list[str] | None = None) -> int:
     from weld._warm_cli import build_parser
 
-    args = build_parser().parse_args(argv)
+    args = build_parser(
+        default_max_ancestors=DEFAULT_MAX_ANCESTORS, env_source=ENV_SOURCE
+    ).parse_args(argv)
     try:
         result = warm(
             Path(args.root),
@@ -290,13 +299,13 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:  # pragma: no cover - operator abort
         return 130
     if args.json:
-        print(json.dumps({
+        print(dumps_safe_json({
             "outcome": result.outcome,
             "artifact_sha": result.artifact_sha,
             "candidates_probed": result.candidates_probed,
             "rejected": result.rejected,
             "refreshed": result.refreshed,
-        }, indent=2))
+        }, indent=2, ensure_ascii=True))
     else:
         if result.outcome == "warmed":
             print(
@@ -308,7 +317,3 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("[weld] warm: no artifact landed and fallback disabled")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

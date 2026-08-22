@@ -10,6 +10,11 @@ existing incremental path:
 * ``_discover_single_repo`` with ``write_graph=True`` writes graph.json +
   sidecars whose node/edge content matches a full discover, and the
   query-state sidecar is a cold-load hit against the on-disk graph.
+
+Every fixture below declares one strategy family over one glob, so an edge's
+producer is always in the same dirty set as its endpoint. The cross-source
+shape -- clean producer, dirty endpoint -- is invisible here and the real repo
+diverged under it; ``incremental_cross_source_equivalence_test`` is that half.
 """
 
 from __future__ import annotations
@@ -22,8 +27,8 @@ from pathlib import Path
 
 
 from weld import _query_sidecar as sidecar  # noqa: E402
+from weld._graph_anchors import files_missing_strategy_outputs  # noqa: E402
 from weld.discover import _discover_single_repo  # noqa: E402
-from weld.discovery_state import files_missing_strategy_outputs  # noqa: E402
 from weld.graph_closure import _module_index  # noqa: E402
 from weld.serializer import dumps_graph, dumps_graph_canonical  # noqa: E402
 
@@ -59,11 +64,11 @@ def _fixture(root: Path) -> None:
 
 
 def _strip_meta_graph(graph: dict) -> dict:
-    """Return graph with volatile + path-order-volatile meta removed.
+    """Return graph with volatile + order-differing meta removed.
 
-    ``discovered_from`` legitimately differs between incremental and full
-    runs (incremental accumulates the changed file path); nodes and edges
-    must match exactly.
+    ``discovered_from``'s two construction orders differ (full rebuilds
+    top-down by source; incremental keeps an old-list prefix), though the
+    SET matches again as of bd 8084; nodes and edges must match exactly.
     """
     out = {k: v for k, v in graph.items() if k != "meta"}
     meta = {

@@ -24,13 +24,14 @@ exit code.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
 import sys
 import traceback
 from pathlib import Path
+
+from weld._safe_text import dumps_safe_json, sanitize_terminal_text
 
 # Ordered for deterministic ``wd demo list`` output.
 _DEMOS: tuple[tuple[str, str, str], ...] = (
@@ -70,12 +71,16 @@ def _list_demos(*, as_json: bool) -> int:
             {"name": name, "script": filename, "description": desc}
             for name, filename, desc in _DEMOS
         ]
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                payload, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
         return 0
     width = max(len(name) for name, _, _ in _DEMOS)
     sys.stdout.write("Available demos:\n")
     for name, _filename, desc in _DEMOS:
-        sys.stdout.write(f"  {name.ljust(width)}  {desc}\n")
+        sys.stdout.write(sanitize_terminal_text(f"  {name.ljust(width)}  {desc}\n"))
     sys.stdout.write(
         "\nRun `wd demo <name> --init <dir>` to materialize a demo.\n",
     )
@@ -172,7 +177,3 @@ def main(argv: list[str] | None = None) -> int:
 
     bootstrap = not getattr(args, "no_bootstrap", False)
     return run_demo(args.action, args.init, bootstrap=bootstrap)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

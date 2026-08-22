@@ -10,6 +10,11 @@ Coverage in this file pins the wiring at the MCP boundary:
 - ``weld_context`` returns the canonical node when called with
   either canonical or alias.
 - ``weld_path`` resolves both endpoints through the alias index.
+- ``weld_enrich`` enriches the canonical node when handed a legacy id,
+  and still reports a genuine miss. Its rewrite is the one that does
+  *not* happen at this boundary: enrichment resolves in the selection
+  oracle it shares with the CLI, so the end-to-end call is what proves
+  the tool kept the behaviour.
 - ``mcp_helpers.resolve_node_id_via_alias`` is exercised directly
   to cover its safety properties (None pass-through, canonical
   pass-through, missing target pass-through, attacker-shadow drop).
@@ -17,9 +22,10 @@ Coverage in this file pins the wiring at the MCP boundary:
   contains an attacker-shadow does NOT redirect.
 
 Tests run end-to-end through the MCP entry points, not by hand-
-constructing graphs and calling internal helpers, so a regression
-that wires alias resolution somewhere other than ``Graph.context`` /
-``Graph.path`` / the ``mcp_helpers`` resolver is caught here.
+constructing graphs and calling internal helpers, so a regression is
+caught here wherever the resolution happens to be wired -- today
+``Graph.context`` / ``Graph.path``, the ``mcp_helpers`` resolver, and
+``weld._enrich_selection`` for enrichment.
 """
 
 from __future__ import annotations
@@ -28,11 +34,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 from weld.graph import Graph  # noqa: E402
 from weld.mcp_helpers import resolve_node_id_via_alias  # noqa: E402
-from weld.mcp_server import weld_context, weld_path  # noqa: E402
+from weld.mcp_server import weld_context, weld_enrich, weld_path  # noqa: E402
+from weld.providers import EnrichmentResult  # noqa: E402
 
 
 def _seed_graph(root: Path) -> None:
@@ -123,6 +131,58 @@ class ResolveHelperContractTest(unittest.TestCase):
                 resolve_node_id_via_alias(g, "skill:generic:nope"),
                 "skill:generic:nope",
             )
+
+
+class _StubProvider:
+    """Enriches whatever node the selection handed it."""
+
+    DEFAULT_MODEL = "stub-model"
+
+    def enrich(self, node: dict, neighbors: list[dict], *, model: str):
+        return EnrichmentResult(
+            description=f"desc for {node['id']}", purpose=None,
+            complexity_hint=None, suggested_tags=[], tokens_used=0,
+            cost_usd=0.0,
+        )
+
+
+class WeldEnrichAliasTest(unittest.TestCase):
+    """The provider-backed ``weld_enrich`` enriches through a legacy id.
+
+    ``weld_enrich`` used to rewrite the id at its own boundary. The
+    rewrite now happens in the selection oracle both enrichment paths
+    share (so ``wd enrich --node <legacy>`` inherits it too), which makes
+    the end-to-end call -- not the helper it used to reach for -- the
+    thing worth pinning here.
+    """
+
+    def test_legacy_alias_id_enriches_the_canonical_node(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _seed_graph(Path(td))
+            with mock.patch(
+                "weld.enrich.resolve_provider", return_value=_StubProvider(),
+            ):
+                res = weld_enrich(
+                    node_id="skill:generic:foo:abc12345",
+                    provider="stub",
+                    root=td,
+                )
+
+            self.assertNotIn("error", res)
+            self.assertEqual(res["enriched"], ["skill:generic:foo"])
+
+    def test_unknown_node_id_is_still_reported_as_a_miss(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            _seed_graph(Path(td))
+            with mock.patch(
+                "weld.enrich.resolve_provider", return_value=_StubProvider(),
+            ):
+                res = weld_enrich(
+                    node_id="skill:generic:nope", provider="stub", root=td,
+                )
+
+            self.assertIn("error", res)
+            self.assertIn("skill:generic:nope", res["error"])
 
 
 class WeldContextSecurityTest(unittest.TestCase):

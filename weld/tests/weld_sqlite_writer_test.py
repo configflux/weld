@@ -10,7 +10,9 @@ Covers the writer's contract:
 - a rebuild from the same JSON bytes produces a byte-identical file
   modulo the ``generated_at`` field (which the test pins to a fixed value);
 - a build failure leaves no partial sidecar behind (atomic rename);
-- the writer accepts unicode / empty / None-prop nodes without crashing.
+- the writer accepts unicode / empty / None-prop nodes without crashing;
+- ``meta.weld_version`` records the weld that actually built the sidecar,
+  in both environments weld ships into.
 """
 
 from __future__ import annotations
@@ -18,11 +20,14 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
+from unittest import mock
 
 
 from weld import _sqlite_schema as schema  # noqa: E402
 from weld import _sqlite_writer as writer  # noqa: E402
+from weld import _version  # noqa: E402
 from weld._review import mint_edge_id  # noqa: E402
 from weld.serializer import dumps_graph  # noqa: E402
 
@@ -284,6 +289,78 @@ class AtomicWriteTest(unittest.TestCase):
                 _sample_graph(), _graph_bytes(_sample_graph()), bad_target,
             )
             self.assertIsNone(result)
+
+
+def _no_distribution(name: str) -> str:
+    """Stand-in for ``importlib.metadata.version`` with nothing installed."""
+    raise PackageNotFoundError(name)
+
+
+class WeldVersionMetaTest(unittest.TestCase):
+    """Which weld built this sidecar, when the caller does not say.
+
+    The deployment ``meta.weld_version`` matters most in -- an installed
+    one, read by support triage rather than by whoever ran discovery -- is
+    exactly the one the test sandbox is not. So each case installs the
+    environment it asserts (distribution metadata, or a checkout's
+    ``VERSION`` file) instead of reading the ambient one, and asserts on
+    the stamped row rather than on the private helper.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.absent_file = self.tmp / "absent" / "VERSION"
+
+    def _stamped_version(self, *, metadata: object, version_file: Path) -> str:
+        target = self.tmp / "graph.db"
+        graph = _sample_graph()
+        with mock.patch("importlib.metadata.version", metadata), mock.patch.object(
+            _version, "version_file_path", lambda: version_file
+        ):
+            writer.build_sidecar_for_bytes(
+                graph, _graph_bytes(graph), target, generated_at="t",
+            )
+        with sqlite3.connect(str(target)) as conn:
+            meta = dict(conn.execute("SELECT key, value FROM meta"))
+        return meta[schema.META_KEY_WELD_VERSION]
+
+    def test_installed_distribution_version_is_stamped(self) -> None:
+        # The regression: the writer asked metadata for the import name
+        # `weld` while the published distribution is `configflux-weld`, so
+        # the lookup always missed -- and an installed wheel has no
+        # repo-root VERSION beside site-packages to fall back to.
+        def _installed(name: str) -> str:
+            if name != _version.DISTRIBUTION_NAME:
+                raise PackageNotFoundError(name)
+            return "9.9.9"
+
+        stamped = self._stamped_version(
+            metadata=_installed, version_file=self.absent_file,
+        )
+
+        self.assertEqual(stamped, "9.9.9")
+
+    def test_source_checkout_version_file_is_stamped(self) -> None:
+        version_file = self.tmp / "VERSION"
+        version_file.write_text("1.2.3\n", encoding="utf-8")
+
+        stamped = self._stamped_version(
+            metadata=_no_distribution, version_file=version_file,
+        )
+
+        self.assertEqual(stamped, "1.2.3")
+
+    def test_unresolvable_version_stamps_the_placeholder(self) -> None:
+        # A partial checkout has neither source. Identity is best-effort,
+        # never a reason to fail the build, so the row is still written --
+        # with a value no one can mistake for a release.
+        stamped = self._stamped_version(
+            metadata=_no_distribution, version_file=self.absent_file,
+        )
+
+        self.assertEqual(stamped, "0")
 
 
 class EdgeIdTest(unittest.TestCase):

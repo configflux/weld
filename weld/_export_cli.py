@@ -16,11 +16,15 @@ import argparse
 import sys
 from pathlib import Path
 
+from weld._safe_text import sanitize_terminal_text
+
 
 def run_export(argv: list[str]) -> int:
     """Parse export subcommand args and run the export."""
     from weld._auto_refresh import auto_refresh_if_stale
+    from weld._graph_cli_errors import load_graph_or_exit
     from weld.export import export
+    from weld.graph import Graph
 
     parser = argparse.ArgumentParser(prog="wd export")
     parser.add_argument(
@@ -30,7 +34,7 @@ def run_export(argv: list[str]) -> int:
         choices=("mermaid", "dot", "d2", "wiki"),
         help=(
             "Output format. ``mermaid``/``dot``/``d2`` stream a single "
-            "diagram to stdout. ``wiki`` (ADR 0053) writes a directory "
+            "diagram to stdout. ``wiki`` writes a directory "
             "tree of markdown wikilinks to ``--output``."
         ),
     )
@@ -77,8 +81,8 @@ def run_export(argv: list[str]) -> int:
         action="store_true",
         default=False,
         help=(
-            "Skip the auto-refresh that runs when the graph is stale "
-            "(ADR 0051). A warning is emitted to stderr."
+            "Skip the auto-refresh that runs when the graph is stale. "
+            "A warning is emitted to stderr."
         ),
     )
     args = parser.parse_args(argv)
@@ -104,12 +108,26 @@ def run_export(argv: list[str]) -> int:
         no_refresh=args.no_refresh,
         json_output=True,
     )
+    # bd tl32: this CLI-only probe load is what turns a corrupt/truncated
+    # graph.json or a directory at the graph path into the structured
+    # `error[<code>]: ... | hint: ...` contract every sibling read command
+    # gives, instead of a raw traceback -- this command had no guard
+    # anywhere in its call chain before that fix. The MCP and viz-server
+    # callers have no such probe load; they call export() with root= only,
+    # so their own exception classifiers still see the raw load exception.
+    #
+    # bd 6vq7: the loaded Graph used to be discarded here, so export()
+    # would construct+load a second Graph internally from the same
+    # graph.json -- reading and JSON-parsing it twice per invocation.
+    # Threading it through via graph= makes export() use this one instead.
+    g = load_graph_or_exit(Graph(args.root))
     output = export(
         args.format,
         node_id=node_id,
         depth=args.depth,
         root=args.root,
         output=args.output,
+        graph=g,
     )
-    sys.stdout.write(output)
+    sys.stdout.write(sanitize_terminal_text(output))
     return 0

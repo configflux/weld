@@ -336,17 +336,21 @@ def emit_inheritance_edges(
                     },
                 },
             )
+        props: dict = {
+            "source_strategy": source_strategy,
+            "confidence": "definite" if resolved else "speculative",
+            "resolved": resolved,
+            "base_name": record["base"],
+            "derived_class": record["derived"],
+        }
+        rel_path = record.get("rel_path", "")
+        if rel_path:
+            # ADR 0074: attribute the edge to the file whose base-class
+            # clause produced it -- record_inheritance already captures
+            # rel_path per record, one file per declaration (bd rifzk).
+            props["provenance"] = {"file": rel_path}
         edges.append({
-            "from": from_id,
-            "to": target_id,
-            "type": "inherits",
-            "props": {
-                "source_strategy": source_strategy,
-                "confidence": "definite" if resolved else "speculative",
-                "resolved": resolved,
-                "base_name": record["base"],
-                "derived_class": record["derived"],
-            },
+            "from": from_id, "to": target_id, "type": "inherits", "props": props,
         })
 
 

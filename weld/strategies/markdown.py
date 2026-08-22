@@ -12,6 +12,35 @@ via ``contains`` edges.
 Authority mapping:
 - adr, policy, runbook, gate, verification -> canonical
 - guide (and fallback)                     -> derived
+
+Per ADR 0074 (second amendment) every ``relates_to`` edge carries
+``props.provenance.file``: the **mentioning** markdown file this strategy
+walked, never the target it resolved. Stamping the target would be
+backwards -- the target is the endpoint that goes stale in the very case
+the stamp exists to survive.
+
+Unlike ``test_peer`` (bd heum) this edge is not *currently* at risk, and
+the stamp is deliberate belt-and-braces (bd 41vw). An edge is only
+emitted when the target resolves inside ``path_to_nid``, i.e. would
+itself be minted by this same ``extract`` call, so the producing file and
+both endpoints always share one glob; purging either endpoint implies a
+dirty file in this strategy's own source entry, which re-runs it over the
+*whole* glob and re-mints every edge. heum needed *disjoint* globs, which
+cannot arise here. But that safety is incidental -- it rests on
+re-reading every matched ``.md`` whenever any one is dirty, exactly the
+cost ADR 0084 removed for ``python_module`` via dirty scope, and the same
+optimisation here would silently reintroduce heum. The stamp makes the
+retention contract explicit rather than emergent;
+``incremental_markdown_provenance_purge_test`` pins both halves.
+
+A second, unrelated edge pass (ADR 0128, bd ziv1) mints ``documents``
+edges from the doc node to any ``file:*`` node a backtick-quoted ``.py``
+path or dotted-module citation in the body resolves to -- see
+:mod:`weld.strategies._markdown_code_refs` for the match rule. Unlike the
+``relates_to`` pass above, this one is *always* cross-source (the doc
+family and the code family are different ``.weld/discover.yaml``
+entries), so the provenance stamp there is load-bearing, not
+belt-and-braces.
 """
 
 from __future__ import annotations
@@ -19,7 +48,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._markdown_code_refs import code_reference_edges
+from weld.strategies._markdown_fence import content_text, iter_headings
+from weld.strategies._markdown_section_kind import classify_section
 
 #: doc_kind values that represent authoritative/primary guidance.
 _CANONICAL_KINDS: frozenset[str] = frozenset(
@@ -51,74 +85,12 @@ _PREFIX_TO_KIND: dict[str, str] = {
 # require an ADR.
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s#]+\.md)(#[^)\s]*)?\)")
 
-# -- Section kind classification ---------------------------------------------
-# Maps heading-text patterns (lowercased) to section_kind values.
-# Order matters: first match wins.  Patterns are checked with substring
-# matching against the lowercased heading text.
-_SECTION_KIND_PATTERNS: list[tuple[str, str]] = [
-    ("install", "setup"),
-    ("setup", "setup"),
-    ("getting started", "setup"),
-    ("quickstart", "setup"),
-    ("quick start", "setup"),
-    ("prerequisite", "setup"),
-    ("requirements", "setup"),
-    ("config", "configuration"),
-    ("environment variable", "configuration"),
-    ("settings", "configuration"),
-    ("api reference", "api-reference"),
-    ("api doc", "api-reference"),
-    ("endpoints", "api-reference"),
-    ("architecture", "architecture"),
-    ("design", "architecture"),
-    ("system overview", "architecture"),
-    ("component", "architecture"),
-    ("troubleshoot", "troubleshooting"),
-    ("debug", "troubleshooting"),
-    ("common error", "troubleshooting"),
-    ("common issue", "troubleshooting"),
-    ("faq", "troubleshooting"),
-    ("overview", "overview"),
-    ("introduction", "overview"),
-    ("summary", "overview"),
-    ("context", "overview"),
-    ("deploy", "deployment"),
-    ("release", "deployment"),
-    ("ci/cd", "deployment"),
-    ("usage", "usage"),
-    ("examples", "usage"),
-    ("how to", "usage"),
-    ("test", "testing"),
-    ("verification", "testing"),
-    ("migrat", "migration"),
-    ("upgrade", "migration"),
-    ("security", "security"),
-    ("auth", "security"),
-    ("permission", "security"),
-    ("access control", "security"),
-    ("contribut", "contributing"),
-    ("development", "contributing"),
-]
-
 def _infer_doc_kind(id_prefix: str) -> str:
     """Infer doc_kind from the id_prefix when not explicitly configured."""
     for fragment, kind in _PREFIX_TO_KIND.items():
         if fragment in id_prefix:
             return kind
     return "guide"
-
-def _classify_section(heading_text: str) -> str | None:
-    """Classify a heading into a section_kind, or None if unrecognized.
-
-    Only returns a classification when the heading text clearly matches
-    a known pattern.  Returns None for ambiguous or generic headings to
-    avoid overclaiming semantics.
-    """
-    lower = heading_text.lower()
-    for pattern, kind in _SECTION_KIND_PATTERNS:
-        if pattern in lower:
-            return kind
-    return None
 
 def _slugify(text: str) -> str:
     """Convert heading text to a URL-safe slug for node IDs."""
@@ -135,21 +107,25 @@ def _parse_sections(text: str) -> list[dict]:
     Only extracts H2 headings (## ...) as section boundaries.  H1 is the
     doc title, H3+ are subsections within an H2 and are not promoted to
     separate nodes.
+
+    Headings inside fenced code blocks are skipped (bd ve41): a ``##`` in a
+    markdown sample is not a section boundary, and treating it as one ends
+    the enclosing real section mid-sample. ``lines`` is still the whole
+    document, so the numbers below stay document line numbers.
     """
     lines = text.splitlines()
     sections: list[dict] = []
 
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("## ") and not stripped.startswith("### "):
-            heading = stripped[3:].strip()
-            sections.append({
-                "heading": heading,
-                "slug": _slugify(heading),
-                "start_line": i + 1,  # 1-indexed
-                "end_line": -1,  # filled in below
-                "section_kind": _classify_section(heading),
-            })
+    for i, level, heading in iter_headings(text):
+        if level != 2:
+            continue
+        sections.append({
+            "heading": heading,
+            "slug": _slugify(heading),
+            "start_line": i + 1,  # 1-indexed
+            "end_line": -1,  # filled in below
+            "section_kind": classify_section(heading),
+        })
 
     # Fill in end_line for each section (up to the next section or EOF)
     for idx, sec in enumerate(sections):
@@ -175,17 +151,15 @@ def _collect_heading_texts(text: str) -> list[str]:
     H1 is the doc title and is usually a filename restatement -- skipped
     here so it does not dominate the token list with low-signal words.
     H2/H3 are the section structure that user queries actually target.
+
+    Headings inside fenced code blocks are skipped (bd ve41): a doc that
+    *shows* markdown was feeding the index vocabulary from its own templates,
+    so ``docs/release.md`` answered a query for "Added" with a changelog
+    placeholder rather than a document that has an Added section.
     """
     found: set[str] = set()
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("### "):
-            heading = stripped[4:].strip()
-        elif stripped.startswith("## ") and not stripped.startswith("### "):
-            heading = stripped[3:].strip()
-        else:
-            continue
-        if heading:
+    for _index, level, heading in iter_headings(text):
+        if level in (2, 3) and heading:
             found.add(heading)
     return sorted(found)
 
@@ -194,10 +168,13 @@ def _extract_md_link_targets(text: str) -> list[tuple[str, str]]:
 
     Order is preserved for caller-side dedupe stability. Only ``.md``
     targets are returned (other links are filtered by the regex).
+
+    Fenced blocks are removed first, so a link that only ever renders as code
+    mints no edge -- see :func:`content_text` for the trade (bd w624).
     """
     return [
         (m.group(2), m.group(3) or "")
-        for m in _MD_LINK_RE.finditer(text)
+        for m in _MD_LINK_RE.finditer(content_text(text))
     ]
 
 
@@ -233,22 +210,19 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     # historical behaviour for ``docs/*.md`` and ``docs/adrs/*.md``.
     include_readme = bool(source.get("include_readme", False))
 
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
-    discovered_from.append(str(parent.relative_to(root)) + "/")
-
     # Pass 1: collect (path, nid) pairs and a resolved-path -> nid map so
     # the link-extraction pass can verify each target would itself
     # produce a node before emitting an edge.
+    #
+    # Provenance is recorded per file in the emission pass below, never from
+    # the glob's parent directory -- this glob is often root-anchored
+    # (``README.md``), and the parent-derived entry was then ``"./"``, the
+    # marker that makes every path in the repository count as tracked source
+    # (bd 8ia5).
     md_paths: list[Path] = []
     path_to_nid: dict[Path, str] = {}
-    for md in filter_glob_results(
-        root, sorted(parent.glob(Path(pattern).name)), excludes=excludes,
-    ):
+    for md in resolve_glob(root, pattern, excludes):
         if md.name == "README.md" and not include_readme:
-            continue
-        if should_skip(md, excludes, root=root):
             continue
         nid = f"{id_prefix}/{md.stem}"
         md_paths.append(md)
@@ -258,7 +232,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             path_to_nid[md] = nid
 
     for md in md_paths:
-        rel_path = str(md.relative_to(root))
+        rel_path = rel_to_root(md, root)
+        discovered_from.append(rel_path)
         nid = path_to_nid.get(md.resolve(), f"{id_prefix}/{md.stem}")
         if "runbook" in id_prefix:
             label = md.stem.replace("_", " ").title()
@@ -305,6 +280,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 # or self-link -- skip silently.
                 continue
             link_targets.add(target_nid)
+        # -- Doc -> code citation extraction (ADR 0128, bd ziv1) --
+        edges.extend(code_reference_edges(root, nid, rel_path, text))
+
         for target_nid in sorted(link_targets):
             edges.append({
                 "from": nid,
@@ -314,6 +292,21 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     "source_strategy": "markdown",
                     "authority": "derived",
                     "confidence": "inferred",
+                    # ADR 0074: the file whose scan produced this edge --
+                    # the *mentioning* markdown file, never the target it
+                    # resolved. See the module docstring for why this is
+                    # stamped even though the edge is not at risk today.
+                    # ``rel_path`` verbatim, not a re-normalised copy: the
+                    # purge tests this against a stale set built by
+                    # ``_source_resolve``, and it is also the node's own
+                    # ``props.file``. Since bd v552 / ADR 0112 both sides
+                    # are constructed by ``weld._rel_path.rel_to_root``, so
+                    # they agree by construction on every platform rather
+                    # than only where ``str()`` and ``as_posix()`` coincide
+                    # -- re-spelling it here could only reintroduce a
+                    # divergence that retains edges whose producing file
+                    # *is* stale.
+                    "provenance": {"file": rel_path},
                 },
             })
 

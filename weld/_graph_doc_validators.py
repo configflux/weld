@@ -17,7 +17,7 @@ from weld._validate_diagnostics import (
     REGEN_HINT as _REGEN_HINT,
     missing_top_level_hint as _missing_top_hint,
 )
-from weld.contract import ValidationError
+from weld._contract_types import ValidationError
 
 
 def _is_federation_root(graph: dict) -> bool:

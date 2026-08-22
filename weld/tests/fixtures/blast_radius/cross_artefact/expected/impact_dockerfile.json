@@ -5,6 +5,7 @@
     "cli_commands": [],
     "entrypoints": [],
     "mcp_tools": [],
+    "repo_tools": [],
     "tests": []
   },
   "capabilities": {
@@ -154,6 +155,12 @@
         "test_edges": false
       },
       "k8s": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "lint": {
         "deps_edges": false,
         "nodes_emitted": false,
         "srcs_edges": false,

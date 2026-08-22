@@ -248,18 +248,15 @@ def _print_first_run_notice(stream: IO[str], path: Path) -> None:
 
 
 def _weld_version_string() -> str:
-    try:
-        from importlib.metadata import version
+    """Version stamped into every telemetry event.
 
-        return version("configflux-weld")
-    except Exception:
-        try:
-            vf = Path(__file__).resolve().parent.parent / "VERSION"
-            if vf.is_file():
-                return vf.read_text(encoding="utf-8").strip() or "0.0.0"
-        except OSError:
-            pass
-        return "0.0.0"
+    Events are schema-validated, so the field must always be a non-empty
+    PEP 440-ish string: an unresolvable version degrades to "0.0.0" rather
+    than dropping the event.
+    """
+    from weld._version import weld_version
+
+    return weld_version() or "0.0.0"
 
 
 def _python_version_string() -> str:

@@ -12,6 +12,8 @@ import os
 import sys
 from pathlib import Path
 
+from weld._safe_text import sanitize_terminal_text
+
 # Known frameworks the agent matrix can cover. Order here is the stable display
 # order used when rendering the matrix.
 _KNOWN_FRAMEWORKS: tuple[str, ...] = ("copilot", "codex", "claude")
@@ -384,7 +386,4 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     root = args.root.resolve()
     output = prime(root, active_agent=args.agent)
-    sys.stdout.write(output)
-
-if __name__ == "__main__":
-    main()
+    sys.stdout.write(sanitize_terminal_text(output))

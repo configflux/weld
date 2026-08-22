@@ -19,19 +19,14 @@ These tests cover the new precondition surface; the existing
 ``WeldAdapterTest`` in ``weld_public_bench_adapters_test.py`` continues
 to cover the present/Python path.
 
-The :class:`EnsureGraphBootstrapsConfigTest` block at the bottom covers
-a separate root cause: ``_ensure_graph`` previously called
-``weld.discover.discover`` directly without first generating a
-``.weld/discover.yaml``. On a fresh nlohmann/json clone with no
-``.weld/`` tree, ``discover.py`` defaulted to ``sources=[]`` and minted
-zero nodes, so every C++ bench row scored F1=0.00 regardless of
-extractor quality. The fix bootstraps a default config via
-:func:`weld.init.init` before invoking discovery.
+``_ensure_graph``'s bootstrap surface -- a separate root cause, and a
+separate mini-spec -- lives in the sibling
+``weld_public_bench_weld_adapter_graph_test.py`` (split out by bd gjli
+when this file reached the 400-line cap).
 """
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,6 +35,10 @@ from unittest.mock import patch
 
 from weld.bench._public_runner import PublicTask  # noqa: E402
 from weld.bench.adapters import weld as weld_adapter  # noqa: E402
+
+from weld.tests.bench.bench_grammar_precondition import (  # noqa: E402
+    skip_or_fail_without_grammars,
+)
 
 
 def _task(family: str = "navigation", **overrides) -> PublicTask:
@@ -179,17 +178,14 @@ class TreeSitterUnavailableGateTest(unittest.TestCase):
                 )
             self.assertIn(result.status, ("ok", "degraded"))
 
-    @unittest.skipUnless(
-        weld_adapter._is_tree_sitter_available(),
-        "tree-sitter not installed; patched availability cannot stand in for the real module",
-    )
     def test_tree_sitter_present_runs_normally(self) -> None:
         # When tree-sitter IS importable, the adapter does NOT short-
         # circuit -- it goes through ``_ensure_graph`` like before.
-        # Skip when tree-sitter is genuinely absent: patching the probe
-        # to True does not make the underlying module importable, and
-        # downstream discover/file_index paths return ``unavailable``
-        # for an empty tempdir, defeating the assertion.
+        # Patching the probe to True does not make the underlying module
+        # importable, and downstream discover/file_index paths return
+        # ``unavailable`` for an empty tempdir, so the real module is a
+        # genuine precondition here rather than a convenience.
+        skip_or_fail_without_grammars(self)
         with tempfile.TemporaryDirectory() as repo_root:
             with patch.object(
                 weld_adapter, "_is_tree_sitter_available",
@@ -225,147 +221,6 @@ class TreeSitterAvailabilityProbeTest(unittest.TestCase):
         # must NOT propagate.
         result = weld_adapter._is_tree_sitter_available()
         self.assertIsInstance(result, bool)
-
-
-class EnsureGraphBootstrapsConfigTest(unittest.TestCase):
-    """``_ensure_graph`` must run ``wd init`` when no discover.yaml exists.
-
-    Root cause for cpp F1=0.00 (see module docstring): without a
-    ``.weld/discover.yaml`` :func:`weld.discover.discover` defaults to
-    ``sources=[]`` and emits zero nodes. The bench tempdir for a fresh
-    nlohmann/json clone has no ``.weld/`` tree, so every cpp bench row
-    scored 0 even though tree-sitter was installed. ``_ensure_graph``
-    must therefore bootstrap the default config (in-process equivalent
-    of ``wd init``) before invoking discovery.
-
-    Hermetic: writes a tiny cpp file inside a tempdir; the only side
-    effects are the ``.weld/`` subdirectory inside that tempdir.
-    """
-
-    def _read_graph_node_count(self, repo_root: Path) -> int:
-        graph_path = repo_root / ".weld" / "graph.json"
-        payload = json.loads(graph_path.read_text(encoding="utf-8"))
-        nodes = payload.get("nodes") or {}
-        return len(nodes)
-
-    @unittest.skipUnless(
-        weld_adapter._is_tree_sitter_available(),
-        "tree-sitter not installed; cpp node extraction cannot run",
-    )
-    def test_fresh_cpp_tempdir_yields_nonempty_graph(self) -> None:
-        # The exact bug class: a fresh tempdir with cpp source files but
-        # no .weld/ tree. Before the fix, _ensure_graph called discover()
-        # with sources=[] and the resulting graph had 0 nodes. After the
-        # fix, the bootstrap step generates a discover.yaml whose
-        # tree-sitter cpp glob picks up the file and mints at least one
-        # file node. Skipped when tree-sitter is genuinely absent: the
-        # cpp strategy depends on tree_sitter_cpp grammar.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "include").mkdir()
-            (root / "include" / "json.hpp").write_text(
-                "#pragma once\nnamespace nlohmann { class json {}; }\n",
-                encoding="utf-8",
-            )
-            (root / "src").mkdir()
-            (root / "src" / "main.cpp").write_text(
-                "#include \"json.hpp\"\nint main() { return 0; }\n",
-                encoding="utf-8",
-            )
-            ok = weld_adapter._ensure_graph(root)
-            self.assertTrue(
-                ok, "_ensure_graph must report success when discovery runs",
-            )
-            # The bootstrap step must have written a discover.yaml inside
-            # the tempdir (containment check).
-            self.assertTrue(
-                (root / ".weld" / "discover.yaml").exists(),
-                "_ensure_graph must bootstrap .weld/discover.yaml",
-            )
-            # The graph must contain at least one node -- the cpp file
-            # nodes from the tree-sitter source entries (or the
-            # python_module entry on the .py-free tempdir, etc.).
-            node_count = self._read_graph_node_count(root)
-            self.assertGreater(
-                node_count, 0,
-                "graph.json must mint > 0 nodes after bootstrap; "
-                "got 0 (regression from sources=[] default)",
-            )
-
-    def test_existing_graph_short_circuits_without_bootstrap(self) -> None:
-        # If a graph already exists, _ensure_graph must NOT regenerate
-        # it (and must NOT write a discover.yaml). Idempotency guard so
-        # repeated calls in the bench loop are cheap.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / ".weld").mkdir(parents=True)
-            sentinel = {
-                "meta": {"version": "1", "schema_version": 1},
-                "nodes": {"file:sentinel": {
-                    "type": "file", "label": "sentinel",
-                    "props": {"file": "sentinel"},
-                }},
-                "edges": [],
-            }
-            (root / ".weld" / "graph.json").write_text(
-                json.dumps(sentinel), encoding="utf-8",
-            )
-            ok = weld_adapter._ensure_graph(root)
-            self.assertTrue(ok)
-            # Sentinel preserved -> short-circuit confirmed.
-            payload = json.loads(
-                (root / ".weld" / "graph.json").read_text(encoding="utf-8"),
-            )
-            self.assertIn("file:sentinel", payload["nodes"])
-            # No discover.yaml should have been written -- the short-
-            # circuit happens before the bootstrap step.
-            self.assertFalse(
-                (root / ".weld" / "discover.yaml").exists(),
-                "short-circuit must not bootstrap discover.yaml",
-            )
-
-    def test_bootstrap_idempotent_when_discover_yaml_exists(self) -> None:
-        # If discover.yaml already exists (e.g. user pre-configured the
-        # tempdir), _ensure_graph must not overwrite it -- it must reuse
-        # the existing config and proceed straight to discovery.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "src").mkdir()
-            (root / "src" / "main.cpp").write_text(
-                "int main() { return 0; }\n", encoding="utf-8",
-            )
-            (root / ".weld").mkdir()
-            user_yaml = "sources:\n  # user-curated\n"
-            (root / ".weld" / "discover.yaml").write_text(
-                user_yaml, encoding="utf-8",
-            )
-            ok = weld_adapter._ensure_graph(root)
-            self.assertTrue(ok)
-            # User's discover.yaml must be preserved verbatim.
-            self.assertEqual(
-                (root / ".weld" / "discover.yaml").read_text(encoding="utf-8"),
-                user_yaml,
-            )
-
-    def test_bootstrap_writes_only_inside_repo_root(self) -> None:
-        # Containment guard: bootstrap must only ever write into
-        # ``repo_root/.weld/``, never elsewhere on the filesystem (the
-        # bench tempdir is the trust boundary).
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "src").mkdir()
-            (root / "src" / "main.cpp").write_text(
-                "int main() { return 0; }\n", encoding="utf-8",
-            )
-            ok = weld_adapter._ensure_graph(root)
-            self.assertTrue(ok)
-            # Every file inside the tempdir must live under root/.
-            # Snapshot the tree and check no escape.
-            for path in root.rglob("*"):
-                self.assertTrue(
-                    str(path.resolve()).startswith(str(root.resolve())),
-                    f"bootstrap escaped the tempdir: {path}",
-                )
 
 
 if __name__ == "__main__":

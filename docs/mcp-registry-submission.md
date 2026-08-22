@@ -32,7 +32,7 @@ The single canonical install path the submission advertises is:
 
 ```bash
 pip install configflux-weld
-python -m weld.mcp_server
+wd mcp serve
 ```
 
 Notes for the submission reviewer:
@@ -45,7 +45,7 @@ Notes for the submission reviewer:
 
   ```bash
   pip install 'configflux-weld[mcp]'
-  python -m weld.mcp_server
+  wd mcp serve
   ```
 
   Both commands are correct. The plain `pip install configflux-weld`
@@ -53,20 +53,29 @@ Notes for the submission reviewer:
   the `[mcp]` form is what users typically run, and it is what the
   install hint surfaces when the SDK is missing.
 
-- `python -m weld.mcp_server` is invoked over stdio by an MCP client.
-  It does not bind a network socket and it does not execute any
-  application code from the analyzed repository. See the
-  [`docs/mcp.md`](mcp.md) "Trust model" section.
+- `wd mcp serve` is invoked over stdio by an MCP client. It does not bind
+  a network socket and it does not execute any application code from the
+  analyzed repository. See the [`docs/mcp.md`](mcp.md) "Trust model"
+  section.
+
+- `wd` is the console script installed with the package, and the launch
+  form is load-bearing rather than a spelling preference. A script's
+  `sys.path[0]` is the script's own directory, so the repository a client
+  launches the server in is never on the server's module search path;
+  `python -m` places it there ahead of the standard library, before any
+  weld code runs. The module form remains supported and documented for
+  running from a source checkout, but it is not what this entry
+  advertises.
 
 - `uv tool install "configflux-weld[mcp]"` is supported as well and is
   the preferred installation route in the project's own README. The
   registry submission still standardises on the `pip install` form for
   parity with other Python-package entries.
 
-The install contract -- "install the package, then run
-`python -m weld.mcp_server`" -- is exercised end-to-end by the smoke
-test linked under [Smoke-test evidence](#smoke-test-evidence). If that
-test breaks, this submission is not safe to send.
+The install contract -- "install the package, then run `wd mcp serve`" --
+is exercised end-to-end by the smoke tests linked under [Smoke-test
+evidence](#smoke-test-evidence). If those break, this submission is not
+safe to send.
 
 ## Server identity and capabilities
 
@@ -105,8 +114,22 @@ test in the package's own test suite:
      `--prefix`, and `python -m weld.mcp_server --help` is run from
      that prefix. The test asserts that the `--help` output prints the
      `Usage: python -m weld.mcp_server` banner *and* the
-     `configflux-weld[mcp]` install hint -- exactly what a registry
-     visitor following the install command will see.
+     `configflux-weld[mcp]` install hint.
+  4. **The advertised launch form executes nothing from the directory
+     it is pointed at.** `weld/tests/weld_mcp_serve_launch_shadow_test.py`
+     starts `wd mcp serve` from a directory carrying a shadow module for
+     every name the server imports -- including the ones CPython's own
+     module runner resolves before a `-m` target's first line -- and
+     requires that none of them ran. A control in the same file requires
+     an empty `-m` target launched from that same directory to execute a
+     non-empty set, so the zero is a measured contrast rather than an
+     inert fixture.
+
+  The release smoke run before each version goes out additionally
+  installs the wheel into a venv and requires `wd mcp serve --help` to
+  print its usage banner -- exactly what a registry visitor following the
+  install command will see, and proof that the advertised entrypoint
+  dispatches to the server rather than erroring as an unknown subcommand.
 
 Point the registry maintainer at this file when reviewing the entry. A
 broken install path or a drifted help banner causes this test to fail
@@ -120,11 +143,12 @@ The submission is intentionally not in flight. Hold reasons:
   installed-wheel smoke coverage, platform support claims, feedback
   channel posture). The registry entry should not advertise an install
   path that is still being hardened.
-- The registry submission should reference a stable PyPI version.
-  `python -m weld.mcp_server` is exposed by every `configflux-weld`
-  release that ships the `mcp` extra, but the registry visitor will
-  install whatever PyPI currently serves. Submit only after the next
-  patch release is out and verified.
+- The registry submission should reference a stable PyPI version. The
+  registry visitor will install whatever PyPI currently serves, and
+  `wd mcp serve` is only present from the release that introduced it --
+  so submit only after a release carrying it is out and verified. Sending
+  the entry against an older published version would advertise a command
+  the installed package does not have.
 - The MCP tool surface listed in the registry should match what the
   bundled server registers. The MCP doc explicitly notes the surface
   is "still settling" -- so we hold the registry submission until a

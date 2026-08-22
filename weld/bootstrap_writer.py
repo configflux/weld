@@ -10,6 +10,7 @@ from __future__ import annotations
 import difflib
 from pathlib import Path
 
+from weld._safe_text import sanitize_terminal_text
 from weld.bootstrap_managed import (
     MarkerError,
     append_region,
@@ -20,6 +21,17 @@ from weld.bootstrap_managed import (
     replace_region_bodies,
     whole_file_diff,
 )
+
+
+# The diffs below are the most attacker-influenced text ``wd`` prints: the
+# bytes are whatever the scanned repository contains, so a destination file
+# holding a raw ``ESC [ 2 J`` would clear the operator's screen mid-review.
+#
+# Each one escapes inline rather than through a shared ``_print_diff`` helper,
+# which is deliberate and was measured: routing them through a helper hides the
+# write behind a parameter, and ``tools.lint_terminal_safety`` then reports zero
+# findings whether the helper escapes or not. The repetition buys a boundary the
+# guard can actually verify, which is the whole point of having one.
 
 
 def process_template_dest(
@@ -63,7 +75,7 @@ def process_template_dest(
             dest.write_text(rendered, encoding="utf-8")
             print(f"Wrote {display} (re-seeded with managed-region markers)")
             return False
-        print(pre_marker_message(display, framework))
+        print(sanitize_terminal_text(pre_marker_message(display, framework)))
         return True
 
     return _process_managed_dest(
@@ -89,7 +101,10 @@ def _process_unmanaged_dest(
             )
         )
         if diff_text:
-            print(diff_text, end="" if diff_text.endswith("\n") else "\n")
+            print(
+                sanitize_terminal_text(diff_text),
+                end="" if diff_text.endswith("\n") else "\n",
+            )
         else:
             print(f"{display} differs from the current template.")
         return True
@@ -131,13 +146,19 @@ def _process_managed_dest(
                 tofile=f"{display} (template)",
             )
             if full:
-                print(full, end="" if full.endswith("\n") else "\n")
+                print(
+                    sanitize_terminal_text(full),
+                    end="" if full.endswith("\n") else "\n",
+                )
                 return True
             return False
         if not drifted and not missing:
             return False
         if diff_text:
-            print(diff_text, end="" if diff_text.endswith("\n") else "\n")
+            print(
+                sanitize_terminal_text(diff_text),
+                end="" if diff_text.endswith("\n") else "\n",
+            )
         for name in missing:
             print(f"{display}: managed region {name!r} missing on disk.")
         return True
@@ -148,7 +169,10 @@ def _process_managed_dest(
 
     if not force:
         if drifted:
-            print(diff_text, end="" if diff_text.endswith("\n") else "\n")
+            print(
+                sanitize_terminal_text(diff_text),
+                end="" if diff_text.endswith("\n") else "\n",
+            )
         for name in missing:
             print(f"{display}: managed region {name!r} missing on disk.")
         names = ", ".join(sorted(set(drifted) | set(missing)))

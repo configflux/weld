@@ -175,6 +175,7 @@ class WorkspaceStateBuildTest(unittest.TestCase):
     def test_save_workspace_state_uses_os_replace(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _write_workspaces(root, [ChildEntry(name="api", path="services/api")])  # cpzx: registry gates the write
             state = WorkspaceState(
                 children={
                     "services-api": WorkspaceChildState(

@@ -16,10 +16,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld._rel_path import rel_to_root
 from weld._yaml import parse_yaml
 from weld.strategies import cpp_resolver as _cpp_resolver
 from weld.strategies._cpp_post_pass import run_cpp_post_pass as _run_cpp_post_pass
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld.strategies._glob_resolve import resolve_glob_with_provenance
+from weld.strategies._helpers import StrategyResult
 from weld.strategies._tree_sitter_ids import (
     canonical_file_node_id as _make_node_id,
     legacy_file_node_id as _legacy_make_node_id,
@@ -34,6 +36,7 @@ from weld.strategies import (
     _rust_tree_sitter,
     _ts_call_graph,
     _ts_definitions,
+    _ts_doc_comments,
     _ts_parse,
     _typescript_inherits,
     _typescript_tree_sitter,
@@ -122,36 +125,6 @@ def load_language_queries(language: str) -> dict[str, str]:
 
     return result
 
-# ---------------------------------------------------------------------------
-# Glob resolution (mirrors python_module._resolve_glob)
-# ---------------------------------------------------------------------------
-
-def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
-    """Resolve a glob pattern that may contain ``**``.
-
-    Returns ``(matched_files, discovered_from_dirs)``.
-    Results inside excluded or nested-repo-copy directories are filtered out.
-    """
-    files: list[Path] = []
-    dirs: set[str] = set()
-
-    if "**" in pattern:
-        raw = sorted(root.glob(pattern))
-        for f in filter_glob_results(root, raw):
-            files.append(f)
-            dirs.add(str(f.parent.relative_to(root)) + "/")
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return [], []
-        name_pat = Path(pattern).name
-        raw = sorted(parent.glob(name_pat))
-        for f in filter_glob_results(root, raw):
-            files.append(f)
-        dirs.add(str(parent.relative_to(root)) + "/")
-
-    return files, sorted(dirs)
-
 # Patchable re-exports of helpers extracted to other modules (tests mock
 # these names on this module, so ``extract()`` must read via namespace).
 # ADR 0041 Layer 1 (Node IDs) -> ``_tree_sitter_ids``; Layer 2 (cpp includes) -> ``cpp_resolver``.
@@ -230,7 +203,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     emit_calls = bool(source.get("emit_calls", False))
     source_strategy = str(source.get("source_strategy", "tree_sitter"))
 
-    matched, dirs = _resolve_glob(root, pattern)
+    matched, dirs = resolve_glob_with_provenance(root, pattern, excludes)
     discovered_from.extend(dirs)
 
     if not matched:
@@ -250,14 +223,12 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for fpath in matched:
         if not fpath.is_file():
             continue
-        if should_skip(fpath, excludes, root=root):
-            continue
         try:
             source_text = fpath.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
 
-        rel_path = str(fpath.relative_to(root))
+        rel_path = rel_to_root(fpath, root)
 
         # Parse symbols. A missing per-language grammar surfaces as an
         # ImportError from ``load_ts_language``; detecting it lazily
@@ -319,6 +290,15 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
         imports = symbols.get("imports", [])
         if imports:
+            # Go's raw capture is quote-wrapped (bd bt5m); clean it before
+            # it reaches imports_from so Go matches every sibling
+            # language's shape and stays matchable by an exact-string
+            # consumer like package_import_resolver. Re-assigning the
+            # local also feeds the cleaned strings into
+            # stamp_import_origins below, so imports_origin's keys are
+            # clean too instead of only imports_from.
+            if language == "go":
+                imports = _go_tree_sitter.strip_import_quotes(imports)
             node_props["imports_from"] = imports
             if language == "go":
                 _go_tree_sitter.stamp_import_origins(node_props, imports, go_module_path)
@@ -372,9 +352,20 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 }
             )
 
+        # bd 5038-009x (ADR 0118 follow-up): best-effort per-symbol doc
+        # comment, for the languages with a registered convention (Go,
+        # Rust today). Reuses the parse + compiled "exports" query this
+        # file's `_parse_file_symbols` call already primed in
+        # `parse_cache` moments ago -- no second parse. `None` for every
+        # other language leaves `props.summary` absent, unchanged from
+        # before this call existed.
+        summaries = _ts_doc_comments.extract_definition_summaries(
+            fpath, language, queries, cache=parse_cache,
+        )
         def_nodes, def_edges = _ts_definitions.promote_definition_symbols(
             language=language, rel_path=rel_path, symbols=symbols,
             file_node_id=nid, source_strategy=source_strategy,
+            summaries=summaries,
         )
         for def_id, def_node in def_nodes.items():
             nodes[def_id] = def_node

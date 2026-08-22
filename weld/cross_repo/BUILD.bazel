@@ -2,6 +2,25 @@ load("@rules_python//python:defs.bzl", "py_library")
 
 package(default_visibility = ["//visibility:public"])
 
+# Exported so //weld/tests:weld_subpackage_srcs_claim_test can stage this
+# package's own declarations in its runfiles and read them -- same reason
+# //weld:BUILD.bazel is exported (see that package's BUILD.bazel comment).
+exports_files([
+    "BUILD.bazel",
+])
+
+# Every .py file that EXISTS in this package, as opposed to every one some
+# target declares. //weld/tests:weld_subpackage_srcs_claim_test set-diffs the
+# two to catch a module that is on disk but claimed by no target -- the same
+# bd 73xa ModuleNotFoundError shape //weld:all_python_sources guards for
+# weld/BUILD.bazel. A glob is required rather than convenient: staging the
+# declared srcs instead would make the test enumerate exactly the set it is
+# supposed to be checking against, and it would pass vacuously.
+filegroup(
+    name = "all_python_sources",
+    srcs = glob(["*.py"]),
+)
+
 py_library(
     name = "cross_repo",
     srcs = [

@@ -48,9 +48,9 @@ below -- freshness metadata.
 
 | Field | Required | Type | Description |
 |---|---|---|---|
-| `version` | yes | int | Contract vocabulary version. Must equal `weld.contract.SCHEMA_VERSION` (currently `5`). A mismatch causes `validate_graph` to emit a remediation message that names the current version and the `wd discover` invocation needed to regenerate. |
+| `version` | yes | int | Contract vocabulary version. Must equal `weld.contract.SCHEMA_VERSION` (currently `7`). A mismatch causes `validate_graph` to emit a remediation message that names the current version and the `wd discover` invocation needed to regenerate. |
 | `schema_version` | written on save | int | Federation layout version: `1` for a single-repo or child graph, `2` for a federated root graph that contains `repo:*` nodes. See `weld/_graph_schema.py` for the gating rules. |
-| `discovered_from` | yes | list | Source roots scanned during discovery. Content-stable at a fixed commit; consumed by `wd stale` to scope source-drift detection. |
+| `discovered_from` | yes | list | Source roots and files scanned during discovery. Content-stable at a fixed commit; consumed by `wd stale` to scope source-drift detection, and every *file* entry is recorded in the discovery inventory so it participates in freshness even when no source glob resolves it. |
 | `updated_at` | sidecar | string | ISO-8601 timestamp written on every save. Stored in the `graph-meta.json` sidecar, not in `graph.json`. Surfaced back on the logical `meta` when a graph is loaded. |
 | `git_sha` | sidecar (optional) | string | HEAD commit SHA recorded when the root is a git working tree. Stored in the `graph-meta.json` sidecar. Used by `wd stale` to detect when the graph is older than the working tree. |
 
@@ -102,7 +102,7 @@ the JSON object form already guarantees this.
 
 ### Node type vocabulary
 
-The set below reflects `VALID_NODE_TYPES` as of contract version 5. New
+The set below reflects `VALID_NODE_TYPES` as of contract version 8. New
 types may be added only under the process in "Extending the schema"
 below.
 
@@ -138,6 +138,18 @@ Polyrepo federation:
   meta-graph. Presence of any `repo:*` node triggers
   `meta.schema_version = 2` on save.
 
+External dependencies:
+
+- `external-dep` -- a dependency a `build-target`/`test-target` declares
+  via an external-workspace label (Bazel's `@pypi//tree_sitter_cpp` and
+  the like) but does not contain or analyze further. One node per
+  distinct `(ecosystem, name)` identity, id `external-dep:<ecosystem>:<name>`;
+  reached via `depends_on` edges from every target that declares it, so
+  "which targets declare this dependency" is a one-hop reverse lookup
+  instead of a text search. Minted only by the `bazel` strategy today;
+  the id shape is ecosystem-agnostic (`npm`, `crates`, ...) by
+  construction even though only Bazel's `@pypi` hub is measured.
+
 ### Optional node props
 
 The validator accepts the following optional fields on `props`. Any
@@ -149,8 +161,9 @@ additional prop is tolerated and round-tripped.
 | `authority` | string | One of `canonical`, `derived`, `manual`, `external`. |
 | `origin` | string | One of `project`, `stdlib`, `external`, `unresolved` — where the symbol comes from, independent of merge precedence. Set on `symbol`, `file`, and `module` nodes by current strategies; legacy graphs without the field are classified deterministically by `weld._graph_origin.classify_node`. Used by `wd viz` to drive the "Hide standard library" / "Hide third-party dependencies" toggles (`hide_origins=stdlib,external` query parameter). |
 | `confidence` | string | One of `definite`, `inferred`, `speculative`. |
-| `roles` | list[string] | Subset of `implementation`, `test`, `config`, `doc`, `build`, `migration`, `fixture`, `script`. |
+| `roles` | list[string] | Subset of `implementation`, `entrypoint`, `package`, `test`, `config`, `doc`, `build`, `migration`, `fixture`, `script`. `entrypoint` exempts a `file:*` node from the inbound-edge requirement; `package` marks a grouping container (what the `python_package` / `csharp_package` / `go_package` strategies stamp on `package:` nodes). |
 | `file` | string | Source file path relative to the repository root. |
+| `summary` | string | The file's or symbol's own one-line self-description, read from source — the opening paragraph of its own doc comment, whitespace-collapsed and length-bounded (`weld.strategies._doc_summary.collapse_summary`, `MAX_SUMMARY_LEN`). Python: `python_module` stamps every `file:` node from the module docstring; `python_callgraph` stamps every `symbol:` node from its own `FunctionDef`/`AsyncFunctionDef`/`ClassDef` docstring. Go and Rust: the generic tree-sitter strategy stamps every `symbol:<lang>:`-style definition it promotes from each language's own doc-comment convention (Go `//`, Rust `///`/`/** */`) — empty string when the symbol has no doc comment, key absent entirely for languages with no registered convention yet (TypeScript, Java, C#, C++). `test_peer` stamps its own `file:`-typed test nodes the same way, but reads each test file's *leading* comment (the file-level equivalent of a module docstring, not a specific symbol's) via `weld.strategies._ts_file_doc_comments` — Python (docstring), Go, Rust, TypeScript (`.ts`/`.tsx`/`.js`/`.jsx`), and Java all have a reader; C# does not, because a C# XML doc comment's own content is structured markup that a plain-text paragraph reduction cannot safely strip, so it is left `""` rather than polluted with raw `<summary>`/`<para>` tags. Every `test_peer` node carries the key regardless of language, `""` when the file has no leading comment or its language has no reader yet. Indexed for `wd query`, so a name that appears only in that sentence is still reachable. Distinct from `description`, which is enrichment *output*: `summary` is structural input and is re-read from source on every discovery run. |
 | `span` | object | `{ "start_line": int, "end_line": int }`; `start_line <= end_line`. |
 | `doc_kind` | string | One of `adr`, `policy`, `runbook`, `guide`, `gate`, `verification`. |
 | `section_kind` | string | Section-level tag derived from markdown headings; see `SECTION_KIND_VALUES` in `weld/contract.py`. |
@@ -159,6 +172,8 @@ additional prop is tolerated and round-tripped.
 | `transport` | string | `tcp`, `http`, `http2`, `amqp`, `kafka`, `mqtt`, `ros2_dds`, `inproc`. Must be compatible with `protocol`; see `PROTOCOL_TRANSPORT_COMPATIBILITY`. |
 | `boundary_kind` | string | `inbound`, `outbound`, `internal`. |
 | `declared_in` | string | Source path where the interaction surface is declared. |
+| `keywords` | list[string] | Short strategy-declared words that make a recorded fact reachable by `wd query`/`wd find` without a core matcher edit — the generic channel any strategy may write into (`weld._match_surface`, `weld.query_index.node_tokens`). Not closed-vocabulary: any strategy may append any short token. Producers today: `bazel` (rule kind on build/test targets, `bzl`/`starlark`/`bazel` on `.bzl` files, the ecosystem name on `external-dep` nodes), `python_callgraph` (the `terminal-write-boundary` token; see `output_sink` below). |
+| `output_sink` | string | One recognized value today: `terminal` — this symbol (or, for a module-level call site, the module's `file:` node) calls `weld._safe_text.sanitize_terminal_text`/`sanitize_terminal_line`, the mandated terminal-write chokepoint, so it is a terminal output boundary. Set by `python_callgraph` as a pure derivation over its own `calls` edges. Unlike the closed-vocabulary props above, this is a *tolerated* prop (like `kind`/`qualname`/`summary`): not in `NODE_OPTIONAL_PROPS`, no schema version bump, precision comes from having exactly one trusted producer rather than from adversarial-input validation. |
 
 Producers follow an "omit instead of guess" rule: every closed-vocabulary
 prop is optional, but once present it must be non-empty and drawn from
@@ -192,7 +207,7 @@ that will be stitched into a larger graph later.
 
 ### Edge type vocabulary
 
-The set below reflects `VALID_EDGE_TYPES` as of contract version 5.
+The set below reflects `VALID_EDGE_TYPES` as of contract version 8.
 `weld/contract.py` is the canonical source of truth.
 
 Core relationships:
@@ -203,7 +218,48 @@ Core relationships:
   `configures`, `tests`.
 - `represents`, `feeds_into`, `enforces`, `verifies`, `exposes`,
   `governs`.
-- `calls` -- symbol-to-symbol call edge.
+- `calls` -- call edge. Historically symbol-to-symbol only; widened to
+  also allow the *node types* that may appear as its `from` endpoint (the
+  relationship's meaning is unchanged) to include a `file:` node for a
+  module-level statement call (sourced at the module's file anchor, since
+  no symbol node represents "the module itself") and a class `symbol:`
+  node for a class-body statement call (a class body executes once, at
+  class-definition time, same reasoning already applied to a function
+  body) -- including a module- or class-direct `def`'s own parameter
+  defaults, which evaluate in that same enclosing scope.
+- `decorates` -- a python decorator's resolved target -> the symbol it
+  decorates. Distinct from `calls`: applying a decorator
+  (`f = deco(f)`) does not call the decorated symbol, so asserting a
+  `calls` edge there would be false. Emitted for every `decorator_list`
+  entry at any nesting depth (module-level, method, or a def nested
+  inside another function).
+- `references` -- a bare-name VALUE reference (a keyword-argument value,
+  a tuple/list element, an assignment RHS -- anything that is not a
+  `Call`'s own callee) that resolves to a same-module top-level symbol.
+  Distinct from `calls`: nothing is invoked, so asserting a `calls` edge
+  would be false the same way it would for a decorator. Sourced at the
+  referencing symbol (or the module's `file:` anchor for a module-level
+  statement), mirroring how `calls` is widened. Deliberately narrower
+  than `calls`/`decorates`: only a same-module hit is recorded -- an
+  import-table (cross-module) reference, an attribute-shaped reference
+  (`mod.CONST`), and an unresolved name are not, to keep the population
+  bounded. Not in the trace-participating vocabulary below or in
+  `wd callers`'s walk -- the same reasoning already applies to
+  `decorates` there: "who calls X" and "who references X" are different
+  questions.
+- `documents` -- a document node asserting authority over the subject it
+  describes: a `runbook` node to the worker stage or service it covers, a
+  runtime-contract doc to the service whose boundary it pins, or -- for
+  any document the `markdown` strategy indexes, ADRs included -- a doc
+  node to a `file:` node when the document's body names a real module by
+  an explicit, backtick-quoted `.py` path or dotted-module reference
+  (`` `pkg/module.py` ``, `` `pkg/module.py:some_function` ``, or
+  `` `pkg.module.some_function` ``). Resolution requires the citation to
+  match a real file on disk; a title match or a thematic association
+  never mints this edge, so an unresolvable citation produces nothing.
+  Direction is always doc -> subject, which is what makes "what governs
+  this file" answerable as the subject's inbound `documents` edges and
+  "what does this doc govern" answerable as the doc's outbound ones.
 
 ### Trace-participating vocabulary
 
@@ -218,8 +274,8 @@ renderable while still not appearing in trace output. Trace buckets:
 - verifications: `test-target`, `test-suite`, `gate`
 
 Trace walks these edge types in both directions: `accepts`, `builds`,
-`calls`, `configures`, `consumes`, `contains`, `depends_on`, `documents`,
-`enforces`, `exposes`, `feeds_into`, `implements`, `invokes`,
+`calls`, `configures`, `consumes`, `contains`, `decorates`, `depends_on`,
+`documents`, `enforces`, `exposes`, `feeds_into`, `implements`, `invokes`,
 `orchestrates`, `produces`, `responds_with`, `tests`, and `verifies`.
 
 `wd graph import` and `wd graph validate-fragment` warn when an imported
@@ -273,8 +329,12 @@ goes through `weld.serializer.dumps_graph`, which enforces:
    `(from, to, type, json.dumps(props, sort_keys=True))`.
 3. All object keys serialized with `sort_keys=True` at every nesting
    level.
-4. Fixed whitespace: `indent=2`, `ensure_ascii=False`, and a single
-   trailing newline.
+4. Fixed whitespace, **one entity per line**: every node and every edge
+   occupies exactly one line, `meta` keeps an `indent=2` block,
+   `ensure_ascii=False`, and a single trailing newline. The file is
+   still one valid JSON document — not JSON Lines — so readers parse it
+   whole exactly as before; the layout exists so a graph change diffs as
+   the entities it touched.
 
 `meta.version` (contract vocabulary) and `meta.schema_version`
 (federation layout) are independent. The federation layout version is
@@ -314,8 +374,8 @@ aggregates across registered child repositories:
   design. Adding a node or edge type requires an ADR, a contract
   `SCHEMA_VERSION` bump, and an entry in `VALID_NODE_TYPES` /
   `VALID_EDGE_TYPES` in `weld/contract.py`. Examples of prior
-  extensions: governance edges, Agent Graph, and
-  the call-graph extension in `weld/docs/adr/0004`.
+  extensions: governance edges, Agent Graph, the call-graph extension in
+  `weld/docs/adr/0004`, `external-dep`, `decorates`, and `references`.
 - **New strategies.** Discovery strategies (config-driven via
   `.weld/discover.yaml`, with plugins in `weld/strategies/` or a
   project-local override in `.weld/strategies/`) emit nodes and edges
@@ -356,7 +416,7 @@ A minimal valid `graph.json`:
 ```json
 {
   "meta": {
-    "version": 5,
+    "version": 8,
     "schema_version": 1,
     "discovered_from": ["src/"]
   },

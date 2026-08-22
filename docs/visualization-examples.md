@@ -553,10 +553,10 @@ Claude Code and Cursor share the same shape, keyed on `mcpServers`:
 {
   "mcpServers": {
     "weld": {
-      "command": "python",
+      "command": "wd",
       "args": [
-        "-m",
-        "weld.mcp_server"
+        "mcp",
+        "serve"
       ]
     }
   }
@@ -569,10 +569,10 @@ VS Code uses `servers` instead:
 {
   "servers": {
     "weld": {
-      "command": "python",
+      "command": "wd",
       "args": [
-        "-m",
-        "weld.mcp_server"
+        "mcp",
+        "serve"
       ]
     }
   }
@@ -586,7 +586,7 @@ The full MCP install story (including the `[mcp]` extra) is covered in
 
 ## Reproducing locally
 
-Snippets on this page were captured against `wd 0.22.1` from a Linux
+Snippets on this page were captured against `wd 0.23.0` from a Linux
 host. To reproduce them on your own machine:
 
 ```bash

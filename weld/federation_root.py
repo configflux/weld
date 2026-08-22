@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from weld._git import get_git_sha
+from weld._git_worktree import get_git_branch
 from weld.contract import SCHEMA_VERSION
 from weld.serializer import canonical_graph as _canonical_graph
 from weld.workspace import ChildEntry, WorkspaceConfig
@@ -208,5 +209,13 @@ def build_root_meta_graph(
     sha = get_git_sha(Path(root))
     if sha is not None:
         meta["git_sha"] = sha
+    # ADR 0096 §3: branch identity is stamped wherever ``git_sha`` is, so a
+    # federated root reports which checkout it was built from just like a
+    # single repo. Volatile (``VOLATILE_META_KEYS``), so it lands in the
+    # sidecar and never in the content-addressable body. Omitted on a
+    # detached HEAD / non-git root, mirroring ``git_sha``.
+    branch = get_git_branch(Path(root))
+    if branch is not None:
+        meta["git_branch"] = branch
 
     return _canonical_graph({"meta": meta, "nodes": nodes, "edges": []})

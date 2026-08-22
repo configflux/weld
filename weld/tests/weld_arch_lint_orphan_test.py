@@ -144,6 +144,73 @@ class OrphanDefaultSuppressionTest(unittest.TestCase):
         self.assertEqual(result.get("suppressed_count"), 5)
 
 
+class PackageNodeOrphanDetectionTest(unittest.TestCase):
+    """bd g7rs QA: confirm the orphan-detection rule flags the exact shape a
+    fully-deleted python_package/csharp_package directory used to leave
+    behind -- a ``package``-typed node with zero incoming and zero outgoing
+    edges. Independent of the incremental-discovery fix itself (this graph
+    is constructed by hand, not produced by ``discover()``): it pins the
+    lint rule's own behaviour on the shape, so a regression in either the
+    purge fix (``weld._discover_membership_purge``) or in this suppression
+    list would both still be caught by *something*."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+
+    def test_zero_edge_package_node_is_flagged_not_suppressed(self) -> None:
+        from weld.arch_lint import lint
+        from weld.graph import Graph
+
+        nodes = {
+            "package:python:pkg": {
+                "type": "package", "label": "pkg",
+                "props": {
+                    "name": "pkg", "language": "python", "dir": "pkg",
+                    "source_strategy": "python_package",
+                    "authority": "derived", "confidence": "definite",
+                    "roles": ["package"], "synthetic": False,
+                    "origin": "project",
+                },
+            },
+        }
+        _write_graph(self.root, nodes, [])
+        g = Graph(self.root)
+        g.load()
+        result = lint(g, rule_ids=["orphan-detection"])
+        ids = [v["node_id"] for v in result["violations"]]
+        self.assertEqual(
+            ids, ["package:python:pkg"],
+            "a zero-edge package node must be flagged by orphan-detection "
+            "-- 'package' is not in the doc/config/test suppression set",
+        )
+        self.assertEqual(result.get("suppressed_count"), 0)
+
+    def test_zero_edge_csharp_package_node_is_flagged_too(self) -> None:
+        """csharp_package's node shape (no dir, no file prop at all) trips
+        the same rule -- the orphan rule only cares about edges, so it
+        needs no strategy-specific carve-out either."""
+        from weld.arch_lint import lint
+        from weld.graph import Graph
+
+        nodes = {
+            "package:csharp:ns": {
+                "type": "package", "label": "ns",
+                "props": {
+                    "name": "ns", "language": "csharp",
+                    "source_strategy": "csharp_package",
+                    "authority": "derived", "confidence": "definite",
+                    "roles": ["package"], "origin": "project",
+                },
+            },
+        }
+        _write_graph(self.root, nodes, [])
+        g = Graph(self.root)
+        g.load()
+        result = lint(g, rule_ids=["orphan-detection"])
+        ids = [v["node_id"] for v in result["violations"]]
+        self.assertEqual(ids, ["package:csharp:ns"])
+
+
 class FormatOrderingTest(unittest.TestCase):
     """Text format prints summary first; signal rules before noisy rules."""
 

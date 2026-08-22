@@ -45,6 +45,90 @@ class SchemaVersionError(Exception):
     """
 
 
+class GraphShapeError(ValueError):
+    """Raised when a graph payload is not a JSON object, or lacks the
+    minimal ``nodes``/``edges`` shape.
+
+    A ``ValueError`` subclass on purpose: every existing
+    ``except (..., ValueError)`` tuple written for a graph-load failure
+    (:func:`weld.federation_child_loader.load_child_from_json`,
+    :func:`weld.federation_child_probe.probe_child_status`) already catches
+    it with zero changes to those tuples, while
+    :func:`weld._errors.classify_graph_load_error` can still recognize it
+    precisely via ``isinstance`` rather than blanket-catching every
+    ``ValueError`` a load might raise -- which would risk mislabeling an
+    unrelated bug as a corrupt graph.
+    """
+
+
+def validate_dict_payload(data: object) -> None:
+    """Raise :class:`GraphShapeError` unless *data* is a JSON object (dict).
+
+    ``json.loads`` happily parses a top-level JSON array or scalar
+    (``'[]'``, ``'42'``, ``'"oops"'``) -- the result is a ``list``/``int``/
+    ``str`` with no ``.get`` method, so the very next line in both
+    :func:`load_graph_file` and :func:`weld.federation_support.load_graph_bytes`
+    (``meta = data.get("meta") or {}``) would raise an uncaught
+    ``AttributeError`` instead of the classifiable :class:`GraphShapeError`
+    every other malformed-``graph.json`` case produces. Both call sites run
+    this check as the *first* statement after parsing, before touching
+    ``meta`` or ``schema_version`` -- unlike :func:`validate_graph_shape`
+    (which stays after the ``schema_version`` gate so an old reader facing
+    a newer, legitimately different-shaped schema still gets a
+    :class:`SchemaVersionError` "upgrade weld" message rather than a
+    misleading "corrupt, run wd discover" one), dict-ness is a hard
+    prerequisite for that very next ``.get()`` call, not a style choice.
+
+    Single-sourcing this guard (bd 5038-w0r4) replaces
+    ``load_graph_bytes``'s previous bespoke, differently-worded
+    ``ValueError`` check -- the exact kind of drift that let
+    :func:`load_graph_file` go without any check at all.
+
+    The message names only the observed Python type -- never file content
+    or a filesystem path -- so it is safe to surface verbatim on the
+    CLI/MCP error contract (the same no-leak bar :class:`SchemaVersionError`
+    messages hold to).
+    """
+    if not isinstance(data, dict):
+        raise GraphShapeError(
+            f"graph payload must be a JSON object, got {type(data).__name__}"
+        )
+
+
+def validate_graph_shape(data: dict) -> None:
+    """Raise :class:`GraphShapeError` unless *data* has a graph's minimal shape.
+
+    A syntactically valid JSON object -- passes ``isinstance(data, dict)``,
+    even a valid ``meta.schema_version`` -- can still be missing ``nodes``
+    or ``edges``, or hold the wrong type for either (a hand-edited or
+    partially-corrupted ``graph.json``). Both :func:`load_graph_file` (the
+    single-repo / ``Graph.load`` surface) and
+    :func:`weld.federation_support.load_graph_bytes` (the federated child
+    surface) call this before returning their parsed payload, because
+    ``Graph._build_inverted_index`` / ``weld.query_state.build_query_state``
+    index straight into ``data["nodes"]`` and ``data["edges"]`` with no
+    further check of their own -- a missing or malformed key would
+    otherwise raise an uncaught ``KeyError``/``TypeError`` deep inside
+    index construction instead of being classified as a corrupt graph at
+    the load boundary.
+
+    The message names only the fixed key ("nodes"/"edges") and the
+    observed Python type -- never file content or a filesystem path -- so
+    it is safe to surface verbatim on the CLI/MCP error contract (the same
+    no-leak bar :class:`SchemaVersionError` messages hold to).
+    """
+    nodes = data.get("nodes")
+    if not isinstance(nodes, dict):
+        raise GraphShapeError(
+            f"graph payload 'nodes' must be an object, got {type(nodes).__name__}"
+        )
+    edges = data.get("edges")
+    if not isinstance(edges, list):
+        raise GraphShapeError(
+            f"graph payload 'edges' must be an array, got {type(edges).__name__}"
+        )
+
+
 def has_repo_nodes(nodes: dict[str, dict]) -> bool:
     """Return ``True`` when any node is a federation ``repo:*`` entry.
 
@@ -87,8 +171,17 @@ def load_graph_file(
 
     A missing ``meta.schema_version`` is treated as ``1`` for backward
     compatibility with pre-federation ``graph.json`` files.
+
+    Also validates that the top level is a JSON object (see
+    :func:`validate_dict_payload`) and the minimal ``nodes``/``edges``
+    shape (see :func:`validate_graph_shape`), so a syntactically valid but
+    structurally wrong file -- a bare list/scalar top level, or e.g.
+    ``{"meta": {...}}`` alone -- raises a classifiable
+    :class:`GraphShapeError` here rather than an uncaught
+    ``AttributeError``/``KeyError`` later.
     """
     data = json.loads(path.read_text(encoding="utf-8"))
+    validate_dict_payload(data)
     meta = data.get("meta") or {}
     observed = meta.get("schema_version", CHILD_SCHEMA_VERSION)
     if not isinstance(observed, int):
@@ -103,4 +196,5 @@ def load_graph_file(
             f"{max_supported_schema_version}. Please upgrade weld to "
             f"read federated root graphs."
         )
+    validate_graph_shape(data)
     return data

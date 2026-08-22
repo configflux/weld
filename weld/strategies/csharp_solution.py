@@ -28,11 +28,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 #: Visual Studio's ``Project(...)`` line declares each project in the
 #: solution. The shape is:
@@ -68,13 +65,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     pattern = source.get("glob", "**/*.sln")
     excludes = source.get("exclude", [])
 
-    matched = _resolve_glob(root, pattern)
-    matched = filter_glob_results(root, matched)
+    matched = resolve_glob(root, pattern, excludes)
 
     for sln_file in matched:
         if not sln_file.is_file():
-            continue
-        if should_skip(sln_file, excludes):
             continue
 
         rel_path = sln_file.relative_to(root).as_posix()
@@ -118,21 +112,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             })
 
     return StrategyResult(nodes, edges, discovered_from)
-
-
-def _resolve_glob(root: Path, pattern: str) -> list[Path]:
-    """Expand *pattern* against *root* into a sorted file list.
-
-    Mirrors :func:`weld.strategies.csharp_project._resolve_glob` to
-    keep both strategies behaviourally identical for the discovery
-    glob surface they share.
-    """
-    if "**" in pattern:
-        return sorted(root.glob(pattern))
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return []
-    return sorted(parent.glob(Path(pattern).name))
 
 
 def _solution_id(name: str) -> str:

@@ -51,10 +51,12 @@ from weld._coverage_admission import (
     coverage_admissions,
     hydrate_union,
     or_fallback_sort_key,
-    partial_coverage_subject_miss,
     strip_match,
     tag_match,
 )
+from weld._match_surface import count_group_hits
+from weld._query_candidacy import relaxed_or_none
+from weld._rank_strict_and import strict_and_sort_key
 from weld._sqlite_index import (
     read_corpus_stats,
     read_doc_lengths,
@@ -62,12 +64,6 @@ from weld._sqlite_index import (
     read_token_rows_for_token,
 )
 from weld._sqlite_query_bm25 import _BM25_B, _BM25_K1, bm25_score
-from weld.ranking import (
-    authority_score,
-    confidence_score,
-    exact_symbol_match_rank,
-    resolution_penalty,
-)
 from weld.synonyms import expand_token_groups
 
 # Re-exported for backward compatibility: ``weld._federation_eager_index``
@@ -141,6 +137,16 @@ def query_sqlite_backed(
         # (substring index over-matches the per-field check). Same OR-fallback
         # relaxation as the zero-candidate branch above.
         return _maybe_or_fallback(conn, graph_view, term, tokens, limit)
+    # ADR 0113 candidacy parity: a strict-AND result made entirely of
+    # demoted material (a bd issue title, or a test) is not evidence the
+    # query was answered, so it must not suppress the fallback.
+    relaxed = relaxed_or_none(
+        matched,
+        token_groups,
+        lambda: _maybe_or_fallback(conn, graph_view, term, tokens, limit),
+    )
+    if relaxed is not None:
+        return relaxed
 
     # ADR 0075 part 1 (8rm0.4 parity): admit high-coverage non-doc nodes the
     # strict-AND intersection dropped. Gated to N>=3 so 1-2 token queries skip
@@ -160,31 +166,10 @@ def query_sqlite_backed(
     match_ids = [nid for nid, _ in matched]
     bm25_scores = _bm25_scores_for(conn, match_ids, token_groups)
 
-    def _score_key(
-        item: tuple[str, dict]
-    ) -> tuple[int, int, int, int, float, int, int, str]:
+    def _score_key(item: tuple[str, dict]) -> tuple:
         node_id, node = item
-        node_with_id = {"id": node_id, **node}
-        return (
-            resolution_penalty(node_with_id),
-            exact_symbol_match_rank(node_with_id, token_groups),
-            # ADR 0075 diffuse-doc demotion: a full-coverage doc whose match
-            # is purely scattered across bag fields (``_diffuse`` pre-tagged
-            # via tag_match, N>=3 only) sorts AFTER every non-diffuse node
-            # (0 < 1) -- below the bounded-coverage code/entity nodes admitted
-            # alongside it. Mirrors the dimension in rank_query_matches; placed
-            # ahead of -bm25 so it survives near-tie BM25 noise.
-            int(bool(node.get("_diffuse"))),
-            # ADR 0075 subject tie-break (8rm0.4 parity with impl #1): a
-            # coverage-admitted node missing the query's leading (subject)
-            # token-group in every identity field sorts after coverage-tied
-            # peers that carry it. Inert for N<3 / non-admitted nodes; placed
-            # ahead of -bm25 (survives BM25 noise), after _diffuse.
-            partial_coverage_subject_miss(node_with_id, token_groups),
-            -bm25_scores.get(node_id, 0.0),
-            authority_score(node_with_id),
-            confidence_score(node_with_id),
-            node_id,
+        return strict_and_sort_key(
+            node_id, node, token_groups, bm25_scores.get(node_id, 0.0)
         )
 
     scored = sorted(matched, key=_score_key)
@@ -303,7 +288,7 @@ def _or_fallback(
         conn, [nid for nid, _ in matched], token_groups
     )
 
-    def _key(item: tuple[str, dict]) -> tuple[int, int, float, str]:
+    def _key(item: tuple[str, dict]) -> tuple[int, int, int, float, str]:
         node_id, node = item
         return or_fallback_sort_key(
             node_id,
@@ -368,31 +353,12 @@ def _match_token_groups(
 ) -> int:
     """Mirror :meth:`weld.graph.Graph._match_token_groups`.
 
-    Duplicated here (not imported) to keep the sqlite-backed query
-    path independent of the JSON-Graph module; the contract is small
-    and stable, and the duplication has been the same pattern the JSON
-    path uses for years.
+    Kept as a named local function because this module's read pipeline and its
+    tests both address it by this name, but the field set now comes from
+    :mod:`weld._match_surface` rather than being restated. It was restated for
+    years on the argument that the contract was "small and stable"; it was
+    neither -- ``props.headings`` and ``props.keywords`` each reached some
+    copies and not others, and the sqlite path silently disagreed with the JSON
+    path about which nodes match (bd ph1g).
     """
-    nid_l = nid.lower()
-    label_l = node.get("label", "").lower()
-    props = node.get("props") or {}
-    file_l = (props.get("file") or "").lower()
-    qualname_l = str(props.get("qualname") or "").lower()
-    exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
-    constants_l = [c.lower() for c in props.get("constants", []) if isinstance(c, str)]
-    headings_l = [h.lower() for h in props.get("headings", []) if isinstance(h, str)]
-    desc_l = (props.get("description") or "").lower()
-    hits = 0
-    for group in token_groups:
-        if any(
-            t in nid_l or t in label_l or t in file_l or t in desc_l
-            or t in qualname_l
-            or any(t in e for e in exports_l)
-            or any(t in c for c in constants_l)
-            or any(t in h for h in headings_l)
-            for t in group
-        ):
-            hits += 1
-        else:
-            return 0
-    return hits
+    return count_group_hits(token_groups, nid, node, short_circuit=True)

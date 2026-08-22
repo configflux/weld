@@ -12,10 +12,32 @@ re-exported here so ``weld.workspace`` remains the single public facade.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from weld._yaml import parse_yaml
+
+# -- Shared schema (constants, exception, dataclasses) -----------------------
+# Defined in weld._workspace_schema (bd 5038-zw6w4, ADR 0130 disposition
+# #14): a dependency-free leaf so workspace_scan.py can import the seven
+# symbols it needs directly instead of back from this module, and
+# workspace_dump.py's TYPE_CHECKING import of WorkspaceConfig can do the
+# same -- breaking the workspace <-> workspace_dump / workspace <->
+# workspace_scan import cycle that existed when both siblings imported
+# these symbols back from here. Re-exported below so every existing
+# ``from weld.workspace import ChildEntry`` (etc.) caller keeps working
+# unchanged.
+from weld._workspace_schema import (
+    DEFAULT_EXCLUDE_PATHS,
+    DEFAULT_MAX_DEPTH,
+    SCHEMA_VERSION,
+    ChildEntry,
+    NestedRepoScanResult,
+    ScanConfig,
+    WorkspaceConfig,
+    WorkspaceConfigError,
+    auto_derive_name,
+    auto_derive_tags,
+)
 
 __all__ = [
     "ChildEntry",
@@ -35,10 +57,11 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+# SCHEMA_VERSION/DEFAULT_MAX_DEPTH/DEFAULT_EXCLUDE_PATHS live in
+# weld._workspace_schema now (imported above); NAME_PATTERN/UNIT_SEPARATOR/
+# KNOWN_CROSS_REPO_STRATEGIES stay here -- only the loader/validator below
+# use them, so leaving them here adds no edge back into the leaf.
 
-SCHEMA_VERSION = 1
-DEFAULT_MAX_DEPTH = 4
-DEFAULT_EXCLUDE_PATHS: tuple[str, ...] = (".worktrees", "vendor")
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 UNIT_SEPARATOR = "\x1f"
 
@@ -50,87 +73,6 @@ KNOWN_CROSS_REPO_STRATEGIES: frozenset[str] = frozenset({
     "package_import_resolver",
     "service_graph",
 })
-
-
-# ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
-
-class WorkspaceConfigError(ValueError):
-    """Raised when ``workspaces.yaml`` is missing, malformed, or invalid."""
-
-
-# ---------------------------------------------------------------------------
-# Schema dataclasses
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ScanConfig:
-    max_depth: int = DEFAULT_MAX_DEPTH
-    respect_gitignore: bool = False
-    exclude_paths: list[str] = field(
-        default_factory=lambda: list(DEFAULT_EXCLUDE_PATHS),
-    )
-
-
-@dataclass
-class ChildEntry:
-    name: str
-    path: str
-    tags: dict[str, str] = field(default_factory=dict)
-    remote: str | None = None
-
-
-@dataclass
-class WorkspaceConfig:
-    version: int = SCHEMA_VERSION
-    scan: ScanConfig = field(default_factory=ScanConfig)
-    children: list[ChildEntry] = field(default_factory=list)
-    cross_repo_strategies: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class NestedRepoScanResult:
-    children: list[ChildEntry]
-    skipped_by_gitignore: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Auto-derivation helpers
-# ---------------------------------------------------------------------------
-
-def auto_derive_name(rel_path: str) -> str:
-    """Return the child name implied by ``rel_path``.
-
-    The default rule replaces path separators with ``-`` so that a child at
-    ``services/api`` is named ``services-api``. Both POSIX and Windows-style
-    separators are normalised for robustness against hand-written YAML.
-    """
-    normalised = rel_path.replace("\\", "/")
-    parts = [p for p in normalised.split("/") if p and p != "."]
-    return "-".join(parts)
-
-
-def auto_derive_tags(rel_path: str) -> dict[str, str]:
-    """Return auto-filled tag metadata implied by ``rel_path``.
-
-    The immediate parent directory becomes ``category: <segment>``; deeper
-    ancestors become ``category_<depth>: <segment>`` with ``depth`` counting
-    from 2 at the grandparent. A child at the workspace root (single segment)
-    gets no category tag at all -- there is no parent to infer one from.
-    """
-    normalised = rel_path.replace("\\", "/")
-    parts = [p for p in normalised.split("/") if p and p != "."]
-    if len(parts) < 2:
-        return {}
-    ancestors = parts[:-1]  # everything except the leaf
-    # ancestors[-1] is the immediate parent -> "category"
-    # ancestors[-2] is the grandparent    -> "category_2"
-    # ancestors[-3] is one above          -> "category_3"
-    tags: dict[str, str] = {"category": ancestors[-1]}
-    for offset, segment in enumerate(reversed(ancestors[:-1]), start=2):
-        tags[f"category_{offset}"] = segment
-    return tags
 
 
 # ---------------------------------------------------------------------------

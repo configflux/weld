@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld._rel_path import rel_to_root
 from weld._yaml import parse_yaml
 from weld.strategies._helpers import StrategyResult, filter_glob_results
 
@@ -244,7 +245,7 @@ def _process_compose_file(
     parsed = _parse_compose(cf)
     if parsed is None:
         return None
-    rel_path = str(cf.relative_to(root))
+    rel_path = rel_to_root(cf, root)
     stem = _compose_stem(cf)
     compose_id = f"compose:{stem}"
 
@@ -305,7 +306,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         parent = root
 
     for cf in filter_glob_results(root, sorted(parent.glob(Path(pattern).name))):
-        rel_path = str(cf.relative_to(root))
+        rel_path = rel_to_root(cf, root)
         discovered_from.append(rel_path)
         result = _process_compose_file(cf, root)
         if result is None:

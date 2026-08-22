@@ -59,6 +59,13 @@ class WeldMcpServerCorruptGraphTest(unittest.TestCase):
         (tmp / ".weld" / "graph.json").write_text(graph_text, encoding="utf-8")
         return tmp
 
+    def _root_with_directory_graph(self) -> Path:
+        """A directory sitting where ``graph.json`` should be a file (bd 9yc8)."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
+        (tmp / ".weld" / "graph.json").mkdir(parents=True, exist_ok=True)
+        return tmp
+
     def test_dispatch_corrupt_graph_returns_structured_error(self) -> None:
         # Truncated JSON carrying a secret value.
         root = self._root_with('{"meta": {"token": "MCP-SECRET-XYZ"')
@@ -73,6 +80,74 @@ class WeldMcpServerCorruptGraphTest(unittest.TestCase):
         # Must not raise -- the whole point of the contract.
         result = mcp_server.dispatch("weld_context", {"node_id": "x"}, root=root)
         self.assertIn("error_code", result)
+
+    def test_dispatch_weld_stale_directory_graph_returns_structured_error(
+        self,
+    ) -> None:
+        """bd 9yc8: a directory at graph.json must not leak IsADirectoryError.
+
+        ``weld_stale`` is the tool the original repro used -- unlike the
+        other graph-backed reads it does not pass through the missing-graph
+        guard (``_graph_present``) first, so this pins the fix at the exact
+        call site that used to raise a raw exception with a filesystem path
+        in it out of ``mcp_server.dispatch``.
+        """
+        root = self._root_with_directory_graph()
+        result = mcp_server.dispatch("weld_stale", {}, root=root)
+        self.assertEqual(result.get("error_code"), _errors.GRAPH_CORRUPT)
+        self.assertIn("hint", result)
+        # SAFETY: no absolute filesystem path leaks into the payload.
+        self.assertNotIn(str(root), json.dumps(result))
+
+    def test_dispatch_directory_graph_does_not_raise(self) -> None:
+        root = self._root_with_directory_graph()
+        # Must not raise -- same contract as the corrupt-JSON case.
+        result = mcp_server.dispatch("weld_query", {"term": "foo"}, root=root)
+        self.assertEqual(result.get("error_code"), _errors.GRAPH_CORRUPT)
+
+    def test_safe_dispatch_directory_graph_converts_to_payload(self) -> None:
+        """The stdio guard helper never lets a directory-shaped graph escape.
+
+        Mirrors :meth:`test_safe_dispatch_converts_load_error_to_payload`
+        for the corrupt-JSON case -- before the fix this payload's ``error``
+        was the raw ``IsADirectoryError: ... '<abs path>'`` string.
+        """
+        root = self._root_with_directory_graph()
+        payload = mcp_server.dispatch_to_text_payload(
+            "weld_stale", {}, root=root
+        )
+        decoded = json.loads(payload)
+        self.assertEqual(decoded.get("error_code"), _errors.GRAPH_CORRUPT)
+        self.assertNotIn(str(root), payload)
+        self.assertNotIn("IsADirectoryError", payload)
+
+    def test_dispatch_malformed_shape_graph_returns_structured_error(self) -> None:
+        # bd 5038-1c7o: {"meta": {...}} alone parses as valid JSON but is
+        # missing "nodes"/"edges" -- used to raise an uncaught KeyError out
+        # of Graph._build_inverted_index instead of the structured contract
+        # every other malformed-graph case on this surface already gets.
+        root = self._root_with(json.dumps({"meta": {"version": 1}}))
+        result = mcp_server.dispatch("weld_query", {"term": "foo"}, root=root)
+        self.assertEqual(result.get("error_code"), _errors.GRAPH_CORRUPT)
+        self.assertIn("hint", result)
+
+    def test_dispatch_bare_list_graph_returns_structured_error(self) -> None:
+        # bd 5038-w0r4: a bare-list top-level graph.json parses fine as
+        # JSON but used to raise an uncaught AttributeError out of
+        # Graph.load() (data.get("meta") on a list) instead of the
+        # structured contract every other malformed-graph case here gets.
+        root = self._root_with(json.dumps([1, 2, 3]))
+        result = mcp_server.dispatch("weld_query", {"term": "foo"}, root=root)
+        self.assertEqual(result.get("error_code"), _errors.GRAPH_CORRUPT)
+        self.assertIn("hint", result)
+
+    def test_dispatch_scalar_graph_returns_structured_error(self) -> None:
+        # Same crash class as the bare-list case above, for a bare scalar
+        # top-level payload ('"oops"').
+        root = self._root_with(json.dumps("oops"))
+        result = mcp_server.dispatch("weld_query", {"term": "foo"}, root=root)
+        self.assertEqual(result.get("error_code"), _errors.GRAPH_CORRUPT)
+        self.assertIn("hint", result)
 
     def test_dispatch_schema_mismatch_returns_structured_error(self) -> None:
         root = self._root_with(
@@ -112,6 +187,64 @@ class WeldMcpServerCorruptGraphTest(unittest.TestCase):
         )
         decoded = json.loads(payload)
         self.assertIn("matches", decoded)
+
+    # ----- weld_export (bd tl32) -----------------------------------------
+    #
+    # weld_export wraps its call to weld.export.export() in a local
+    # `except ValueError`. json.JSONDecodeError IS a ValueError subclass, so
+    # a corrupt graph.json used to be caught right here -- before it ever
+    # reached this shared classifier -- and returned an unstructured
+    # {"error": str(exc)} with no error_code at all. The directory-shape
+    # case (below) was never affected: IsADirectoryError is an OSError, not
+    # a ValueError, so it already reached the classifier pre-fix.
+
+    def test_dispatch_export_corrupt_graph_returns_structured_error(self) -> None:
+        root = self._root_with('{"meta": {"token": "MCP-EXPORT-SECRET"')
+        result = mcp_server.dispatch(
+            "weld_export", {"format": "mermaid"}, root=root
+        )
+        self.assertEqual(result.get("error_code"), _errors.GRAPH_CORRUPT)
+        self.assertIn("hint", result)
+        # SAFETY: raw bytes (and the secret) never appear in the payload.
+        self.assertNotIn("MCP-EXPORT-SECRET", json.dumps(result))
+
+    def test_dispatch_export_directory_graph_returns_structured_error(self) -> None:
+        # Already correct before this fix (IsADirectoryError is not a
+        # ValueError); pinned here so a future change to the local except
+        # clause cannot regress it silently.
+        root = self._root_with_directory_graph()
+        result = mcp_server.dispatch(
+            "weld_export", {"format": "mermaid"}, root=root
+        )
+        self.assertEqual(result.get("error_code"), _errors.GRAPH_CORRUPT)
+        self.assertIn("hint", result)
+        self.assertNotIn(str(root), json.dumps(result))
+
+    def test_dispatch_export_unknown_format_stays_plain_error(self) -> None:
+        """The local except ValueError's legitimate purpose survives.
+
+        export()'s own argument-validation errors (an unrecognized
+        --format) are not graph-load failures -- they must keep returning
+        the plain {"error": ...} shape they always have, with no
+        error_code, rather than being routed to the graph-load classifier.
+        """
+        root = _valid_graph_root()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        result = mcp_server.dispatch(
+            "weld_export", {"format": "bogus"}, root=root
+        )
+        self.assertNotIn("error_code", result)
+        self.assertIn("error", result)
+        self.assertIn("bogus", result["error"])
+
+    def test_dispatch_export_valid_graph_still_succeeds(self) -> None:
+        root = _valid_graph_root()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        result = mcp_server.dispatch(
+            "weld_export", {"format": "mermaid"}, root=root
+        )
+        self.assertNotIn("error", result)
+        self.assertIn("output", result)
 
 
 class WeldMcpServerNodeNotFoundTest(unittest.TestCase):

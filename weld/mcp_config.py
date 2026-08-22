@@ -6,9 +6,11 @@ is to print the snippet -- the tracked issue acceptance bar -- with optional
 ``--write`` / ``--merge`` / ``--force`` / ``--dry-run`` flags for safer
 in-place edits of the client-appropriate file.
 
-The MCP server invocation (``python -m weld.mcp_server``) is identical
-across clients; only the wrapping JSON shape and target file path differ.
-This module is the single source of truth for both pieces.
+The MCP server invocation (``wd mcp serve``) is identical across clients;
+only the wrapping JSON shape and target file path differ. This module is the
+single source of truth for both pieces. The invocation it renders has to
+stay routable by :mod:`weld._mcp_cli`, which owns the ``wd mcp`` subcommand
+table -- drift between the two is invisible here and fatal in a client.
 
 Layout intent: keep all three clients in one ~250-line file rather than
 splitting per client. The per-client variation is small (one key name,
@@ -24,6 +26,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from weld._safe_text import sanitize_json_text
 
 # ---------------------------------------------------------------------------
 # Client registry
@@ -58,11 +62,21 @@ _CLIENTS: dict[str, _ClientSpec] = {
     ),
 }
 
-# The MCP server entry. Same across clients: stdio python module invocation.
+# The MCP server entry. Same across clients: the `wd` console script.
 # Centralised so the generator never drifts from docs/mcp.md.
+#
+# Console script rather than `python -m weld.mcp_server`, for two reasons.
+# A script's sys.path[0] is the script's own directory, so the directory a
+# client launches the server in -- the repository being served -- is never on
+# the module search path; `python -m` puts it there ahead of the standard
+# library, before any weld code can run. And a console script hard-codes its
+# interpreter in the shebang, so it cannot be handed an environment whose
+# `python` resolves to a different install than the one weld was installed
+# into. The `-m` form remains supported for source checkouts, where serving
+# the checkout rather than an installed copy is the point.
 _SERVER_ENTRY: dict[str, Any] = {
-    "command": "python",
-    "args": ["-m", "weld.mcp_server"],
+    "command": "wd",
+    "args": ["mcp", "serve"],
 }
 
 _SERVER_NAME = "weld"
@@ -269,8 +283,12 @@ def write_config(
 # CLI
 # ---------------------------------------------------------------------------
 
-def _cli_main(argv: list[str]) -> int:
-    """Implement ``wd mcp config``. Returns a process exit code."""
+def cli_main(argv: list[str]) -> int:
+    """Implement ``wd mcp config``. Returns a process exit code.
+
+    Package-internal entry point: :mod:`weld._mcp_cli` owns the ``wd mcp``
+    subcommand table and routes here.
+    """
     parser = argparse.ArgumentParser(
         prog="wd mcp config",
         description=(
@@ -317,7 +335,11 @@ def _cli_main(argv: list[str]) -> int:
     # Default behaviour: print the snippet. This is the tracked issue acceptance
     # bar and stays true even when --write/--merge/--dry-run are also set,
     # so users can pipe the same output into ``jq`` or a clipboard.
-    sys.stdout.write(snippet)
+    # sanitize_json_text, not sanitize_terminal_text: the snippet is JSON and
+    # the line above promises it stays pipeable into ``jq``, so the escape has
+    # to be the \uXXXX form a parser round-trips rather than the \xNN form a
+    # human reads.
+    sys.stdout.write(sanitize_json_text(snippet))
 
     if not (args.write or args.merge):
         return 0
@@ -350,24 +372,3 @@ def _cli_main(argv: list[str]) -> int:
             f"no change to {result.path}: {result.reason}\n"
         )
     return 0
-
-
-def main(argv: list[str]) -> int:
-    """Dispatch ``wd mcp <subcommand>``. Today only ``config`` is wired."""
-    if not argv or argv[0] in {"-h", "--help"}:
-        sys.stdout.write(
-            "Usage: wd mcp <subcommand> [args]\n\n"
-            "Subcommands:\n"
-            "  config   Generate a per-client MCP config snippet "
-            "(see wd mcp config --help)\n"
-        )
-        return 0
-    sub = argv[0]
-    rest = argv[1:]
-    if sub == "config":
-        return _cli_main(rest)
-    sys.stderr.write(
-        f"error: unknown wd mcp subcommand: {sub!r}. "
-        f"Did you mean 'config'?\n"
-    )
-    return 2

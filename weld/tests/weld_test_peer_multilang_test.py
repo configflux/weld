@@ -308,6 +308,62 @@ class TestDispatcherDeterminism(unittest.TestCase, _MultiLangFixture):
         self.assertEqual(list(first.nodes), list(second.nodes))
 
 
+class TestEdgeProvenanceIsTheTestFile(unittest.TestCase, _MultiLangFixture):
+    """ADR 0074 (2nd amendment): every ``tests`` edge names its producer.
+
+    ``props.provenance.file`` must be the **test** file the strategy
+    walked, in every language. That is what lets the incremental purge
+    attribute the edge and keep it when the *peer* is dirty; an
+    unattributed edge falls back to endpoint membership and is dropped
+    with the purged peer node, never to be re-minted while the test glob
+    stays clean (bd heum). Stamping the peer instead would be exactly as
+    broken, so the assertion pins the direction, not merely the presence.
+
+    All six languages share one emission site in ``test_peer.extract``,
+    so this is a table rather than six near-identical methods.
+    """
+
+    #: ``(language, files, glob, test_rel)`` -- ``test_rel`` is the file
+    #: whose scan produces the edge, i.e. the expected provenance.
+    _CASES: tuple[tuple[str, list[str], str, str], ...] = (
+        ("python", ["lib/thing.py", "lib/tests/thing_test.py"],
+         "lib/tests/*_test.py", "lib/tests/thing_test.py"),
+        ("go", ["pkg/foo.go", "pkg/foo_test.go"],
+         "**/*_test.go", "pkg/foo_test.go"),
+        ("typescript", ["src/foo.ts", "src/foo.test.ts"],
+         "src/*.test.ts", "src/foo.test.ts"),
+        ("java", ["pkg/Foo.java", "pkg/FooTest.java"],
+         "pkg/*Test.java", "pkg/FooTest.java"),
+        ("csharp", ["pkg/Foo.cs", "pkg/FooTests.cs"],
+         "pkg/*Tests.cs", "pkg/FooTests.cs"),
+        ("rust", ["src/integration.rs", "tests/integration.rs"],
+         "tests/*.rs", "tests/integration.rs"),
+    )
+
+    def tearDown(self) -> None:
+        if hasattr(self, "_tmp"):
+            self._tmp.cleanup()
+
+    def test_every_language_stamps_the_test_file(self) -> None:
+        for language, files, glob, test_rel in self._CASES:
+            with self.subTest(language=language):
+                root = self._make_tree(files)
+                try:
+                    edges = [
+                        e for e in self._run(root, glob).edges
+                        if e["type"] == "tests"
+                    ]
+                    self.assertEqual(len(edges), 1, "expected one tests edge")
+                    self.assertEqual(
+                        edges[0]["props"].get("provenance"),
+                        {"file": test_rel},
+                        "tests edge must name the test file it was derived "
+                        "from -- not the production peer",
+                    )
+                finally:
+                    self._tmp.cleanup()
+
+
 class TestDispatcherSkipsUnsupported(unittest.TestCase, _MultiLangFixture):
     """Files matching the glob but not any per-language predicate are skipped."""
 

@@ -13,11 +13,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
+from weld._discover_external_package_purge import emptied_placeholder_node_ids
 from weld._incremental_purge import purge_edges_by_provenance
 from weld._notice import emit
+from weld._rel_path import canonical_rel_path, canonical_rel_paths
 
 #: Current state file schema version.  Bump when the on-disk format changes.
 STATE_VERSION: int = 1
@@ -49,23 +50,84 @@ class DiscoveryState:
     """In-memory representation of the discovery state file."""
 
     version: int = STATE_VERSION
-    created_at: str = ""
+    # No ``created_at`` (bd lrfu; ADR 0110 amended): re-stamped every save, so
+    # tracking this file made it a diff line per no-change discover, and ADR
+    # 0065 already keeps volatile per-run values in the gitignored
+    # ``graph-meta.json``, which carries that wall clock as ``updated_at``.
     files: dict[str, str] = field(default_factory=dict)
-    # ADR 0008 §file-level cross-check: files that the previous run
-    # processed but which produced zero graph nodes (e.g. empty
-    # ``__init__.py`` skipped by ``python_module``). Recording the
-    # empty-output set lets the per-file graph<->state audit
-    # distinguish "stale graph predates this file" (re-run) from
-    # "strategy legitimately produces nothing for this file" (skip).
+    # ADR 0008 §file-level cross-check: files a strategy processed and left
+    # without a graph node on purpose (e.g. empty ``__init__.py`` skipped by
+    # ``python_module``). Recording the declined set lets the per-file
+    # graph<->state audit distinguish "stale graph predates this file"
+    # (re-run) from "strategy legitimately produces nothing for this file"
+    # (skip). Only a *decision* belongs here -- see the field below.
     files_with_no_nodes: set[str] = field(default_factory=set)
+    # ADR 0008 §file-level cross-check, amended (bd hch4): files this run
+    # could not speak for at all -- a strategy that would not load or was
+    # refused by ``--safe``, an ``external_json`` adapter that bailed, a file
+    # a strategy could not parse. Folding these into the set above recorded a
+    # failure as a decision, and since the exemption keys on the path alone, a
+    # failure caused by anything other than the file's own content never
+    # re-armed. Read through :mod:`weld._graph_anchors`: exempt from the
+    # vouching audit, never from the per-file repair.
+    files_with_failed_strategy: set[str] = field(default_factory=set)
+    # ADR 0008 §file-level cross-check, amended again (bd um00): a source
+    # entry with no ``glob``/``path``/``files`` key at all -- a command-only
+    # ``external_json`` adapter is the shipped example -- resolves to an
+    # empty file list, so the field above is a structural no-op for it: there
+    # is no path to record a failure under. Keyed by
+    # :func:`weld._discover_basis.entry_fingerprint` (content, not list
+    # position, so a reorder elsewhere in ``sources:`` cannot orphan a
+    # record) rather than a path. Value: ``{"kind": <short code>, "reason":
+    # <bounded str>}``. Read/written through
+    # :mod:`weld.strategies._strategy_failure`; consumed by
+    # :func:`weld._discover_basis.sources_needing_retry` to force a retry on
+    # the next incremental pass, the way the field above rides
+    # ``files_missing_from_graph`` to the same effect for path-shaped
+    # failures.
+    sources_with_failed_strategy: dict[str, dict] = field(default_factory=dict)
+    # ADR 0101 (bd esww/hfm6/nwyq/wq9i): identity of the ``graph.json`` this
+    # run published -- ``{sha256, size, mtime_ns}``, or ``None`` if it
+    # published none. The boolean this replaced said only *that* a graph was
+    # published, never that the body on disk is still that one. Read it only
+    # through :func:`weld._discover_state_check.state_vouches_for_graph`.
+    published_graph: dict | None = None
+    # ADR 0008 §7 (fifth fallback, bd 4fpj): fingerprint of the parsed
+    # ``discover.yaml`` this run ran, or ``None`` if it recorded none.
+    # ``files`` says which files were seen; it cannot say which *strategies*
+    # were pointed at them, so a config edit that changes that mapping leaves
+    # a delta computed under one config applied under another. Read it only
+    # through :func:`weld._discover_basis.state_vouches_for_config`.
+    config_fingerprint: str | None = None
+    # ADR 0008 §7 (sixth fallback, bd jzxl): the field above says which
+    # strategies were pointed at a file, this says what they *do* -- which
+    # content hashing cannot see. Stamped by :func:`save_state`;
+    # ``weld._discover_basis.strategy_fingerprint`` owns the rationale.
+    strategy_fingerprint: str | None = None
 
     def to_dict(self) -> dict:
         return {
             "version": self.version,
-            "created_at": self.created_at,
             "files": dict(self.files),
             "files_with_no_nodes": sorted(self.files_with_no_nodes),
+            "files_with_failed_strategy": sorted(self.files_with_failed_strategy),
+            "sources_with_failed_strategy": {
+                k: dict(v)
+                for k, v in sorted(self.sources_with_failed_strategy.items())
+            },
+            "published_graph": self.published_graph,
+            "config_fingerprint": self.config_fingerprint,
+            "strategy_fingerprint": self.strategy_fingerprint,
+            # Compatibility mirror: written, never read here. An older weld
+            # gates its incremental basis on this boolean; dropping it costs
+            # that reader a full re-discovery per alternating run.
+            "graph_published": self.published_graph is not None,
         }
+
+
+def _opt_str(value: object) -> str | None:
+    """A recorded fingerprint, or ``None`` for anything that is not one."""
+    return value if isinstance(value, str) else None
 
 
 def compute_hash(path: Path) -> str:
@@ -132,33 +194,87 @@ def load_state(root: Path) -> DiscoveryState | None:
     files_with_no_nodes: set[str] = (
         set(raw_no_nodes) if isinstance(raw_no_nodes, list) else set()
     )
+    # Absent on a state an older weld wrote, which recorded failures as
+    # declines. Empty is the safe reading of that: nothing is exempted from
+    # the vouching audit that was not already exempted before, and the first
+    # run under this weld re-derives the split.
+    raw_failed = raw.get("files_with_failed_strategy", [])
+    # Coerced to str, not merely collected: ``to_dict`` sorts this set, and
+    # ``mark_state_published`` round-trips a loaded state straight back
+    # through it, so a hand-edited list of mixed types would raise TypeError
+    # out of a best-effort path that only guards OSError.
+    files_with_failed_strategy: set[str] = (
+        {str(f) for f in raw_failed} if isinstance(raw_failed, list) else set()
+    )
+    # Absent on a state an older weld wrote (or one predating bd um00), which
+    # names no footprint-less-entry failures. Empty is the safe reading, same
+    # as its file-keyed sibling above: nothing is exempted that was not
+    # already exempt, and the next run re-derives it. Each value is
+    # re-validated as a dict, not merely collected, for the same
+    # round-trip-through-``to_dict`` reason the sibling coerces to ``str``.
+    raw_sources_failed = raw.get("sources_with_failed_strategy", {})
+    sources_with_failed_strategy: dict[str, dict] = (
+        {
+            str(k): dict(v) for k, v in raw_sources_failed.items()
+            if isinstance(v, dict)
+        }
+        if isinstance(raw_sources_failed, dict) else {}
+    )
+    raw_published = raw.get("published_graph")
     return DiscoveryState(
         version=version,
-        created_at=raw.get("created_at", ""),
         files=files,
         files_with_no_nodes=files_with_no_nodes,
+        files_with_failed_strategy=files_with_failed_strategy,
+        sources_with_failed_strategy=sources_with_failed_strategy,
+        # Absent both on a run that published no graph and on a state
+        # predating the field; neither names one, so neither vouches. Not a
+        # STATE_VERSION bump: that discards the inventory and forces a *full*
+        # pass, where an unnamed graph costs one refresh that re-stamps it.
+        published_graph=raw_published if isinstance(raw_published, dict) else None,
+        # Same reading as ``published_graph`` above: absent on a state
+        # predating the field, so it names no config and vouches for none.
+        config_fingerprint=_opt_str(raw.get("config_fingerprint")),
+        # Same reading again (bd jzxl), and not a STATE_VERSION bump for the
+        # same reason: an unnamed set costs one full run that stamps it.
+        strategy_fingerprint=_opt_str(raw.get("strategy_fingerprint")),
     )
 
 
 def save_state(root: Path, state: DiscoveryState) -> None:
-    """Write discovery state to disk atomically."""
+    """Write discovery state to disk atomically.
+
+    Stamps an *unset* ``strategy_fingerprint`` (bd jzxl) -- a state
+    round-tripped from disk already names the code its own run used, and
+    overwriting that would vouch for code that never built the graph. Nothing
+    else is stamped, so two runs over an unchanged tree write equal bytes (bd
+    lrfu).
+
+    bd 70he: the write itself is delegated to
+    :func:`weld.workspace_state.atomic_write_text` rather than hand-rolling a
+    temp-file-then-rename here. This function used to compute that temp file
+    as a FIXED name (``state_path.with_suffix(".tmp")``), which two
+    concurrent callers targeting the same root -- e.g. two live-repo
+    discover() calls from sibling Bazel test actions -- could collide on: the
+    second rename would target a temp file the first had already consumed,
+    raising an uncaught ``FileNotFoundError``. ``atomic_write_text`` already
+    solves this correctly elsewhere via ``tempfile.mkstemp``, whose name is
+    unique per call by construction.
+    """
+    from weld.workspace_state import atomic_write_text
+
     state_dir = root / ".weld"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / STATE_FILENAME
 
-    if not state.created_at:
-        state.created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if state.strategy_fingerprint is None:
+        from weld._discover_basis import strategy_fingerprint
+        state.strategy_fingerprint = strategy_fingerprint(root)
 
-    tmp_path = state_path.with_suffix(".tmp")
-    try:
-        tmp_path.write_text(
-            json.dumps(state.to_dict(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-        tmp_path.replace(state_path)
-    except OSError:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_text(
+        state_path,
+        json.dumps(state.to_dict(), indent=2, ensure_ascii=False) + "\n",
+    )
 
 
 def diff_state(
@@ -222,14 +338,34 @@ def purge_stale_nodes(
 
     Used before merging incremental results so modified/deleted files get a
     clean slate.
+
+    *stale_files* is in the index spelling and ``props.file`` in whichever
+    spelling its strategy chose, so the membership test goes through the
+    canonical form (:mod:`weld._rel_path`; identity on POSIX). Off POSIX the
+    two disagree and a genuinely dirty file's node is never purged (bd pbi8).
+    The canonical set is passed on to the edge purge rather than the raw one,
+    so both tiers judge staleness by the same yardstick.
+
+    bd g7rs / bd pkz2s / bd oao53 / bd ukt95 / bd n4nvt / bd 5ouuf: the *emptied* id set
+    is computed by
+    :func:`weld._discover_external_package_purge.emptied_placeholder_node_ids`,
+    which unions five independently-scoped placeholder-node rules (see that
+    function's docstring for all five), each purged only once every
+    file-purge and provenance-edge-purge pass above has already run.
+    The widened id set is then folded through one more such pass so any edge
+    now pointing at a freshly-removed node is judged by the identical rule
+    the first pass already applied -- a provenance-carrying survivor is left
+    dangling for :mod:`weld._discover_orphan_edges` to widen-and-retry
+    downstream, never silently kept here.
     """
     if not stale_files:
         return nodes, edges
 
+    stale = canonical_rel_paths(stale_files)
     removed_ids: set[str] = set()
     surviving_nodes: dict[str, dict] = {}
     for nid, node in nodes.items():
-        if node.get("props", {}).get("file", "") in stale_files:
+        if canonical_rel_path(node.get("props", {}).get("file")) in stale:
             removed_ids.add(nid)
         else:
             surviving_nodes[nid] = node
@@ -237,146 +373,26 @@ def purge_stale_nodes(
     if not removed_ids:
         return nodes, edges
 
-    surviving_edges = purge_edges_by_provenance(edges, stale_files, removed_ids)
+    surviving_edges = purge_edges_by_provenance(edges, stale, removed_ids)
+
+    emptied = emptied_placeholder_node_ids(surviving_nodes, surviving_edges)
+    if emptied:
+        surviving_nodes = {
+            nid: n for nid, n in surviving_nodes.items() if nid not in emptied
+        }
+        removed_ids |= emptied
+        surviving_edges = purge_edges_by_provenance(
+            surviving_edges, stale, removed_ids
+        )
+
     return surviving_nodes, surviving_edges
 
 
-def files_missing_strategy_outputs(
-    existing_graph: dict,
-    source_file_map: list[list[str]],
-    exempt_files: set[str] | None = None,
-) -> set[str]:
-    """Audit *existing_graph* for sources whose files have zero nodes.
+# The source-level audit over ``existing_graph`` / ``source_file_map`` moved
+# to :func:`weld._graph_anchors.files_missing_strategy_outputs` (bd um00),
+# alongside its entry-keyed sibling for footprint-less sources -- both are
+# graph<->state predicates, not content-hash bookkeeping, and the move made
+# room for ``sources_with_failed_strategy`` below.
 
-    Returns the set of repo-relative file paths for which the strategy
-    must re-run to repair a graph that was written without the nodes the
-    source was supposed to produce. Each source entry in
-    ``source_file_map`` contributes either *all* of its files (when no
-    node in the graph has ``props.file`` inside that set) or none.
-
-    Background: the incremental discovery path (ADR 0008) keys re-runs
-    on file content hashes. If the previous run committed
-    ``discovery-state.json`` with the current files but committed a
-    ``graph.json`` that lacks those files' nodes -- e.g. because of a
-    crash, partial write, or a sequence where the state-write path ran
-    but the symbol-emitting strategy did not -- the dirty set is empty
-    and the bug perpetuates: every subsequent incremental run skips the
-    strategy and the symbols never reappear short of deleting state.
-
-    The audit closes that gap. Treating "no nodes for any of a source's
-    files" as a re-run trigger is conservative: it never produces a
-    false positive when the strategy genuinely emits at least one node
-    for at least one file in the set, and it costs at most one pass
-    over the graph's nodes.
-
-    *exempt_files* (bd 85tb.2) is the prior run's ``files_with_no_nodes``
-    -- files the last run already proved produce no ``props.file`` /
-    ``props.declared_in``-anchored node (e.g. an issue-store source whose
-    strategy emits abstract ``concept`` nodes that anchor to no file).
-    Without this exemption such a source is flagged on *every* incremental
-    run, which on a repo that has one perpetually drops every refresh onto
-    the slow with-changes path instead of the no-change fast path. A file
-    in *exempt_files* whose content actually changed is still picked up by
-    the content-hash ``dirty`` set, so exempting it here cannot mask a real
-    edit -- it only stops the perpetual no-op re-run.
-    """
-    exempt = exempt_files or set()
-    nodes = existing_graph.get("nodes", {})
-    # Different strategies record the source file under different prop
-    # keys (``file`` for most, ``declared_in`` for the events family).
-    # Treat a file as "has nodes" if any node references it under
-    # either key so the audit does not force a perpetual re-run for
-    # those strategies.
-    files_with_nodes: set[str] = set()
-    for node in nodes.values():
-        props = node.get("props", {})
-        f = props.get("file") or props.get("declared_in")
-        if f:
-            files_with_nodes.add(f)
-
-    missing: set[str] = set()
-    for files in source_file_map:
-        if not files:
-            continue
-        file_set = set(files)
-        if not file_set & files_with_nodes:
-            # A source whose every file is already known to legitimately
-            # produce no file-anchored node must not perpetually re-trigger.
-            if file_set <= exempt:
-                continue
-            missing |= file_set
-    return missing
-
-
-def resolve_source_files(
-    root: Path,
-    source: dict,
-    filter_fn,
-) -> list[str]:
-    """Resolve files matched by a source entry's glob or files key.
-
-    Returns repo-relative paths.  *filter_fn* is
-    ``filter_glob_results`` from the strategies helpers module -- passed
-    in to avoid a circular import. The source-level ``exclude`` list is
-    applied here so that every entry under ``.weld/discover.yaml`` honours
-    excludes uniformly, independent of whether the dispatched strategy
-    opts into its own per-file check.
-    """
-    from weld.glob_match import matches_exclude, walk_glob
-
-    excludes = [p for p in (source.get("exclude") or []) if p]
-    files: list[str] = []
-
-    glob_pattern = source.get("glob")
-    if glob_pattern:
-        matched = walk_glob(root, glob_pattern, excludes=excludes)
-        files = [str(p.relative_to(root)) for p in matched]
-
-    path_entry = source.get("path")
-    if path_entry and (root / path_entry).exists():
-        rel = str((root / path_entry).relative_to(root))
-        if not excludes or not matches_exclude(Path(rel).as_posix(), excludes):
-            files.append(rel)
-
-    for f in source.get("files", []):
-        if not (root / f).exists():
-            continue
-        rel = str((root / f).relative_to(root))
-        if excludes and matches_exclude(Path(rel).as_posix(), excludes):
-            continue
-        files.append(rel)
-
-    return files
-
-
-def resolve_source_file_map(
-    root: Path,
-    sources: list[dict],
-    filter_fn,
-) -> list[list[str]]:
-    """Resolve every source entry to its file list, memoizing duplicate globs.
-
-    Returns one list per entry in *sources*, preserving order. Many
-    ``.weld/discover.yaml`` configs point several strategy sources at the
-    *same* glob (e.g. ``python_module`` / ``python_callgraph`` /
-    ``python_package`` all on ``weld/*.py``); resolving each independently
-    re-walks the tree once per duplicate. Memoizing by the
-    resolution-relevant keys (glob, path, files, exclude) collapses those
-    to one walk apiece -- ~280 ms on this repo's 21-source / 13-glob config
-    (bd 85tb.2) -- while returning byte-identical lists (the same shared
-    list object is reused for identical keys, which downstream code only
-    reads).
-    """
-    cache: dict[tuple, list[str]] = {}
-    out: list[list[str]] = []
-    for source in sources:
-        key = (
-            source.get("glob"), source.get("path"),
-            tuple(source.get("files") or ()), tuple(source.get("exclude") or ()),
-        )
-        resolved = cache.get(key)
-        if resolved is None:
-            resolved = resolve_source_files(root, source, filter_fn)
-            cache[key] = resolved
-        out.append(resolved)
-    return out
+# Source-entry glob resolution lives in :mod:`weld._source_resolve` -- it is
+# not part of the content-hash index this module owns. Import it from there.

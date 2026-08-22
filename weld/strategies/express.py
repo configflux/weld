@@ -61,11 +61,9 @@ from weld.strategies._express_routes_helpers import (
     route_id,
     route_node,
 )
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._provenance import file_provenance
 
 #: Matches an ``express`` import / require. Covers ES-module
 #: ``import express from 'express'`` / ``import { Router } from "express"``,
@@ -120,19 +118,21 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract express route nodes + diagnostic exposes edges from TS/JS src."""
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
-    discovered_dirs: set[str] = set()
+    discovered_from: list[str] = []
 
     pattern = source.get("glob", _DEFAULT_GLOB)
     excludes = source.get("exclude", [])
-    candidates = filter_glob_results(
-        root, _resolve_glob(root, pattern), excludes=excludes,
-    )
+    candidates = resolve_glob(root, pattern, excludes)
 
     for src_file in candidates:
         if not src_file.is_file():
             continue
-        if should_skip(src_file, excludes, root=root):
-            continue
+        # Provenance is this file, recorded before the read (bd od2a): the
+        # parent directory it replaced degenerated to ``"./"`` for a
+        # repo-root match (``index.js`` is where an Express app usually
+        # lives), and recording only files that emitted a route meant
+        # adding the first ``app.get`` to a module never marked it stale.
+        discovered_from.extend(file_provenance(root, [src_file]))
         try:
             text = src_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -141,50 +141,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             continue
 
         rel_path = src_file.relative_to(root).as_posix()
-        if _emit_for_file(text, rel_path, nodes, edges):
-            discovered_dirs.add(
-                src_file.parent.relative_to(root).as_posix() + "/",
-            )
+        _emit_for_file(text, rel_path, nodes, edges)
 
-    return StrategyResult(nodes, edges, sorted(discovered_dirs))
-
-
-def _resolve_glob(root: Path, pattern: str) -> list[Path]:
-    """Expand *pattern* against *root* deterministically (sorted).
-
-    ``Path.glob`` does not understand brace expansion, so a ``{ts,js}``
-    suffix is expanded into one glob per alternative and the unioned
-    result is de-duplicated and sorted. A pattern without braces falls
-    through to a single sorted glob.
-    """
-    patterns = _expand_braces(pattern)
-    seen: set[Path] = set()
-    for pat in patterns:
-        if "**" in pat:
-            seen.update(root.glob(pat))
-        else:
-            parent = (root / pat).parent
-            if parent.is_dir():
-                seen.update(parent.glob(Path(pat).name))
-    return sorted(seen)
-
-
-def _expand_braces(pattern: str) -> list[str]:
-    """Expand a single ``{a,b,c}`` group into one pattern per alternative.
-
-    Only the first brace group is expanded (express globs use at most one,
-    e.g. ``**/*.{ts,js}``); a pattern with no brace returns unchanged.
-    Mirrors the minimal brace handling the C# / cpp build globs need
-    without pulling in a full brace-expansion dependency.
-    """
-    start = pattern.find("{")
-    end = pattern.find("}", start + 1)
-    if start < 0 or end < 0:
-        return [pattern]
-    prefix = pattern[:start]
-    suffix = pattern[end + 1 :]
-    alts = pattern[start + 1 : end].split(",")
-    return [f"{prefix}{alt.strip()}{suffix}" for alt in alts if alt.strip()]
+    return StrategyResult(nodes, edges, discovered_from)
 
 
 def _strip_line_comments(text: str) -> str:

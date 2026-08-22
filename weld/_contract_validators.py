@@ -17,7 +17,7 @@ from weld._validate_diagnostics import (
     missing_node_field_hint as _missing_node_hint,
     vocab_hint as _vocab_hint,
 )
-from weld.contract import (
+from weld._contract_types import (
     AUTHORITY_VALUES,
     BOUNDARY_KIND_VALUES,
     CONFIDENCE_VALUES,

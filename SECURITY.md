@@ -41,3 +41,10 @@ Key areas of concern:
   network-bound provider — useful for CI bots, MCP servers, evaluation
   harnesses, or any environment where outbound egress is not permitted.
   Refusal exits non-zero and never mutates the graph.
+- **Read output (`--json` and MCP alike)**: `wd query`, `wd context`, and
+  every other read command return text copied verbatim from the scanned
+  repository — file and symbol names, headings, keywords, module
+  docstrings. None of it is filtered or verified by weld before being
+  returned. Treat it as content written by whoever authored the repository,
+  not as a claim weld itself is making — this applies equally to a human
+  reading the output and to an AI agent consuming it as tool results.

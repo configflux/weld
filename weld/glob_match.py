@@ -12,9 +12,11 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import Iterable, Iterator
 
 from weld.repo_boundary import (
     filter_repo_paths,
@@ -115,6 +117,52 @@ def _glob_pattern_to_regex(pattern: str) -> re.Pattern[str]:
     return re.compile("".join(out))
 
 
+_GlobKey = tuple[str, str, tuple[str, ...]]
+
+_GLOB_SCOPE: ContextVar[dict[_GlobKey, list[Path]] | None] = ContextVar(
+    "weld_glob_scope", default=None,
+)
+
+
+@contextmanager
+def glob_scope() -> Iterator[None]:
+    """Memoize :func:`walk_glob` results for the duration of one operation.
+
+    A glob result is a point-in-time observation of the tree, so the memo is
+    bound to an *operation*, never to the process -- the same rule
+    :func:`weld.repo_boundary.repo_boundary_scope` follows, and for the same
+    reason (bd jbpb): the warm-refresh entry runs inside a long-lived host
+    (the MCP stdio server, weld embedded as a library), which must never
+    inherit an earlier run's file listing.
+
+    Inside the scope each distinct ``(root, pattern, excludes)`` triple is
+    walked once and reused. A discovery run asks for the identical triple
+    several times: once when the source-file resolver builds the file map,
+    then once more inside *every* strategy that re-resolves the same glob in
+    its own ``extract()``. ``resolve_source_file_map`` already collapses the
+    entries sharing a glob (bd 85tb.2), but that memo cannot reach inside a
+    strategy -- on this repo the three sources on ``weld/**/*.py``
+    (python_module / python_callgraph / python_package) each re-walked the
+    whole tree, so one glob cost four traversals plus four runs of the
+    per-path repo-boundary filter (bd cjij).
+
+    Re-entrant: a nested scope joins the enclosing one instead of starting a
+    fresh memo. Leaving the outermost scope drops it, so the next operation
+    observes the tree as it is then.
+
+    With no scope open :func:`walk_glob` never memoizes, so direct callers
+    outside a bracketed operation are unaffected.
+    """
+    if _GLOB_SCOPE.get() is not None:
+        yield  # Join the enclosing operation; it owns the memo.
+        return
+    token = _GLOB_SCOPE.set({})
+    try:
+        yield
+    finally:
+        _GLOB_SCOPE.reset(token)
+
+
 def walk_glob(
     root: Path,
     pattern: str,
@@ -131,19 +179,141 @@ def walk_glob(
     previously let Bazel runfiles leak into discovery.
 
     For patterns without ``**``, delegates to pathlib (no recursion,
-    single-directory glob).
+    single-directory glob) and drops the directories ``Path.glob`` matches,
+    so both branches return the same kind of thing (bd 0d73).
 
     Symlinks are never followed (``followlinks=False`` default). The
     repo-boundary filter is applied to the final list so git-hidden and
     nested-repo-copy files are dropped as usual.
+
+    Inside a :func:`glob_scope` a repeated identical request is served from
+    that operation's memo rather than re-walking the tree.
     """
     excl = [p for p in (excludes or []) if p]
 
+    scope = _GLOB_SCOPE.get()
+    if scope is None:
+        return _walk_glob_uncached(root, pattern, excl)
+
+    # Keyed on the literal root form: the walker consumes *root* as given for
+    # both ``os.walk`` and its ``relative_to`` calls, so two spellings of one
+    # directory can yield differently-rooted paths. Distinct spellings simply
+    # miss the memo -- never a wrong answer for a cheaper one.
+    key = (str(root), pattern, tuple(excl))
+    hit = scope.get(key)
+    # ``is None``, not falsiness: a glob that legitimately matches nothing is
+    # memoized too, or the emptiest patterns would re-walk on every request.
+    if hit is None:
+        hit = _walk_glob_uncached(root, pattern, excl)
+        scope[key] = hit
+    # Hand out a copy: callers own their list and some sort or extend it
+    # in place, which must not corrupt what the next hit serves.
+    return list(hit)
+
+
+def expand_braces(pattern: str) -> list[str]:
+    """Expand a single top-level ``{a,b,...}`` group into concrete patterns.
+
+    Neither ``Path.glob`` nor :func:`_glob_pattern_to_regex` understands
+    ``{``, so a ``discover.yaml`` entry like ``src/**/*.{ts,tsx}`` matches
+    *nothing at all* without this. One group is rewritten into one pattern
+    per trimmed, non-empty alternative, duplicates collapsed.
+
+    Patterns with no braces, nested braces, or more than one group pass
+    through unchanged rather than half-expanded: a half-expanded pattern is a
+    wrong answer, an unexpanded one is the pre-existing (empty) answer, and no
+    shipped config needs the multi-group form. Add it when one does.
+
+    This lives beside :func:`matches_exclude` rather than in the strategy
+    layer because brace expansion is glob *syntax*, and this module owns the
+    user-visible "how does ``glob:`` match?" contract (ADR 0020, ADR 0112).
+    Putting it anywhere else would give the strategies a wider glob language
+    than :func:`weld._source_resolve.resolve_source_files` -- the call that
+    decides which files discovery records as in scope -- so a brace glob would
+    emit nodes for files the ADR 0101 accounting never knew were in scope, and
+    editing one of them would never mark the graph stale.
+
+    *Exclude* patterns are deliberately not expanded: that is
+    :func:`matches_exclude`'s vocabulary, which ADR 0020 fixed and bd ds5g
+    explicitly held out of scope.
+    """
+    open_idx = pattern.find("{")
+    if open_idx == -1:
+        return [pattern]
+    close_idx = pattern.find("}", open_idx + 1)
+    if close_idx == -1:
+        return [pattern]
+    inner = pattern[open_idx + 1 : close_idx]
+    if "{" in inner or "{" in pattern[close_idx + 1 :]:
+        return [pattern]
+    prefix, suffix = pattern[:open_idx], pattern[close_idx + 1 :]
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in inner.split(","):
+        alt = raw.strip()
+        if not alt:
+            continue
+        expanded = f"{prefix}{alt}{suffix}"
+        if expanded not in seen:
+            seen.add(expanded)
+            out.append(expanded)
+    return out or [pattern]
+
+
+def _walk_glob_uncached(
+    root: Path,
+    pattern: str,
+    excl: list[str],
+) -> list[Path]:
+    """Walk the tree for :func:`walk_glob`, bypassing any open memo.
+
+    Brace alternatives are walked one at a time and unioned. The single-
+    alternative case -- every pattern in every shipped config but the
+    TypeScript monorepo example -- short-circuits to exactly one walk, so it
+    is byte-identical to the pre-expansion behaviour rather than merely
+    equivalent.
+    """
+    patterns = expand_braces(pattern)
+    if len(patterns) == 1:
+        return _walk_one(root, patterns[0], excl)
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for concrete in patterns:
+        for path in _walk_one(root, concrete, excl):
+            if path not in seen:
+                seen.add(path)
+                out.append(path)
+    return out
+
+
+def _walk_one(
+    root: Path,
+    pattern: str,
+    excl: list[str],
+) -> list[Path]:
+    """Walk one brace-free pattern."""
     if "**" not in pattern:
         parent = (root / pattern).parent
         if not parent.is_dir():
             return []
-        raw = sorted(parent.glob(Path(pattern).name))
+        # ``not is_dir()``, not ``is_file()`` (bd 0d73). ``Path.glob`` yields
+        # matching *directories* alongside files, while the ``**`` branch
+        # below iterates ``os.walk``'s ``filenames`` and never does -- so the
+        # two branches answered with different *kinds* of thing for the same
+        # documented contract ("return files under root matching pattern").
+        # A directory that leaked through reached ``build_file_hashes``, which
+        # opens it, takes ``IsADirectoryError`` as ``OSError`` and drops it:
+        # in scope, with no hash and no incremental basis, and counted by the
+        # ADR 0101 accounting as a file discovery should have covered.
+        #
+        # The predicate matches the ``**`` branch's set exactly rather than
+        # being merely stricter: ``filenames`` includes broken symlinks and
+        # other non-regular entries (``is_file()`` would drop those), and
+        # excludes symlinks-to-directories (which land in ``dirnames``, and
+        # which ``is_dir()`` does resolve and reject). Making the flat branch
+        # stricter than the recursive one would be the same disagreement in
+        # the other direction.
+        raw = sorted(p for p in parent.glob(Path(pattern).name) if not p.is_dir())
         filtered = filter_repo_paths(root, raw)
         if not excl:
             return filtered

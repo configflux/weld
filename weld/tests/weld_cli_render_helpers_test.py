@@ -13,12 +13,10 @@ import unittest
 
 
 from weld._cli_render import (  # noqa: E402
-    render_callers,
     render_context,
     render_find,
     render_path,
     render_query,
-    render_references,
     render_stale,
     render_stats,
 )
@@ -194,53 +192,6 @@ class RendererPurityTest(unittest.TestCase):
         text = render_path({"path": None, "reason": "no path found"})
         self.assertIn("no path found", text)
 
-    def test_render_callers_includes_symbol_header(self) -> None:
-        text = render_callers({
-            "symbol": "_load_strategy",
-            "depth": 2,
-            "callers": [
-                {"id": "symbol:py:m:fn", "type": "symbol", "label": "m.fn"},
-            ],
-            "edges": [],
-        })
-        self.assertIn("# callers: _load_strategy", text)
-        self.assertIn("depth 2", text)
-
-    def test_render_callers_no_callers(self) -> None:
-        text = render_callers({
-            "symbol": "x",
-            "depth": 1,
-            "callers": [],
-            "edges": [],
-        })
-        self.assertIn("no callers", text)
-
-    def test_render_callers_error(self) -> None:
-        text = render_callers({
-            "symbol": "x", "depth": 1, "callers": [], "edges": [],
-            "error": "node not found: x",
-        })
-        self.assertIn("error: node not found: x", text)
-
-    def test_render_references_groups_graph_and_textual(self) -> None:
-        text = render_references({
-            "symbol": "checkout",
-            "matches": [
-                {"id": "symbol:py:m:checkout", "type": "symbol"},
-            ],
-            "callers": [],
-            "files": [{"path": "shop.py", "score": 3, "tokens": ["checkout"]}],
-        })
-        self.assertIn("graph matches", text)
-        self.assertIn("textual hits", text)
-        self.assertIn("shop.py", text)
-
-    def test_render_references_empty(self) -> None:
-        text = render_references({
-            "symbol": "x", "matches": [], "callers": [], "files": [],
-        })
-        self.assertIn("no references", text)
-
     def test_render_stats_lists_counts_and_top_authority(self) -> None:
         text = render_stats({
             "total_nodes": 10,
@@ -277,6 +228,61 @@ class RendererPurityTest(unittest.TestCase):
             "reason": "not a git repo",
         })
         self.assertIn("reason: not a git repo", text)
+
+    def test_render_stale_lists_stale_sources(self) -> None:
+        # Names the diverging path(s) and why.
+        text = render_stale({
+            "stale": True, "source_stale": True, "sha_behind": False,
+            "graph_sha": "abc", "current_sha": "def", "commits_behind": 0,
+            "stale_sources": [
+                {"path": "src/a.py", "reason": "content differs"},
+            ],
+            "stale_sources_omitted": 0,
+        })
+        self.assertIn("stale_sources (1):", text)
+        self.assertIn("src/a.py: content differs", text)
+        self.assertNotIn("elided", text)
+
+    def test_render_stale_reports_omitted_count(self) -> None:
+        text = render_stale({
+            "stale": True, "source_stale": True, "sha_behind": False,
+            "graph_sha": "abc", "current_sha": "def", "commits_behind": 0,
+            "stale_sources": [
+                {"path": "src/a.py", "reason": "content differs"},
+            ],
+            "stale_sources_omitted": 12,
+        })
+        self.assertIn("12 more elided (capped)", text)
+
+    def test_render_stale_omits_the_block_when_nothing_diverged(self) -> None:
+        text = render_stale({
+            "stale": False, "source_stale": False, "sha_behind": False,
+            "graph_sha": "abc", "current_sha": "abc", "commits_behind": 0,
+            "stale_sources": [], "stale_sources_omitted": 0,
+        })
+        self.assertNotIn("stale_sources", text)
+
+    def test_stale_sources_path_survives_render_then_escapes_at_boundary(
+        self,
+    ) -> None:
+        # weld._safe_text: render_stale is a pure formatter (no escaping);
+        # the write boundary (_emit -> sanitize_terminal_text) is where a
+        # hostile repo-controlled path gets escaped. Same contract every
+        # other renderer in this module already relies on -- no new write
+        # site is introduced by this block.
+        from weld._safe_text import sanitize_terminal_text
+
+        hostile = "src/\x1b[2Jevil.py"
+        text = render_stale({
+            "stale": True, "source_stale": True, "sha_behind": False,
+            "graph_sha": "abc", "current_sha": "def", "commits_behind": 0,
+            "stale_sources": [{"path": hostile, "reason": "content differs"}],
+            "stale_sources_omitted": 0,
+        })
+        self.assertIn(hostile, text)
+        safe = sanitize_terminal_text(text)
+        self.assertNotIn("\x1b", safe)
+        self.assertIn("\\x1b[2J", safe)
 
 
 if __name__ == "__main__":

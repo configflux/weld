@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 from weld._notice import emit
+from weld._safe_text import sanitize_terminal_text
 
 
 DEFAULT_DEBOUNCE: float = 0.5   # seconds before flushing pending changes
@@ -268,7 +269,7 @@ def run_once(
         print(f"[weld watch] discovery failed: {exc}", file=target)
         return
     if summary:
-        print(summary, file=target)
+        print(sanitize_terminal_text(summary), file=target)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -300,8 +301,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _default_enumerate(root: Path) -> list[str]:
     """Union of repo-relative paths matched by every configured source."""
     from weld._yaml import parse_yaml
-    from weld.discovery_state import resolve_source_files
-    from weld.strategies._helpers import filter_glob_results
+    from weld._source_resolve import resolve_source_files
 
     config_path = root / ".weld" / "discover.yaml"
     if not config_path.is_file():
@@ -310,7 +310,7 @@ def _default_enumerate(root: Path) -> list[str]:
     sources = config.get("sources", []) or []
     files: set[str] = set()
     for s in sources:
-        files.update(resolve_source_files(root, s, filter_glob_results))
+        files.update(resolve_source_files(root, s))
     return sorted(files)
 
 
@@ -387,7 +387,3 @@ def main(argv: list[str] | None = None) -> int:
             stop()
 
     return 0
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())

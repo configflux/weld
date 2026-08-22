@@ -91,8 +91,12 @@ libclang adapter renders SKIPPED for that repo's rows.
 ## Output
 
 The report is written to `docs/bench/PUBLIC-BENCHMARK-<version>.md` by
-default (where `<version>` is read from the repo's `VERSION` file).
-Sections:
+default, under the `--root` being benchmarked. `<version>` is the version
+of the weld that produced the report -- the same one in the report header
+and in `wd --version`, not the version of the repository under benchmark.
+When weld cannot determine its own version (a partial checkout with
+neither installed distribution metadata nor a `VERSION` file), the report
+falls back to the unversioned `docs/bench/PUBLIC-BENCHMARK.md`. Sections:
 
 - `## Methodology` -- benchmark methodology abbreviated
 - `## Corpus manifest` -- repo ids, families covered, materialization status

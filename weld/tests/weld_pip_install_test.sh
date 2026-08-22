@@ -8,9 +8,18 @@
 # relative to ``Path(weld.__file__).parent``.
 #
 # This check runs everywhere (local gate and CI) and MUST NOT have any
-# SKIP paths. It does NOT perform a real pip install — that lives in
-# weld/tests/weld_real_install.sh and runs in a CI-only job, because
-# the local devcontainer ships without ensurepip.
+# SKIP paths. It does NOT perform a real pip install.
+#
+# The real-install counterpart this used to name, weld/tests/weld_real_install.sh,
+# is gone (bd 03ez). It was never wired to anything — no Bazel target, no
+# workflow, no caller — so the "CI-only job" it claimed to run in did not
+# exist, and it was the last thing in the repo pointing pip at the LIVE
+# source tree (`pip install -e "$WELD_ROOT"`, `pip wheel "$WELD_ROOT"`).
+# Every other install consumer builds from a disposable copy for exactly
+# that reason: weld_source_pollution_guard_test and weld_mcp_install_smoke_test
+# via copy_weld_source, tools/local_gate_install_test.sh via a tar copy.
+# Wiring it up as it stood would have reintroduced the pollution those
+# copies exist to prevent, so it was deleted rather than repaired.
 
 set -euo pipefail
 

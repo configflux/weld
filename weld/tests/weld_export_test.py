@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 from weld.contract import SCHEMA_VERSION  # noqa: E402
@@ -182,6 +183,103 @@ class ExportDispatchTest(unittest.TestCase):
         from weld.export import export
         with self.assertRaises(ValueError):
             export("svg", root=self.root)
+
+
+class ExportPreloadedGraphTest(unittest.TestCase):
+    """bd 6vq7: a caller-supplied ``graph=`` must not trigger a second
+    ``graph.json`` read+parse, and must produce byte-identical output to
+    the ``root=``-only path it replaces (ADR 0083 parity)."""
+
+    def setUp(self) -> None:
+        self.root = _make_graph_root()
+
+    def test_root_only_still_loads_exactly_once(self) -> None:
+        # Pins the unchanged default: no graph= means export() constructs
+        # and loads its own Graph, same as before this fix.
+        from weld.export import export
+        import weld.graph as graph_mod
+
+        with patch(
+            "weld.graph.load_graph_file", wraps=graph_mod.load_graph_file,
+        ) as mock_load:
+            export("mermaid", root=self.root)
+        mock_load.assert_called_once()
+
+    def test_graph_param_never_touches_disk_for_the_graph_body(self) -> None:
+        # The core regression proof: once a Graph is already loaded, handing
+        # it to export() via graph= must not read graph.json again.
+        from weld.export import export
+        import weld.graph as graph_mod
+
+        g = Graph(self.root)
+        g.load()  # simulates the CLI's own load_graph_or_exit() probe load
+
+        with patch(
+            "weld.graph.load_graph_file", wraps=graph_mod.load_graph_file,
+        ) as mock_load:
+            export("mermaid", root=self.root, graph=g)
+        mock_load.assert_not_called()
+
+    def test_graph_param_wiki_format_never_touches_disk_either(self) -> None:
+        # The multi-file branch takes the same graph= shortcut: the CLI
+        # calls load_graph_or_exit() before every --format, wiki included.
+        from weld.export import export
+        import weld.graph as graph_mod
+
+        g = Graph(self.root)
+        g.load()
+        out_dir = self.root / "wiki-out"
+
+        with patch(
+            "weld.graph.load_graph_file", wraps=graph_mod.load_graph_file,
+        ) as mock_load:
+            export("wiki", root=self.root, output=out_dir, graph=g)
+        mock_load.assert_not_called()
+        self.assertTrue(out_dir.exists())
+
+    def test_graph_param_output_matches_root_param(self) -> None:
+        from weld.export import export
+
+        for fmt in ("mermaid", "dot", "d2"):
+            with self.subTest(fmt=fmt):
+                via_root = export(fmt, root=self.root)
+                g = Graph(self.root)
+                g.load()
+                via_graph = export(fmt, root=self.root, graph=g)
+                self.assertEqual(via_root, via_graph)
+
+    def test_graph_param_with_node_and_depth_matches(self) -> None:
+        from weld.export import export
+
+        via_root = export(
+            "mermaid", node_id="entity:Store", depth=1, root=self.root,
+        )
+        g = Graph(self.root)
+        g.load()
+        via_graph = export(
+            "mermaid", node_id="entity:Store", depth=1, root=self.root, graph=g,
+        )
+        self.assertEqual(via_root, via_graph)
+
+    def test_graph_param_wiki_output_matches_root_param(self) -> None:
+        from weld.export import export
+
+        root_out = self.root / "wiki-via-root"
+        export("wiki", root=self.root, output=root_out)
+
+        g = Graph(self.root)
+        g.load()
+        graph_out = self.root / "wiki-via-graph"
+        export("wiki", root=self.root, output=graph_out, graph=g)
+
+        root_files = sorted(p.relative_to(root_out) for p in root_out.rglob("*") if p.is_file())
+        graph_files = sorted(p.relative_to(graph_out) for p in graph_out.rglob("*") if p.is_file())
+        self.assertEqual(root_files, graph_files)
+        for rel in root_files:
+            self.assertEqual(
+                (root_out / rel).read_bytes(), (graph_out / rel).read_bytes(),
+            )
+
 
 class McpExportToolTest(unittest.TestCase):
     def setUp(self) -> None:

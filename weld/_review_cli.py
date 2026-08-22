@@ -17,7 +17,6 @@ with regex length bounds so the CLI cannot be hung by a crafted input.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -34,19 +33,25 @@ from weld._review import (
 )
 from weld._review_pattern import PatternError, match, parse_pattern
 from weld._review_state import load_state
+from weld._safe_text import dumps_safe_json, sanitize_terminal_text
 from weld.graph import Graph
 
 
 def _out(payload: Any) -> None:
-    json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
-    sys.stdout.write("\n")
+    sys.stdout.write(dumps_safe_json(payload, indent=2) + "\n")
 
 
 def _emit(payload: Any, *, as_json: bool, render) -> None:
+    """The one write boundary for ``wd review``.
+
+    The renderer arrives as a callback, so the escape has to sit here rather
+    than at each ``_render_*``: every line it emits names graph-derived edge
+    ids, node ids and strategy names.
+    """
     if as_json:
         _out(payload)
         return
-    sys.stdout.write(render(payload))
+    sys.stdout.write(sanitize_terminal_text(render(payload)))
 
 
 def _render_status(payload: dict) -> str:
@@ -97,7 +102,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="wd review",
         description=(
             "Triage speculative edges in the connected structure "
-            "(accept / reject / reset). See ADR 0055."
+            "(accept / reject / reset)."
         ),
     )
     p.add_argument(
@@ -111,7 +116,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--limit", type=int, default=None)
     p_list.add_argument(
         "--json", dest="as_json", action="store_true",
-        help="Emit JSON envelope (ADR 0040).",
+        help="Emit JSON envelope.",
     )
 
     p_show = sub.add_parser("show", help="Show one edge by review id.")

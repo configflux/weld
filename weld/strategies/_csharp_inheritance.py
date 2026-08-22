@@ -171,6 +171,7 @@ def emit_base_edges(
     imports: list[str] | None = None,
     package_references: frozenset[str] | None = None,
     project_namespace_roots: frozenset[str] | None = None,
+    rel_path: str = "",
 ) -> None:
     """Emit one ``inherits`` or ``implements`` edge for a base entry.
 
@@ -187,6 +188,11 @@ def emit_base_edges(
     *package_references* / *project_namespace_roots* is supported --
     the resolver treats it as "no external usings visible" and keeps
     the legacy consuming-namespace placeholder shape.
+
+    *rel_path*, when non-empty, stamps ``props.provenance.file`` (ADR 0074,
+    bd rifzk): a base-list entry has exactly one declaring file. Default
+    ``""`` (no stamp) keeps legacy direct callers on today's
+    endpoint-membership purge, unchanged.
     """
     edge_type = split_inherits_implements(base_name)
     target_id = _resolve_base_target(
@@ -198,16 +204,19 @@ def emit_base_edges(
         package_references=package_references,
         project_namespace_roots=project_namespace_roots,
     )
+    props: dict = {
+        "source_strategy": source_strategy,
+        "confidence": "inferred",
+        "base_name": base_name,
+        "derived_class": derived_class,
+    }
+    if rel_path:
+        props["provenance"] = {"file": rel_path}
     edges.append({
         "from": from_id if from_id is not None else file_node_id,
         "to": target_id,
         "type": edge_type,
-        "props": {
-            "source_strategy": source_strategy,
-            "confidence": "inferred",
-            "base_name": base_name,
-            "derived_class": derived_class,
-        },
+        "props": props,
     })
 
 
@@ -314,6 +323,7 @@ def finalise(
             imports=imports,
             package_references=package_references,
             project_namespace_roots=project_namespace_roots,
+            rel_path=rel_path,
         )
 
 

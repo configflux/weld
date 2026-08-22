@@ -3,11 +3,22 @@
 # Codex reads MCP servers from `.codex/config.toml`, not from `.mcp.json`.
 # `wd bootstrap codex` writes this file so Codex can use both the local
 # `weld` MCP server and Context7 developer docs in the same project.
+#
+# `wd mcp serve` is the console script installed with configflux-weld. Being
+# a script rather than `python -m`, it never places this project directory on
+# its own module search path, so serving a repository cannot execute code
+# from it.
+#
+# Running weld from a source checkout instead of an install? Point the server
+# at the `python` interpreter with the module arguments `-m weld.mcp_server`,
+# so it serves the checkout rather than the installed copy. (Spelled out in
+# prose rather than as a literal setting, so a reader -- or a tool -- editing
+# the block below cannot mistake this note for the live configuration.)
 
 # weld-managed:start name=mcp-servers
 [mcp_servers.weld]
-command = "python"
-args = ["-m", "weld.mcp_server"]
+command = "wd"
+args = ["mcp", "serve"]
 
 [mcp_servers.context7]
 command = "npx"

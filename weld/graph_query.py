@@ -10,6 +10,7 @@ from weld._coverage_admission import (
     strip_match,
     tag_match,
 )
+from weld._query_candidacy import relaxed_or_none
 from weld.embeddings import semantic_scores
 from weld.ranking import rank_query_matches
 from weld.synonyms import candidate_nodes_grouped, expand_token_groups
@@ -63,6 +64,19 @@ def query_graph(graph: object, term: str, limit: int = 20) -> dict:
             matched_ids.add(node_id)
     if not matched:
         return _maybe_or_fallback(graph, term, tokens, limit)
+    # ADR 0113: a strict-AND result made entirely of material this query would
+    # demote is not evidence the query was answered, and must not suppress the
+    # fallback. Two reported shapes, one rule: an issue title quotes the query
+    # it reports, and a test is named after the behaviour it covers, so either
+    # can cover every token group alone -- "succeeding" with one match that is
+    # the bug report (bd pxjc, bd c64p) or the test (bd atcb) rather than the
+    # code. Relaxing re-admits the code; the demoted node returns via the OR
+    # union, ranked behind it rather than instead of it.
+    relaxed = relaxed_or_none(
+        matched, token_groups, lambda: _maybe_or_fallback(graph, term, tokens, limit)
+    )
+    if relaxed is not None:
+        return relaxed
     # ADR 0075 part 1: when strict-AND succeeds on an N>=3 query, ALSO admit
     # high-coverage (>= max(2, N-1)) code/entity nodes that strict-AND filtered
     # out, so an entity-shaped query surfaces its owning nodes above a diffuse
@@ -210,7 +224,7 @@ def query_or_fallback(graph: object, term: str, limit: int = 20) -> dict:
     # Rank via the shared OR-fallback key (group_hits, subject tie-break, BM25,
     # id) so this JSON impl and its sqlite peer cannot drift on order. The BM25
     # score is supplied per-node from this backend's corpus.
-    def _key(item: tuple[str, dict]) -> tuple[int, int, float, str]:
+    def _key(item: tuple[str, dict]) -> tuple[int, int, int, float, str]:
         node_id, node = item
         bm25_score = bm25.score(node_id, token_groups) if bm25 else 0.0
         return or_fallback_sort_key(

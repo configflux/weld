@@ -31,6 +31,7 @@ from unittest import mock
 
 
 from weld import discover as discover_mod  # noqa: E402
+from weld._discover_state_check import mark_state_published  # noqa: E402
 from weld.discover import _discover_single_repo  # noqa: E402
 from weld.discovery_state import build_file_hashes  # noqa: E402
 
@@ -103,6 +104,13 @@ def _seed_state_and_graph(root: Path, *, omit_file_in_graph: str | None) -> None
     (root / ".weld" / "graph.json").write_text(
         json.dumps(seed_graph), encoding="utf-8",
     )
+    # The seeding run built with ``write_graph=False`` and this helper landed
+    # the canonical graph itself -- the ``wd discover`` CLI shape, which
+    # re-stamps the inventory through ``persist_cli_graph``. Do the same, or
+    # the state says it never published a graph and the run under test
+    # downgrades to full discovery (bd nwyq), testing that guard instead of
+    # the per-file audit these cases are about.
+    mark_state_published(root, root / ".weld" / "graph.json")
 
     state_path = root / ".weld" / "discovery-state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))

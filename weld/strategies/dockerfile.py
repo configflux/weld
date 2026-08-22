@@ -24,11 +24,11 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies._helpers import (
     StrategyResult,
-    filter_glob_results,
     is_excluded_dir_name,
-    should_skip,
 )
 
 # Conventional service-id mapping kept for back-compat with older
@@ -356,14 +356,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     pattern = source["glob"]
     excludes = source.get("exclude", [])
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
-
-    for df in filter_glob_results(root, sorted(parent.glob(Path(pattern).name))):
-        if should_skip(df, excludes):
-            continue
-        rel_path = str(df.relative_to(root))
+    for df in resolve_glob(root, pattern, excludes):
+        rel_path = rel_to_root(df, root)
         discovered_from.append(rel_path)
 
         props, df_edges, df_file_nodes = _process_dockerfile(df, root, rel_path)

@@ -23,7 +23,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob_with_provenance
+from weld.strategies._helpers import StrategyResult
 from weld.strategies._tree_sitter_ids import (
     canonical_file_node_id as _make_node_id,
     legacy_file_node_id as _legacy_make_node_id,
@@ -52,85 +54,6 @@ _EXPORT_RE = re.compile(
     r"(?:function|const|let|var|class|interface|type|enum)\s+"
     r"(\w+)",
 )
-
-# ---------------------------------------------------------------------------
-# Glob resolution (mirrors python_module._resolve_glob, with brace expansion)
-# ---------------------------------------------------------------------------
-
-def _expand_braces(pattern: str) -> list[str]:
-    """Expand a single top-level ``{a,b,...}`` into concrete patterns.
-
-    ``pathlib.Path.glob`` does not understand brace alternatives, so a
-    discover.yaml entry like ``packages/ui/src/**/*.{ts,tsx}`` silently
-    matches nothing. Single top-level brace groups are rewritten into
-    one concrete pattern per trimmed, non-empty alternative (duplicates
-    collapsed). Patterns with no braces, nested braces, or multiple brace
-    groups pass through unchanged; multi-group support can be added later
-    if a real config needs it.
-    """
-    open_idx = pattern.find("{")
-    if open_idx == -1:
-        return [pattern]
-    close_idx = pattern.find("}", open_idx + 1)
-    if close_idx == -1:
-        return [pattern]
-    inner = pattern[open_idx + 1 : close_idx]
-    if "{" in inner or "{" in pattern[close_idx + 1 :]:
-        return [pattern]
-    prefix = pattern[:open_idx]
-    suffix = pattern[close_idx + 1 :]
-    alternatives: list[str] = []
-    seen: set[str] = set()
-    for raw in inner.split(","):
-        alt = raw.strip()
-        if not alt:
-            continue
-        expanded = f"{prefix}{alt}{suffix}"
-        if expanded in seen:
-            continue
-        seen.add(expanded)
-        alternatives.append(expanded)
-    return alternatives or [pattern]
-
-
-def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
-    """Resolve a glob pattern that may contain ``**`` and ``{a,b}``.
-
-    Returns ``(matched_files, discovered_from_dirs)``.
-    Results inside excluded or nested-repo-copy directories are filtered out.
-    Files matched by multiple brace alternatives are deduplicated while
-    preserving stable (sorted) order.
-    """
-    patterns = _expand_braces(pattern)
-
-    files: list[Path] = []
-    seen: set[Path] = set()
-    dirs: set[str] = set()
-
-    for concrete in patterns:
-        if "**" in concrete:
-            raw = sorted(root.glob(concrete))
-            for ts in filter_glob_results(root, raw):
-                if ts in seen:
-                    continue
-                seen.add(ts)
-                files.append(ts)
-                dirs.add(str(ts.parent.relative_to(root)) + "/")
-        else:
-            parent = (root / concrete).parent
-            if not parent.is_dir():
-                continue
-            name_pat = Path(concrete).name
-            raw = sorted(parent.glob(name_pat))
-            for ts in filter_glob_results(root, raw):
-                if ts in seen:
-                    continue
-                seen.add(ts)
-                files.append(ts)
-            dirs.add(str(parent.relative_to(root)) + "/")
-
-    files.sort()
-    return files, sorted(dirs)
 
 # ---------------------------------------------------------------------------
 # Node ID builders are imported from :mod:`weld.strategies._tree_sitter_ids`
@@ -313,7 +236,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     package_id = source.get("package", "")
     id_prefix = source.get("id_prefix", "")
 
-    matched, dirs = _resolve_glob(root, pattern)
+    matched, dirs = resolve_glob_with_provenance(root, pattern, excludes)
     discovered_from.extend(dirs)
 
     if not matched:
@@ -341,14 +264,12 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     for ts_file in matched:
         if not ts_file.is_file():
             continue
-        if should_skip(ts_file, excludes, root=root):
-            continue
         try:
             source_text = ts_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
 
-        rel_path = str(ts_file.relative_to(root))
+        rel_path = rel_to_root(ts_file, root)
         line_count = _count_lines(source_text)
 
         # Try AST extraction first, fall back to regex on failure

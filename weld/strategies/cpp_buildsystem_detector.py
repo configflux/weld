@@ -28,11 +28,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from weld._node_ids import package_id
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 _STRATEGY = "cpp_buildsystem_detector"
 
@@ -63,20 +60,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    if "**" in pattern:
-        matched = filter_glob_results(root, sorted(root.glob(pattern)))
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return StrategyResult(nodes, edges, discovered_from)
-        matched = filter_glob_results(
-            root, sorted(parent.glob(Path(pattern).name)),
-        )
+    matched = resolve_glob(root, pattern, excludes)
 
     for candidate in matched:
         if not candidate.is_file():
-            continue
-        if should_skip(candidate, excludes, root=root):
             continue
         detected = _detect_one(candidate)
         if detected is None:

@@ -8,13 +8,33 @@ full coverage`` so admission admits nothing strict-AND would not, and demotion
 must NOT run (it could reorder a future N<=2 doc-vs-code result a golden
 depends on).
 
-The match surface here is identical to :meth:`weld.graph.Graph._match_token_groups`
-(ADR 0075 requires admission and strict-AND to agree on what "covered" means).
+The match surface here is :mod:`weld._match_surface`, the same one
+:meth:`weld.graph.Graph._match_token_groups` uses (ADR 0075 requires admission
+and strict-AND to agree on what "covered" means, and the reliable way to make
+two functions agree on a field list is to give them one).
 """
 
 from __future__ import annotations
 
 from typing import Callable
+
+from weld._issue_concepts import issue_concept_demotion
+from weld._match_surface import count_group_hits
+from weld._test_paths import test_noise_demotion
+
+# bd jkir / ADR 0107: the query-subject primitives and the two rank dimensions
+# that turn on the subject alone live in weld._rank_subject, which is where they
+# went when this module hit the 400-line cap. Re-exported here because
+# weld.ranking, weld.graph_query, weld._sqlite_query, weld._federation_eager_index
+# and the tests that pin them all address these at this module's path.
+from weld._rank_subject import (  # noqa: F401 -- re-exported for callers
+    _group_hits_string,
+    _identity_values,
+    _subject_in_identity,
+    subject_identity_miss,
+    subject_identity_specificity,
+    subject_label_exact_miss,
+)
 
 # ADR 0075: the coverage-aware admission relaxation and the diffuse-doc
 # demotion BOTH fire only at this token-group count (the load-bearing dual
@@ -35,32 +55,14 @@ def covered_group_count(
 ) -> int:
     """Count how many ``token_groups`` are hit, WITHOUT short-circuiting.
 
-    The match surface is identical to :meth:`Graph._match_token_groups`
-    (admission and strict-AND must agree on "covered"), so this includes
-    ``props.constants`` -- unlike the OR-fallback counter
-    :func:`weld.graph_query._count_groups_hit`, whose pre-existing
-    ``constants`` omission ADR 0075 deliberately leaves unchanged.
+    The match surface is :mod:`weld._match_surface`, shared with
+    :meth:`Graph._match_token_groups` rather than restated -- ADR 0075 requires
+    admission and strict-AND to agree on what "covered" means, and two copies
+    of a field list is how they stop agreeing. So this includes
+    ``props.constants``, unlike the OR-fallback counter
+    :func:`count_groups_hit` below.
     """
-    nid_l, label_l = nid.lower(), node.get("label", "").lower()
-    props = node.get("props") or {}
-    file_l = (props.get("file") or "").lower()
-    qualname_l = str(props.get("qualname") or "").lower()
-    exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
-    constants_l = [c.lower() for c in props.get("constants", []) if isinstance(c, str)]
-    headings_l = [h.lower() for h in props.get("headings", []) if isinstance(h, str)]
-    desc_l = (props.get("description") or "").lower()
-    hits = 0
-    for group in token_groups:
-        if any(
-            t in nid_l or t in label_l or t in file_l
-            or t in qualname_l or t in desc_l
-            or any(t in e for e in exports_l)
-            or any(t in c for c in constants_l)
-            or any(t in h for h in headings_l)
-            for t in group
-        ):
-            hits += 1
-    return hits
+    return count_group_hits(token_groups, nid, node, short_circuit=False)
 
 
 def count_groups_hit(
@@ -71,81 +73,19 @@ def count_groups_hit(
     The single, shared definition of the OR-fallback group-hit counter used by
     BOTH OR-fallback impls (the JSON ``Graph`` read path and its sqlite peer),
     so the two cannot drift on what "hit a group" means. Unlike
-    :func:`covered_group_count` (the *admission*/strict-AND counter, identical
-    to :meth:`Graph._match_token_groups`), this surface intentionally OMITS
-    ``props.constants``: that is the pre-existing OR-fallback field set, and the
-    relaxation tier deliberately retains it so the OR fallback never *under*
-    counts a node strict-AND would have hit while keeping the existing
-    OR-fallback behavior unchanged. Like :func:`covered_group_count`, it does
-    NOT short-circuit on a missing group -- it counts partial hits so callers
-    can rank by ``num_groups_hit_desc``.
+    :func:`covered_group_count` (the *admission*/strict-AND counter), this
+    surface intentionally OMITS ``props.constants``: that is the pre-existing
+    OR-fallback field set, and the relaxation tier deliberately retains it so
+    the OR fallback never *under* counts a node strict-AND would have hit while
+    keeping the existing OR-fallback behavior unchanged. That omission is the
+    single argument :mod:`weld._match_surface` takes, so it stays a decision
+    rather than becoming a sixth copy of the field list. Like
+    :func:`covered_group_count`, it does NOT short-circuit on a missing group --
+    it counts partial hits so callers can rank by ``num_groups_hit_desc``.
     """
-    nid_l = nid.lower()
-    label_l = node.get("label", "").lower()
-    props = node.get("props") or {}
-    file_l = (props.get("file") or "").lower()
-    qualname_l = str(props.get("qualname") or "").lower()
-    exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
-    headings_l = [h.lower() for h in props.get("headings", []) if isinstance(h, str)]
-    desc_l = (props.get("description") or "").lower()
-    hits = 0
-    for group in token_groups:
-        if any(
-            t in nid_l or t in label_l or t in file_l
-            or t in qualname_l or t in desc_l
-            or any(t in e for e in exports_l)
-            or any(t in h for h in headings_l)
-            for t in group
-        ):
-            hits += 1
-    return hits
-
-
-def _group_hits_string(group: list[str], value: str) -> bool:
-    """Return True if any synonym ``t`` in *group* is a substring of *value*."""
-    return any(t in value for t in group)
-
-
-def _identity_values(nid: str, node: dict) -> list[str]:
-    """Return the lowered identity-field strings for *node* (ADR 0075).
-
-    Identity fields are the ones that make a node *about* a concept (as
-    opposed to merely mentioning it): the node id, ``label``, ``props.file``,
-    ``props.qualname`` and ``props.description``. This is the exact set the
-    diffuse-doc discriminator (:func:`is_diffuse_doc`) treats as "identity";
-    sharing one extractor keeps the two ADR 0075 demotion signals from
-    drifting on what "identity" means. Bag fields (``headings`` / ``constants``
-    / ``exports``) are intentionally excluded -- a hit there is a scattered
-    mention, not an identity.
-    """
-    props = node.get("props") or {}
-    return [
-        nid.lower(),
-        node.get("label", "").lower(),
-        (props.get("file") or "").lower(),
-        str(props.get("qualname") or "").lower(),
-        (props.get("description") or "").lower(),
-    ]
-
-
-def _subject_in_identity(
-    nid: str, node: dict, token_groups: list[list[str]]
-) -> bool:
-    """Return True when the query *subject* lands in an identity field.
-
-    The subject is the **leading** token-group (``token_groups[0]``); a node
-    that carries it in an identity field (see :func:`_identity_values`) is
-    *about* the subject, not merely a co-mention. Shared core for the two
-    subject tie-breaks (``partial_coverage_subject_miss`` in the admission tier
-    and ``subject_identity_miss`` in the OR-fallback tier) so they cannot drift
-    on what "covers the subject" means. Empty ``token_groups`` -> True (no
-    subject to miss, so never a penalty).
-    """
-    if not token_groups:
-        return True
-    subject_group = token_groups[0]
-    identity = _identity_values(nid, node)
-    return any(_group_hits_string(subject_group, value) for value in identity)
+    return count_group_hits(
+        token_groups, nid, node, short_circuit=False, include_constants=False,
+    )
 
 
 def partial_coverage_subject_miss(
@@ -191,59 +131,75 @@ def partial_coverage_subject_miss(
     return 0 if _subject_in_identity(node.get("id", ""), node, token_groups) else 1
 
 
-def subject_identity_miss(
-    nid: str, node: dict, token_groups: list[list[str]]
-) -> int:
-    """Return 1 when an OR-fallback candidate misses the query *subject*.
-
-    The OR-fallback tier (:func:`weld.graph_query.query_or_fallback`) is the
-    *degraded* retrieval path: it fires only when strict-AND yields zero
-    matches on a multi-token query, and ranks the per-group union by
-    ``(group_hits_desc, BM25_desc, id)``. Without a subject signal it suffers
-    the same defect as the admission tier -- for ``"typescript discovery
-    strategy"`` on a graph with no node covering all three groups (the durable,
-    clean-graph case once the transient ``concept:<issue>`` node is gone),
-    ``discovery_state`` (group_hits 2, no ``typescript``) outranks the
-    TypeScript strategy modules (group_hits 2, with ``typescript``) purely on
-    BM25 IDF rarity.
-
-    This restores intent by sorting any union candidate that does NOT carry the
-    subject (leading token-group) in an identity field *after* its group-hit
-    peers that do. Gated to multi-token queries (``len(token_groups) >= 2``);
-    single-token queries never reach OR-fallback and have no distinct subject.
-    Returns ``1`` (sorts later) when the subject is absent from every identity
-    field, else ``0``. Placed ahead of ``-bm25`` and after ``-group_hits`` in
-    the OR-fallback key, so a node hitting strictly more groups still wins. Pure
-    re-rank: nothing is excluded.
-    """
-    if len(token_groups) < 2:
-        return 0
-    return 0 if _subject_in_identity(nid, node, token_groups) else 1
-
-
 def or_fallback_sort_key(
     nid: str,
     node: dict,
     group_hits: int,
     token_groups: list[list[str]],
     bm25_score: float,
-) -> tuple[int, int, float, str]:
+) -> tuple[int, int, int, int, int, int, float, str]:
     """Return the shared OR-fallback ranking key for one union candidate.
 
-    The single, shared definition of the OR-fallback sort order used by BOTH
-    OR-fallback impls (the JSON ``Graph`` read path and its sqlite peer), so the
-    two cannot drift on rank. The dimensions, in order:
+    The single, shared definition of the OR-fallback sort order used by ALL
+    THREE OR-fallback impls (the JSON ``Graph`` read path, its sqlite peer and
+    the eager-federation path), so they cannot drift on rank. The dimensions, in
+    order:
 
-    1. ``-group_hits`` -- a node hitting more query groups wins;
-    2. :func:`subject_identity_miss` -- among group-hit-tied candidates, one
-       that misses the query *subject* (leading token-group) in every identity
-       field sorts last (so it does not beat a subject-bearing peer on BM25 IDF
-       rarity alone). Inert for single-token queries / when the subject is
-       present;
-    3. ``-bm25_score`` -- the caller-supplied BM25 score (each impl computes it
-       with its own corpus accessor; placed after the subject dimension so the
-       latter survives near-tie BM25 noise);
-    4. ``nid`` -- a stable, deterministic final tiebreak.
+    1. :func:`subject_label_exact_miss` -- a node whose ``label`` *is* the query
+       subject leads, ahead of group count (ADR 0107). Inert unless some
+       candidate's label exactly equals a subject token;
+    2. :func:`weld._test_paths.test_noise_demotion` -- test material sorts
+       below non-test material unless the query names tests (bd to8x). It has
+       to sit *above* group count, because outranking the code is exactly what
+       a test's naming convention earns it here: the query "graph.json
+       serialization write json dump indent" hit two groups on
+       ``JsonSerializerBoundaryTest.test_unwrapped_graph_dump_is_flagged`` and
+       one on ``weld.serializer.dumps_graph``, the funnel that actually writes
+       the file. A test states its subject in a sentence; the subject states
+       itself in a word. Below dimension 1, so naming a test exactly still
+       returns it first, and gated on the query, so asking for tests still
+       ranks them top. *nid* / *group_hits* are threaded through (bd ikof) so
+       a test node whose own summary -- not just its name -- earns high
+       coverage of the query can be exempted; see
+       :func:`weld._test_paths._summary_earns_exemption`;
+    3. :func:`weld._issue_concepts.issue_concept_demotion` -- a concept node
+       minted from a bd issue title sorts below substantive matches unless the
+       query names the backlog (ADR 0113). It sits above ``-group_hits`` for the
+       same reason dimension 2 does, only more so: an issue title is a whole
+       *sentence* quoting the query it reports, so it covers every token group
+       by construction and takes the group count outright. Without this, the
+       ADR 0113 candidacy rule would admit the code nodes and still leave the
+       issue's own restatement sitting on top of them;
+    4. ``-group_hits`` -- a node hitting more query groups wins;
+    5. :func:`subject_identity_miss` -- among group-hit-tied candidates, a
+       0/1/2 tier (ADR 0120) for how the query *subject* (leading token-group)
+       lands in an identity field: 0 for a raw-token/alias hit, 1 for a
+       separator-variant-only hit (bd 2xoj respellings, e.g. ``graph_json`` for
+       a ``graph.json`` query), 2 for absent from every identity field. A
+       higher tier sorts later, so a variant-only hit does not beat a raw hit,
+       and neither beats a subject-bearing peer on BM25 IDF rarity alone.
+       Inert (always 0) for single-token queries;
+    6. :func:`subject_identity_specificity` -- among candidates *tied* on tier
+       5 (almost always both tier 0, e.g. two nodes that both state the raw
+       subject), the one whose matched identity field is shorter wins. BM25
+       (dimension 7) scores a node's whole indexed text, bag fields included,
+       so it is not a reliable arbiter between two nodes that both name the
+       subject directly -- it rewards whichever candidate happens to have less
+       *unrelated* text, not whichever states the subject more concisely. This
+       dimension asks the narrower question directly. Inert (0) for single-
+       token queries or a tier-2 (miss) candidate, where dimension 5 already
+       decided the order;
+    7. ``-bm25_score`` -- the caller-supplied BM25 score (each impl computes it
+       with its own corpus accessor; placed after the subject dimensions so they
+       survive near-tie BM25 noise);
+    8. ``nid`` -- a stable, deterministic final tiebreak.
+
+    :func:`subject_label_exact_miss` and :func:`subject_identity_miss` are
+    deliberately *not* merged: the former is exact-equality on ``label`` and
+    outranks retrieval count, the latter is substring across every identity
+    field and only breaks ties within a count. Collapsing them would either make
+    the exact signal substring-loose or promote every substring identity hit
+    above group count, and ADR 0075 chose the latter's placement on purpose.
 
     *bm25_score* is passed in (not computed here) so this helper stays free of
     any corpus/backend dependency: the JSON path supplies
@@ -251,8 +207,12 @@ def or_fallback_sort_key(
     BM25 score, but both rank identically.
     """
     return (
+        subject_label_exact_miss(node, token_groups),
+        test_noise_demotion(node, token_groups, nid=nid, group_hits=group_hits),
+        issue_concept_demotion(node, token_groups),
         -group_hits,
         subject_identity_miss(nid, node, token_groups),
+        subject_identity_specificity(nid, node, token_groups),
         -bm25_score,
         nid,
     )

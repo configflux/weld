@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from weld._gitignore_writer import write_weld_gitignore
+from weld._gitattributes_writer import write_repo_git_policy
 from weld._workspace_bootstrap_result import BootstrapResult
 from weld.init import init as _root_init
 from weld._graph_meta_sidecar import write_graph_with_meta
@@ -80,8 +80,8 @@ def _init_child(
     """
     weld_dir = child_root / ".weld"
     if _child_has_discover_yaml(child_root):
-        write_weld_gitignore(
-            weld_dir, ignore_all=ignore_all, track_graphs=track_graphs,
+        _write_tracking_policy(
+            child_root, ignore_all=ignore_all, track_graphs=track_graphs,
         )
         return
     output = weld_dir / "discover.yaml"
@@ -92,8 +92,18 @@ def _init_child(
         return
     if wrote:
         result.children_initialized.append(name)
-    write_weld_gitignore(
-        weld_dir, ignore_all=ignore_all, track_graphs=track_graphs,
+    _write_tracking_policy(
+        child_root, ignore_all=ignore_all, track_graphs=track_graphs,
+    )
+
+
+def _write_tracking_policy(
+    repo_root: Path, *, ignore_all: bool, track_graphs: bool,
+) -> None:
+    """Seed *repo_root*'s managed ``.weld/`` git policy, quietly (ADR 0110)."""
+    write_repo_git_policy(
+        repo_root, repo_root / ".weld",
+        ignore_all=ignore_all, track_graphs=track_graphs, announce=False,
     )
 
 
@@ -218,10 +228,8 @@ def bootstrap_workspace(
 
     # Step 1: root init if needed.
     result.root_init_ran = _run_root_init(root_path)
-    write_weld_gitignore(
-        root_path / ".weld",
-        ignore_all=ignore_all,
-        track_graphs=track_graphs,
+    _write_tracking_policy(
+        root_path, ignore_all=ignore_all, track_graphs=track_graphs,
     )
 
     # Step 2: unified federation predicate.

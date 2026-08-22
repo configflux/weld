@@ -12,11 +12,9 @@ import json
 import re
 from pathlib import Path
 
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 # Script name patterns that indicate test targets
 _TEST_SCRIPT_RE = re.compile(r"^(test|check|lint|e2e|spec|coverage|verify)", re.IGNORECASE)
@@ -31,7 +29,7 @@ def _extract_package_json(
     discovered_from: list,
 ) -> None:
     """Extract build/test script targets from a package.json file."""
-    rel_path = str(pj_path.relative_to(root))
+    rel_path = rel_to_root(pj_path, root)
     discovered_from.append(rel_path)
 
     try:
@@ -112,7 +110,7 @@ def _extract_makefile(
     discovered_from: list,
 ) -> None:
     """Extract make/just targets from a Makefile or Justfile."""
-    rel_path = str(mk_path.relative_to(root))
+    rel_path = rel_to_root(mk_path, root)
     discovered_from.append(rel_path)
 
     try:
@@ -194,20 +192,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    # Handle recursive globs
-    if "**" in pattern:
-        matched = sorted(root.glob(pattern))
-        matched = filter_glob_results(root, matched)
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return StrategyResult(nodes, edges, discovered_from)
-        matched = sorted(parent.glob(Path(pattern).name))
+    matched = resolve_glob(root, pattern, excludes)
 
     for filepath in matched:
         if not filepath.is_file():
-            continue
-        if should_skip(filepath, excludes):
             continue
 
         name_lower = filepath.name.lower()

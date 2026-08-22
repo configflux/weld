@@ -42,7 +42,10 @@ from pathlib import Path
 
 from weld._graph_node_registry import ensure_node
 from weld._node_ids import package_id
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._strategy_failure import note_strategy_failure
 
 _STRATEGY = "ros2_interfaces"
 
@@ -297,25 +300,31 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    if "**" in pattern:
-        matched = filter_glob_results(root, sorted(root.glob(pattern)))
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return StrategyResult(nodes, edges, discovered_from)
-        matched = filter_glob_results(
-            root, sorted(parent.glob(Path(pattern).name))
-        )
+    matched = resolve_glob(root, pattern, excludes)
 
     for iface in matched:
-        if not iface.is_file():
-            continue
-        if should_skip(iface, excludes):
-            continue
+        # Both path predicates, so they cost nothing and decide nothing about
+        # whether the file is still there -- ordered ahead of the ``is_file``
+        # stat below so the two kinds of skip stay distinguishable.
         if iface.suffix not in _INTERFACE_EXTS:
             continue
 
-        rel_path = str(iface.relative_to(root))
+        rel_path = rel_to_root(iface, root)
+        if not iface.is_file():
+            # bd o642: the walk named it, so it was a file then and is not one
+            # now -- this run could not speak for it. Unlike its four sibling
+            # strategies this one never crashed on a vanished file, because
+            # this stat catches it before the read; it recorded nothing
+            # either, and that was the defect. The file was hashed when the run
+            # began, so with no failure noted it lands in
+            # ``files_with_no_nodes`` -- the set meaning a strategy looked and
+            # decided the file yields nothing. That exemption is keyed on the
+            # path, so a file that came back byte-identical was never dirty and
+            # never repaired: absent from the graph while every freshness
+            # signal read clean (bd hch4).
+            note_strategy_failure(context, [rel_path])
+            continue
+
         discovered_from.append(rel_path)
 
         pkg = _owning_package(iface)
@@ -328,6 +337,12 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             elif iface.suffix == ".action":
                 _emit_action(iface, rel_path, pkg, nodes, edges)
         except OSError:
+            # The same rule one moment later: the file passed the stat above
+            # and was unreadable by the time ``_emit_*`` read it. ``OSError``
+            # is the whole inventory for these three reads -- they pass
+            # ``errors="replace"``, so there is no decode left to fail, and a
+            # line parser raises no ``SyntaxError``.
+            note_strategy_failure(context, [rel_path])
             continue
 
     return StrategyResult(nodes, edges, discovered_from)

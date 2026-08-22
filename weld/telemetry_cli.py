@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import IO
 
 from weld import _telemetry as tel
+from weld._safe_text import dumps_safe_json, sanitize_json_text
 from weld._telemetry import Recorder
 
 
@@ -139,7 +140,11 @@ def _cmd_show(args: argparse.Namespace, target: Path,
     tail = lines[-last:] if last > 0 else lines
     if args.json:
         for ln in tail:
-            out.write(ln)
+            # Replayed from disk, and a repo can ship a crafted
+            # .weld/telemetry.jsonl, so the escape must not depend on who
+            # wrote the file. `ln` carries no call, so this is the one escape
+            # here lint_terminal_safety cannot prove (its limit 1): keep it.
+            out.write(sanitize_json_text(ln))
             out.write("\n")
         return 0
     parsed: list[dict] = []
@@ -152,7 +157,14 @@ def _cmd_show(args: argparse.Namespace, target: Path,
                 parsed.append({"_corrupt": True, "_raw_kind": type(obj).__name__})
         except json.JSONDecodeError:
             parsed.append({"_corrupt": True})
-    rendered = "\n".join(json.dumps(ev, indent=2, sort_keys=True) for ev in parsed)
+    # dumps_safe_json rather than json.dumps: ensure_ascii=True already
+    # neutralizes DEL/C1 here, so the bytes are unchanged, but routing through
+    # the sanctioned emitter means the safety stops resting on a keyword a
+    # later edit could drop.
+    rendered = "\n".join(
+        dumps_safe_json(ev, indent=2, sort_keys=True, ensure_ascii=True)
+        for ev in parsed
+    )
     if rendered:
         out.write(rendered)
         out.write("\n")
@@ -248,7 +260,7 @@ def _cmd_enable(_args: argparse.Namespace, _target: Path,
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wd telemetry",
-        description="Manage local telemetry recorded by wd (ADR 0035).",
+        description="Manage local telemetry recorded by wd.",
     )
     sub = parser.add_subparsers(dest="cmd", metavar="subcommand")
 

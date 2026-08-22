@@ -135,6 +135,10 @@ class CallersQueryTest(unittest.TestCase):
         )
         self.assertEqual(result["depth"], 1)
         self.assertEqual(result["symbol"], "symbol:py:m:helper")
+        # bd jz65r: a full-id lookup is a single-seed resolution, but
+        # ``seeds`` is stamped unconditionally -- a consumer never has to
+        # branch on how the id was resolved to find it.
+        self.assertEqual(result["seeds"], ["symbol:py:m:helper"])
 
     def test_transitive_callers_depth_two(self) -> None:
         result = self.g.callers("symbol:py:m:helper", depth=2)
@@ -143,11 +147,20 @@ class CallersQueryTest(unittest.TestCase):
         self.assertIn("symbol:py:m:caller_one", ids)
         self.assertIn("symbol:py:m:caller_two", ids)
         self.assertIn("symbol:py:m:top", ids)
+        # bd jz65r: ``seeds`` is present at any depth, but per-caller
+        # ``targets`` attribution is the tractable-only-at-depth-1 subset --
+        # a depth-2 caller can be reachable via more than one seed's chain,
+        # so it is never fabricated here, not even for the ones reached at
+        # the first hop.
+        self.assertEqual(result["seeds"], ["symbol:py:m:helper"])
+        for caller in result["callers"]:
+            self.assertNotIn("targets", caller)
 
     def test_callers_unknown_symbol(self) -> None:
         result = self.g.callers("symbol:py:m:nope")
         self.assertEqual(result["callers"], [])
         self.assertIn("error", result)
+        self.assertEqual(result["seeds"], [])
 
     def test_callers_resolves_bare_name(self) -> None:
         """A bare name like ``helper`` must resolve the same way
@@ -164,6 +177,54 @@ class CallersQueryTest(unittest.TestCase):
         self.assertIn("symbol:py:m:caller_two", ids)
         self.assertIn("symbol:py:m:top", ids)
         self.assertNotIn("error", result)
+        # bd jz65r: the callers() half of the aggregation-without-attribution
+        # gap bd nyoks fixed for references(). ``seeds`` names both matches;
+        # each caller's ``targets`` names the seed it was actually found
+        # calling, not the union of every seed this bare name resolved to.
+        self.assertEqual(
+            {"symbol:py:m:helper", "symbol:unresolved:helper"},
+            set(result["seeds"]),
+        )
+        by_id = {c["id"]: c for c in result["callers"]}
+        self.assertEqual(
+            ["symbol:py:m:helper"], by_id["symbol:py:m:caller_one"]["targets"],
+        )
+        self.assertEqual(
+            ["symbol:py:m:helper"], by_id["symbol:py:m:caller_two"]["targets"],
+        )
+        self.assertEqual(
+            ["symbol:unresolved:helper"], by_id["symbol:py:m:top"]["targets"],
+        )
+
+    def test_callers_bare_name_caller_of_both_seeds_gets_one_row(self) -> None:
+        """bd jz65r: a caller that directly calls every seed a bare name
+        resolved to gets one row naming every target, not one duplicated
+        row per seed -- the same dedup contract bd nyoks pinned for
+        references(). Target tracking must not be short-circuited by the
+        BFS's own "already emitted" dedup, which runs on caller id alone.
+        """
+        _DEFINITE = {"confidence": "definite", "source_strategy": "test_fixture"}
+        self.g.add_node(
+            "symbol:py:m:both_caller", "symbol", "both_caller",
+            {"module": "m", "qualname": "both_caller", "language": "python"},
+        )
+        self.g.add_edge(
+            "symbol:py:m:both_caller", "symbol:py:m:helper", "calls", _DEFINITE,
+        )
+        self.g.add_edge(
+            "symbol:py:m:both_caller", "symbol:unresolved:helper", "calls",
+            _DEFINITE,
+        )
+        result = self.g.callers("helper", depth=1)
+        both = [
+            c for c in result["callers"]
+            if c["id"] == "symbol:py:m:both_caller"
+        ]
+        self.assertEqual(1, len(both))
+        self.assertEqual(
+            {"symbol:py:m:helper", "symbol:unresolved:helper"},
+            set(both[0]["targets"]),
+        )
 
     def test_callers_bare_name_unique(self) -> None:
         """Bare name that uniquely resolves to one definite symbol returns
@@ -174,12 +235,21 @@ class CallersQueryTest(unittest.TestCase):
         ids = {c["id"] for c in result["callers"]}
         self.assertEqual(ids, {"symbol:py:m:top"})
         self.assertNotIn("error", result)
+        # bd jz65r: a unique bare-name resolution still carries ``seeds``
+        # (length 1) and per-caller ``targets`` -- presence does not depend
+        # on ambiguity, mirroring how references() always stamps ``targets``
+        # regardless of match count.
+        self.assertEqual(result["seeds"], ["symbol:py:m:caller_one"])
+        self.assertEqual(
+            ["symbol:py:m:caller_one"], result["callers"][0]["targets"],
+        )
 
     def test_callers_bare_name_missing(self) -> None:
         """A bare name that matches no symbol still surfaces an error."""
         result = self.g.callers("does_not_exist", depth=1)
         self.assertEqual(result["callers"], [])
         self.assertIn("error", result)
+        self.assertEqual(result["seeds"], [])
 
     def test_callers_full_id_still_works(self) -> None:
         """Regression: fully-qualified ids must continue to resolve directly."""
@@ -203,6 +273,19 @@ class CallersQueryTest(unittest.TestCase):
         self.assertIn("symbol:py:m:caller_one", caller_ids)
         self.assertIn("symbol:py:m:caller_two", caller_ids)
         self.assertIn("symbol:py:m:top", caller_ids)
+        # bd nyoks: each caller names the match it was actually found under,
+        # not the union of every match this bare name resolved to -- top
+        # calls the sentinel, not the resolved helper.
+        by_id = {c["id"]: c for c in refs["callers"]}
+        self.assertEqual(
+            ["symbol:py:m:helper"], by_id["symbol:py:m:caller_one"]["targets"],
+        )
+        self.assertEqual(
+            ["symbol:py:m:helper"], by_id["symbol:py:m:caller_two"]["targets"],
+        )
+        self.assertEqual(
+            ["symbol:unresolved:helper"], by_id["symbol:py:m:top"]["targets"],
+        )
 
 if __name__ == "__main__":
     unittest.main()

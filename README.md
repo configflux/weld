@@ -13,8 +13,8 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.22.1 -->
-> **Evaluators: start with v0.19.1.** v0.19.1 is the current
+<!-- evaluator-note: latest=v0.23.0 -->
+> **Evaluators: start with v0.23.0.** v0.23.0 is the current
 > recommended starting point. Headline features added since v0.14.0:
 > a 14-tool MCP server for graph-backed agent context
 > (`weld_query`, `weld_find`, `weld_context`, `weld_path`,
@@ -132,6 +132,10 @@ were not designed to provide.
 - **Agent-native** — generates MCP config snippets by default and ships an
   optional stdio MCP server so Claude Code, Codex, and other agents can query
   the graph directly.
+- **Worktree-aware** — every read answers from the checkout you are standing
+  in, and a fresh `git worktree add` seeds its graph from a sibling checkout
+  on the first query instead of paying a cold discovery. See
+  [Worktrees and multiple checkouts](#worktrees-and-multiple-checkouts).
 - **Zero external dependencies** — runs from a plain checkout with Python >= 3.10.
   Tree-sitter is optional.
 
@@ -187,6 +191,19 @@ applies the same default filter, and so does the MCP `weld_query` tool
 same matches by construction. Every match still carries its `confidence` so a
 client can weight or discount hits itself.
 
+The `description:` line above prefers `props.description` (an LLM enrichment
+pass) whenever a match has one. A match with no enrichment yet — the common
+case, since enrichment is opt-in — falls back to `props.summary` instead: a
+file's or symbol's own opening doc-comment line (a file node reads its module
+docstring — a Python test module's own docstring included, not just the
+production code it covers; a symbol node reads its own function/class
+docstring or, for Go and Rust, its own `//`/`///` doc comment), populated by
+`wd discover` with no enrichment pass required, and rendered as
+`summary: ...` so the two are never confused. `wd context`'s node header, and
+the match blocks behind `wd callers` / `wd references`, apply the same
+precedence. `--json` and the MCP surfaces are unaffected — both fields are
+always present in `props` already.
+
 `wd query` and `wd context` (and their MCP peers `weld_query` / `weld_context`)
 also **bound the read envelope** by default so a large graph stays usable on
 both surfaces. First the neighborhood is dieted: neighbors that are stdlib
@@ -205,6 +222,37 @@ reason (`stdlib`, `unresolved`, `external_symbol`, `fanout_capped`, and
 nodes the brief actually emits and the byte budget applies (a `warnings` entry
 records any node dropped for size); `--full-size` / `full_size: true` returns the
 unbounded brief.
+
+The four **traversal reads** — `wd impact`, `wd callers`, `wd references`, and
+`wd trace` (and their MCP peers) — share the same budget, because a blast radius
+or a caller list is exactly the answer that grows without limit on the nodes
+worth asking about. Each reports what it dropped rather than truncating quietly:
+
+| Read | Dropped first | Reported in |
+|---|---|---|
+| `impact` | farthest hops, then lowest-priority nodes | `warnings.size_capped` + a `warnings.messages` entry |
+| `callers` | lowest-priority callers | `size_capped` |
+| `references` | file hits, then callers (resolved `matches` last) | `size_capped` |
+| `trace` | lowest-priority slice nodes | a `warnings` entry |
+
+`--full-size` / `full_size: true` returns the unbounded payload on every one of
+them.
+
+What the budget may **never** shrink is the verdict. `wd impact` always reports
+`risk_level` and `affected_surface_counts` — per-bucket counts of everything the
+radius reaches — over the **full** blast radius, so a bounded payload can never
+come back claiming a smaller radius or a lower risk than the change really has.
+The surface *member lists* under `affected_surfaces` are prunable (they are seven
+unbounded node lists, not a summary), and what was dropped from each is reported
+in `warnings.size_capped.affected_surfaces`. The human (non-`--json`) output is
+never bounded — a terminal has no tool cap, and the counts are what a reader ran
+the command for.
+
+The budget is best-effort, and says so when it falls short: if everything
+droppable has been dropped and the payload is *still* over, `warnings`
+(top-level `budget_exceeded` on `callers` / `references`) carries
+`budget_exceeded: true` plus a message suggesting a narrower question. It is
+always present, so a consumer never has to probe for it.
 
 All `wd` retrieval commands default to human-readable text and accept
 `--json` for the stable JSON envelope. Pass `--json` when
@@ -328,11 +376,36 @@ Weld's trust posture is explicit and narrow:
   repository without executing any code from it; pass `wd enrich --safe`
   to refuse network egress (every currently registered provider —
   Anthropic, OpenAI, Ollama, Copilot CLI — is refused). Safe mode produces a stable
-  `[weld] safe mode: ...` stderr line for each refused path.
+  `[weld] safe mode: ...` stderr line for each refused path. Enrichment
+  is still available under `--safe` via `wd enrich --agent-direct`, which
+  makes no network call at all.
+- **Launch form**: the claim above is measured against `wd`, the
+  recommended surface. A console script's own directory heads Python's
+  module search path, so the repository being scanned is never on that
+  path and nothing in it can answer an import. The raw-source path
+  `python -m weld` cannot reach zero: `-m` puts the working directory
+  ahead of the standard library. Weld removes that entry before importing
+  anything of its own, but CPython's `-m` bootstrap has already imported a
+  handful of standard-library modules — eight on CPython 3.12, among them
+  `collections`, `threading` and `warnings`, with the exact set varying by
+  interpreter version — before any weld code runs, so a repository holding
+  files by those names still gets them executed. That floor is what every
+  `-m` target pays, weld's or the standard library's. Use `wd`, or
+  `PYTHONSAFEPATH=1 python -m weld` (Python 3.11+), against a wholly
+  untrusted repository.
 - **Advanced strategies**: project-local strategies are Python modules
   loaded at discovery time, and `strategy: external_json` executes
   configured commands from `discover.yaml`. Only enable these on
   repositories you trust.
+- **MCP server**: the stdio server is launched with `python -m`, so it is
+  bound by exactly the **Launch form** limit above and by nothing worse.
+  Clients start it with the project directory as its working directory,
+  which `-m` would put ahead of the standard library on Python's module
+  search path; the server removes that entry before it loads anything of
+  its own, leaving the same interpreter-imposed floor and nothing above it.
+  Launch it with `PYTHONSAFEPATH=1` (Python 3.11+) in its environment to
+  remove the floor too. See [docs/mcp.md](docs/mcp.md#trust-model) for the
+  exact boundary and the configuration snippet.
 
 See [SECURITY.md](SECURITY.md) for the full policy and reporting process.
 
@@ -507,13 +580,35 @@ enrichment now. The answer is persisted to
 Graphs over 2,000 nodes are out of the auto-flow: the message points
 you at the explicit `wd enrich --batch=N` path instead. Inside an
 agent harness (Claude Code, Cursor, Codex, etc.) with no provider
-configured, the prompt is replaced by a tip to run `/enrich-weld`.
+configured, the prompt is replaced by a tip to run
+`wd enrich --agent-direct`.
 
 For a source-checkout install (contributors editing Weld itself), see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Agents can also enrich nodes without provider extras or API keys by reading the
-relevant source or documentation and writing reviewed enrichment manually:
+### Enrichment without an API key (`--agent-direct`)
+
+If you are an AI agent, you *are* an enrichment provider — you can read the
+source and judge it yourself. `wd enrich --agent-direct` prints the work plan
+for exactly that: the nodes still missing enrichment, the record contract a
+write must satisfy, the command that lands one, and how to verify the result.
+It calls no provider, needs no extra, no API key, and no network, and it never
+writes to the graph:
+
+```bash
+wd enrich --agent-direct                      # the full plan
+wd enrich --agent-direct --type entity --limit 25   # one batch
+wd enrich --agent-direct --json               # the same plan as data
+```
+
+`--limit` caps the listed nodes but still reports how many were left out, so a
+batched run never mistakes a truncated list for a finished graph. `--json`
+emits the pending list, the record contract, and the command template as a
+payload a harness can drive batches from. `--force` lists nodes that already
+carry enrichment, for a deliberate re-run. Because the mode makes no network
+call, it is also the one enrichment path `wd enrich --safe` permits.
+
+Following the plan means reading the source and writing the record back:
 
 ```bash
 wd stale
@@ -529,7 +624,33 @@ later `wd discover` runs: discovery re-attaches `props.enrichment` to the
 rebuilt node, keyed by node id. A record written by `wd enrich` is re-validated
 against a node source fingerprint and dropped only when that node's own source
 changes; manual enrichment carries no fingerprint, so it persists until you
-re-enrich it. Manual inferred edges should use explicit provenance such as
+re-enrich it.
+
+That fingerprint covers a node's *identity*, not its position. Inserting a
+line above a function shifts everything below it, and none of those nodes lose
+their enrichment; a file node likewise keeps its enrichment when the file
+merely grows, and loses it when its exports, constants, or imports change.
+Because the graph stores no copy of a body, rewriting a function's internals
+without changing its signature will *not* invalidate its enrichment — use
+`wd enrich --force` when you want a deliberate rewrite. Enrichment is keyed by
+node id, so renaming a symbol starts it fresh.
+
+`props.enrichment` must carry a non-empty `provider`, `model`, `timestamp`, and
+`description`. `wd add-node` refuses a record missing any of them and names the
+gaps, rather than accepting a record that the next `wd discover` would discard:
+
+```console
+$ wd add-node "symbol:py:pkg.mod:fn" --type symbol --merge --props '{"enrichment":{"provider":"manual","description":"..."}}'
+error[invalid_enrichment]: symbol:py:pkg.mod:fn: props.enrichment is missing required field(s): model, timestamp. An enrichment record must be written whole; discovery would drop this one, so the write was refused. | hint: ...
+```
+
+Write the record whole every time, including under `--merge`. A record is a
+single attestation — provider P, model M, at time T, says D — so amending just
+the `description` would leave the previous model and timestamp standing behind
+text they never produced, and is refused for that reason. Restating all four
+fields re-attests the node and is always accepted.
+
+Manual inferred edges should use explicit provenance such as
 `{"source": "manual"}` after the relationship is verified from source content.
 `wd graph communities --write` derives `.weld/graph-communities.json`,
 `.weld/graph-community-report.md`, and `.weld/graph-community-index.md`
@@ -558,18 +679,32 @@ wd mcp config --client=vscode
 wd mcp config --client=cursor
 ```
 
-Running the stdio MCP server requires the optional MCP SDK extra:
+Running the stdio MCP server requires the optional MCP SDK extra, which
+pins `mcp>=2,<3`:
 
 ```bash
 uv tool install "configflux-weld[mcp]"
-python -m weld.mcp_server --help
+wd mcp serve --help
 ```
 
-Point your client at `python -m weld.mcp_server`:
+Already have an older `mcp` installed separately? Upgrade it with
+`pip install -U "mcp>=2"` -- the server targets the MCP SDK 2.x handler API
+and exits with an upgrade hint on anything older.
+
+Point your client at `wd mcp serve`:
 
 ```json
-{"mcpServers": {"weld": {"command": "python", "args": ["-m", "weld.mcp_server"]}}}
+{"mcpServers": {"weld": {"command": "wd", "args": ["mcp", "serve"]}}}
 ```
+
+`wd` is a console script, so the directory your client launches it in --
+the repository being served -- is never placed on the server's module search
+path, and the interpreter is the one weld was installed into rather than
+whatever `python` resolves to in the client's environment. Running from a
+source checkout rather than an install? `python -m weld.mcp_server` serves
+the checkout and is supported for exactly that case; see
+[docs/mcp.md](docs/mcp.md#the-repository-is-not-on-the-servers-import-path)
+for what that form costs.
 
 See **[docs/mcp.md](docs/mcp.md)** for the full tool reference, per-client
 configs, example prompts, troubleshooting, and the exact dependency model. See
@@ -603,27 +738,54 @@ of bundled strategies.
 ### `.weld/.gitignore`
 
 `wd init` and `wd workspace bootstrap` write a managed `.weld/.gitignore`
-the first time they touch a `.weld/` directory (idempotent — never
-overwrites an existing file). Three policies are available:
+the first time they touch a `.weld/` directory, and never switch an
+existing file to a different policy. Re-running either is still safe on a
+later checkout: any pattern lines the file's own policy has gained since
+are appended, nothing existing is changed, and a hand-edited file is left
+alone entirely. Three policies are available.
+
+The first two encode the one real choice — whether `graph.json` is
+committed or rebuilt. The default (config-only) is the blessed answer for
+almost every repo; see the [graph-tracking
+policy](docs/graph-tracking-policy.md) for which to pick, what tracking
+the graph actually costs today, and how to switch between them later.
 
 - **Default — config-only.** Tracks the source-of-truth config
   (`discover.yaml`, `workspaces.yaml`, `agents.yaml`, `strategies/`,
   `adapters/`, `README.md`) and ignores everything else weld writes,
   including the generated graphs (`graph.json`, `agent-graph.json`),
-  graph-community reports (`graph-communities.json`,
-  `graph-community-report.md`, `graph-community-index.md`),
-  and per-machine state (`discovery-state.json`, `graph-previous.json`,
+  the filename index (`file-index.json`), graph-community reports
+  (`graph-communities.json`, `graph-community-report.md`,
+  `graph-community-index.md`), and per-machine state
+  (`discovery-state.json`, `graph-previous.json`,
   `workspace-state.json`, `workspace.lock`, `query_state.bin`). A
   fresh contributor gets a clean `git status` after the first run.
 - **Track-graphs (opt-in team workflow for warm CI / warm MCP).** Pass
-  `--track-graphs` to widen the default so the canonical graphs are
-  committed alongside config. Use this when every contributor should
-  share a pre-built graph:
+  `--track-graphs` to widen the default so the artifacts that make a
+  checkout warm are committed alongside config — each one together with
+  the record that explains it: `graph.json` with
+  `discovery-state.json` (what the graph read), `file-index.json` with
+  `file-index-state.json` (what the index covers), plus
+  `agent-graph.json`. Use this when every contributor should share a
+  pre-built graph:
 
   ```bash
   wd init --track-graphs
   wd workspace bootstrap --track-graphs
   ```
+
+  A fresh clone or `git worktree add` answers straight from the
+  committed graph and its records, so an unchanged checkout reports
+  fresh and runs no discovery at all. Only real source drift triggers a
+  refresh. The same command writes a `.weld/.gitattributes` so a merge
+  conflict on those files resolves by regenerating instead of by hand,
+  and registers the driver in the checkout it runs in — git will not
+  clone driver config, so **each clone runs `git config
+  merge.weld-regenerable.driver true` once**. Gate freshness in CI with
+  `wd stale --check --no-refresh`, which exits non-zero when the
+  committed graph is behind its source. See [Worktrees and multiple
+  checkouts](#worktrees-and-multiple-checkouts) for how the default
+  (gitignored) mode bootstraps a new worktree.
 
 - **Ignore-all (opt-in).** Pass `--ignore-all` for early experimentation
   or test installs where no weld state should be committed yet:
@@ -641,14 +803,32 @@ is a usage error.
 
 **Migration from earlier versions.** Pre-existing `.weld/.gitignore`
 files written by older `wd init` / `wd workspace bootstrap` runs are
-**not** rewritten — the helper is idempotent. To pick up the new
-default, delete the file and re-run init:
+**not** rewritten — the helper is idempotent. Because of that,
+`wd init --track-graphs` (or `--ignore-all`) in a repository whose
+existing ignore file expresses a *different* mode fails and names the
+file, rather than leaving you a half-switched checkout. To pick up the
+new default, delete the file and re-run init:
 
 ```bash
 rm .weld/.gitignore
 wd init                  # config-only default, generated graphs ignored
 # or wd init --track-graphs   to keep tracking the graphs as before
 ```
+
+**Rules outside `.weld/` count too.** Whether the artifacts actually get
+committed is a question about git, not about the one file Weld manages,
+so `wd init --track-graphs` asks `git check-ignore`. That covers your
+repository root's `.gitignore`, any `.gitignore` on the way down,
+`.git/info/exclude`, and your global `core.excludesFile`. The usual
+case is a root `.gitignore` that already carries `.weld/` — it hides the
+artifacts just as completely, so `--track-graphs` fails and names the
+file, line and pattern rather than reporting a warm setup that is not
+one. Narrow that rule (or drop it: the managed `.weld/.gitignore` Weld
+writes already ignores the per-machine files you did not want committed)
+and re-run. Two cases still succeed: a `graph.json` that is *already*
+tracked under such a rule — git keeps committing a tracked file
+regardless, so the mode is in effect — and a directory that is not a git
+checkout at all, where `wd init` works as before.
 
 To opt out entirely, just delete `.weld/.gitignore` after init — the
 skip-if-exists guard means it won't be recreated until the next init
@@ -711,6 +891,124 @@ working example that extracts TODO comments as graph nodes, and
 [docs/extending-discovery.md](docs/extending-discovery.md) for the
 full step-by-step guide (contract, capability matrix, fixtures, and
 a worked end-to-end walkthrough).
+
+## Worktrees and multiple checkouts
+
+A graph describes one tree at one commit, so an answer from a *different*
+checkout is a wrong answer, not a cached one. Weld therefore answers from
+the checkout you are standing in, and a fresh `git worktree add` becomes
+answerable on its first read.
+
+### Which root answers
+
+Graph-backed reads (`wd query`, `wd find`, `wd context`, `wd path`,
+`wd callers`, `wd references`, `wd trace`, `wd impact`, `wd brief`,
+`wd stale`, `wd stats`, …) resolve their root in this order:
+
+1. An explicit `--root` — always wins. It is made absolute and used as
+   given, never re-walked.
+2. The nearest enclosing directory containing a `.weld/`, **bounded by the
+   git worktree you are in**. The bound is the point: worktrees are often
+   created inside another checkout, and an unbounded upward walk would
+   climb out of yours and answer from the outer checkout's branch.
+3. The root of the current git worktree.
+4. The current directory — outside a git checkout nothing else is searched,
+   so weld never wanders into an unrelated parent project.
+
+Resolution never crosses into another checkout. Commands that *create*
+state — `wd discover`, `wd init`, `wd warm` — keep explicit-root semantics
+and default to the current directory, so nothing is written to a root you
+did not name.
+
+### A new worktree answers on the first read
+
+`git worktree add` gives you a tree with no graph. Rather than making you pay
+a cold full discovery there, the first read seeds one:
+
+```bash
+git worktree add ../feature-x -b feature-x
+cd ../feature-x
+wd query "auth"
+```
+
+The first read prints one line to stderr naming what it seeded from and the
+branch it reconciled to:
+
+```text
+[weld] seeded worktree graph from /repos/app; reconciled to feature-x@a1b2c3d4e5f6
+```
+
+Weld copies the graph from another checkout of the same repository (the
+main checkout first, then any other worktree) and immediately reconciles it
+against *your* tree, so the answer describes your branch rather than the one
+it was seeded from. That reconcile is normally incremental, so it costs
+roughly your branch's delta instead of a full pass. When the checkout it
+copied from cannot account for the graph it handed over, weld re-derives from
+scratch instead and says so on stderr: a partial update applied to a graph of
+unknown provenance would quietly answer for the wrong code.
+
+Worth knowing:
+
+- **Any layout, any tool.** Sibling checkouts are found through git itself,
+  so nested, sibling, temp-directory, and bare-repository-hub layouts all
+  work no matter what created them. There are no path conventions to match.
+- **What it needs.** The worktree's own `.weld/discover.yaml` (configuration
+  always comes from the tree that owns it) and one other checkout of the
+  repository that already has a graph. A plain clone has no sibling to seed
+  from and keeps the normal first-run guidance — run `wd discover`, or use
+  [`wd warm`](#warm-graphs-from-ci-wd-warm) to start warm from CI.
+- **What lands.** The graph plus its small state files; the optional SQLite
+  index is not copied and rebuilds lazily. Deleting the worktree directory
+  deletes everything weld put in it.
+- **Which command triggers it.** Any read that answers from `.weld/` state,
+  not just the graph searches: `wd query`, `context`, `path`, `callers`,
+  `references`, `communities`, and equally `wd stale`, `wd find`, `wd stats`,
+  `wd list`, `wd dump`. Checking freshness first is the natural way to start
+  in a new worktree, so `wd stale` seeds and then reports the graph it just
+  seeded rather than answering `no graph`. Commands that *create* state —
+  `wd discover`, `wd init`, `wd warm` — stay deliberate and seed nothing.
+- **Frozen when you freeze it.** `WELD_AUTO_REFRESH=0` and `--no-refresh`
+  each disable seeding along with auto-refresh, and they behave
+  identically: seeding builds a graph and ends in a discovery pass, which
+  is what both opt-outs exist to prevent. A worktree that has no graph yet
+  therefore answers with the normal first-run guidance instead; drop the
+  freeze and the next read seeds it.
+- **Single-repo roots only.** A federated polyrepo root
+  ([Polyrepo Federation](#polyrepo-federation)) is left alone; discovery run
+  from a worktree of a workspace root already falls back to the main
+  checkout for children that the worktree does not contain.
+
+With a tracked graph ([`wd init --track-graphs`](#weldgitignore)) there is
+nothing to copy — the graph is already in the tree, and so is the record of
+what it read — so a fresh clone or worktree reports fresh and runs no
+discovery until the sources actually drift. A repo initialised before that
+record was tracked reconstructs a conservative one from the graph's own
+contents instead, which costs the checkout one full discovery and then
+converges.
+
+### Confirming which checkout answered
+
+`wd stale` reports the branch you are on next to the branch the graph was
+built on (human form, trimmed):
+
+```text
+# stale
+  stale: no
+  ...
+  graph_branch: feature-x
+  branch: feature-x
+```
+
+`branch` is read live; `graph_branch` is what was checked out at discovery
+time. On a detached `HEAD` and outside a git checkout there is no branch to
+report — `(none)` in text output, `null` under `--json`. When the two
+disagree, the graph is either about to refresh or you are reading a root you
+did not mean.
+
+Over MCP the same signal rides on every read as `freshness.branch`, and one
+running server can answer for a checkout it was not started in via the read
+tools' optional `root` parameter — bounded to checkouts of the same
+repository. See **[docs/mcp.md](docs/mcp.md)**.
 
 ## Polyrepo Federation
 
@@ -1152,7 +1450,7 @@ rm .weld/workspace-state.json
 | `wd init` | Bootstrap `.weld/discover.yaml` (and `workspaces.yaml` when nested repos are detected); seed managed `.weld/.gitignore` (config-only default ignores generated graphs) |
 | `wd init --max-depth N` | Limit nested repo scan depth during init (default: 4) |
 | `wd init --respect-gitignore` | Skip scan-only nested repos ignored by Git when writing `workspaces.yaml`; explicit children can still be added later |
-| `wd init --track-graphs` | Seed `.weld/.gitignore` so canonical graphs (`graph.json` + `agent-graph.json`) stay tracked alongside config (warm-CI / warm-MCP workflow) |
+| `wd init --track-graphs` | Seed `.weld/.gitignore` so the warm-checkout artifacts stay tracked alongside config -- `graph.json` + `discovery-state.json`, `agent-graph.json`, `file-index.json` + `file-index-state.json`; also writes `.weld/.gitattributes` and registers the `weld-regenerable` merge driver so conflicts on them resolve by regenerating (warm-CI / warm-MCP workflow) |
 | `wd init --ignore-all` | Write a fully-ignoring `.weld/.gitignore` instead of the config-only default; mutually exclusive with `--track-graphs` |
 | `wd discover` | Run discovery, emit graph JSON (federation mode when `workspaces.yaml` is present); on success prints a one-line stderr summary `wrote N nodes / M edges -> path (T.Ts)`, suppressed by `--quiet` |
 | `wd agents discover` | Scan AI customization assets and write `.weld/agent-graph.json`; text mode summarizes diagnostics per code and `--show-diagnostics` dumps the full list inline |
@@ -1167,20 +1465,23 @@ rm .weld/workspace-state.json
 | `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
 | `wd workspace bootstrap` | One-shot polyrepo bootstrap: init root + every nested child, recurse-discover, rebuild root meta-graph (config-only `.weld/.gitignore` default) |
 | `wd workspace bootstrap --respect-gitignore` | Skip scan-only child repos ignored by Git and persist `scan.respect_gitignore: true` into `workspaces.yaml` |
-| `wd workspace bootstrap --track-graphs` | Bootstrap and seed `.weld/.gitignore` in root and every child to track canonical graphs alongside config |
+| `wd workspace bootstrap --track-graphs` | Bootstrap and seed the Mode B policy (`.gitignore` + `.gitattributes` + merge driver) in root and every child, so each tracks its warm-checkout artifacts alongside config |
 | `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child; mutually exclusive with `--track-graphs` |
 | `wd build-index` | Regenerate file index |
-| `wd query <term>` | Hybrid-ranked tokenized graph search (strict-AND first; OR fallback when AND yields nothing on multi-word phrases — envelope is tagged with `degraded_match=or_fallback`). Multi-word phrases have common function-word stopwords (`the`, `is`, `how`, `of`, `for`, WH-words, …) dropped before matching so content tokens drive the result (a natural-language phrase like `"how does auth work"` searches on `auth`/`work`); single-word and symbol-id queries are never altered. Shows `confidence` per match and hides `origin=unresolved` sentinels by default (`--include-speculative` restores them). Bounds the neighborhood by default (drops stdlib/unresolved/speculative-external neighbors, caps fan-out, then a byte budget prunes to fit the tool cap — all reported in `omitted_neighbors`, including `size_capped`); `--full-neighborhood` restores the raw neighborhood and `--full-size` skips only the byte budget |
-| `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`). A single word is a case-insensitive substring match; a multi-word phrase is tokenized on whitespace and ranks files by how many of the words their tokens hit (so `wd find "mcp server"` surfaces `mcp_server.py`) |
+| `wd query <term>` | Hybrid-ranked tokenized graph search (strict-AND first; OR fallback when AND yields nothing on multi-word phrases — envelope is tagged with `degraded_match=or_fallback`). Multi-word phrases have common function-word stopwords (`the`, `is`, `how`, `of`, `for`, WH-words, …) dropped before matching so content tokens drive the result (a natural-language phrase like `"how does auth work"` searches on `auth`/`work`); single-word and symbol-id queries are never altered. A token written with `-` also matches the `_` spelling and vice versa, so a query typed the way a project names itself (`tree-sitter`) reaches code that spells it `tree_sitter`. Concept nodes derived from issue-tracker titles rank below code and never suppress it: because such a title quotes the query it describes, it would otherwise be the only strict-AND match and hide the very code being searched for. Shows `confidence` per match and hides `origin=unresolved` sentinels by default (`--include-speculative` restores them). Bounds the neighborhood by default (drops stdlib/unresolved/speculative-external neighbors, caps fan-out, then a byte budget prunes to fit the tool cap — all reported in `omitted_neighbors`, including `size_capped`); `--full-neighborhood` restores the raw neighborhood and `--full-size` skips only the byte budget |
+| `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`). A single word is a case-insensitive substring match; a multi-word phrase is tokenized on whitespace and ranks files by how many of the words their tokens hit (so `wd find "mcp server"` surfaces `mcp_server.py`). Its index covers more of the tree than the graph's own scope does, so it keeps its own coverage check rather than borrowing the graph's: a file inside the search surface that the index has not accounted for schedules the rebuild that ingests it, instead of being reported as no match. Symlinks are never followed, so a link committed to the repository cannot pull content from outside the checkout into a searchable index |
 | `wd context <id>` | Node + neighborhood (bounded by default, same as `wd query`; `--full-neighborhood` restores the full neighborhood, `--full-size` skips the byte budget) |
 | `wd path <from> <to>` | Shortest path |
-| `wd trace <term>` | Startup/runtime and interaction slice around a term or node |
-| `wd impact <path-or-node>` | Reverse-dependency blast radius |
+| `wd trace <term>` | Startup/runtime and interaction slice around a term or node (byte-bounded; `--full-size` for the whole slice) |
+| `wd impact <path-or-node>` | Reverse-dependency blast radius. `affected_surfaces` buckets what the radius reaches: `cli_commands`, `mcp_tools`, `repo_tools`, `api_endpoints`, `entrypoints`, `boundaries`, `tests`. Published surfaces set `risk_level` (endpoints/entrypoints/boundaries are `HIGH`, CLI commands and MCP tools `MEDIUM`); `repo_tools` — the repo's own scripts — is reported but never raises risk, since internal tooling is not a contract anyone outside the repo depends on. `--json` is byte-bounded — dependents and surface members are pruned farthest-hop-first in one pass and reported in `warnings.size_capped`, while `risk_level` and `affected_surface_counts` always reflect the full radius; `warnings.budget_exceeded` flags a payload that is still over budget after pruning everything droppable; `--full-size` returns every dependent, and the human output is never bounded |
 | `wd capabilities` | Runtime per-language / per-framework support matrix (`--json`, `--missing`) |
-| `wd callers <symbol>` | Direct/transitive callers |
+| `wd callers <symbol>` | Direct/transitive callers (`--json` is byte-bounded, drops reported in `size_capped`; `--full-size` returns every caller) |
+| `wd references <name-or-node-id>` | What points at a thing, plus file-index hits. Takes a bare symbol name or a full node id. A symbol reports its callers; any other node type (build target, tool, doc) reports every node with an edge into it, since nothing *calls* those. An id weld does not know reports an `error` **and exits non-zero**, matching `wd callers` and `wd context`, so "unknown" and "nothing points at it" stay distinguishable — "no references" is what a reader sees before deleting a symbol as dead, and a typo or a moved symbol must not render as "nothing uses this" (`--json` is byte-bounded, dropping file hits before resolved callers and resolved `matches` last; `--full-size` returns everything) |
 | `wd viz` | Local read-only browser graph explorer (sidebar toggles: **Hide standard library**, **Hide third-party dependencies** — see [Filtering noise in `wd viz`](#filtering-noise-in-wd-viz)) |
-| `wd stale` | Check graph freshness |
-| `wd <read-cmd> --no-refresh` | Skip the auto-refresh that runs when the graph is stale; a warning is emitted to stderr. Set `WELD_AUTO_REFRESH=0` to disable globally for CI / batch runs. |
+| `wd stale` | Check graph freshness; reports `branch` (live) beside `graph_branch` (what was checked out at discovery), and `coverage_stale` when a file discovery would resolve today is missing from the discovery inventory (or the inventory can no longer vouch for the graph on disk) — the one signal that fires without HEAD having moved, so an empty result can be told apart from a genuine absence. Where there is no freshness answer to give, `reason` says which case it is: `no graph` (nothing discovered here yet — run `wd discover`) or `not a git repo`. Without it a missing graph reports the same `sha_behind: no` / `commits_behind: -1` as a graph that merely has no recorded basis. When `source_stale` is true, `stale_sources` names which path(s) tripped it and why — `changed since last discovery`, `content differs`, `ingested file vanished`, or `in-scope file never ingested` — capped at 50 entries with `stale_sources_omitted` reporting how many more there were; some stale states (no recorded SHA, unreachable history) have no file-level cause to name and leave it empty |
+| `wd stale --check` | Same report, but exit 1 when the graph is stale. The freshness gate for a repo that commits its graph: `wd stale --check --no-refresh` in CI fails a commit whose tracked graph is behind its source |
+| `wd <read-cmd> --root <dir>` | Answer from an explicit root. Omitted, the root is resolved from the current directory and bounded by the git worktree you are in — never another checkout ([Worktrees and multiple checkouts](#worktrees-and-multiple-checkouts)) |
+| `wd <read-cmd> --no-refresh` | Skip the auto-refresh that runs when the graph is stale; a warning is emitted to stderr. Also skips the first-read seeding of a new worktree, so the command neither builds nor bootstraps a graph. `WELD_AUTO_REFRESH=0` is the same opt-out applied globally for CI / batch runs. |
 | `wd graph stats` | Graph statistics |
 | `wd graph communities [--format json\|markdown] [--top N] [--write]` | Detect deterministic graph communities, report top-level hubs, and optionally write derived JSON/report/index artifacts (unresolved-symbol nodes are excluded from the projected subgraph) |
 | `wd stats` | Backward-compatible alias for `wd graph stats` |
@@ -1193,7 +1494,7 @@ rm .weld/workspace-state.json
 | `wd scaffold` | Write starter templates |
 | `wd bootstrap` | Agent onboarding files |
 | `wd brief` | Agent context briefing |
-| `wd enrich` | LLM-assisted semantic enrichment |
+| `wd enrich` | LLM-assisted semantic enrichment; `--agent-direct` prints the no-credentials work plan instead of calling a provider |
 | `wd lint` | Lint the graph for architectural violations |
 
 `wd doctor` reports each finding at one of four levels: `[ok ]` for
@@ -1217,6 +1518,13 @@ The valid note ids are `mcp-config-missing`, `optional-mcp-missing`,
 standalone GitHub Copilot CLI binary, so its install hint points at
 [github.com/en/copilot](https://docs.github.com/en/copilot/how-tos/use-copilot-cli)
 rather than a `pip install` line.
+
+The `mcp SDK` probe checks the version, not just the import: the MCP
+stdio server requires `mcp>=2`, so an older SDK is reported as a `[warn]`
+naming the installed version and the upgrade that fixes it
+(`pip install -U 'mcp>=2'`) instead of being counted as present. An SDK
+that is genuinely absent still gets the install-the-extra note, because
+the two states have different remedies.
 
 ### Per-language trust metrics
 
@@ -1412,7 +1720,7 @@ the CLI.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.22.1`.
+terminal snippets captured against `wd 0.23.0`.
 
 ## Install
 
@@ -1436,14 +1744,16 @@ uv tool upgrade configflux-weld   # or: uv tool upgrade --all
 Don't have `uv` yet? See the [uv install
 instructions](https://docs.astral.sh/uv/getting-started/installation/).
 
-To run the stdio MCP server, install the optional MCP extra:
+To run the stdio MCP server, install the optional MCP extra (`mcp>=2,<3`):
 
 ```bash
 uv tool install "configflux-weld[mcp]"
-python -m weld.mcp_server --help
+wd mcp serve --help
 ```
 
 `wd mcp config` does not require the extra; only the server process does.
+If a pre-2.0 `mcp` is already installed in that environment, upgrade it
+with `pip install -U "mcp>=2"`.
 
 ### Alternative install paths
 
@@ -1498,6 +1808,13 @@ checkout:
 python -m weld --help
 ```
 
+This is a compatibility path, not the hardened one. `python -m` places the
+working directory on Python's module search path before weld starts; weld
+removes that entry before importing anything of its own, but a few
+standard-library modules are imported by the interpreter first. See
+[Trust model](#trust-model) for the exact boundary, and prefer `wd` when
+scanning a repository you do not trust.
+
 ### Python compatibility
 
 Runtime installs support Python 3.10 through 3.13. Contributor builds and
@@ -1536,6 +1853,9 @@ checklist (the post-release consistency check is step 9).
   retrieval surface
 - [Agent Graph](docs/agent-graph.md) — static map of the AI
   customization layer (agents, skills, prompts, hooks, MCP servers)
+- [Graph-tracking policy](docs/graph-tracking-policy.md) — commit the
+  graph or rebuild it? Mode A vs Mode B, what each tracks, and how to
+  switch
 - [Graph visualization examples](docs/visualization-examples.md) —
   real terminal output: monorepo graph, polyrepo `repo:` nodes,
   Agent Graph, MCP config snippet

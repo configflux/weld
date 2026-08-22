@@ -11,8 +11,14 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Any
 
+from weld._agent_graph_asset import (
+    ParsedAgentGraphAsset,
+    _config_props,
+    _mcp_nodes,
+    _metadata_references,
+    _text_references,
+)
 from weld.agent_graph_metadata_diagnostics import broken_file_diagnostics
 from weld.agent_graph_metadata_utils import (
     dedupe_references,
@@ -24,21 +30,8 @@ from weld.agent_graph_metadata_utils import (
 def parse_toml_asset(
     root: Path, rel_path: str, platform: str, text: str,
     known_commands: frozenset[str] | None,
-) -> Any:
-    """Parse a TOML platform config and return a ``ParsedAgentGraphAsset``.
-
-    Imported lazily by the metadata facade to avoid a circular import.
-    """
-    # Local import: the metadata module imports from this module, and we
-    # need ParsedAgentGraphAsset / helpers that live there.
-    from weld.agent_graph_metadata import (
-        ParsedAgentGraphAsset,
-        _config_props,
-        _mcp_nodes,
-        _metadata_references,
-        _text_references,
-    )
-
+) -> ParsedAgentGraphAsset:
+    """Parse a TOML platform config and return a ``ParsedAgentGraphAsset``."""
     try:
         payload = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:

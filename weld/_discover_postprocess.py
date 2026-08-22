@@ -13,6 +13,8 @@ from pathlib import Path
 from weld._discover_origin_reconcile import reconcile_intra_repo_origins
 from weld._events_join import link_producers_consumers
 from weld._git import get_git_sha
+from weld._git_worktree import get_git_branch
+from weld._rel_path import canonical_rel_path, needs_folding
 from weld.contract import SCHEMA_VERSION
 from weld.enrichment_persistence import reattach_enrichment
 from weld.graph import _schema_version_for
@@ -68,7 +70,14 @@ def post_process(
     from weld._review import apply_review_state as _apply_review_state
     edges[:] = _apply_review_state(root, edges)
     reattach_enrichment(nodes, previous_graph)
-    unique_from = _dedup_discovered_from(discovered_from)
+    # bd 244j: with every prop final, spell the stored path props canonically.
+    # Runs after enrichment re-attachment for the same reason the sorted walk
+    # does -- one place, both discover paths, so incremental stays
+    # byte-identical to full.
+    _canonicalize_path_props(nodes, edges)
+    unique_from = _dedup_discovered_from(
+        _canonicalize_discovered_from(discovered_from)
+    )
 
     meta: dict = {
         "version": SCHEMA_VERSION,
@@ -80,8 +89,89 @@ def post_process(
     sha = get_git_sha(root)
     if sha is not None:
         meta["git_sha"] = sha
+    # ADR 0096 §3: stamp which branch this graph was discovered on so every
+    # downstream answer can name the checkout it came from. Both this key and
+    # ``git_sha`` are in ``VOLATILE_META_KEYS``, so they are split into the
+    # gitignored sidecar and never reach the content-addressable graph body --
+    # which is what keeps ``graph.json`` byte-identical across two worktrees on
+    # two branches at the same commit (ADR 0065). Absent (not ``None``) on a
+    # detached HEAD or outside git, mirroring ``git_sha``: a key that is only
+    # ever present-and-true beats a nullable one every reader must special-case.
+    branch = get_git_branch(root)
+    if branch is not None:
+        meta["git_branch"] = branch
 
     return _canonical_sorted({"meta": meta, "nodes": nodes, "edges": edges})
+
+
+#: Node/edge ``props`` keys that carry a repo-relative path (with
+#: ``provenance.file``, nested and handled separately below).
+#:
+#: ``file`` and ``declared_in`` were the two a read-side consumer already
+#: matches paths against, which is what made their split visible. ``dir`` --
+#: 8 ``package:`` nodes in this repo's own graph, e.g. ``weld/strategies`` --
+#: is here because the membership rule is *path-shaped prop*, not *prop some
+#: reader currently folds*: an artifact whose file anchors are canonical and
+#: whose directory anchors are native is a worse state than either, and the
+#: reader that eventually matches on ``props.dir`` should not have to
+#: discover that it is the odd one out (bd mzv1). Adding it costs nothing on
+#: POSIX, where the whole pass is skipped.
+_PATH_PROP_KEYS = ("file", "declared_in", "dir")
+
+
+def _canonicalize_path_props(nodes: dict[str, dict], edges: list[dict]) -> None:
+    """Rewrite the stored path props into the canonical POSIX spelling.
+
+    ADR 0041 already makes node *ids* POSIX; ``props.file``,
+    ``props.declared_in`` and ``props.provenance.file`` were left to whichever
+    strategy wrote them, and roughly half write ``as_posix()`` while half
+    write ``str()``. Identical on POSIX; off it, one graph carries both
+    spellings for sibling files, and a graph is meant to be portable -- read
+    on another platform, or federated as a child of a POSIX root, those
+    anchors reach a reader that correctly refuses to rewrite them, because a
+    POSIX reader has no business folding a backslash (bd 244j).
+
+    Canonicalizing at the *writing* platform is what makes the read side
+    right, and it is why the whole pass is skipped when this platform's
+    separator is already canonical: on POSIX there is no walk and the stored
+    bytes are unchanged, so this lands with no migration on any platform weld
+    supports (ADR 0065, ADR 0012 §3). Off POSIX the result is a byte-level
+    canonicalization a plain re-discovery reproduces.
+
+    Non-string values are left exactly as they are.
+    :func:`weld._rel_path.canonical_rel_path` answers ``""`` for a non-string
+    -- correct for a comparison, destructive for a rewrite.
+    """
+    if not needs_folding():
+        return
+    for item in (*nodes.values(), *edges):
+        props = item.get("props")
+        if not isinstance(props, dict):
+            continue
+        for key in _PATH_PROP_KEYS:
+            value = props.get(key)
+            if isinstance(value, str):
+                props[key] = canonical_rel_path(value)
+        provenance = props.get("provenance")
+        if isinstance(provenance, dict) and isinstance(provenance.get("file"), str):
+            provenance["file"] = canonical_rel_path(provenance["file"])
+
+
+def _canonicalize_discovered_from(paths: list[str]) -> list[str]:
+    """Canonicalize the ``meta.discovered_from`` manifest, preserving order.
+
+    The same treatment as the node/edge props above, applied to the one path
+    list that lives in ``meta`` -- an artifact canonical in its props and
+    native in its manifest would be a worse state than either.
+
+    Not :func:`weld._rel_path.canonical_rel_paths`, despite the near-identical
+    name: that one answers a *set*, for the side of a comparison that is
+    tested against repeatedly, and order is contract here (ADR 0012 §3).
+    Returns the input unchanged on POSIX.
+    """
+    if not needs_folding():
+        return paths
+    return [canonical_rel_path(p) if isinstance(p, str) else p for p in paths]
 
 
 def _sort(v):

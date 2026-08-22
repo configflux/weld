@@ -137,6 +137,7 @@ class CachesAndStagingTest(unittest.TestCase):
             [
                 {
                     "module_path": "src.geometry",
+                    "rel_path": "src/geometry.ts",
                     "decl_short": "Rectangle",
                     "base_short": "Base",
                     "base_full": "Base",
@@ -144,6 +145,7 @@ class CachesAndStagingTest(unittest.TestCase):
                 },
                 {
                     "module_path": "src.geometry",
+                    "rel_path": "src/geometry.ts",
                     "decl_short": "Rectangle",
                     "base_short": "Shape",
                     "base_full": "Shape",
@@ -230,6 +232,7 @@ class FinaliseTest(unittest.TestCase):
             "inherit_records": [
                 {
                     "module_path": "src.geometry",
+                    "rel_path": "src/geometry.ts",
                     "decl_short": "Rectangle",
                     "base_short": "Base",
                     "base_full": "Base",
@@ -242,6 +245,11 @@ class FinaliseTest(unittest.TestCase):
         self.assertEqual(edges[0]["type"], "inherits")
         self.assertEqual(edges[0]["to"], "symbol:typescript:src.geometry:Base")
         self.assertTrue(edges[0]["props"]["resolved"])
+        # ADR 0074 / bd rifzk: attributed to the file whose extends/
+        # implements clause produced the edge.
+        self.assertEqual(
+            edges[0]["props"]["provenance"], {"file": "src/geometry.ts"},
+        )
 
     def test_unresolved_base_mints_sentinel(self) -> None:
         nodes = {

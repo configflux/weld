@@ -17,7 +17,14 @@ label happens to be higher.
 
 from __future__ import annotations
 
+from weld._amalgamation_boost import (  # noqa: F401 -- re-exported for callers
+    amalgamation_boost,
+    is_amalgamation_file_node,
+)
 from weld._coverage_admission import partial_coverage_subject_miss
+from weld._issue_concepts import issue_concept_demotion
+from weld._summary_match import summary_only_match_demotion
+from weld._test_paths import test_noise_demotion
 from weld.bm25 import BM25Corpus
 
 # Authority ordering: canonical > derived > manual > inferred
@@ -161,48 +168,6 @@ def exact_symbol_match_rank(node: dict, token_groups: list[list[str]]) -> int:
     return 1
 
 
-def is_amalgamation_file_node(node: dict) -> bool:
-    """Return True when *node* is a C++ amalgamation file node.
-
-    Per ADR 0062 the discovery side stamps ``props.amalgamation = True``
-    on file nodes whose path matches a single-include / single-header
-    convention. The ranker uses this signal as a coarse tiebreak so the
-    "import surface" wins against same-score modular peers on
-    single-token navigation queries.
-
-    The check is intentionally narrow:
-
-    * the node's ``type`` MUST be ``"file"`` (we never boost a symbol
-      node, even if a downstream pass mistakenly inherits the marker);
-    * ``props.amalgamation`` must be truthy.
-    """
-    if node.get("type") != "file":
-        return False
-    props = node.get("props") or {}
-    return bool(props.get("amalgamation"))
-
-
-def amalgamation_boost(node: dict, token_groups: list[list[str]]) -> int:
-    """Return 0 for amalgamation files on a single-token query, else 1.
-
-    Per ADR 0062 the boost only fires when:
-
-    * the query is a single-token navigation query (one token group of
-      length 1 -- multi-token queries already provide enough BM25
-      signal that the boost would only swap deterministic ordering);
-    * the node is a C++ amalgamation file node (see
-      :func:`is_amalgamation_file_node`).
-
-    A return value of 0 sorts ahead of 1, so the boost is additive
-    inside the existing tiebreak chain in :func:`rank_query_matches`.
-    """
-    if len(token_groups) != 1 or len(token_groups[0]) != 1:
-        return 1
-    if not is_amalgamation_file_node(node):
-        return 1
-    return 0
-
-
 def _qualified_tail_matches(qualname: str, query: str) -> bool:
     return any(qualname.endswith(sep + query) for sep in (".", "::", "#"))
 
@@ -326,7 +291,7 @@ def rank_query_matches(
 
     def sort_key(
         item: tuple[str, dict]
-    ) -> tuple[int, int, int, int, int, float, int, int, str]:
+    ) -> tuple[int, int, int, int, int, int, int, int, float, int, int, str]:
         node_id, node = item
         node_with_id = {"id": node_id, **node}
         score = hybrid_score(
@@ -348,6 +313,11 @@ def rank_query_matches(
             # discovery), and (c) single-token queries -- so non-cpp
             # behaviour is unchanged.
             amalgamation_boost(node_with_id, token_groups),
+            # bd ek4y: a single-token match carried only by the node's own
+            # ``props.summary`` sorts after every node with independent
+            # (non-summary) support. Ahead of -score so it survives
+            # BM25/length noise. See weld._summary_match for the rationale.
+            summary_only_match_demotion(node_with_id, token_groups),
             # ADR 0075: diffuse-doc demotion. A full-coverage doc whose match
             # is purely scattered across bag fields (``_diffuse`` pre-tagged in
             # weld.graph_query, N>=3 only) sorts AFTER every non-diffuse node
@@ -365,6 +335,23 @@ def rank_query_matches(
             # non-admitted node; placed ahead of -score so it survives BM25
             # noise, after _diffuse so diffuse-doc demotion still wins.
             partial_coverage_subject_miss(node_with_id, token_groups),
+            # bd to8x: test material sorts after the code it covers (0 < 1)
+            # unless the query names tests. A test is named after its subject
+            # in a whole sentence while the subject is named in one word, so
+            # on a prose query the test always carries more of the vocabulary
+            # -- eight lint_terminal_safety_test symbols beat weld.serializer,
+            # the documented graph.json write funnel, which fell to rank 31 of
+            # 57 and out of the default limit. Ahead of -score so it survives
+            # that lexical gap, behind exact_symbol_match_rank so naming a
+            # test outright still returns it first. Re-rank, never a filter.
+            test_noise_demotion(node_with_id, token_groups),
+            # ADR 0113: an issue-derived concept sorts after substantive
+            # matches (0 < 1) unless the query names the backlog. An issue
+            # title quotes the query it reports, so it covers every token group
+            # and would otherwise lead on score alone -- the "cosmetic
+            # self-heal" of bd 9ucf. Ahead of -score to survive that coverage
+            # advantage; a re-rank, never a filter.
+            issue_concept_demotion(node_with_id, token_groups),
             -score,
             role_boost(node, query_roles),
             confidence_score(node),

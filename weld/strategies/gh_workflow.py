@@ -11,7 +11,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._node_ids import workflow_id
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._target_ids import target_ids
+from weld.strategies._workflow_run_refs import workflow_script_references
 
 # -- Line-based YAML parsers ------------------------------------------------
 # We deliberately avoid a full YAML parser dependency.  GH Actions workflow
@@ -132,15 +137,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
-
-    for yml in filter_glob_results(root, sorted(parent.glob(Path(pattern).name)), excludes=excludes):
-        if should_skip(yml, excludes, root=root):
-            continue
-
-        rel_path = str(yml.relative_to(root))
+    for yml in resolve_glob(root, pattern, excludes):
+        rel_path = rel_to_root(yml, root)
         discovered_from.append(rel_path)
 
         try:
@@ -157,7 +155,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         if not parsed["name"] and not parsed["triggers"] and not parsed["jobs"]:
             continue
 
-        nid = f"workflow:{yml.stem}"
+        nid = workflow_id(rel_path)
         nodes[nid] = {
             "type": "workflow",
             "label": wf_name,
@@ -173,5 +171,34 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 "roles": ["config"],
             },
         }
+        edges.extend(_invocation_edges(root, nid, rel_path, text))
 
     return StrategyResult(nodes, edges, discovered_from)
+
+
+def _invocation_edges(
+    root: Path, source_id: str, rel_path: str, text: str
+) -> list[dict]:
+    """Return ``invokes`` edges for every script named in *text*'s ``run:``
+    steps. See :func:`weld.strategies.yaml_meta._invocation_edges`, which
+    this mirrors exactly -- both strategies mint the same ``workflow:`` node
+    shape and share the same run:-block extractor (ADR 0106, bd lwrh), and
+    (bd 57lra) the same ADR 0074 provenance stamp for the identical reason:
+    without it, editing only the invoked script purges this edge by
+    endpoint membership and this workflow file -- clean, so never re-run --
+    never re-mints it.
+    """
+    out: list[dict] = []
+    for referent in workflow_script_references(root, text):
+        for target in target_ids(referent):
+            out.append({
+                "from": source_id,
+                "to": target,
+                "type": "invokes",
+                "props": {
+                    "source_strategy": "gh_workflow",
+                    "confidence": "inferred",
+                    "provenance": {"file": rel_path},
+                },
+            })
+    return out

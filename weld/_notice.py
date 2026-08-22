@@ -14,6 +14,8 @@ from __future__ import annotations
 import sys
 from typing import IO
 
+from weld._safe_text import sanitize_terminal_line
+
 __all__ = ["emit"]
 
 _PREFIX = "[weld]"
@@ -32,4 +34,9 @@ def emit(message: str, *, stream: IO[str] | None = None) -> None:
     text = message if message.startswith(_PREFIX) else f"{_PREFIX} {message}"
     if not text.endswith("\n"):
         text += "\n"
-    err.write(text)
+    # Notices interpolate tree-derived values (paths, child repo names,
+    # strategy names), so a hostile repo can reach this stream. Being the
+    # single sink, one escape here covers every notice call site. Line-strict:
+    # the one-notice-per-line invariant above is what agents parse, so only
+    # the trailing newline this function owns is allowed through.
+    err.write(sanitize_terminal_line(text[:-1]) + "\n")

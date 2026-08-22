@@ -18,7 +18,9 @@ All currently registered providers (``anthropic``, ``openai``,
 ``ollama``, ``copilot-cli``) are network-bound, so safe mode currently
 refuses every known provider; a future deterministic provider would
 simply be omitted from :data:`weld.providers.NETWORK_PROVIDERS` to be
-permitted under safe mode.
+permitted under safe mode. Safe mode is no longer a dead end, though:
+``wd enrich --agent-direct`` (ADR 0098) performs no network call at all
+and is the path both messages below point at.
 
 The no-provider error reuses :mod:`weld._doctor_optional`'s probes so
 ``wd doctor`` and ``wd enrich`` agree on which providers are installed:
@@ -36,8 +38,13 @@ from weld._notice import emit
 # Documented agent-direct entry point. Surfaced in error messages when no
 # provider is installed (or under --safe, where every registered provider
 # is refused) so users without provider credentials know what to run.
+# ADR 0098: this names a product command, not a harness-specific slash
+# command -- the caller hitting this error may be running any agent, in any
+# repository, and needs something they can actually execute.
 _AGENT_DIRECT_HINT = (
-    "Or run /enrich-weld in your agent harness (no provider needed)."
+    "Or run `wd enrich --agent-direct` to get the work plan and write the "
+    "enrichment yourself -- if you are an agent, you are the provider (no "
+    "API key needed)."
 )
 
 

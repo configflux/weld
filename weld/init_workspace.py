@@ -135,7 +135,7 @@ def init_workspace(
         # at the main checkout. When main has a workspaces.yaml, mirror it
         # so federation discover can resolve each child via
         # resolve_child_root's worktree fallback (ADR 0028).
-        from weld._git import git_main_checkout_path
+        from weld._git_worktree import git_main_checkout_path
         main_checkout = git_main_checkout_path(Path(root))
         if main_checkout is not None:
             main_yaml = main_checkout / ".weld" / "workspaces.yaml"

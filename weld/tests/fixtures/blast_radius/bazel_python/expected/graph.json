@@ -1,155 +1,22 @@
 {
-  "edges": [
-    {
-      "from": "build-target://:foo",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "bazel"
-      },
-      "to": "file:foo",
-      "type": "contains"
-    },
-    {
-      "from": "file:foo_test",
-      "props": {
-        "confidence": "inferred",
-        "source_strategy": "test_peer"
-      },
-      "to": "file:foo",
-      "type": "tests"
-    },
-    {
-      "from": "pkg:foo",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "python_module"
-      },
-      "to": "file:foo",
-      "type": "contains"
-    },
-    {
-      "from": "pkg:foo",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "python_module"
-      },
-      "to": "file:foo_test",
-      "type": "contains"
-    },
-    {
-      "from": "test-target://:foo_test",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "bazel"
-      },
-      "to": "build-target://:foo",
-      "type": "depends_on"
-    },
-    {
-      "from": "test-target://:foo_test",
-      "props": {
-        "confidence": "inferred",
-        "source_strategy": "bazel"
-      },
-      "to": "build-target://:foo",
-      "type": "tests"
-    },
-    {
-      "from": "test-target://:foo_test",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "bazel"
-      },
-      "to": "file:foo_test",
-      "type": "contains"
-    }
-  ],
-  "meta": {
-    "schema_version": 1,
-    "version": 5
-  },
-  "nodes": {
-    "build-target://:foo": {
-      "label": "//:foo",
-      "props": {
-        "authority": "canonical",
-        "bazel_label": "//:foo",
-        "confidence": "definite",
-        "file": "BUILD.bazel",
-        "roles": [
-          "build"
-        ],
-        "rule": "py_library",
-        "source_strategy": "bazel",
-        "unresolved_labels": [],
-        "unresolved_labels_dropped": 0
-      },
-      "type": "build-target"
-    },
-    "file:foo": {
-      "label": "foo",
-      "props": {
-        "aliases": [],
-        "authority": "derived",
-        "confidence": "definite",
-        "constants": [],
-        "exports": [
-          "greet"
-        ],
-        "file": "foo.py",
-        "imports_from": [],
-        "line_count": 5,
-        "origin": "project",
-        "roles": [
-          "implementation"
-        ],
-        "source_strategy": "python_module"
-      },
-      "type": "file"
-    },
-    "file:foo_test": {
-      "label": "foo_test",
-      "props": {
-        "aliases": [
-          "file:tests/foo_test"
-        ],
-        "authority": "derived",
-        "confidence": "definite",
-        "file": "foo_test.py",
-        "kind": "test",
-        "origin": "project",
-        "roles": [
-          "test"
-        ],
-        "source_strategy": "test_peer"
-      },
-      "type": "file"
-    },
-    "pkg:foo": {
-      "label": "foo",
-      "props": {
-        "authority": "manual",
-        "confidence": "definite",
-        "source_strategy": "topology"
-      },
-      "type": "package"
-    },
-    "test-target://:foo_test": {
-      "label": "//:foo_test",
-      "props": {
-        "authority": "canonical",
-        "bazel_label": "//:foo_test",
-        "confidence": "definite",
-        "file": "BUILD.bazel",
-        "roles": [
-          "test"
-        ],
-        "rule": "py_test",
-        "source_strategy": "bazel",
-        "unresolved_labels": [],
-        "unresolved_labels_dropped": 0
-      },
-      "type": "test-target"
-    }
-  }
+"edges": [
+{"from": "build-target://:foo", "props": {"confidence": "definite", "provenance": {"file": "BUILD.bazel"}, "source_strategy": "bazel"}, "to": "file:foo", "type": "contains"},
+{"from": "file:foo_test", "props": {"confidence": "inferred", "provenance": {"file": "foo_test.py"}, "source_strategy": "test_peer"}, "to": "file:foo", "type": "tests"},
+{"from": "pkg:foo", "props": {"confidence": "definite", "source_strategy": "python_module"}, "to": "file:foo", "type": "contains"},
+{"from": "pkg:foo", "props": {"confidence": "definite", "source_strategy": "python_module"}, "to": "file:foo_test", "type": "contains"},
+{"from": "test-target://:foo_test", "props": {"confidence": "definite", "provenance": {"file": "BUILD.bazel"}, "source_strategy": "bazel"}, "to": "build-target://:foo", "type": "depends_on"},
+{"from": "test-target://:foo_test", "props": {"confidence": "inferred", "provenance": {"file": "BUILD.bazel"}, "source_strategy": "bazel"}, "to": "build-target://:foo", "type": "tests"},
+{"from": "test-target://:foo_test", "props": {"confidence": "definite", "provenance": {"file": "BUILD.bazel"}, "source_strategy": "bazel"}, "to": "file:foo_test", "type": "contains"}
+],
+"meta": {
+  "schema_version": 1,
+  "version": 8
+},
+"nodes": {
+"build-target://:foo": {"label": "//:foo", "props": {"authority": "canonical", "bazel_label": "//:foo", "confidence": "definite", "file": "BUILD.bazel", "keywords": ["py_library"], "roles": ["build"], "rule": "py_library", "source_strategy": "bazel", "unresolved_labels": [], "unresolved_labels_dropped": 0}, "type": "build-target"},
+"file:foo": {"label": "foo", "props": {"aliases": [], "authority": "derived", "confidence": "definite", "constants": [], "exports": ["greet"], "file": "foo.py", "imports_from": [], "line_count": 5, "origin": "project", "roles": ["implementation"], "source_strategy": "python_module", "summary": "Tiny library used by foo_test."}, "type": "file"},
+"file:foo_test": {"label": "foo_test", "props": {"aliases": ["file:tests/foo_test"], "authority": "derived", "confidence": "definite", "file": "foo_test.py", "kind": "test", "origin": "project", "roles": ["test"], "source_strategy": "test_peer", "summary": "Bazel-style py_test for foo."}, "type": "file"},
+"pkg:foo": {"label": "foo", "props": {"authority": "manual", "confidence": "definite", "source_strategy": "topology"}, "type": "package"},
+"test-target://:foo_test": {"label": "//:foo_test", "props": {"authority": "canonical", "bazel_label": "//:foo_test", "confidence": "definite", "file": "BUILD.bazel", "keywords": ["py_test"], "roles": ["test"], "rule": "py_test", "source_strategy": "bazel", "unresolved_labels": [], "unresolved_labels_dropped": 0}, "type": "test-target"}
+}
 }

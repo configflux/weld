@@ -9,9 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from weld._enrich_safe import (SafeModeRefusedError, refuse_if_network_provider, resolve_provider_name)
+from weld._enrich_selection import selected_node_ids
 from weld._first_run_enrich import cli_reset_prompt
 from weld._graph_cli import _build_retry_hint, ensure_graph_exists
 from weld._graph_cli_errors import load_graph_or_exit
+from weld._safe_text import dumps_safe_json
 from weld.enrichment_persistence import enrichment_fingerprint, valid_enrichment
 from weld.graph import Graph
 from weld.providers import EnrichmentProvider, resolve_provider
@@ -36,15 +38,6 @@ def _parse_non_negative_float(raw: str) -> float:
     if value < 0:
         raise argparse.ArgumentTypeError("value must be >= 0")
     return value
-
-
-def _selected_node_ids(graph: Graph, node_id: str | None) -> list[str]:
-    if node_id is not None:
-        if graph.get_node(node_id) is None:
-            raise ValueError(f"node not found: {node_id}")
-        return [node_id]
-    nodes = graph.dump().get("nodes", {})
-    return sorted(nodes, key=lambda nid: (nodes[nid].get("type", ""), nid))
 
 
 def _snapshot(graph: Graph) -> dict:
@@ -169,7 +162,9 @@ def run_enrichment(
     if max_cost is not None and max_cost < 0:
         raise ValueError("max_cost must be >= 0")
 
-    selected_ids = _selected_node_ids(graph, node_id)
+    # ADR 0098: one selection oracle, shared with the agent-direct plan, so
+    # both enrichment paths agree on what needs work and in what order.
+    selected_ids = selected_node_ids(graph, node_id)
     baseline = _snapshot(graph)
     resolved_model = model or provider.DEFAULT_MODEL
     result = {
@@ -322,16 +317,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider", help="Provider name or WELD_ENRICH_PROVIDER env fallback")
     parser.add_argument("--model", help="Override the provider's default model")
     parser.add_argument("--node", dest="node_id", help="Limit enrichment to one node id")
-    parser.add_argument("--force", action="store_true", help="Rewrite existing matching enrichment")
+    parser.add_argument("--force", action="store_true", help="Rewrite existing matching enrichment (with --agent-direct: list already-enriched nodes too)")
     parser.add_argument("--max-tokens", type=_parse_non_negative_int, help="Stop after this many tokens are used")
     parser.add_argument("--max-cost", type=_parse_non_negative_float, help="Stop after this much tracked cost is used")
     parser.add_argument("--json", dest="json_output", action="store_true", help="Emit machine-readable JSON")
-    parser.add_argument("--safe", action="store_true", help="Refuse network/LLM providers (ADR 0024)")
-    parser.add_argument("--reset-prompt", action="store_true", help="Re-arm wd discover's first-run enrichment prompt (ADR 0052).")
+    parser.add_argument("--safe", action="store_true", help="Refuse network/LLM providers")
+    parser.add_argument("--reset-prompt", action="store_true", help="Re-arm wd discover's first-run enrichment prompt.")
+    parser.add_argument("--agent-direct", dest="agent_direct", action="store_true", help="Emit a self-serve enrichment work plan instead of calling a provider (no API key or network needed)")
+    # Same choices contract as `wd list --type` / `wd add-node --type`: a typo
+    # fails with the valid list instead of rendering an empty plan.
+    from weld.contract import VALID_NODE_TYPES
+    parser.add_argument("--type", dest="node_type", choices=sorted(VALID_NODE_TYPES), help="With --agent-direct: list only nodes of this type")
+    parser.add_argument("--limit", type=_parse_non_negative_int, help="With --agent-direct: cap the listed nodes (the remainder is still counted)")
     args = parser.parse_args(argv)
     if args.reset_prompt:
         return cli_reset_prompt(args.root)
+    from weld._enrich_agent_direct import mode_flag_error, run_agent_direct
+    conflict = mode_flag_error(args)
+    if conflict is not None:
+        sys.stderr.write(f"wd enrich: {conflict}\n")
+        return 1
     ensure_graph_exists(args.root, _build_retry_hint("enrich", node=args.node_id) if args.node_id else _build_retry_hint("enrich"))
+    if args.agent_direct:
+        # ADR 0098: read-only, provider-free, network-free -- no write lock,
+        # no provider resolution, and therefore nothing for --safe to refuse.
+        return run_agent_direct(args)
     from weld._graph_write_lock import graph_write_lock
     try:
         # ADR 0094: enrichment is load -> mutate -> save, so the whole span
@@ -358,8 +368,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.json_output:
-        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-        sys.stdout.write("\n")
+        sys.stdout.write(dumps_safe_json(result, indent=2) + "\n")
     else:
         _print_human(result)
     return 0

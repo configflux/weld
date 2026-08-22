@@ -5,6 +5,7 @@
     "cli_commands": [],
     "entrypoints": [],
     "mcp_tools": [],
+    "repo_tools": [],
     "tests": [
       {
         "file": "src/tests/lib_test.py",
@@ -173,6 +174,12 @@
         "test_edges": false
       },
       "k8s": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
+      "lint": {
         "deps_edges": false,
         "nodes_emitted": false,
         "srcs_edges": false,
@@ -355,7 +362,8 @@
         "roles": [
           "implementation"
         ],
-        "source_strategy": "python_module"
+        "source_strategy": "python_module",
+        "summary": "Entrypoint that consumes the library."
       },
       "type": "file"
     },
@@ -375,7 +383,8 @@
         "roles": [
           "test"
         ],
-        "source_strategy": "test_peer"
+        "source_strategy": "test_peer",
+        "summary": "Tests for the lib module (filename test_peer convention)."
       },
       "type": "file"
     },
@@ -407,7 +416,8 @@
         "roles": [
           "implementation"
         ],
-        "source_strategy": "python_callgraph"
+        "source_strategy": "python_callgraph",
+        "summary": ""
       },
       "type": "symbol"
     },
@@ -428,7 +438,8 @@
         "roles": [
           "implementation"
         ],
-        "source_strategy": "python_callgraph"
+        "source_strategy": "python_callgraph",
+        "summary": ""
       },
       "type": "symbol"
     },
@@ -449,7 +460,8 @@
         "roles": [
           "implementation"
         ],
-        "source_strategy": "python_callgraph"
+        "source_strategy": "python_callgraph",
+        "summary": ""
       },
       "type": "symbol"
     }
@@ -472,6 +484,9 @@
       "from": "file:src/tests/lib_test",
       "props": {
         "confidence": "inferred",
+        "provenance": {
+          "file": "src/tests/lib_test.py"
+        },
         "source_strategy": "test_peer"
       },
       "to": "file:src/lib",
@@ -594,6 +609,22 @@
       },
       "to": "symbol:py:src.tests.lib_test:test_add",
       "type": "contains"
+    },
+    {
+      "from": "file:src/main",
+      "props": {
+        "confidence": "definite",
+        "provenance": {
+          "file": "src/main.py",
+          "line": 10
+        },
+        "raw": "run",
+        "resolution": "local",
+        "resolved": true,
+        "source_strategy": "python_callgraph"
+      },
+      "to": "symbol:py:src.main:run",
+      "type": "calls"
     },
     {
       "from": "file:src/main",

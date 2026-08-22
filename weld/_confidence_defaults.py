@@ -55,6 +55,7 @@ _DEFINITE_STRATEGIES: tuple[str, ...] = (
     "_rust_tree_sitter",
 
     "csharp_package",
+    "go_package",
 
     # Build-system label parsers.
     "bazel",
@@ -125,8 +126,9 @@ _INFERRED_STRATEGIES: tuple[str, ...] = (
 
 _SPECULATIVE_STRATEGIES: tuple[str, ...] = (
     # LLM-emitted enrichment edges. Provider names match
-    # weld.providers.* + the agent-direct path used by
-    # /enrich-weld (provider == "manual" but emits via LLM judgement).
+    # weld.providers.* + the agent-direct path (`wd enrich
+    # --agent-direct`): provider == "manual", but the text still comes
+    # from LLM judgement.
     "anthropic_enrichment",
     "openai_enrichment",
     "ollama_enrichment",

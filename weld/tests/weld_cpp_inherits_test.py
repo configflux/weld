@@ -298,6 +298,11 @@ class EmitInheritanceEdgesTest(unittest.TestCase):
         self.assertEqual(edge["type"], "inherits")
         self.assertTrue(edge["props"]["resolved"])
         self.assertEqual(edge["props"]["confidence"], "definite")
+        # ADR 0074 / bd rifzk: attributed to the file whose base-class
+        # clause produced the edge.
+        self.assertEqual(
+            edge["props"]["provenance"], {"file": "include/circle.hpp"},
+        )
 
     def test_unresolved_base_mints_sentinel(self) -> None:
         """Edge targets symbol:unresolved:<short> when base not in project."""

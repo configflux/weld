@@ -2,13 +2,33 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 
 package(default_visibility = ["//visibility:public"])
 
+# "BUILD.bazel" is exported so //weld/tests:weld_subpackage_srcs_claim_test
+# can stage this package's own declarations in its runfiles and read them --
+# same reason //weld:BUILD.bazel is exported (see that package's BUILD.bazel
+# comment).
 exports_files([
+    "BUILD.bazel",
     "public_corpus.yaml",
 ])
 
 filegroup(
     name = "public_corpus_manifest",
     srcs = ["public_corpus.yaml"],
+)
+
+# Every .py file that EXISTS in this package (including the adapters/
+# subpackage), as opposed to every one some target declares.
+# //weld/tests:weld_subpackage_srcs_claim_test set-diffs the two to catch a
+# module that is on disk but claimed by no target -- the same bd 73xa
+# ModuleNotFoundError shape //weld:all_python_sources guards for
+# weld/BUILD.bazel. fixtures/ is deliberately excluded: its .py files are
+# benchmark corpus *data* (see :public_corpus_smoke_fixture below), never
+# part of the importable weld.bench package, and including them here would
+# make the claim test demand a py_library target for synthetic fixture
+# source it was never meant to have.
+filegroup(
+    name = "all_python_sources",
+    srcs = glob(["*.py", "adapters/*.py"]),
 )
 
 filegroup(
@@ -69,6 +89,11 @@ py_library(
 py_library(
     name = "synthetic_large_repo",
     srcs = ["synthetic_large_repo.py"],
+    deps = [
+        # Its launch-path guard (ADR 0099, bd 4g0d) imports weld._launch_path,
+        # which lives in RUNTIME_SRCS -- there is no standalone target for it.
+        "//weld:runtime",
+    ],
 )
 
 py_binary(
@@ -82,8 +107,11 @@ py_binary(
     ],
     main = "__main__.py",
     deps = [
-        ":public_bench_lib",
+        # __main__.py imports weld.bench.bench_cli, which lives in :bench_lib
+        # (not :public_bench_lib, which is bench_cli's own dependency, not
+        # its home). :bench_lib already carries :public_bench_lib and
+        # bench_tasks_lib transitively.
+        ":bench_lib",
         "//weld:runtime",
-        "//weld/bench_tasks:bench_tasks_lib",
     ],
 )

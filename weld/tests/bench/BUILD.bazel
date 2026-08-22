@@ -1,4 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load(":bench_py_test.bzl", "bench_py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,24 +8,37 @@ exports_files([
     "quality_cases.yaml",
 ])
 
+# The one home for weld/tests/bench/__init__.py as a Python source (mirrors
+# //weld:package_init's rationale exactly, bd p07k). Before bd 5038-30of this
+# directory had THREE independent literal "__init__.py" srcs declarations
+# (:bench_test_helpers, :federation_bench_helpers, :bench_grammar_precondition)
+# and 13 py_test targets reaching none of them -- so those 13 runfiles trees
+# took Bazel's synthesised empty init while any sibling depending on one of
+# the three took the real (symlinked) one. Same dual-treatment race bd p07k
+# fixed at the weld/ root; lint_package_init_runfiles.py now sweeps every
+# wired subpackage, not just the root, so a future omission here fails the
+# gate instead of racing silently.
 py_library(
-    name = "bench_test_helpers",
-    srcs = [
-        "__init__.py",
-        "bench_test_helpers.py",
-    ],
-    deps = ["//weld:contract"],
+    name = "package_init",
+    srcs = ["__init__.py"],
 )
 
-py_test(
+py_library(
+    name = "bench_test_helpers",
+    srcs = ["bench_test_helpers.py"],
+    deps = [
+        ":package_init",
+        "//weld:contract",
+    ],
+)
+
+bench_py_test(
     name = "weld_bench_quality_test",
     srcs = ["weld_bench_quality_test.py"],
     data = [
         "prompts.yaml",
         "quality_cases.yaml",
     ],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
         ":bench_test_helpers",
         "//weld:runtime",
@@ -32,12 +46,10 @@ py_test(
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_bench_tasks_test",
     srcs = ["weld_bench_tasks_test.py"],
     data = ["//weld/bench_tasks:fixtures"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
         ":bench_test_helpers",
         "//weld:runtime",
@@ -46,12 +58,10 @@ py_test(
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_bench_tasks_cli_test",
     srcs = ["weld_bench_tasks_cli_test.py"],
     data = ["//weld/bench_tasks:fixtures"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
         ":bench_test_helpers",
         "//weld:runtime",
@@ -62,11 +72,9 @@ py_test(
 
 py_library(
     name = "federation_bench_helpers",
-    srcs = [
-        "__init__.py",
-        "federation_bench_helpers.py",
-    ],
+    srcs = ["federation_bench_helpers.py"],
     deps = [
+        ":package_init",
         "//weld:runtime",
         "//weld:workspace",
     ],
@@ -79,11 +87,10 @@ py_library(
 # jitter that previously forced `flaky=True` (bd ...yzfw / ...2c19). Their
 # correctness/determinism invariants gate; their latency/drift numbers are
 # advisory (printed for triage), never asserted, so they cannot flake.
-py_test(
+bench_py_test(
     name = "weld_federation_benchmark_test",
     srcs = ["weld_federation_benchmark_test.py"],
-    local = True,
-    tags = ["benchmark", "no-sandbox"],
+    tags = ["benchmark"],
     deps = [
         ":federation_bench_helpers",
         "//weld:runtime",
@@ -93,11 +100,10 @@ py_test(
 
 # ADR 0058 memory-peak probe: split from the benchmark test so each
 # file stays under the project line-count cap.
-py_test(
+bench_py_test(
     name = "weld_federation_memory_probe_test",
     srcs = ["weld_federation_memory_probe_test.py"],
-    local = True,
-    tags = ["benchmark", "no-sandbox"],
+    tags = ["benchmark"],
     deps = [
         ":federation_bench_helpers",
         "//weld:runtime",
@@ -110,11 +116,10 @@ py_test(
 # the JSON cache) and the headline RSS memory win; latency ratios are
 # advisory. Serial benchmark lane (see comment above) replaces the former
 # flaky=True retry budget.
-py_test(
+bench_py_test(
     name = "weld_federation_query_test",
     srcs = ["weld_federation_query_test.py"],
-    local = True,
-    tags = ["benchmark", "no-sandbox"],
+    tags = ["benchmark"],
     deps = [
         ":federation_bench_helpers",
         "//weld:runtime",
@@ -126,11 +131,10 @@ py_test(
 # correctness (eager and lazy return identical query results) and that the
 # eager index is actually built; the eager-vs-lazy latency speedup and
 # construction tax are advisory. Serial benchmark lane replaces flaky=True.
-py_test(
+bench_py_test(
     name = "weld_federation_eager_test",
     srcs = ["weld_federation_eager_test.py"],
-    local = True,
-    tags = ["benchmark", "no-sandbox"],
+    tags = ["benchmark"],
     deps = [
         ":federation_bench_helpers",
         "//weld:runtime",
@@ -138,171 +142,252 @@ py_test(
     ],
 )
 
-py_test(
+bench_py_test(
     name = "synthetic_large_repo_test",
     srcs = ["synthetic_large_repo_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        # bd p07k: :synthetic_large_repo puts weld/bench/*.py in the runfiles,
+        # which makes weld/ an intermediate package directory -- so without the
+        # real file Bazel synthesises the competing empty weld/__init__.py here.
+        "//weld:package_init",
         "//weld/bench:synthetic_large_repo",
+        # //weld/bench:bench_lib added for bd 5038-30of: :synthetic_large_repo
+        # (above) stages weld/bench/synthetic_large_repo.py but declares no
+        # dep reaching weld/bench/__init__.py itself -- the same p07k hazard,
+        # one package down, that //weld:package_init (above) fixes at the root.
+        "//weld/bench:bench_lib",
+        # :package_init (this package's own) added for bd 5038-30of: this
+        # test's own source lives under weld/tests/bench/, which needs its
+        # own __init__.py by the same p07k reasoning, one directory over.
+        ":package_init",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_test",
     srcs = ["weld_public_bench_test.py"],
     data = [
         "//weld/bench:public_corpus_manifest",
         "//weld/bench:public_corpus_smoke_fixture",
     ],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
+# No corpus fixture and no repo on disk: the empty-corpus probe resolves a
+# version and renders a header, and the filename cases resolve a path
+# without writing to it, so this one is hermetic and stays in the fast loop
+# rather than carrying the package's no-sandbox tag.
 py_test(
+    name = "weld_public_bench_version_test",
+    srcs = ["weld_public_bench_version_test.py"],
+    deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+    ],
+)
+
+bench_py_test(
     name = "weld_public_bench_setup_test",
     srcs = ["weld_public_bench_setup_test.py"],
     data = [
         "//weld/bench:public_corpus_smoke_fixture",
     ],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_skipped_test",
     srcs = ["weld_public_bench_skipped_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_adapters_test",
     srcs = ["weld_public_bench_adapters_test.py"],
     data = [
         "//weld/bench:public_corpus_smoke_fixture",
     ],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_cli_test",
     srcs = ["weld_public_bench_cli_test.py"],
     data = [
         "//weld/bench:public_corpus_manifest",
         "//weld/bench:public_corpus_smoke_fixture",
     ],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_libclang_setup_test",
     srcs = ["weld_public_bench_libclang_setup_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_libclang_materialize_test",
     srcs = ["weld_public_bench_libclang_materialize_test.py"],
     data = [
         "//weld/bench:public_corpus_manifest",
     ],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_libclang_adapter_test",
     srcs = ["weld_public_bench_libclang_adapter_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+# The cpp grammar precondition shared by the adapter test targets below
+# (bd gjli). It deliberately does NOT declare the two wheels itself:
+# every user must name @pypi//tree_sitter + @pypi//tree_sitter_cpp in its
+# own deps, which is exactly what the helper's diagnostic tells a fixer
+# to restore here. Granting them transitively would let a target satisfy
+# the guard while declaring nothing.
+py_library(
+    name = "bench_grammar_precondition",
+    srcs = ["bench_grammar_precondition.py"],
+    deps = [
+        ":package_init",
+        "//weld:runtime",
+        # adapters/weld.py -- whose _is_tree_sitter_available the helper
+        # probes -- is a public_bench_lib source, not a bench_lib one.
+        "//weld/bench:public_bench_lib",
+        # The shared skip-or-fail-on-missing-grammar branch policy (bd
+        # 9txq); this library still owns its own probe and reason/labels.
+        "//weld/tests:tier_check_grammar_gate",
+    ],
+)
+
+bench_py_test(
+    name = "bench_grammar_precondition_test",
+    srcs = ["bench_grammar_precondition_test.py"],
+    # Declares both wheels for its consumers' reason and one more:
+    # test_both_present_under_bazel_reports_nothing_missing asserts the
+    # probe finds them, so dropping a label fails the guard's coverage.
+    # //weld/bench:bench_lib added for bd 5038-30of: this target staged
+    # weld/bench/adapters/*.py (via :public_bench_lib) without ever staging
+    # weld/bench/__init__.py itself -- confirmed empirically via
+    # `bazel query deps(...)`, the exact bd p07k hazard one level down.
+    deps = [
+        ":bench_grammar_precondition",
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+        "@pypi//tree_sitter",
+        "@pypi//tree_sitter_cpp",
+    ],
+)
+
+bench_py_test(
     name = "weld_public_bench_weld_adapter_test",
     srcs = ["weld_public_bench_weld_adapter_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
+    # Both wheels are pinned in requirements_lock.txt, so the
+    # tree-sitter-gated case below runs in every lane instead of skipping
+    # green wherever the host lacked an ambient grammar (bd srzy,
+    # following bd c42b). tree_sitter_cpp specifically: the cpp
+    # extraction path is that case's bug class, and the precondition now
+    # probes it rather than only the umbrella (bd gjli).
     deps = [
+        ":bench_grammar_precondition",
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
+        "@pypi//tree_sitter",
+        "@pypi//tree_sitter_cpp",
     ],
 )
 
-py_test(
+bench_py_test(
+    name = "weld_public_bench_weld_adapter_graph_test",
+    srcs = ["weld_public_bench_weld_adapter_graph_test.py"],
+    # Split from weld_public_bench_weld_adapter_test at the 400-line cap
+    # (bd gjli). Carries the _ensure_graph bootstrap cases, one of which
+    # asserts a cpp-grammar floor -- same two wheels, same reason.
+    # //weld/bench:bench_lib added for bd 5038-30of, same reason as
+    # bench_grammar_precondition_test above.
+    deps = [
+        ":bench_grammar_precondition",
+        "//weld:runtime",
+        "//weld/bench:bench_lib",
+        "//weld/bench:public_bench_lib",
+        "@pypi//tree_sitter",
+        "@pypi//tree_sitter_cpp",
+    ],
+)
+
+bench_py_test(
     name = "weld_public_bench_weld_adapter_fallback_test",
     srcs = ["weld_public_bench_weld_adapter_fallback_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_libclang_report_test",
     srcs = ["weld_public_bench_libclang_report_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",
     ],
 )
 
-py_test(
+bench_py_test(
     name = "weld_public_bench_libclang_integration_test",
     srcs = ["weld_public_bench_libclang_integration_test.py"],
-    local = True,
-    tags = ["no-sandbox"],
     deps = [
+        ":package_init",  # bd 5038-30of: this directory's own init, see :package_init above
         "//weld:runtime",
         "//weld/bench:bench_lib",
         "//weld/bench:public_bench_lib",

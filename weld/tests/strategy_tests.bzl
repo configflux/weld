@@ -1,7 +1,7 @@
 """Framework / source strategy + enrichment-metadata test targets.
 
-Extracted verbatim from weld/tests/BUILD.bazel (line-count policy: the test
-BUILD is shrink-only). Target names, srcs, data, and deps are unchanged so
+Extracted verbatim from weld/tests/BUILD.bazel, which indexes subjects rather
+than listing targets. Target names, srcs, data, and deps are unchanged so
 every label stays //weld/tests:<name>.
 """
 
@@ -43,6 +43,24 @@ def strategy_tests():
             "//weld:contract",
             "//weld:runtime",
             "//weld:yaml",
+            "//weld/strategies",
+            "//weld/strategies:helpers",
+        ],
+    )
+
+    # bd 5038-rhuc: systematic node/edge contract-conformance check,
+    # generalizing rgru's per-strategy `test_emitted_nodes_satisfy_the_
+    # contract` (python_package_strategy_test.py, weld_csharp_package_
+    # strategy_test.py) into one reusable checker. Hermetic unit fixtures
+    # here; the real-repo zero-violations gate is
+    # weld_node_edge_contract_repo_test (BUILD.bazel, tags=["external"] --
+    # same shape as weld_cross_source_edge_provenance_repo_test).
+    py_test(
+        name = "weld_graph_contract_check_test",
+        srcs = ["weld_graph_contract_check_test.py"],
+        deps = [
+            "//weld:contract",
+            "//weld:runtime",
             "//weld/strategies",
             "//weld/strategies:helpers",
         ],

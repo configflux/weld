@@ -26,7 +26,7 @@ from unittest import mock
 
 
 from weld import discover as discover_mod  # noqa: E402
-from weld.discovery_state import resolve_source_files  # noqa: E402
+from weld._source_resolve import resolve_source_files  # noqa: E402
 from weld.discover import _discover_single_repo  # noqa: E402
 
 
@@ -64,11 +64,7 @@ class DiscoverNoChangesDoesNotMutateLoadedGraphTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="path-source-") as td:
             root = Path(td)
             (root / "issues.jsonl").write_text("{}", encoding="utf-8")
-            files = resolve_source_files(
-                root,
-                {"path": "issues.jsonl"},
-                lambda _root, matched: matched,
-            )
+            files = resolve_source_files(root, {"path": "issues.jsonl"})
             self.assertEqual(files, ["issues.jsonl"])
 
     def test_incremental_no_changes_does_not_mutate_loaded_graph(self) -> None:

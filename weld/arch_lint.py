@@ -12,7 +12,10 @@ Built-in rules:
   doc/config/test (``--include-noisy`` overrides).
 * ``strategy-coverage`` -- ``discover.yaml`` source globs matching zero
   files.
-* ``no-circular-deps`` -- SCC detection via Tarjan's algorithm.
+* ``no-circular-deps`` -- SCC detection via Tarjan's algorithm over
+  structural edges only; excludes doc cross-references, doc/code
+  citations, governance validation, and the symbol call graph (see
+  ``weld.arch_lint_cycles`` for the excluded-type rationale).
 * ``boundary-enforcement`` -- edges crossing layer boundaries without a
   ``topology.allowed_cross_layer`` entry.
 * ``canonical-id-uniqueness`` -- two nodes share canonical
@@ -21,23 +24,27 @@ Built-in rules:
 * ``file-anchor-symmetry`` -- ``file:`` nodes with outgoing ``contains``
   but no inbound (ADR 0041 Layer 3).
 * ``strategy-pair-consistency`` -- declared strategy pairs whose
-  members visit divergent file sets (ADR 0041 Layer 3).
+  members visit divergent file sets, or whose emitted file anchors
+  fall outside the set that member declared (ADR 0041 Layer 3).
+* ``cross-source-edge-provenance`` -- a strategy edge whose endpoints are
+  not provably minted by the same discover.yaml source entry, carrying no
+  ``props.provenance.file`` (ADR 0074's incremental-purge invariant).
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+from weld._arch_lint_types import Violation
 from weld._graph_closure_invariants import (
     check_canonical_id_uniqueness,
     check_file_anchor_symmetry,
     check_strategy_pair_consistency,
 )
+from weld._graph_edge_provenance_lint import check_cross_source_edge_provenance
+from weld import arch_lint_cli
 from weld.arch_lint_boundary import rule_boundary_enforcement
 from weld.arch_lint_coverage import rule_strategy_coverage
 from weld.arch_lint_custom import (
@@ -54,26 +61,11 @@ ARCH_LINT_VERSION = 1
 
 ORPHAN_RULE_ID = "orphan-detection"
 
-@dataclass(frozen=True)
-class Violation:
-    """A single architectural violation reported by a rule.
-
-    The ``to_dict`` shape is part of the stable JSON contract; callers
-    (CI scripts, editors, the MCP server) may rely on it.
-    """
-
-    rule: str
-    node_id: str
-    message: str
-    severity: str = "error"
-
-    def to_dict(self) -> dict:
-        return {
-            "rule": self.rule,
-            "node_id": self.node_id,
-            "message": self.message,
-            "severity": self.severity,
-        }
+# ``Violation`` itself lives in ``weld._arch_lint_types`` (bd 5038-mx8sd,
+# ADR 0130 disposition #6) -- a dependency-free leaf every rule module
+# imports directly instead of late-importing it from here. Re-imported and
+# re-exported (see ``__all__`` below) so ``from weld.arch_lint import
+# Violation`` keeps resolving for existing external callers.
 
 # Most rules take a graph-data dict (as returned by ``Graph.dump()``) and
 # yield violations.  A rule that also needs the project root (e.g. to
@@ -124,8 +116,22 @@ def _rule_file_anchor_symmetry(data: dict, root: Path) -> Iterable[Violation]:
 def _rule_strategy_pair_consistency(
     data: dict, root: Path
 ) -> Iterable[Violation]:
-    """Adapter: filesystem-walking rule; ``data`` arg is unused but required."""
-    yield from check_strategy_pair_consistency(root)
+    """Adapter: forward both halves' inputs -- config on disk, graph nodes.
+
+    The rule resolves declared file sets from ``.weld/discover.yaml``
+    itself; ``data`` supplies the emitted-anchor provenance the rule
+    needs to observe what the strategies actually did (bd sf36).
+    """
+    nodes = data.get("nodes", {}) or {}
+    yield from check_strategy_pair_consistency(root, nodes)
+
+def _rule_cross_source_edge_provenance(
+    data: dict, root: Path
+) -> Iterable[Violation]:
+    """Adapter: forward the graph's nodes/edges to the ADR 0074 rule."""
+    nodes = data.get("nodes", {}) or {}
+    edges = data.get("edges", []) or []
+    yield from check_cross_source_edge_provenance(root, nodes, edges)
 
 _RULES: tuple[Rule, ...] = (
     Rule(
@@ -145,7 +151,19 @@ _RULES: tuple[Rule, ...] = (
         check=rule_strategy_coverage,
         needs_root=True,
     ),
-    Rule(rule_id="no-circular-deps", description="Detect circular dependencies via SCC analysis.", check=rule_no_circular_deps),
+    Rule(
+        rule_id="no-circular-deps",
+        description=(
+            "Detect circular dependencies via SCC analysis over structural "
+            "edges (depends_on, contains, implements, ...); excludes "
+            "relates_to/documents/validates/calls/decorates/references so "
+            "doc cross-references, doc<->code citation/governance bridges, "
+            "and symbol-level recursion are not reported as architectural "
+            "cycles (bd 5038-ojg27; see weld.arch_lint_cycles.NON_STRUCTURAL_"
+            "EDGE_TYPES)."
+        ),
+        check=rule_no_circular_deps,
+    ),
     Rule(rule_id="boundary-enforcement", description="Flag edges crossing layer boundaries without topology declaration.", check=rule_boundary_enforcement, needs_root=True),
     Rule(
         rule_id="canonical-id-uniqueness",
@@ -169,9 +187,20 @@ _RULES: tuple[Rule, ...] = (
         rule_id="strategy-pair-consistency",
         description=(
             "Flag declared strategy pairs whose members visit "
-            "divergent file sets (ADR 0041 Layer 3)."
+            "divergent file sets, or that emitted a node anchored "
+            "outside the member's own declared set (ADR 0041 Layer 3)."
         ),
         check=_rule_strategy_pair_consistency,
+        needs_root=True,
+    ),
+    Rule(
+        rule_id="cross-source-edge-provenance",
+        description=(
+            "Flag a strategy edge whose endpoints are not provably minted "
+            "by the same discover.yaml source entry and carries no "
+            "props.provenance.file (ADR 0074 incremental-purge invariant)."
+        ),
+        check=_rule_cross_source_edge_provenance,
         needs_root=True,
     ),
 )
@@ -315,8 +344,25 @@ def _select_rules(
         selected.append(rule)
     return selected, warnings
 
-# Re-export ``format_text`` so that existing callers and tests continue
-# to import it from ``weld.arch_lint``.
+# ``format_text`` (from ``arch_lint_format``) is a straight re-export.
+# ``main`` is not: this module is the composition root for the
+# ``arch_lint``/``arch_lint_cli`` pair (ADR 0130 disposition #7, bd
+# 5038-efr7z -- the same shape ``mcp_server.py`` uses for
+# ``_mcp_dispatch``/``_mcp_stdio``). ``arch_lint_cli.main`` takes the live
+# rule registry (``lint``/``available_rule_ids``) as required parameters
+# instead of importing them back from here, so this module wraps it,
+# injecting both at the one real call site below rather than importing its
+# ``main`` directly. ``weld.cli`` still dispatches ``wd lint`` through
+# ``arch_lint.main``, and this module stays the single public name for the
+# linter regardless of how it is split internally.
+def main(argv: list[str] | None = None) -> int:
+    """``wd lint`` entry point: :func:`weld.arch_lint_cli.main` with the
+    live rule registry injected."""
+    return arch_lint_cli.main(
+        argv, lint_fn=lint, available_rule_ids_fn=available_rule_ids
+    )
+
+
 __all__ = [
     "ARCH_LINT_VERSION",
     "Rule",
@@ -326,74 +372,3 @@ __all__ = [
     "lint",
     "main",
 ]
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for ``wd lint``.
-
-    Exit code is ``0`` when no *visible* violations were reported and
-    ``1`` when any non-suppressed violation fired.  Suppressed orphans
-    alone never raise the exit code -- they are reported only in the
-    summary line.
-    """
-    parser = argparse.ArgumentParser(
-        prog="wd lint",
-        description=(
-            "Lint the graph for architectural violations (dead code, layer "
-            "inversion, missing metadata). Loads .weld/lint-rules.yaml when "
-            "present. Exits non-zero on visible violations."
-        ),
-    )
-    parser.add_argument(
-        "--rule",
-        action="append",
-        default=None,
-        metavar="RULE_ID",
-        help=(
-            "Run only the named rule (may be repeated). Default: run every "
-            f"registered rule. Available: {', '.join(available_rule_ids())}."
-        ),
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit the stable JSON envelope instead of human-readable text.",
-    )
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("."),
-        help="Project root containing .weld/graph.json (default: cwd).",
-    )
-    parser.add_argument(
-        "--include-noisy",
-        action="store_true",
-        help=(
-            "Disable the orphan-detection default suppression of "
-            "doc/config/test nodes; surface every orphan."
-        ),
-    )
-    args = parser.parse_args(argv)
-
-    graph = Graph(args.root)
-    graph.load()
-
-    rule_filter = list(args.rule) if args.rule is not None else None
-    result = lint(
-        graph,
-        rule_ids=rule_filter,
-        root=args.root,
-        include_noisy=args.include_noisy,
-    )
-
-    if args.json:
-        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-        sys.stdout.write("\n")
-    else:
-        sys.stdout.write(format_text(result))
-
-    # Exit non-zero only when a non-suppressed violation fired.
-    return 1 if result["violation_count"] > 0 else 0

@@ -88,8 +88,92 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
   paths the strategy actually inspected — used by the
   determinism harness to render diffs).
 
+### Resolving `glob:` and honouring `exclude:`
+
+Resolve the source entry's glob with
+`weld.strategies._glob_resolve.resolve_glob(root, pattern, excludes)` and
+nothing else:
+
+```python
+from weld.strategies._glob_resolve import resolve_glob
+
+for path in resolve_glob(root, source["glob"], source.get("exclude", [])):
+    ...
+```
+
+If your strategy also records `discovered_from` — and it should — take
+both from one call instead:
+
+```python
+from weld.strategies._glob_resolve import resolve_glob_with_provenance
+
+matched, provenance = resolve_glob_with_provenance(root, pattern, excludes)
+discovered_from.extend(provenance)
+```
+
+Report every file you actually **read**, not only the ones your glob
+resolved. A strategy that follows a reference out of its own file set —
+the bazel strategy reading a `.bzl` a `BUILD` file loads, for instance —
+must name that file too. Discovery records a content hash for every file
+in `discovered_from`, and that inventory is what freshness compares a
+dirty working tree against: a real input you leave out is one no
+`wd stale` can see and no incremental run will re-read.
+
+That one module is the whole contract, and it exists because strategies
+used to carry hand-copied variants of it that drifted apart. It handles,
+once:
+
+- **`**`** — recursive patterns resolve at any depth. Do **not** add a
+  `(root / pattern).parent.is_dir()` early return: for `docs/**/*.md`
+  that parent is the literal path `docs/**`, which is never a directory,
+  so the guard makes your strategy emit *nothing* — silence, not a
+  subset, which is a trap with no partial result to notice.
+- **`{a,b}` brace alternatives** — `packages/ui/src/**/*.{ts,tsx}`
+  expands, unions and de-duplicates. `Path.glob` does not understand
+  braces, so without this the pattern matches nothing at all.
+- **`exclude:`** — matching directories are pruned *during descent*,
+  which is what gives the directory form its meaning. Filtering an
+  already-resolved file list is **not** equivalent: the matcher tests the
+  file path with no ancestor-directory check, so `exclude: ["pkg/tests"]`
+  never matches `pkg/tests/foo.py` and the whole subtree is read and
+  emitted anyway. Do not re-filter afterwards; the repo-boundary filter
+  and vendored-tree skip are applied too, so no `filter_glob_results`
+  call is needed either.
+- **order** — the result is sorted, so your node emission and
+  `discovered_from` are properties of the tree rather than of filesystem
+  enumeration.
+
+Both exclude forms below must work, and only the shared resolver
+delivers the first:
+
+```yaml
+exclude:
+  - pkg/tests      # directory form (also matches a bare `tests` at any depth)
+  - pkg/tests/**   # subtree form
+```
+
+One historical trap, now closed: a single-directory pattern (no `**`)
+resolves through `Path.glob`, which used to yield matching *directories*
+alongside files while the `**` branch yielded only files. Neither branch
+yields a directory any more, so `glob: "packs/*"` no longer hands your
+strategy `packs/nested` beside `packs/a.yaml`. An
+`if not path.is_file(): continue` before you read or emit is still worth
+keeping as belt-and-braces, but it is no longer load-bearing. If you do
+guard, guard when you *emit* rather than by filtering the resolved list:
+the resolution call must stay identical to the one
+`weld._source_resolve.resolve_source_files` makes, or the set your
+strategy covers and the set discovery records drift, and the difference
+reads as scope that is never covered — staleness that never clears.
+
+Spell every repo-relative path you put in `props.file`, `props.dir` or
+`discovered_from` with `weld._rel_path.rel_to_root(path, root)`, never
+`str(path.relative_to(root))`. The latter is separator-native, so off
+POSIX your props disagree with the POSIX node ids addressing the same
+file. `weld/tests/strategy_path_prop_spelling_test.py` enforces this.
+
 The simplest example in the bundled tree is
-[`weld/strategies/config_file.py`](../weld/strategies/config_file.py).
+[`weld/strategies/config_file.py`](../weld/strategies/config_file.py),
+which accepts either `glob:` or an explicit `files:` list (or both).
 The most thorough example is
 [`weld/strategies/python_module.py`](../weld/strategies/python_module.py).
 Read both before writing a new one. Strategies must not import
@@ -105,6 +189,45 @@ mapping. Required props by convention: `source_strategy`,
 Edges have `from`, `to`, `type`, and `props`. Stamp every edge
 with `source_strategy` so consumers can attribute provenance.
 
+**Also stamp `props.provenance.file` on any edge that crosses files** —
+set it to the repo-relative POSIX path of the file *your strategy read
+to produce the edge*, which is normally the `from` side, never the
+resolved target. This is not decoration; it is what keeps the edge
+alive across an incremental refresh. When a file changes, the
+orchestrator purges that file's nodes and then decides which edges to
+keep: an edge that names its producing file survives unless *that* file
+is stale, while an edge that names nothing is dropped whenever either
+endpoint was purged. So an unstamped edge pointing *into* a changed
+file is dropped with it — and if your strategy's own glob holds no
+changed file, the strategy never re-runs and the edge is gone until the
+next full discover. The graph then silently disagrees with itself
+depending on how it was built, which is the hardest class of discovery
+bug to notice. [`weld/strategies/test_peer.py`](../weld/strategies/test_peer.py)
+shows the stamp in context.
+
+This is checked automatically: `wd lint`'s `cross-source-edge-provenance`
+rule flags a strategy edge whose endpoints are not provably minted by the
+same `discover.yaml` source entry and carries no `props.provenance.file`,
+naming the strategy and the missing stamp.
+
+**If a node's own existence depends on member files it does not itself
+anchor via `props.file`** (a directory- or namespace-rooted parent like
+`python_package`'s `package:python:*`, `csharp_package`'s
+`package:csharp:*`, or `go_package`'s `package:go:*`, whose real anchor
+is `props.dir` or nothing at all),
+stamp `"package"` into `props.roles` and always emit at least one
+outgoing `contains` edge to a member whenever the node is emitted. The
+orchestrator purges such a node automatically once an incremental refresh
+leaves it with zero `contains` out-edges — the same self-repair a full
+discover gives you for free, since a full run's own emission logic
+never mints the node in the first place once its last member is gone
+(`weld._discover_membership_purge`). Do **not** stamp the `package` role
+on a node representing something else entirely (an external dependency
+sentinel, for example) — for those, having no outgoing edges (only
+inbound `depends_on` from the files that reference them) is normal, and
+the `package` role would make the orchestrator purge them the next time
+any unrelated file goes stale.
+
 If a strategy emits an edge whose `to` does not exist as a node,
 the post-processing step in `weld/_discover_postprocess.py` will
 prune the edge as dangling. Either emit the target node alongside
@@ -112,6 +235,35 @@ the edge, or rely on another strategy to emit it (and document the
 dependency in your discover.yaml entry). The Dockerfile strategy
 [`weld/strategies/dockerfile.py`](../weld/strategies/dockerfile.py)
 shows the "emit the target file node yourself" pattern.
+
+When two source entries emit the same node id, the driver keeps the
+better-evidenced claim: a node whose `confidence` is strictly weaker
+than the one already recorded for that id is discarded, and otherwise
+the later entry wins as before. So a placeholder emitted only to keep
+an edge from dangling — no `file`, no `line`, `confidence:
+speculative` — cannot overwrite the real declaration another entry
+parsed, whatever order the entries are declared in. Emit placeholders
+freely; just mark them `speculative` and give the definite claim every
+prop you actually proved.
+
+**This guarantee is per source entry, not per file.** `extract()` is
+called once per source entry, and if your `glob` matches several
+files, your own `nodes` dict accumulates all of them in one call — the
+driver's claim veto only runs once your `StrategyResult` comes back,
+so it never sees two of *your own* files competing for the same id. If
+your strategy can mint the same id from two different matched files
+(for example, an id derived from a declared name rather than from the
+file path), a plain `nodes.setdefault(...)` lets whichever file
+`resolve_glob`'s sorted walk happens to reach first win outright,
+silently discarding the other claim — order-dependent, and observable
+across incremental vs. full discovery. `weld/strategies/cpp_cmake.py`
+hit exactly this (a project's own id collided with one of its
+`find_package` dependencies) and fixed it by calling
+`weld._discover_node_merge.claim_supersedes` itself before writing to
+its own `nodes` dict, the same veto the driver applies — see
+`weld/strategies/cpp_cmake.py`'s `_ensure_project_node` and
+`weld/strategies/_cmake_packages.py`'s `ensure_package_sentinel` for
+the pattern.
 
 ---
 
@@ -236,7 +388,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 _COMPILE = re.compile(r'<Compile\s+Include="([^"]+)"')
 _PKGREF = re.compile(r'<PackageReference\s+Include="([^"]+)"')
@@ -265,13 +418,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     pattern = source["glob"]
     excludes = source.get("exclude", [])
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return StrategyResult(nodes, edges, seen_files)
 
-    for proj in filter_glob_results(root, sorted(parent.glob(Path(pattern).name))):
-        if should_skip(proj, excludes):
-            continue
+    for proj in resolve_glob(root, pattern, excludes):
         rel = proj.relative_to(root).as_posix()
         seen_files.append(rel)
         text = proj.read_text(encoding="utf-8", errors="replace")

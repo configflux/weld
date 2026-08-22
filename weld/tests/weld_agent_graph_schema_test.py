@@ -49,15 +49,20 @@ AGENT_GRAPH_EDGE_TYPES = (
 
 
 class AgentGraphSchemaVersionTest(unittest.TestCase):
-    def test_schema_version_is_five(self) -> None:
-        self.assertEqual(SCHEMA_VERSION, 5)
+    def test_schema_version_is_eight(self) -> None:
+        # ADR 0127 bumped SCHEMA_VERSION 7 -> 8 for the references edge
+        # type; this pin moves in lockstep with every contract vocabulary
+        # bump -- 6 -> 7 for ADR 0122's decorates edge type, 5 -> 6 for
+        # ADR 0121's external-dep node type, and 4 -> 5 for the Agent
+        # Graph vocabulary this test module is named for.
+        self.assertEqual(SCHEMA_VERSION, 8)
         self.assertEqual(
             validate_meta({"version": SCHEMA_VERSION, "updated_at": _TS}),
             [],
         )
 
     def test_prior_schema_version_is_rejected(self) -> None:
-        errors = validate_meta({"version": 4, "updated_at": _TS})
+        errors = validate_meta({"version": SCHEMA_VERSION - 1, "updated_at": _TS})
         self.assertTrue(any("version" in error.field for error in errors))
 
 

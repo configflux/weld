@@ -9,8 +9,39 @@ enforces the determinism contract documented in ADR 0012 §3:
    ``(from, to, type, json.dumps(props, sort_keys=True))``.
 3. **Props serialized with ``sort_keys=True``** at every level of nesting.
 4. **Top-level object keys serialized with ``sort_keys=True``.``
-5. **Whitespace and indentation fixed** -- ``indent=2``, ``ensure_ascii=False``.
+5. **Whitespace fixed, and line-oriented** -- one entity per line,
+   ``ensure_ascii=False``. See below.
 6. **Trailing newline** -- exactly one ``\\n`` at end of emitted text.
+
+Rule 5 is the **entity-per-line** layout (ADR 0110, bd az06.2), which
+replaced ``indent=2``. Every node and every edge occupies exactly one
+line; the ``meta`` header keeps an ``indent=2`` block because it is small
+and read by humans. The result is still a *single valid JSON document* --
+not JSON Lines -- so every reader keeps calling ``json.loads`` on the whole
+file and nothing about the schema changes::
+
+    {
+    "edges": [
+    {"from": "...", "props": {...}, "to": "...", "type": "contains"},
+    ...
+    ],
+    "meta": {
+      "schema_version": 2
+    },
+    "nodes": {
+    "file:weld/graph": {"label": "graph", "props": {...}, "type": "file"},
+    ...
+    }
+    }
+
+Why this shape and not one-JSON-object-per-line (JSONL): a graph change
+then diffs as the entity lines it touched instead of the whole file
+(measured on this repo: 711368 lines to 49303, and a *smaller* file --
+21.1 MB to 15.9 MB, because the indentation was a quarter of the bytes),
+while JSONL would have broken every ``json.loads`` reader, the three
+whole-file-hash integrity surfaces, and the schema, to buy the same
+per-entity diff. It also emits and parses faster than ``indent=2``, so
+there is no cost to weigh against it.
 
 Two entry points:
 
@@ -47,7 +78,22 @@ __all__ = [
 
 # Fixed canonical dump settings. The whitespace contract lives here so any
 # drift is a single-line change reviewable in a single diff.
-_JSON_SETTINGS: dict[str, Any] = {
+#
+# ``_ENTITY_SETTINGS`` renders one node or one edge onto one line -- no
+# ``indent``, so ``json.dumps`` emits its compact single-line form. The
+# separators are left at the default ``(", ", ": ")`` rather than the tight
+# ``(",", ":")``: a line a reviewer has to read is worth the two bytes, and
+# the bytes saved by dropping the indentation dwarf them either way.
+#
+# ``_HEADER_SETTINGS`` renders every *other* top-level value (today only
+# ``meta``) as an ``indent=2`` block. That half of the file is small,
+# human-read, and holds lists like ``discovered_from`` whose own entries
+# want a line each for the same diff reason the entities do.
+_ENTITY_SETTINGS: dict[str, Any] = {
+    "ensure_ascii": False,
+    "sort_keys": True,
+}
+_HEADER_SETTINGS: dict[str, Any] = {
     "indent": 2,
     "ensure_ascii": False,
     "sort_keys": True,
@@ -139,18 +185,89 @@ def canonical_graph(graph: dict) -> dict:
     return out
 
 
+def _object_key(key: Any) -> str:
+    """The JSON text for *key* used as an object member name.
+
+    Mirrors what ``json.dumps`` does with a non-string mapping key, so the
+    hand-rolled entity lines below cannot emit a bare ``1:`` where the
+    stdlib would have emitted ``"1":``. Node ids are strings everywhere in
+    weld; this exists so the emitter degrades to valid JSON rather than to
+    a corrupt file if one ever is not.
+    """
+    if isinstance(key, str):
+        return json.dumps(key, **_ENTITY_SETTINGS)
+    if key is True:
+        return '"true"'
+    if key is False:
+        return '"false"'
+    if key is None:
+        return '"null"'
+    if isinstance(key, (int, float)):
+        return json.dumps(json.dumps(key))
+    raise TypeError(f"graph object keys must be str, got {type(key).__name__}")
+
+
+def _nodes_block(nodes: dict) -> str:
+    """``nodes`` as ``{`` + one ``"id": {...}`` line per node + ``}``.
+
+    Keys are sorted here rather than left to ``sort_keys=True``, because the
+    dumper never sees the ``nodes`` mapping as a whole -- each value is
+    dumped on its own. The order is the same one ``sort_keys`` produces
+    (``sorted`` over the raw keys), which is ADR 0012 §3 rule 1.
+    """
+    if not nodes:
+        return "{}"
+    lines = ",\n".join(
+        f"{_object_key(key)}: {json.dumps(nodes[key], **_ENTITY_SETTINGS)}"
+        for key in sorted(nodes)
+    )
+    return "{\n" + lines + "\n}"
+
+
+def _edges_block(edges: list) -> str:
+    """``edges`` as ``[`` + one edge object per line + ``]``.
+
+    Order is taken as given: the caller has already applied ADR 0012 §3
+    rule 2 (:func:`canonical_graph`, or the fast path's
+    :func:`_is_already_canonical` check).
+    """
+    if not edges:
+        return "[]"
+    lines = ",\n".join(json.dumps(edge, **_ENTITY_SETTINGS) for edge in edges)
+    return "[\n" + lines + "\n]"
+
+
+def _dumps_canonical_text(canonical: dict) -> str:
+    """Emit the entity-per-line text for an already-canonical *canonical*.
+
+    Top-level keys are emitted in sorted order (rule 4). ``nodes`` and
+    ``edges`` get the line-oriented blocks above; every other key -- today
+    only ``meta``, plus anything a forward-compatible writer adds -- is
+    handed to ``json.dumps`` with the header settings, so an unknown key
+    can never be emitted in a shape this module invented.
+    """
+    parts: list[str] = []
+    for key in sorted(canonical):
+        value = canonical[key]
+        if key == "nodes" and isinstance(value, dict):
+            body = _nodes_block(value)
+        elif key == "edges" and isinstance(value, list):
+            body = _edges_block(value)
+        else:
+            body = json.dumps(value, **_HEADER_SETTINGS)
+        parts.append(f"{_object_key(key)}: {body}")
+    return "{\n" + ",\n".join(parts) + "\n}\n"
+
+
 def dumps_graph(graph: dict) -> str:
     """Emit the canonical JSON text for ``graph``.
 
-    Applies :func:`canonical_graph` then serialises with the fixed settings
-    bundle (``indent=2``, ``ensure_ascii=False``, ``sort_keys=True``) and a
-    single trailing newline.
+    Applies :func:`canonical_graph` then serialises in the entity-per-line
+    layout (rule 5) with a single trailing newline.
 
     The input dict is never mutated.
     """
-    canonical = canonical_graph(graph)
-    text = json.dumps(canonical, **_JSON_SETTINGS)
-    return text + "\n"
+    return _dumps_canonical_text(canonical_graph(graph))
 
 
 def _is_already_canonical(graph: dict) -> bool:
@@ -194,4 +311,4 @@ def dumps_graph_canonical(graph: dict) -> str:
     """
     if not _is_already_canonical(graph):
         return dumps_graph(graph)
-    return json.dumps(graph, **_JSON_SETTINGS) + "\n"
+    return _dumps_canonical_text(graph)

@@ -5,6 +5,10 @@ This file is intentionally distinct from ``weld_mcp_smoke_test``,
 collision with concurrent MCP fixture-consolidation work; those files cover
 the running stdio server, while this one covers the per-client config
 generator described in ADR 0023.
+
+The ``wd mcp`` subcommand namespace that routes ``config`` -- and the
+``serve`` invocation the generated snippet names -- is
+``weld_mcp_cli_test``.
 """
 
 from __future__ import annotations
@@ -33,8 +37,11 @@ class RenderTests(unittest.TestCase):
         self.assertIn("mcpServers", parsed)
         self.assertIn("weld", parsed["mcpServers"])
         entry = parsed["mcpServers"]["weld"]
-        self.assertEqual(entry["command"], "python")
-        self.assertEqual(entry["args"], ["-m", "weld.mcp_server"])
+        # The console-script form, not `python -m`: a script's sys.path[0] is
+        # its own directory, so a client launching this entry from a
+        # repository never puts that repository on the module search path.
+        self.assertEqual(entry["command"], "wd")
+        self.assertEqual(entry["args"], ["mcp", "serve"])
 
     def test_cursor_render_shape(self) -> None:
         rendered = mcp_config.render("cursor")
@@ -49,8 +56,8 @@ class RenderTests(unittest.TestCase):
         self.assertIn("servers", parsed)
         self.assertIn("weld", parsed["servers"])
         entry = parsed["servers"]["weld"]
-        self.assertEqual(entry["command"], "python")
-        self.assertEqual(entry["args"], ["-m", "weld.mcp_server"])
+        self.assertEqual(entry["command"], "wd")
+        self.assertEqual(entry["args"], ["mcp", "serve"])
 
     def test_render_unknown_client_raises_with_list(self) -> None:
         with self.assertRaises(mcp_config.UnknownClientError) as cm:

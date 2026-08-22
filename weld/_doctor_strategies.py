@@ -5,8 +5,12 @@ Factored out of ``weld/doctor.py`` to keep the main entry point under the
 referenced strategies into enabled vs disabled, then check whether each
 enabled strategy resolves to a bundled or project-local plugin.
 
-Security posture: this module never prints filesystem paths. Strategy
-identifiers are taken only from ``discover.yaml`` and echoed verbatim.
+Security posture: this module never prints the absolute project root or
+environment variables. Strategy identifiers are taken only from
+``discover.yaml`` and echoed verbatim; ``check_failed_files`` echoes
+repo-relative paths already recorded in ``discovery-state.json`` by a
+completed discovery run -- the same paths a user already sees via ``git
+status`` or their editor, never an absolute path.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from weld._yaml import parse_yaml
+from weld.discovery_state import load_state
 
 
 @dataclass(frozen=True)
@@ -171,3 +176,84 @@ def check_trust_boundaries(weld_dir: Path, result_cls: type) -> list:
             )
         )
     return results
+
+
+def check_failed_sources(root: Path, result_cls: type) -> list:
+    """Report source entries ``discovery-state.json`` recorded as failed.
+
+    Bd um00: a source entry with no ``glob``/``path``/``files`` key (a
+    command-only ``external_json`` adapter) has no file to carry a failure
+    signal, so the per-file repair and every freshness check are structurally
+    blind to it -- the only trace was a stderr line on the run that hit it.
+    ``DiscoveryState.sources_with_failed_strategy`` is the record; this is
+    the report.
+
+    Deliberately not fed into ``coverage_stale`` / ``wd stale`` (bd 0jck's
+    reasoning for the file-keyed sibling, applied here directly): a
+    permanently failing command would then earn a refresh on every read,
+    forever, for no benefit. Read-only and off the hot read path -- this
+    parses the already-written state file, at most once per ``wd doctor``
+    invocation, same as :func:`check_strategies` reads ``discover.yaml``.
+    """
+    state = load_state(root)
+    if state is None or not state.sources_with_failed_strategy:
+        return []
+    results: list = []
+    for info in state.sources_with_failed_strategy.values():
+        kind = info.get("kind", "unknown") if isinstance(info, dict) else "unknown"
+        reason = info.get("reason", "") if isinstance(info, dict) else ""
+        message = f"source entry failed ({kind})"
+        if reason:
+            message += f": {reason}"
+        results.append(result_cls("warn", message, "Strategies"))
+    return results
+
+
+#: Cap on inline file paths shown for a ``files_with_failed_strategy``
+#: report. Unlike its entry-keyed sibling above -- bounded implicitly by the
+#: number of ``discover.yaml`` source entries, typically a handful -- one
+#: missing optional dependency or one disallowed strategy under ``--safe``
+#: can fail every file of a language, so this field has no such ceiling.
+#: Bounded here instead (ADR 0082 discipline: bound the list, but always
+#: report the true count so a large failure set is never undercounted).
+_MAX_FAILED_FILES_SHOWN = 10
+
+
+def check_failed_files(root: Path, result_cls: type) -> list:
+    """Report files ``discovery-state.json`` recorded as strategy failures.
+
+    Bd hch4: a file no strategy could speak for this run -- refused by
+    ``--safe``, a strategy that would not load, or a file a strategy could
+    not parse -- is recorded in ``DiscoveryState.files_with_failed_strategy``
+    so the ADR 0008 per-file repair keeps retrying it while the vouching
+    audit stays exempt. Until bd 0jck (this function), the only trace was a
+    stderr line on the run that hit it.
+
+    File-keyed sibling of :func:`check_failed_sources` (bd um00,
+    entry-keyed), reached the same way: read-only and off the hot read
+    path, one parse of the already-written state file per ``wd doctor``
+    invocation. Deliberately not fed into ``coverage_stale`` / ``wd
+    stale`` -- a permanently failing file would then earn a refresh, which
+    would fail the same way, on every read, forever.
+
+    Unlike the entry-keyed sibling, no per-file reason is recorded here
+    (only the path), so the message cannot name a strategy the way
+    ``check_failed_sources`` names a ``kind`` -- it points instead at
+    where that detail actually lives: stderr on the next ``wd discover``.
+    """
+    state = load_state(root)
+    if state is None or not state.files_with_failed_strategy:
+        return []
+    files = sorted(state.files_with_failed_strategy)
+    count = len(files)
+    shown = files[:_MAX_FAILED_FILES_SHOWN]
+    remaining = count - len(shown)
+    suffix = "files" if count != 1 else "file"
+    message = (
+        f"{count} {suffix} could not be processed by their strategy: "
+        + ", ".join(shown)
+    )
+    if remaining > 0:
+        message += f", +{remaining} more"
+    message += " -- rerun `wd discover` to see the strategy and reason in stderr"
+    return [result_cls("warn", message, "Strategies")]

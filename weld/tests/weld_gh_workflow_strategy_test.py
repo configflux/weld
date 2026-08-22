@@ -99,8 +99,8 @@ class TestGhWorkflowExtract(unittest.TestCase):
             result = extract(root, source, {})
 
             self.assertIsInstance(result, StrategyResult)
-            self.assertIn("workflow:ci", result.nodes)
-            node = result.nodes["workflow:ci"]
+            self.assertIn("workflow:.github/workflows/ci", result.nodes)
+            node = result.nodes["workflow:.github/workflows/ci"]
             self.assertEqual(node["type"], "workflow")
             self.assertEqual(node["label"], "CI")
 
@@ -114,7 +114,7 @@ class TestGhWorkflowExtract(unittest.TestCase):
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            props = result.nodes["workflow:ci"]["props"]
+            props = result.nodes["workflow:.github/workflows/ci"]["props"]
             self.assertIn("pull_request", props["triggers"])
             self.assertIn("push", props["triggers"])
 
@@ -128,7 +128,7 @@ class TestGhWorkflowExtract(unittest.TestCase):
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            props = result.nodes["workflow:ci"]["props"]
+            props = result.nodes["workflow:.github/workflows/ci"]["props"]
             self.assertIn("build", props["jobs"])
             self.assertIn("lint", props["jobs"])
 
@@ -142,7 +142,7 @@ class TestGhWorkflowExtract(unittest.TestCase):
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            props = result.nodes["workflow:ci"]["props"]
+            props = result.nodes["workflow:.github/workflows/ci"]["props"]
             self.assertIn("contents: read", props["permissions"])
 
     def test_extracts_concurrency(self) -> None:
@@ -155,7 +155,7 @@ class TestGhWorkflowExtract(unittest.TestCase):
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            props = result.nodes["workflow:ci"]["props"]
+            props = result.nodes["workflow:.github/workflows/ci"]["props"]
             self.assertIsNotNone(props["concurrency"])
 
     def test_normalized_metadata_contract(self) -> None:
@@ -186,7 +186,7 @@ class TestGhWorkflowExtract(unittest.TestCase):
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            node = result.nodes["workflow:delivery_placeholder"]
+            node = result.nodes["workflow:.github/workflows/delivery_placeholder"]
             self.assertEqual(node["type"], "workflow")
             props = node["props"]
             self.assertIn("workflow_dispatch", props["triggers"])
@@ -204,8 +204,8 @@ class TestGhWorkflowExtract(unittest.TestCase):
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            self.assertIn("workflow:ci", result.nodes)
-            self.assertIn("workflow:deploy", result.nodes)
+            self.assertIn("workflow:.github/workflows/ci", result.nodes)
+            self.assertIn("workflow:.github/workflows/deploy", result.nodes)
             self.assertEqual(len(result.discovered_from), 2)
 
     def test_exclude_pattern(self) -> None:
@@ -253,8 +253,8 @@ class TestGhWorkflowExtract(unittest.TestCase):
             source = {"glob": ".github/workflows/*.yml"}
             result = extract(root, source, {})
 
-            self.assertIn("workflow:simple", result.nodes)
-            props = result.nodes["workflow:simple"]["props"]
+            self.assertIn("workflow:.github/workflows/simple", result.nodes)
+            props = result.nodes["workflow:.github/workflows/simple"]["props"]
             self.assertEqual(props["triggers"], ["push"])
             self.assertIn("check", props["jobs"])
 
@@ -269,6 +269,96 @@ class TestGhWorkflowExtract(unittest.TestCase):
             result = extract(root, source, {})
 
             self.assertIn(".github/workflows/ci.yml", result.discovered_from)
+
+
+class TestGhWorkflowInvokesEdges(unittest.TestCase):
+    """``run:`` steps that invoke a repo script by path get an edge (bd lwrh).
+
+    Mirrors ``TestYamlMetaInvokesEdges`` -- both strategies mint the same
+    ``workflow:`` node shape and share the same run:-block extractor
+    (:mod:`weld.strategies._workflow_run_refs`), so both get the same
+    capability.
+    """
+
+    def _invokes(self, result) -> list[dict]:
+        return [e for e in result.edges if e["type"] == "invokes"]
+
+    def test_inline_run_becomes_an_inferred_invokes_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wf_dir = root / ".github" / "workflows"
+            wf_dir.mkdir(parents=True)
+            (root / "tools").mkdir()
+            (root / "tools" / "audit.sh").write_text("#!/bin/sh\n")
+            (wf_dir / "ci.yml").write_text(
+                "name: CI\non: push\njobs:\n  x:\n    steps:\n"
+                "      - run: tools/audit.sh --dry-run\n"
+            )
+            result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
+            edges = self._invokes(result)
+            self.assertTrue(edges)
+            self.assertEqual(
+                {e["from"] for e in edges}, {"workflow:.github/workflows/ci"}
+            )
+            self.assertIn("tool:tools/audit", {e["to"] for e in edges})
+            for edge in edges:
+                self.assertEqual(edge["props"]["confidence"], "inferred")
+                self.assertEqual(edge["props"]["source_strategy"], "gh_workflow")
+                # ADR 0074 (bd 57lra): provenance names the workflow file
+                # this edge was scanned from, never the invoked target --
+                # the same stamp yaml_meta takes, for the identical reason
+                # (this strategy is not wired into this repo's own
+                # discover.yaml, so the incremental-purge contract itself
+                # is pinned by yaml_meta's equivalence test; this asserts
+                # the two strategies stay in the same shape).
+                self.assertEqual(
+                    edge["props"]["provenance"], {"file": ".github/workflows/ci.yml"}
+                )
+
+    def test_conditional_block_run_is_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wf_dir = root / ".github" / "workflows"
+            wf_dir.mkdir(parents=True)
+            (root / "tools").mkdir()
+            (root / "tools" / "verify.py").write_text("")
+            (wf_dir / "release.yml").write_text(
+                "name: Release\non: push\njobs:\n  verify:\n    steps:\n"
+                "      - name: Verify\n"
+                "        run: |\n"
+                "          if [ -f tools/verify.py ]; then\n"
+                "            python tools/verify.py --strict\n"
+                "          fi\n"
+            )
+            result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
+            targets = {e["to"] for e in self._invokes(result)}
+            self.assertIn("file:tools/verify", targets)
+
+    def test_unresolvable_variable_path_yields_no_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wf_dir = root / ".github" / "workflows"
+            wf_dir.mkdir(parents=True)
+            (root / "tools").mkdir()
+            (root / "tools" / "real.py").write_text("")
+            (wf_dir / "ci.yml").write_text(
+                "name: CI\non: push\njobs:\n  x:\n    steps:\n"
+                '      - run: python "tools/${SCRIPT}.py"\n'
+            )
+            result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
+            self.assertEqual(self._invokes(result), [])
+
+    def test_simple_workflow_run_steps_yield_no_edges(self) -> None:
+        # _SIMPLE_WORKFLOW's run: steps (npm install/test/lint) name no
+        # repo-relative script -- a regression guard that new edges do not
+        # appear from nowhere.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wf_dir = root / ".github" / "workflows"
+            wf_dir.mkdir(parents=True)
+            (wf_dir / "ci.yml").write_text(_SIMPLE_WORKFLOW)
+            result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
+            self.assertEqual(self._invokes(result), [])
 
 
 if __name__ == "__main__":

@@ -29,11 +29,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._provenance import file_provenance
 
 #: Default HTTP method when a Flask decorator omits ``methods=``.
 _DEFAULT_METHOD: str = "GET"
@@ -271,24 +270,21 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     pattern = source["glob"]
     excludes = source.get("exclude", [])
-    if "**" in pattern:
-        candidates = sorted(root.glob(pattern))
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return StrategyResult(nodes, edges, discovered_from)
-        candidates = sorted(parent.glob(Path(pattern).name))
-
-    candidates = filter_glob_results(root, candidates, excludes=excludes)
-    discovered_dirs: set[str] = set()
+    candidates = resolve_glob(root, pattern, excludes)
 
     for py in candidates:
         if not py.is_file():
             continue
         if py.name.startswith("_") and py.name != "__init__.py":
             continue
-        if should_skip(py, excludes, root=root):
-            continue
+        # Provenance is this file, recorded before the read (bd od2a). The
+        # parent directory it used to record degenerated to ``"./"`` for a
+        # repo-root match -- the marker that makes every path in the
+        # repository count as tracked source. Recording before the read also
+        # closes the hole the old ``if emitted_here`` placement left: a
+        # module with no route today was not provenance, so adding the first
+        # ``@app.route`` to it never marked the graph stale.
+        discovered_from.extend(file_provenance(root, [py]))
         try:
             tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
         except (SyntaxError, OSError, UnicodeDecodeError):
@@ -299,9 +295,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         if not carriers:
             continue
 
-        rel_path = str(py.relative_to(root))
+        rel_path = rel_to_root(py, root)
         module_path = _module_dotted_path(rel_path)
-        emitted_here = _emit_for_module(
+        _emit_for_module(
             tree=tree,
             carriers=carriers,
             rel_path=rel_path,
@@ -309,10 +305,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             nodes=nodes,
             edges=edges,
         )
-        if emitted_here:
-            discovered_dirs.add(str(py.parent.relative_to(root)) + "/")
 
-    discovered_from = sorted(discovered_dirs)
     return StrategyResult(nodes, edges, discovered_from)
 
 
@@ -322,8 +315,10 @@ def _emit_for_module(
 ) -> bool:
     """Run decorator + add_url_rule scans for one module.
 
-    Returns ``True`` when at least one route was emitted so the
-    caller records the parent directory under ``discovered_from``.
+    Returns ``True`` when at least one route was emitted. The caller no
+    longer branches on it for provenance -- every module it reads is
+    recorded, emitting or not (bd od2a) -- but the flag stays part of the
+    scan's answer for callers and tests that ask what a module produced.
     """
     any_emitted = False
 

@@ -221,6 +221,96 @@ def file_id(rel_path: Union[str, PurePosixPath]) -> str:
     return f"file:{cleaned}"
 
 
+def tool_id(rel_path: Union[str, PurePosixPath]) -> str:
+    """Return the canonical ``tool:`` ID for an executable script path.
+
+    The rule is :func:`file_id`'s, under a different prefix:
+    ``"tool:" + rel_posix_path_without_extension``. The *path* is used, not
+    the bare stem, and that is the whole point of this function existing.
+
+    ``tool_script`` previously minted ``tool:<stem>``, which was safe only
+    while the repo's single ``tool_script`` entry was anchored at the root
+    and could therefore hold at most one script per name. Widening the scope
+    to a directory tree makes ``tools/x.sh`` and ``tools/sub/x.sh`` mint the
+    same ``tool:x`` and silently **merge two scripts into one node** -- a
+    wrong-but-real node, indistinguishable at the point of use from a real
+    one, which is the failure class :data:`weld.strategies._target_ids.
+    FILE_NODE_EXTENSIONS` was made deny-by-default to prevent. Path
+    qualification removes the collision by construction rather than
+    detecting it afterwards, which is also what lets a *referrer* offer a
+    ``tool:`` spelling for a path literal at all (bd x5ec, bd mdvp).
+
+    Every ``tool:`` node this repo minted before path qualification sat at
+    the repo root, where the qualified form and the stem form are the same
+    string, so the change is a no-op for them. A script one directory down
+    is newly distinguishable rather than newly renamed.
+
+    Examples
+    --------
+    >>> tool_id("gradlew")
+    'tool:gradlew'
+    >>> tool_id("install.sh")
+    'tool:install'
+    >>> tool_id("tools/publish.sh")
+    'tool:tools/publish'
+    >>> tool_id("tools/sub/publish.sh") != tool_id("tools/publish.sh")
+    True
+    """
+    return "tool:" + file_id(rel_path).split(":", 1)[1]
+
+
+def workflow_id(rel_path: Union[str, PurePosixPath]) -> str:
+    """Return the canonical ``workflow:`` ID for a CI workflow file path.
+
+    :func:`file_id`'s rule under a different prefix, for the same reason
+    :func:`tool_id` path-qualified ``tool:``: a bare stem collides once a
+    second directory can hold a same-named workflow file, which is exactly
+    what widening ``workflow:`` discovery past ``.github/workflows/`` to
+    ``tools/publish_overlays/*.yml`` (the internal home for the public
+    repo's release workflows) creates --
+    ``tools/publish_overlays/install-test.yml`` and
+    ``.github/workflows/install-test.yml`` are two different files that
+    would otherwise both mint ``workflow:install-test`` (bd lwrh; ADR 0106).
+
+    Examples
+    --------
+    >>> workflow_id(".github/workflows/ci.yml")
+    'workflow:.github/workflows/ci'
+    >>> workflow_id("tools/publish_overlays/install-test.yml")
+    'workflow:tools/publish_overlays/install-test'
+    """
+    return "workflow:" + file_id(rel_path).split(":", 1)[1]
+
+
+def config_id(rel_path: str) -> str:
+    """Return the canonical ``config:`` ID for a root config file.
+
+    Leading dots are stripped so ``.bazelrc`` becomes ``config:bazelrc``, and
+    both separators and dots collapse to underscores. Unlike :func:`file_id`
+    the extension is *kept* (as an underscore-joined segment), because a
+    ``config:`` node is minted for whatever file the ``.weld/discover.yaml``
+    entry names -- ``install.sh`` and ``install.py`` are two config files and
+    must not share an ID.
+
+    This rule was minted in two places until bd hxsi: the
+    ``config_file`` strategy that creates the nodes, and
+    :func:`weld.strategies._target_ids.config_id`, which the referring
+    strategies use to guess the spelling. That is the same duplication that
+    silently rotted when the ADR 0041 rename moved ``file:`` IDs (bd u5dt) --
+    a wrong spelling and an unresolvable one are indistinguishable once the
+    dangling-edge sweep has run. Both callers now import this one.
+
+    Examples
+    --------
+    >>> config_id(".bazelrc")
+    'config:bazelrc'
+    >>> config_id("docs/guide.md")
+    'config:docs_guide_md'
+    """
+    safe = rel_path.lstrip(".").replace("/", "_").replace(".", "_")
+    return f"config:{safe}"
+
+
 def package_id(language: Union[str, None], name: str) -> str:
     """Return the canonical ``package:`` ID for a language package.
 
@@ -290,7 +380,10 @@ def entity_id(
 __all__ = [
     "canonical_slug",
     "canonical_slug_case_sensitive",
+    "config_id",
     "file_id",
     "package_id",
     "entity_id",
+    "tool_id",
+    "workflow_id",
 ]

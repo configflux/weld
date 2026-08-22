@@ -385,7 +385,3 @@ def main(argv: list[str] | None = None) -> None:
     if args.diff:
         # --diff exits with 1 when any target differs, 0 otherwise.
         raise SystemExit(1 if diff_count else 0)
-
-
-if __name__ == "__main__":
-    main()

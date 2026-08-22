@@ -26,6 +26,8 @@ import json
 import tempfile
 from pathlib import Path
 
+from weld._safe_text import sanitize_terminal_line, sanitize_terminal_text
+from weld._version import weld_version
 from weld.bench.runner import (
     load_prompts,
     render_report,
@@ -43,23 +45,31 @@ _DEFAULT_PUBLIC_CORPUS = Path("weld/bench/public_corpus.yaml")
 _DEFAULT_PUBLIC_REPORT = Path("docs/bench/PUBLIC-BENCHMARK.md")
 
 
-def _resolve_public_report_path(args, root: Path) -> Path:
+def _resolve_public_report_path(root: Path) -> Path:
     """Compute the default ``--public`` report path.
 
     The committable artifact lives at
     ``docs/bench/PUBLIC-BENCHMARK-<version>.md`` so each release ships
-    a versioned report (ADR 0059 release cadence). The version is read
-    from the ``VERSION`` file at the repo root; when absent we fall
-    back to the unversioned path.
+    a versioned report (ADR 0059 release cadence). That version names
+    the weld that earned the numbers, so it comes from the same
+    :mod:`weld._version` resolver the report header uses -- one fact,
+    resolved twice at different moments, must not answer twice.
+
+    Notably *not* from ``<root>/VERSION``: ``root`` is the repository
+    being benchmarked, so an installed weld pointed at someone else's
+    tree used to name the report after their release history.
+
+    ``root`` still anchors the directory -- the report is written beside
+    the tree it describes. When the version cannot be resolved at all
+    the unversioned path stands: the header can say "unknown" because it
+    is prose, but a filename has no room to say it and must not stamp a
+    version-shaped non-version instead.
     """
-    version_file = root / "VERSION"
-    try:
-        version = version_file.read_text(encoding="utf-8").strip()
-    except OSError:
-        version = ""
+    report = root / _DEFAULT_PUBLIC_REPORT
+    version = weld_version()
     if version:
-        return root / "docs" / "bench" / f"PUBLIC-BENCHMARK-{version}.md"
-    return root / _DEFAULT_PUBLIC_REPORT
+        return report.with_stem(f"{report.stem}-{version}")
+    return report
 
 
 def _run_token_bench(args) -> int:
@@ -77,13 +87,16 @@ def _run_token_bench(args) -> int:
     results = run_bench(prompts, root)
     report = render_report(results)
     if args.print_only:
-        print(report, end="")
+        # Only the tty copy is escaped; the artifact keeps its exact bytes.
+        print(sanitize_terminal_text(report), end="")
         return 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(report, encoding="utf-8")
     print(
-        f"wrote {out_path} ({len(results)} prompts, "
-        f"tokenizer={tokenizer_name()})"
+        sanitize_terminal_line(
+            f"wrote {out_path} ({len(results)} prompts, "
+            f"tokenizer={tokenizer_name()})"
+        )
     )
     return 0
 
@@ -109,7 +122,7 @@ def _run_quality_bench(args) -> int:
     results = run_quality(cases, root)
     report = render_quality_report(results)
     if args.print_only:
-        print(report, end="")
+        print(sanitize_terminal_text(report), end="")
         return 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(report, encoding="utf-8")
@@ -149,7 +162,7 @@ def _run_compare_bench(args) -> int:
     results = run_compare(tasks, root)
     report = render_compare_report(results)
     if args.print_only:
-        print(report, end="")
+        print(sanitize_terminal_text(report), end="")
         return 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(report, encoding="utf-8")
@@ -192,7 +205,7 @@ def _run_report(args) -> int:
     report = render_compare_report(results)
     out_path = args.out
     if out_path is None or args.print_only:
-        print(report, end="")
+        print(sanitize_terminal_text(report), end="")
         return 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(report, encoding="utf-8")
@@ -208,7 +221,7 @@ def _run_public_bench(args) -> int:
 
     root = args.root.resolve()
     corpus_path = args.corpus or (root / _DEFAULT_PUBLIC_CORPUS)
-    out_path = args.out or _resolve_public_report_path(args, root)
+    out_path = args.out or _resolve_public_report_path(root)
     if not corpus_path.exists():
         print(f"error: public corpus manifest not found: {corpus_path}")
         return 1
@@ -249,7 +262,7 @@ def _run_public_bench(args) -> int:
         return 0
 
     if args.print_only:
-        print(rendered, end="")
+        print(sanitize_terminal_text(rendered), end="")
         return 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(rendered, encoding="utf-8")
@@ -294,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "With --public: re-run the corpus and assert byte-identity "
-            "against the existing report at --out. ADR 0059."
+            "against the existing report at --out."
         ),
     )
     parser.add_argument(
@@ -322,10 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     mode_group.add_argument(
         "--public",
         action="store_true",
-        help=(
-            "Run the public benchmark against a SHA-pinned corpus "
-            "(ADR 0059)."
-        ),
+        help="Run the public benchmark against a SHA-pinned corpus.",
     )
     args = parser.parse_args(argv)
 

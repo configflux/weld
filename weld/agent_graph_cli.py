@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from weld._safe_text import (
+    dumps_safe_json,
+    sanitize_json_text,
+    sanitize_terminal_line,
+    sanitize_terminal_text,
+)
 from weld.agent_graph_audit import audit_graph
 from weld.agent_graph_discovery import discover_agent_graph
 from weld.agent_graph_inventory import asset_entries, explain_asset, impact_asset
 from weld.agent_graph_plan import plan_change
 from weld.agent_graph_render import (
+    format_asset_list,
+    format_diagnostic_list,
+    format_discover_summary,
     print_audit,
     print_change_plan,
     print_explanation,
@@ -108,7 +115,9 @@ def _run_discover(args: argparse.Namespace) -> int:
     diagnostics = (graph.get("meta") or {}).get("diagnostics") or []
     exit_code = 1 if any(d.get("severity") == "error" for d in diagnostics) else 0
     if args.json:
-        sys.stdout.write(dumps_graph(graph))
+        # Escape at the tty only; the persisted agent-graph.json above keeps
+        # its canonical bytes.
+        sys.stdout.write(sanitize_json_text(dumps_graph(graph)))
         return exit_code
     _print_discover_summary(graph, output_path, root=root, no_write=args.no_write)
     if args.show_diagnostics and diagnostics:
@@ -147,7 +156,11 @@ def _run_list(args: argparse.Namespace) -> int:
                 "type": args.type_filter,
             },
         }
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                payload, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
         return 0
     _print_asset_list(entries)
     return 0
@@ -184,10 +197,19 @@ def _run_explain(args: argparse.Namespace) -> int:
     query = _query_relative_to_root(args.asset, root)
     explanation = explain_asset(graph, query)
     if explanation is None:
-        print(f"Agent Graph asset not found: {args.asset}", file=sys.stderr)
+        print(
+            sanitize_terminal_line(
+                f"Agent Graph asset not found: {args.asset}"
+            ),
+            file=sys.stderr,
+        )
         return 2
     if args.json:
-        sys.stdout.write(json.dumps(explanation, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                explanation, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
         return 0
     print_explanation(explanation)
     return 0
@@ -219,10 +241,19 @@ def _run_impact(args: argparse.Namespace) -> int:
     query = _query_relative_to_root(args.asset, root)
     impact = impact_asset(graph, query)
     if impact is None:
-        print(f"Agent Graph asset not found: {args.asset}", file=sys.stderr)
+        print(
+            sanitize_terminal_line(
+                f"Agent Graph asset not found: {args.asset}"
+            ),
+            file=sys.stderr,
+        )
         return 2
     if args.json:
-        sys.stdout.write(json.dumps(impact, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                impact, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
         return 0
     print_impact(impact)
     return 0
@@ -244,7 +275,7 @@ def _add_audit_parser(subparsers: Any) -> None:
         "--strict",
         action="store_true",
         help=(
-            "Surface canonical+rendered groups silenced by ADR 0029 as "
+            "Surface normally-silenced canonical+rendered groups as "
             "info-level findings (codes suffixed `_suppressed`)."
         ),
     )
@@ -257,7 +288,11 @@ def _run_audit(args: argparse.Namespace) -> int:
         return 2
     payload = audit_graph(graph, root=root, strict=args.strict)
     if args.json:
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                payload, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
         return 0
     print_audit(payload)
     return 0
@@ -288,7 +323,11 @@ def _run_plan_change(args: argparse.Namespace) -> int:
         return 2
     payload = plan_change(graph, args.request)
     if args.json:
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                payload, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
         return 0
     print_change_plan(payload)
     return 0
@@ -298,7 +337,7 @@ def _load_persisted_graph(root: Path) -> dict[str, Any] | None:
     try:
         return load_agent_graph(root)
     except AgentGraphNotFoundError as exc:
-        print(str(exc), file=sys.stderr)
+        print(sanitize_terminal_line(str(exc)), file=sys.stderr)
         return None
 
 
@@ -313,27 +352,7 @@ def _query_relative_to_root(raw: str, root: Path) -> str:
 
 
 def _print_asset_list(entries: list[dict[str, Any]]) -> None:
-    if not entries:
-        print("No Agent Graph assets found.")
-        return
-
-    current_platform: str | None = None
-    for entry in entries:
-        if entry["platform_name"] != current_platform:
-            if current_platform is not None:
-                print()
-            current_platform = entry["platform_name"]
-            print(current_platform)
-        print(_format_asset_row(entry))
-
-
-def _format_asset_row(entry: dict[str, Any]) -> str:
-    description = entry["description"]
-    suffix = f" - {description}" if description else ""
-    return (
-        f"  {entry['type']:<12} {entry['name']:<24} "
-        f"{entry['path']} [{entry['status']}]{suffix}"
-    ).rstrip()
+    sys.stdout.write(sanitize_terminal_text(format_asset_list(entries)))
 
 
 def _print_discover_summary(
@@ -343,42 +362,18 @@ def _print_discover_summary(
     root: Path,
     no_write: bool,
 ) -> None:
-    meta = graph.get("meta", {})
-    diagnostics = meta.get("diagnostics") or []
-    discovered_from = meta.get("discovered_from") or []
-    print("Agent Graph discovery")
-    print(f"Root: {_display_path(root, root)}")
-    print(f"Assets: {len(discovered_from)}")
-    print(f"Nodes: {len(graph.get('nodes', {}))}")
-    print(f"Edges: {len(graph.get('edges', []))}")
-    print(_format_diagnostics_summary(diagnostics))
-    if no_write:
-        print("Write: skipped (--no-write)")
-    else:
-        path = output_path or agent_graph_path(root)
-        print(f"Write: {_display_path(path, root)}")
-
-
-def _format_diagnostics_summary(diagnostics: list[dict[str, Any]]) -> str:
-    total = len(diagnostics)
-    if total == 0:
-        return "Diagnostics: 0"
-    counts = Counter(d.get("code") or "<unknown>" for d in diagnostics)
-    breakdown = ", ".join(
-        f"{count} {code}" for code, count in counts.most_common()
-    )
-    return f"Diagnostics: {total} ({breakdown})"
+    write_display = None
+    if not no_write:
+        write_display = _display_path(output_path or agent_graph_path(root), root)
+    sys.stdout.write(sanitize_terminal_text(format_discover_summary(
+        graph,
+        root_display=_display_path(root, root),
+        write_display=write_display,
+    )))
 
 
 def _print_diagnostic_list(diagnostics: list[dict[str, Any]]) -> None:
-    for diag in diagnostics:
-        severity = diag.get("severity") or "warning"
-        code = diag.get("code") or "<unknown>"
-        path = diag.get("path") or "<unknown>"
-        line = diag.get("line")
-        loc = f"{path}:{line}" if line is not None else path
-        message = diag.get("message") or ""
-        print(f"  {severity} {code} {loc} - {message}".rstrip())
+    sys.stdout.write(sanitize_terminal_text(format_diagnostic_list(diagnostics)))
 
 
 def _display_path(path: Path, root: Path) -> str:

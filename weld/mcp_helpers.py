@@ -5,6 +5,13 @@ cap. Each function here is a thin adapter that
 loads a fresh ``Graph`` and delegates to the underlying helper -- same
 pattern as the adapters in ``mcp_server.py``.
 
+``weld_enrich`` and its descriptor moved on to :mod:`weld._mcp_enrich` when
+this module in turn reached the cap. Nothing here may import that module
+back -- there is deliberately no re-export.
+
+:func:`resolve_node_id_via_alias` serves the tools defined here.
+``weld_enrich`` does not use it: enrichment resolves a legacy node id in
+:mod:`weld._enrich_selection` instead, so the CLI gets the same treatment.
 """
 
 from __future__ import annotations
@@ -12,28 +19,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from weld._mcp_read import load_graph_for_read as _load_for_read
-from weld.enrich import enrich as _enrich
 from weld.federation import FederatedGraph as _FederatedGraph
 from weld.federation_tools import federated_impact as _federated_impact
 from weld.federation_tools import federated_trace as _federated_trace
 from weld.graph import Graph as _Graph
 from weld.impact import impact as _impact
 from weld.trace import trace as _trace
-
-
-def _load_graph(root: Path) -> _Graph:
-    """Uncached graph load for the *mutating* enrich path.
-
-    ``weld_enrich`` mutates the graph and persists it; it must own a fresh
-    in-memory object rather than the process-wide read cache (a persist must
-    never write back from a shared instance). The read helpers (``weld_trace``
-    / ``weld_impact``) use
-    :func:`weld._mcp_read.load_single_repo_for_read` instead, so they inherit
-    the auto-refresh + sha-keyed cache (bd 85tb.3).
-    """
-    g = _Graph(root)
-    g.load()
-    return g
 
 
 def resolve_node_id_via_alias(graph: _Graph, node_id: str | None) -> str | None:
@@ -61,6 +52,7 @@ def weld_trace(
     node_id: str | None = None,
     depth: int = 2,
     seed_limit: int = 5,
+    full_size: bool = False,
     root: Path | str = ".",
 ) -> dict:
     """Protocol-aware cross-boundary slice. Delegates to ``weld.trace.trace``.
@@ -71,22 +63,31 @@ def weld_trace(
     a stale graph and reuses the in-process cache (bd 85tb.3) via
     :func:`weld._mcp_read.load_graph_for_read`. At a federated root the graph is
     flattened across children (ADR 0089) so the trace reaches child nodes.
+
+    Bounded by the shared :func:`weld.read_traversal.shape_trace` (ADR 0082),
+    the same shaper ``wd trace`` applies, so the two surfaces agree
+    (ADR 0083); *full_size* skips the byte budget.
     """
+    from weld.read_traversal import shape_trace
+
     g = _load_for_read(Path(root))
     if isinstance(g, _FederatedGraph):
-        return _federated_trace(
+        result = _federated_trace(
             g, term=term, node_id=node_id, depth=depth, seed_limit=seed_limit,
         )
-    node_id = resolve_node_id_via_alias(g, node_id)
-    return _trace(
-        g, term=term, node_id=node_id, depth=depth, seed_limit=seed_limit,
-    )
+    else:
+        node_id = resolve_node_id_via_alias(g, node_id)
+        result = _trace(
+            g, term=term, node_id=node_id, depth=depth, seed_limit=seed_limit,
+        )
+    return shape_trace(result, full_size=full_size)
 
 
 def weld_impact(
     target: str,
     depth: int = 3,
     *,
+    full_size: bool = False,
     root: Path | str = ".",
 ) -> dict:
     """Reverse-dependency blast radius for a node id or file path.
@@ -96,50 +97,28 @@ def weld_impact(
     aliases of node ids). Self-heals on a stale graph and reuses the
     in-process cache (bd 85tb.3). At a federated root the graph is flattened
     across children (ADR 0089) so the reverse-BFS reaches child dependents.
+
+    Bounded by the shared :func:`weld.read_traversal.shape_impact` (ADR 0082),
+    the same shaper ``wd impact --json`` applies, so the two surfaces agree
+    (ADR 0083). Without it a hot dispatcher's blast radius exceeded the agent
+    tool-result cap and the tool returned nothing readable on exactly the nodes
+    worth asking about. ``affected_surfaces`` and ``risk_level`` are never
+    pruned; *full_size* skips the byte budget entirely.
     """
+    from weld.read_traversal import shape_impact
+
     g = _load_for_read(Path(root))
     if isinstance(g, _FederatedGraph):
-        return _federated_impact(g, target, depth=depth)
+        return shape_impact(
+            _federated_impact(g, target, depth=depth), full_size=full_size,
+        )
     target = resolve_node_id_via_alias(g, target) or target
     try:
-        return _impact(g, target=target, depth=depth)
+        result = _impact(g, target=target, depth=depth)
     except ValueError as exc:
         return {"error": str(exc)}
+    return shape_impact(result, full_size=full_size)
 
-
-def weld_enrich(
-    *,
-    node_id: str | None = None,
-    provider: str | None = None,
-    model: str | None = None,
-    force: bool = False,
-    max_tokens: int | None = None,
-    max_cost: float | None = None,
-    root: Path | str = ".",
-) -> dict:
-    """LLM-assisted semantic enrichment for one node or the whole graph.
-
-    Alias-aware per ADR 0041 for the optional *node_id* argument.
-    """
-    from weld._graph_write_lock import graph_write_lock
-    try:
-        # ADR 0094: same lock span as the wd enrich CLI (load -> mutate ->
-        # save) so MCP and CLI writers serialize with each other.
-        with graph_write_lock(Path(root)):
-            g = _load_graph(Path(root))
-            node_id = resolve_node_id_via_alias(g, node_id)
-            return _enrich(
-                g,
-                provider_name=provider,
-                model=model,
-                node_id=node_id,
-                force=force,
-                max_tokens=max_tokens,
-                max_cost=max_cost,
-                persist=True,
-            )
-    except (RuntimeError, ValueError) as exc:
-        return {"error": str(exc)}
 
 def build_trace_tool() -> dict:
     """Return ``(name, description, input_schema, handler)`` for weld_trace.
@@ -333,50 +312,4 @@ def build_review_tool() -> dict:
             "additionalProperties": False,
         },
         "handler": weld_review,
-    }
-
-
-def build_enrich_tool() -> dict:
-    """Return the MCP tool descriptor for ``weld_enrich``."""
-    return {
-        "name": "weld_enrich",
-        "description": (
-            "LLM-assisted semantic enrichment for a node or the full graph. "
-            "Returns enriched, skipped, and error lists in a stable envelope."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "node_id": {
-                    "type": "string",
-                    "description": "Limit enrichment to one node id.",
-                },
-                "provider": {
-                    "type": "string",
-                    "description": "Provider name or env-configured default.",
-                },
-                "model": {
-                    "type": "string",
-                    "description": "Override the provider's default model.",
-                },
-                "force": {
-                    "type": "boolean",
-                    "description": "Rewrite existing matching enrichment.",
-                    "default": False,
-                },
-                "max_tokens": {
-                    "type": "integer",
-                    "description": "Stop after this many tracked tokens.",
-                    "minimum": 0,
-                },
-                "max_cost": {
-                    "type": "number",
-                    "description": "Stop after this much tracked cost.",
-                    "minimum": 0,
-                },
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-        "handler": weld_enrich,
     }

@@ -66,47 +66,6 @@ def _calls_edges(graph: dict) -> list[tuple]:
     )
 
 
-def _without_closure_anchors(graph: dict) -> dict:
-    """Strip graph_closure-synthesised file anchors + their contains edges.
-
-    A *pre-existing* (shipped-code), order-dependent full-discovery
-    artifact is orthogonal to this lever: a cross-glob call target is
-    minted speculative (no ``props.file``) by the *calling* glob and
-    ``dict.update`` last-batch-wins lets that clobber the definite
-    file-bearing node the *defining* glob walked. Whether ``graph_closure``
-    then synthesises a ``file:<path>`` anchor + ``contains`` edge for that
-    symbol therefore depends on glob ordering and on whether the clobbering
-    glob ran. A parse-only-dirty incremental refresh that does not re-run
-    the (clean) clobbering glob keeps the file-bearing node and so keeps
-    the anchor, while a full discover drops it. That divergence exists in
-    shipped code independent of dirty-narrowing (verified: it persists with
-    the strategy unmodified) and is fundamentally incompatible with the
-    lever's premise of not re-parsing clean globs. It is tracked as a
-    separate follow-up. These cross-glob assertions therefore compare the
-    python_callgraph contract surface (symbols, calls/inherits edges,
-    origin tags) and exclude the closure-synthesised file scaffolding.
-    """
-    closure_files = {
-        nid for nid, n in graph.get("nodes", {}).items()
-        if nid.startswith("file:")
-        and n.get("props", {}).get("source_strategy") == "graph_closure"
-    }
-    nodes = {
-        nid: n for nid, n in graph.get("nodes", {}).items()
-        if nid not in closure_files
-    }
-    edges = [
-        e for e in graph.get("edges", [])
-        if e.get("from") not in closure_files and e.get("to") not in closure_files
-    ]
-    out = {k: v for k, v in graph.items() if k not in ("meta", "nodes", "edges")}
-    out["nodes"] = nodes
-    out["edges"] = sorted(
-        edges, key=lambda e: (e["from"], e["to"], e["type"]),
-    )
-    return out
-
-
 class CleanCallerDirtyCalleeSingleGlobTest(unittest.TestCase):
     """Edit a callee; a clean caller in the same glob points at it.
 
@@ -182,18 +141,18 @@ class CleanCallerDirtyCalleeCrossGlobTest(unittest.TestCase):
     yield the cross-glob project-module union, or the tag drifts to
     ``external``).
 
-    Note on the clobbered callee NODE: a full discover mints
-    ``symbol:py:lib.core:helper`` in its *speculative, clobbered* form (the
-    calling ``tools`` glob's ``make_resolved_target_node`` output overwrites
-    the defining glob's definite node via last-batch-wins ``dict.update``).
-    When only the callee is edited, the clean ``tools`` glob is not re-run,
-    so the incremental refresh keeps the *definite* node and cannot
-    reproduce that clobber without re-parsing a clean glob -- a pre-existing
-    full-discovery artifact orthogonal to this lever (tracked as a
-    follow-up). These callee-edit assertions therefore pin the edge + origin
-    contract, not the clobbered node's exact shape. The caller-edit case
-    below (where the clobbering glob *does* re-run) pins the full
-    contract-surface byte-identity.
+    Both directions assert *whole-graph* byte-identity. They did not always:
+    a full discover used to mint ``symbol:py:lib.core:helper`` in its
+    speculative, clobbered form, because the calling ``tools`` glob's
+    ``make_resolved_target_node`` output overwrote the defining glob's
+    definite node under last-batch-wins ``dict.update``. An incremental
+    refresh that never re-ran the clean ``tools`` glob kept the definite node
+    -- and its ``graph_closure`` file anchor and ``contains`` edge -- so the
+    two paths genuinely disagreed. This file used to filter that disagreement
+    out through a ``_without_closure_anchors`` helper and compare only the
+    python_callgraph contract surface. ADR 0103 fixed the clobber at the
+    orchestrator merge (bd 4ux4), so the filter is gone and the exclusion it
+    hid is now pinned.
     """
 
     def _fixture(self, root: Path, callee_body: str) -> None:
@@ -262,6 +221,13 @@ class CleanCallerDirtyCalleeCrossGlobTest(unittest.TestCase):
         # The full call-edge set (from/to/confidence) must match: the
         # inbound cross-glob edge survives and no spurious edge appears.
         self.assertEqual(_calls_edges(g_inc), _calls_edges(g_full))
+        # ADR 0103: whole-graph, including the graph_closure file anchor and
+        # ``contains`` edge the clobber used to take out of the full run.
+        self.assertEqual(
+            _strip_meta(g_inc), _strip_meta(g_full),
+            "edit-the-callee incremental graph must be byte-identical to a "
+            "full discover, closure-synthesised file scaffolding included",
+        )
 
     def test_edit_caller_side_also_matches_full(self) -> None:
         # The pre-existing "edit the caller" case (necessary but, per the
@@ -298,10 +264,9 @@ class CleanCallerDirtyCalleeCrossGlobTest(unittest.TestCase):
             )
 
         self.assertEqual(
-            _without_closure_anchors(_strip_meta(g_inc)),
-            _without_closure_anchors(_strip_meta(g_full)),
-            "edit-the-caller incremental graph must match full discover "
-            "on the python_callgraph contract surface",
+            _strip_meta(g_inc), _strip_meta(g_full),
+            "edit-the-caller incremental graph must be byte-identical to a "
+            "full discover, closure-synthesised file scaffolding included",
         )
 
 

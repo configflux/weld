@@ -8,8 +8,10 @@ When a user runs ``wd enrich`` without ``--provider`` and without the
 * list which provider strings are valid (``Available: ...``), reusing
   the ``wd doctor`` optional-dep detection so the two surfaces never
   drift;
-* point at the agent-direct workflow (``/enrich-weld``) so harnesses
-  without an installed provider know what to run instead;
+* point at the agent-direct workflow (``wd enrich --agent-direct``) so
+  harnesses without an installed provider know what to run instead --
+  and name a *product* command, never a harness-specific slash command
+  the caller may have no way to run (ADR 0098);
 * mention ``--safe`` for users who specifically want to refuse network
   providers.
 
@@ -96,7 +98,8 @@ class BareNoProviderMessageTest(unittest.TestCase):
         ):
             with self.assertRaises(ValueError) as cm:
                 resolve_provider_name(None)
-        self.assertIn("/enrich-weld", str(cm.exception))
+        self.assertIn("wd enrich --agent-direct", str(cm.exception))
+        self.assertNotIn("/enrich-weld", str(cm.exception))
 
     def test_error_mentions_safe_flag(self) -> None:
         with mock.patch.dict(
@@ -122,7 +125,8 @@ class BareNoProviderMessageTest(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 resolve_provider_name(None)
         msg = str(cm.exception)
-        self.assertIn("/enrich-weld", msg)
+        self.assertIn("wd enrich --agent-direct", msg)
+        self.assertNotIn("/enrich-weld", msg)
         self.assertNotIn("Available: \n", msg)
         self.assertNotIn("Available: .", msg)
 
@@ -144,7 +148,8 @@ class SafeModeNoProviderMessageTest(unittest.TestCase):
         ):
             with self.assertRaises(ValueError) as cm:
                 resolve_provider_name(None, safe=True)
-        self.assertIn("/enrich-weld", str(cm.exception))
+        self.assertIn("wd enrich --agent-direct", str(cm.exception))
+        self.assertNotIn("/enrich-weld", str(cm.exception))
 
     def test_error_does_not_recommend_network_install(self) -> None:
         # Recommending `pip install` here would contradict --safe.
@@ -184,7 +189,8 @@ class CliErrorTextTest(unittest.TestCase):
             stderr = err.getvalue()
             self.assertIn("wd enrich:", stderr)
             self.assertIn("Available:", stderr)
-            self.assertIn("/enrich-weld", stderr)
+            self.assertIn("wd enrich --agent-direct", stderr)
+            self.assertNotIn("/enrich-weld", stderr)
 
     def test_main_safe_no_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -207,7 +213,8 @@ class CliErrorTextTest(unittest.TestCase):
             self.assertEqual(rc, 1)
             stderr = err.getvalue()
             self.assertIn("wd enrich:", stderr)
-            self.assertIn("/enrich-weld", stderr)
+            self.assertIn("wd enrich --agent-direct", stderr)
+            self.assertNotIn("/enrich-weld", stderr)
 
 
 class AvailableProviderDetectionTest(unittest.TestCase):

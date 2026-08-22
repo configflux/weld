@@ -1,145 +1,21 @@
 {
-  "edges": [
-    {
-      "from": "compose:default",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "compose"
-      },
-      "to": "service:default:api",
-      "type": "contains"
-    },
-    {
-      "from": "compose:default",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "compose"
-      },
-      "to": "service:default:cache",
-      "type": "contains"
-    },
-    {
-      "from": "dockerfile:Dockerfile",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "dockerfile"
-      },
-      "to": "file:app",
-      "type": "contains"
-    },
-    {
-      "from": "dockerfile:Dockerfile",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "dockerfile"
-      },
-      "to": "file:requirements.txt",
-      "type": "contains"
-    },
-    {
-      "from": "service:default:api",
-      "props": {
-        "confidence": "definite",
-        "source_strategy": "compose"
-      },
-      "to": "dockerfile:Dockerfile",
-      "type": "depends_on"
-    }
-  ],
-  "meta": {
-    "schema_version": 1,
-    "version": 5
-  },
-  "nodes": {
-    "compose:default": {
-      "label": "docker-compose.yml",
-      "props": {
-        "authority": "canonical",
-        "confidence": "definite",
-        "file": "docker-compose.yml",
-        "roles": [
-          "config"
-        ],
-        "services": [
-          "api",
-          "cache"
-        ],
-        "source_strategy": "compose"
-      },
-      "type": "compose"
-    },
-    "dockerfile:Dockerfile": {
-      "label": "Dockerfile",
-      "props": {
-        "authority": "canonical",
-        "base_image": "python:3.12-slim",
-        "confidence": "definite",
-        "file": "Dockerfile",
-        "roles": [
-          "build"
-        ],
-        "source_strategy": "dockerfile"
-      },
-      "type": "dockerfile"
-    },
-    "file:app": {
-      "label": "app",
-      "props": {
-        "authority": "derived",
-        "confidence": "definite",
-        "file": "app",
-        "origin": "project",
-        "roles": [
-          "build"
-        ],
-        "source_strategy": "dockerfile"
-      },
-      "type": "file"
-    },
-    "file:requirements.txt": {
-      "label": "requirements.txt",
-      "props": {
-        "authority": "derived",
-        "confidence": "definite",
-        "file": "requirements.txt",
-        "origin": "project",
-        "roles": [
-          "build"
-        ],
-        "source_strategy": "dockerfile"
-      },
-      "type": "file"
-    },
-    "service:default:api": {
-      "label": "api",
-      "props": {
-        "authority": "canonical",
-        "compose_stem": "default",
-        "confidence": "definite",
-        "file": "docker-compose.yml",
-        "roles": [
-          "config"
-        ],
-        "service_name": "api",
-        "source_strategy": "compose"
-      },
-      "type": "service"
-    },
-    "service:default:cache": {
-      "label": "cache",
-      "props": {
-        "authority": "canonical",
-        "compose_stem": "default",
-        "confidence": "definite",
-        "file": "docker-compose.yml",
-        "roles": [
-          "config"
-        ],
-        "runtime_image": "redis:7",
-        "service_name": "cache",
-        "source_strategy": "compose"
-      },
-      "type": "service"
-    }
-  }
+"edges": [
+{"from": "compose:default", "props": {"confidence": "definite", "source_strategy": "compose"}, "to": "service:default:api", "type": "contains"},
+{"from": "compose:default", "props": {"confidence": "definite", "source_strategy": "compose"}, "to": "service:default:cache", "type": "contains"},
+{"from": "dockerfile:Dockerfile", "props": {"confidence": "definite", "source_strategy": "dockerfile"}, "to": "file:app", "type": "contains"},
+{"from": "dockerfile:Dockerfile", "props": {"confidence": "definite", "source_strategy": "dockerfile"}, "to": "file:requirements.txt", "type": "contains"},
+{"from": "service:default:api", "props": {"confidence": "definite", "source_strategy": "compose"}, "to": "dockerfile:Dockerfile", "type": "depends_on"}
+],
+"meta": {
+  "schema_version": 1,
+  "version": 8
+},
+"nodes": {
+"compose:default": {"label": "docker-compose.yml", "props": {"authority": "canonical", "confidence": "definite", "file": "docker-compose.yml", "roles": ["config"], "services": ["api", "cache"], "source_strategy": "compose"}, "type": "compose"},
+"dockerfile:Dockerfile": {"label": "Dockerfile", "props": {"authority": "canonical", "base_image": "python:3.12-slim", "confidence": "definite", "file": "Dockerfile", "roles": ["build"], "source_strategy": "dockerfile"}, "type": "dockerfile"},
+"file:app": {"label": "app", "props": {"authority": "derived", "confidence": "definite", "file": "app", "origin": "project", "roles": ["build"], "source_strategy": "dockerfile"}, "type": "file"},
+"file:requirements.txt": {"label": "requirements.txt", "props": {"authority": "derived", "confidence": "definite", "file": "requirements.txt", "origin": "project", "roles": ["build"], "source_strategy": "dockerfile"}, "type": "file"},
+"service:default:api": {"label": "api", "props": {"authority": "canonical", "compose_stem": "default", "confidence": "definite", "file": "docker-compose.yml", "roles": ["config"], "service_name": "api", "source_strategy": "compose"}, "type": "service"},
+"service:default:cache": {"label": "cache", "props": {"authority": "canonical", "compose_stem": "default", "confidence": "definite", "file": "docker-compose.yml", "roles": ["config"], "runtime_image": "redis:7", "service_name": "cache", "source_strategy": "compose"}, "type": "service"}
+}
 }

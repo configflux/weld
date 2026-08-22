@@ -22,6 +22,9 @@ import json
 import sys
 from pathlib import Path
 
+from weld._root_resolver import ROOT_HELP, resolve_weld_root
+from weld._safe_text import dumps_safe_json, sanitize_terminal_text
+
 
 # ---------------------------------------------------------------------------
 # Diff computation (pure, no I/O)
@@ -140,7 +143,7 @@ def load_and_diff(root: Path) -> dict:
     looks like "no changes" -- a silent, dangerously-wrong result.  We now let
     its parse failure propagate so each surface translates it to the shared
     ``graph_corrupt`` structured error (CLI: :func:`main`; MCP:
-    ``mcp_server._dispatch_inner`` -> ``_mcp_guard.load_error_payload``, both
+    ``_mcp_dispatch._dispatch_inner`` -> ``_mcp_guard.load_error_payload``, both
     via :func:`weld._errors.classify_graph_load_error`, which derives a safe
     positional detail and never echoes the raw bytes).
     """
@@ -273,24 +276,21 @@ def main(argv: list[str] | None = None) -> int:
         prog="wd diff",
         description="Show what changed between the previous and current discovery run.",
     )
-    parser.add_argument(
-        "root", nargs="?", default=".",
-        help="Project root directory (default: .)",
-    )
+    parser.add_argument("root", nargs="?", default=None, help=ROOT_HELP)
     parser.add_argument(
         "--json", dest="json_output", action="store_true", default=False,
         help="Output machine-readable JSON instead of human summary.",
     )
     args = parser.parse_args(argv)
+    root = resolve_weld_root(args.root)  # ADR 0096
 
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
 
     # Surface a friendly first-run message when the graph has not been
     # built yet; mirrors the behaviour of read commands in _graph_cli
     # (tracked issue / tracked issue).
-    ensure_graph_exists(Path(args.root), _build_retry_hint("diff"))
+    ensure_graph_exists(root, _build_retry_hint("diff"))
 
-    root = Path(args.root)
     try:
         result = load_and_diff(root)
     except Exception as exc:  # noqa: BLE001 - classify then re-raise non-graph
@@ -309,9 +309,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.exit(1)
 
     if args.json_output:
-        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-        sys.stdout.write("\n")
+        sys.stdout.write(dumps_safe_json(result, indent=2) + "\n")
     else:
-        print(format_human(result))
+        # Added/removed/modified nodes are named by graph-derived id.
+        print(sanitize_terminal_text(format_human(result)))
 
     return 0

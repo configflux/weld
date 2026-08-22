@@ -54,11 +54,9 @@ from weld.strategies._axum_routes_helpers import (
     route_id,
     route_node,
 )
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._provenance import file_provenance
 
 #: Matches an ``axum`` ``use`` import. ``use axum::...`` / ``use axum;``
 #: both fire; ``use axum_extra::...`` does not (the word boundary plus
@@ -89,19 +87,21 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract axum route nodes and diagnostic exposes edges from Rust src."""
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
-    discovered_dirs: set[str] = set()
+    discovered_from: list[str] = []
 
     pattern = source.get("glob", _DEFAULT_GLOB)
     excludes = source.get("exclude", [])
-    candidates = filter_glob_results(
-        root, _resolve_glob(root, pattern), excludes=excludes,
-    )
+    candidates = resolve_glob(root, pattern, excludes)
 
     for rs_file in candidates:
         if not rs_file.is_file():
             continue
-        if should_skip(rs_file, excludes, root=root):
-            continue
+        # Provenance is this file, recorded before the read (bd od2a): the
+        # parent directory it replaced degenerated to ``"./"`` for a
+        # repo-root match, and recording only files that emitted a route
+        # meant adding the first ``.route()`` to a module never marked it
+        # stale.
+        discovered_from.extend(file_provenance(root, [rs_file]))
         try:
             text = rs_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -110,20 +110,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             continue
 
         rel_path = rs_file.relative_to(root).as_posix()
-        if _emit_for_file(text, rel_path, nodes, edges):
-            discovered_dirs.add(rs_file.parent.relative_to(root).as_posix() + "/")
+        _emit_for_file(text, rel_path, nodes, edges)
 
-    return StrategyResult(nodes, edges, sorted(discovered_dirs))
-
-
-def _resolve_glob(root: Path, pattern: str) -> list[Path]:
-    """Expand *pattern* against *root* deterministically (sorted)."""
-    if "**" in pattern:
-        return sorted(root.glob(pattern))
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return []
-    return sorted(parent.glob(Path(pattern).name))
+    return StrategyResult(nodes, edges, discovered_from)
 
 
 def _strip_line_comments(text: str) -> str:

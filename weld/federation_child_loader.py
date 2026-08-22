@@ -37,12 +37,14 @@ from weld.workspace import ChildEntry
 from weld._notice import emit
 
 __all__ = [
+    "ReadBytes",
     "child_edges_for",
     "child_local_context",
     "graph_rel_path",
     "load_child",
     "load_child_for_query",
     "load_child_from_json",
+    "maybe_sentinel",
 ]
 
 #: Read-bytes callable signature. Default reads from disk; tests can
@@ -94,7 +96,7 @@ def load_child(
     graph_path = child_root / ".weld" / "graph.json"
     graph_rel = graph_rel_path(entry)
 
-    early = _maybe_sentinel(name, entry, child_root, graph_path, graph_rel)
+    early = maybe_sentinel(name, entry, child_root, graph_path, graph_rel)
     if early is not None:
         sentinel_cache[name] = early
         return early
@@ -146,7 +148,7 @@ def load_child_for_query(
     graph_path = child_root / ".weld" / "graph.json"
     graph_rel = graph_rel_path(entry)
 
-    early = _maybe_sentinel(name, entry, child_root, graph_path, graph_rel)
+    early = maybe_sentinel(name, entry, child_root, graph_path, graph_rel)
     if early is not None:
         sentinel_cache[name] = early
         return early
@@ -297,7 +299,7 @@ def _graph_digest(graph_path: Path, read_bytes: ReadBytes) -> str | None:
         return None
 
 
-def _maybe_sentinel(
+def maybe_sentinel(
     name: str,
     entry: ChildEntry,
     child_root: Path,

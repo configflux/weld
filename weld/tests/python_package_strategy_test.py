@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 
 
+from weld.contract import validate_node  # noqa: E402
 from weld.strategies.python_package import extract  # noqa: E402
 
 
@@ -190,6 +191,145 @@ class PythonPackageStrategyTest(unittest.TestCase):
             result = extract(root, {}, {})
         self.assertEqual(result.nodes, {})
         self.assertEqual(result.edges, [])
+
+    def test_emitted_nodes_satisfy_the_contract(self) -> None:
+        """Every node this strategy emits must pass ``validate_node``.
+
+        The strategy stamps ``roles: ["package"]``; when that value was
+        missing from the contract vocabulary, discovering any repo with a
+        Python package produced a graph the product's own ``wd validate``
+        rejected. Validating the strategy's real output here ties emission
+        to the contract, so a future role/prop that is not in the
+        vocabulary fails at the strategy that introduced it rather than in
+        a user's ``wd validate`` run.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _make_tree(root)
+            result = extract(root, {"glob": "mypkg/*.py"}, {})
+        self.assertTrue(result.nodes, "fixture must emit at least one node")
+        for node_id, node in result.nodes.items():
+            self.assertEqual(
+                validate_node(node_id, node), [],
+                f"{node_id} violates the node contract",
+            )
+
+
+class PackageAnchorSymmetryTest(unittest.TestCase):
+    """A package node must parent at least one file anchor (issue ``ddsy``).
+
+    ``python_module`` emits no ``file:`` anchor for an ``__init__.py``
+    with no exports, so a directory whose only member is such a file
+    contributes nothing for the package to contain. Emitting the package
+    node anyway produced ``package:python:weld.demos`` -- zero inbound
+    edges, zero outgoing edges, flagged by ``wd lint``'s orphan rule.
+    This is the parent-layer mirror of ADR 0041 Rule 2: file anchors
+    need an inbound ``contains``, package nodes need an outgoing one.
+    """
+
+    def test_docstring_only_init_dir_emits_nothing(self) -> None:
+        """The ``weld/demos`` shape: the directory's sole ``*.py`` member
+        is a docstring-only ``__init__.py``, so no package node."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "demos").mkdir()
+            (root / "demos" / "__init__.py").write_text(
+                '"""Vendored scripts live here."""\n', encoding="utf-8",
+            )
+            result = extract(root, {"glob": "demos/*.py"}, {})
+        self.assertEqual(result.nodes, {})
+        self.assertEqual(result.edges, [])
+        self.assertEqual(result.discovered_from, [])
+
+    def test_empty_init_dir_emits_nothing(self) -> None:
+        """An entirely empty ``__init__.py`` is the same case."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "pkg").mkdir()
+            (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+            result = extract(root, {"glob": "pkg/*.py"}, {})
+        self.assertEqual(result.nodes, {})
+        self.assertEqual(result.edges, [])
+
+    def test_init_with_exports_still_emits_package(self) -> None:
+        """Suppression keys off the *anchor*, not off being an
+        ``__init__.py``: a re-exporting package keeps its node."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "pkg").mkdir()
+            (root / "pkg" / "__init__.py").write_text(
+                "class Facade:\n    pass\n", encoding="utf-8",
+            )
+            result = extract(root, {"glob": "pkg/*.py"}, {})
+        self.assertIn("package:python:pkg", result.nodes)
+        targets = {
+            e["to"] for e in result.edges
+            if e["from"] == "package:python:pkg" and e["type"] == "contains"
+        }
+        self.assertEqual(targets, {"file:pkg/__init__"})
+
+    def test_exportless_init_beside_a_module_still_emits_package(self) -> None:
+        """Guard against over-suppression: one anchoring member is enough,
+        and the ``__init__.py`` edge is still emitted (the downstream
+        de-dangle in ``_discover_postprocess`` drops it)."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "pkg").mkdir()
+            (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "pkg" / "alpha.py").write_text("X = 1\n", encoding="utf-8")
+            result = extract(root, {"glob": "pkg/*.py"}, {})
+        self.assertIn("package:python:pkg", result.nodes)
+        targets = {
+            e["to"] for e in result.edges
+            if e["from"] == "package:python:pkg" and e["type"] == "contains"
+        }
+        self.assertEqual(targets, {"file:pkg/__init__", "file:pkg/alpha"})
+
+    def test_suppressed_dir_does_not_shadow_sibling_packages(self) -> None:
+        """A suppressed directory must not affect its siblings' emission
+        under a recursive glob -- only its own node disappears."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "top").mkdir()
+            (root / "top" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "top" / "real.py").write_text("Y = 2\n", encoding="utf-8")
+            (root / "top" / "hollow").mkdir()
+            (root / "top" / "hollow" / "__init__.py").write_text(
+                '"""Doc only."""\n', encoding="utf-8",
+            )
+            result = extract(root, {"glob": "top/**/*.py"}, {})
+        self.assertIn("package:python:top", result.nodes)
+        self.assertNotIn("package:python:top.hollow", result.nodes)
+        self.assertNotIn("top/hollow/", result.discovered_from)
+
+    def test_explicit_package_override_is_also_suppressed(self) -> None:
+        """The synthetic-namespace branch takes the same rule: an explicit
+        ``package:`` name does not conjure children that do not exist."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "hollow").mkdir()
+            (root / "hollow" / "__init__.py").write_text("", encoding="utf-8")
+            result = extract(
+                root, {"glob": "hollow/*.py", "package": "hollow"}, {},
+            )
+        self.assertEqual(result.nodes, {})
+
+    def test_suppression_is_deterministic(self) -> None:
+        """ADR 0012 §3: repeated runs over a tree containing a suppressed
+        directory stay byte-identical."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _make_tree(root)
+            (root / "mypkg" / "hollow").mkdir()
+            (root / "mypkg" / "hollow" / "__init__.py").write_text(
+                '"""Doc."""\n', encoding="utf-8",
+            )
+            r1 = extract(root, {"glob": "mypkg/**/*.py"}, {})
+            r2 = extract(root, {"glob": "mypkg/**/*.py"}, {})
+        self.assertEqual(r1.nodes, r2.nodes)
+        self.assertEqual(r1.edges, r2.edges)
+        self.assertEqual(r1.discovered_from, r2.discovered_from)
+        self.assertNotIn("package:python:mypkg.hollow", r1.nodes)
 
 
 if __name__ == "__main__":

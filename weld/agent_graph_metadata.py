@@ -4,10 +4,22 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from weld._agent_graph_asset import (
+    DerivedAgentGraphNode,
+    ParsedAgentGraphAsset,
+    _DENIED_TOOL_KEYS,
+    _DESCRIPTION_KEYS,
+    _HANDOFF_KEYS,
+    _PATH_KEYS,
+    _TOOL_KEYS,
+    _config_props,
+    _mcp_nodes,
+    _metadata_references,
+    _text_references,
+)
 from weld._yaml import parse_yaml
 from weld.agent_graph_authority import (
     frontmatter_authority_props,
@@ -16,77 +28,21 @@ from weld.agent_graph_authority import (
 from weld.agent_graph_metadata_diagnostics import broken_file_diagnostics
 from weld.agent_graph_metadata_permissions import permission_references_with_lines
 from weld.agent_graph_metadata_utils import (
-    AgentGraphReference,
+    AgentGraphReference,  # noqa: F401 -- re-exported for callers (weld.agent_graph_materialize)
     clean_heading,
     copy_first_scalar,
     copy_list,
     dedupe_references,
     diagnostic as _diagnostic,
-    extract_inferred_references,
     first_paragraph,
-    is_external_ref,
     iter_strings,
     jsonable,
     named_entries,
-    prose_inferred_references,
     ref,
-    strings_for_keys,
 )
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
-_MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
-_AT_FILE_RE = re.compile(r"(?<![\w/])@([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)")
-# The trailing (?!\w) anchors the extension at a word boundary; without it,
-# greedy backtracking lets a shorter known extension match as a prefix of a
-# longer one (.tsv reported as .ts, .jsonl as .json) and the truncated path
-# is then flagged as a broken reference.
-_PATH_RE = re.compile(
-    r"(?<![\w@./-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
-    r"\.(?:md|mdc|json|jsonl|ya?ml|toml|txt|tsv|py|js|jsx|ts|tsx|sh|bash))"
-    r"(?!\w)"
-)
-_NAMED_REF_RE = re.compile(
-    r"\b(skill|agent|command|mcp|mcp-server):([A-Za-z0-9_.-]+)\b"
-)
 _HEADING_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
-_GLOB_CHARS = set("*?[")
-
-_DESCRIPTION_KEYS = ("description", "desc", "purpose")
-_TOOL_KEYS = ("tools", "allowed_tools", "allowedTools")
-_DENIED_TOOL_KEYS = ("denied_tools", "deniedTools", "forbidden_tools")
-_HANDOFF_KEYS = ("handoffs", "handoff_to", "handoffTo", "delegates_to")
-_PATH_KEYS = ("applyTo", "applies_to", "paths", "path_globs", "globs")
-_SKILL_KEYS = ("skills", "uses_skills", "usesSkills")
-_COMMAND_KEYS = ("commands", "uses_commands", "usesCommands")
-_MCP_KEYS = ("mcp", "mcp_servers", "mcpServers")
-# Authoritative orchestrator-pipeline declarations live under the ``weld:``
-# namespace in frontmatter (see ADR 0021 Amendment 1). Edges from these keys
-# emit ``invokes_agent`` at confidence=definite, dedupe-winning over any
-# inferred-confidence edge produced by body regex on the same target.
-_INVOKES_AGENT_KEYS = ("invokes_agents", "subagents", "dispatches_to")
-
-
-@dataclass(frozen=True)
-class DerivedAgentGraphNode:
-    """A node declared inside a larger static config file."""
-
-    node_type: str
-    name: str
-    platform: str
-    path: str
-    source_kind: str
-    props: dict[str, Any] = field(default_factory=dict)
-    references: tuple[AgentGraphReference, ...] = ()
-
-
-@dataclass(frozen=True)
-class ParsedAgentGraphAsset:
-    """Metadata extracted from one discovered customization asset."""
-
-    props: dict[str, Any] = field(default_factory=dict)
-    references: tuple[AgentGraphReference, ...] = ()
-    derived_nodes: tuple[DerivedAgentGraphNode, ...] = ()
-    diagnostics: tuple[dict[str, Any], ...] = ()
 
 
 def parse_agent_asset(
@@ -208,14 +164,6 @@ def _skill_props(body: str) -> dict[str, Any]:
     return props
 
 
-def _config_props(payload: dict[str, Any]) -> dict[str, Any]:
-    props: dict[str, Any] = {}
-    copy_first_scalar(props, payload, "description", _DESCRIPTION_KEYS)
-    copy_list(props, payload, "tools", _TOOL_KEYS)
-    copy_list(props, payload, "denied_tools", _DENIED_TOOL_KEYS)
-    return props
-
-
 def _derived_json_nodes(
     rel_path: str, platform: str, payload: dict[str, Any], known_commands: frozenset[str] | None,
 ) -> list[DerivedAgentGraphNode]:
@@ -249,18 +197,6 @@ def _configured_nodes(
     return nodes
 
 
-def _mcp_nodes(rel_path: str, platform: str, payload: dict[str, Any]) -> list[DerivedAgentGraphNode]:
-    entries = payload.get("mcpServers") or payload.get("mcp_servers") or payload.get("mcp")
-    nodes: list[DerivedAgentGraphNode] = []
-    for name, config in named_entries(entries):
-        props = _config_props(config) if isinstance(config, dict) else {}
-        nodes.append(DerivedAgentGraphNode(
-            node_type="mcp-server", name=name, platform=platform,
-            path=f"{rel_path}#/mcpServers/{name}", source_kind=f"{platform}-mcp-server", props=props,
-        ))
-    return nodes
-
-
 def _hook_nodes(
     rel_path: str, platform: str, payload: dict[str, Any], known_commands: frozenset[str] | None,
 ) -> list[DerivedAgentGraphNode]:
@@ -287,74 +223,3 @@ def _hook_nodes(
                 props=props, references=tuple(dedupe_references(refs)),
             ))
     return nodes
-
-
-def _metadata_references(value: Any, *, line: int, known_commands: frozenset[str] | None = None) -> list[AgentGraphReference]:
-    refs: list[AgentGraphReference] = []
-    if not isinstance(value, dict):
-        return refs
-    for item in strings_for_keys(value, _TOOL_KEYS):
-        refs.append(ref("tool", item, "provides_tool", line, item))
-    for item in strings_for_keys(value, _DENIED_TOOL_KEYS):
-        refs.append(ref("tool", item, "restricts_tool", line, item))
-    for item in strings_for_keys(value, _HANDOFF_KEYS):
-        refs.append(ref("agent", item, "handoff_to", line, item))
-    for item in strings_for_keys(value, _PATH_KEYS):
-        refs.append(ref("scope", item, "applies_to_path", line, item))
-    for item in strings_for_keys(value, _SKILL_KEYS):
-        refs.append(ref("skill", item, "uses_skill", line, item))
-    for item in strings_for_keys(value, _COMMAND_KEYS):
-        refs.append(ref("command", item, "uses_command", line, item))
-    for item in strings_for_keys(value, _MCP_KEYS):
-        refs.append(ref("mcp-server", item, "provides_tool", line, item))
-    # Slice 2: orchestrator pipeline declarations live under ``weld:`` in
-    # frontmatter (canonical), but accept top-level for forward compat.
-    weld_ns = value.get("weld") if isinstance(value.get("weld"), dict) else {}
-    for item in strings_for_keys(value, _INVOKES_AGENT_KEYS):
-        refs.append(ref("agent", item, "invokes_agent", line, item))
-    for item in strings_for_keys(weld_ns, _INVOKES_AGENT_KEYS):
-        refs.append(ref("agent", item, "invokes_agent", line, item))
-    # Permission allow/deny entries are exploded per-entry by the JSON parser
-    # (permission_references_with_lines); not handled here.
-    # Slice-3 (a1) k58t: scan prose-bearing scalars (description/desc/purpose)
-    # via the same body-text inferred-edge regex. Same filter & contract.
-    refs.extend(prose_inferred_references(value, _DESCRIPTION_KEYS, line=line, known_commands=known_commands))
-    return refs
-
-
-def _text_references(
-    text: str,
-    *,
-    start_line: int,
-    known_commands: frozenset[str] | None = None,
-) -> list[AgentGraphReference]:
-    refs: list[AgentGraphReference] = []
-    for offset, line in enumerate(text.splitlines()):
-        line_no = start_line + offset
-        for match in _MARKDOWN_LINK_RE.finditer(line):
-            _append_file_ref(refs, match.group(1), line_no)
-        for match in _AT_FILE_RE.finditer(line):
-            _append_file_ref(refs, match.group(1), line_no)
-        for match in _PATH_RE.finditer(line):
-            _append_file_ref(refs, match.group(1), line_no)
-        for match in _NAMED_REF_RE.finditer(line):
-            kind, name = match.groups()
-            target_type = "mcp-server" if kind in {"mcp", "mcp-server"} else kind
-            edge_type = {
-                "agent": "invokes_agent",
-                "command": "uses_command",
-                "mcp-server": "provides_tool",
-                "skill": "uses_skill",
-            }[target_type]
-            refs.append(ref(target_type, name, edge_type, line_no, match.group(0)))
-    refs.extend(extract_inferred_references(
-        text, start_line=start_line, known_commands=known_commands,
-    ))
-    return dedupe_references(refs)
-
-
-def _append_file_ref(refs: list[AgentGraphReference], raw: str, line: int) -> None:
-    target = raw.split("#", 1)[0].strip()
-    if not target or is_external_ref(target) or any(ch in target for ch in _GLOB_CHARS):
-        return
-    refs.append(ref("file", target, "references_file", line, raw, target_path=target))

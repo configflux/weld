@@ -67,7 +67,12 @@ def stage_file(
 
     No-op when *go_inherit_records* is ``None`` (Go-only seam). Each
     record carries the module path so :func:`finalise` mints the correct
-    ``symbol:go:<module>:<Type>`` origin id without re-deriving it.
+    ``symbol:go:<module>:<Type>`` origin id without re-deriving it, and the
+    raw ``rel_path`` so :func:`_emit_inherits` can stamp
+    ``props.provenance.file`` on the embedding's ``inherits`` edge (ADR
+    0074): a struct's embed clause is declared at exactly one point in
+    exactly one file, so the record that clause lands in unambiguously
+    names the edge's producing file (bd rifzk).
     """
     if go_inherit_records is None:
         return
@@ -77,6 +82,7 @@ def stage_file(
     go_inherit_records.append(
         {
             "module_path": ts_module_from_path(rel_path),
+            "rel_path": rel_path,
             "embeddings": facts.embeddings,
             "methods": facts.methods,
             "interfaces": facts.interfaces,
@@ -170,22 +176,32 @@ def _emit_edge(
     source_strategy: str,
     base_name: str,
     impl_type: str,
+    provenance_file: str = "",
 ) -> None:
-    """Append one ``inherits`` / ``implements`` edge with the shared props shape."""
-    edges.append(
-        {
-            "from": from_id,
-            "to": to_id,
-            "type": edge_type,
-            "props": {
-                "source_strategy": source_strategy,
-                "confidence": "definite" if resolved else "speculative",
-                "resolved": resolved,
-                "base_name": base_name,
-                "impl_type": impl_type,
-            },
-        }
-    )
+    """Append one ``inherits`` / ``implements`` edge with the shared props shape.
+
+    *provenance_file*, when non-empty, stamps ``props.provenance.file`` (ADR
+    0074) so :func:`weld._incremental_purge.purge_edges_by_provenance` can
+    attribute the edge to the file that declared it rather than falling back
+    to the conservative endpoint-membership purge -- which drops the edge
+    outright, with no chance to re-derive the unresolved-sentinel downgrade a
+    full discover would produce, when the base's file is deleted and the
+    declaring file itself stays clean (bd rifzk). Left empty for
+    ``implements`` (interface satisfaction): a type's method set can be
+    declared across multiple files in the same package, so there is no
+    single unambiguous producing file to attribute the edge to -- stamping
+    one file would misattribute rather than merely omit an optimization.
+    """
+    props: dict = {
+        "source_strategy": source_strategy,
+        "confidence": "definite" if resolved else "speculative",
+        "resolved": resolved,
+        "base_name": base_name,
+        "impl_type": impl_type,
+    }
+    if provenance_file:
+        props["provenance"] = {"file": provenance_file}
+    edges.append({"from": from_id, "to": to_id, "type": edge_type, "props": props})
 
 
 def _mint_unresolved(nodes: dict[str, dict], short: str, source_strategy: str) -> str:
@@ -221,6 +237,7 @@ def _emit_inherits(
     seen: set[tuple[str, str]] = set()
     for record in records:
         module = record["module_path"]
+        rel_path = record.get("rel_path", "")
         for struct, base_short, base_full in record["embeddings"]:
             from_id = f"symbol:go:{module}:{struct}"
             if from_id not in nodes:
@@ -239,6 +256,7 @@ def _emit_inherits(
                 edges, from_id=from_id, to_id=target_id, edge_type="inherits",
                 resolved=resolved, source_strategy=source_strategy,
                 base_name=base_full, impl_type=struct,
+                provenance_file=rel_path,
             )
 
 

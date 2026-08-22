@@ -17,42 +17,14 @@ Two benchmark dimensions:
   compliance.
 
 Both harnesses are **on demand**, not CI gates.
+
+This package is deliberately import-free (ADR 0099, bd 4g0d). ``python -m
+weld.bench.synthetic_large_repo`` and ``python -m weld.bench`` (the
+``bazel run //weld/bench:bench`` entry) each carry a launch-path guard that
+only works because importing this package runs no code of its own --
+``python -m pkg.mod`` imports ``pkg`` first, so anything this file imported
+would resolve against the launch directory before either guard could run.
+Import :mod:`weld.bench.runner`, :mod:`weld.bench.quality`, or
+:mod:`weld.bench.bench_cli` directly instead of re-exporting them here --
+``weld/cli.py``'s ``wd bench`` dispatch already does.
 """
-
-from weld.bench.quality import (
-    QualityCase,
-    QualityResult,
-    evaluate_case,
-    load_cases,
-    render_quality_report,
-    run_quality,
-)
-from weld.bench.runner import (
-    BenchResult,
-    Prompt,
-    count_tokens,
-    grep_baseline,
-    weld_cli_baseline,
-    weld_mcp_baseline,
-    load_prompts,
-    render_report,
-    run_bench,
-)
-
-__all__ = [
-    "BenchResult",
-    "Prompt",
-    "QualityCase",
-    "QualityResult",
-    "count_tokens",
-    "evaluate_case",
-    "grep_baseline",
-    "weld_cli_baseline",
-    "weld_mcp_baseline",
-    "load_cases",
-    "load_prompts",
-    "render_quality_report",
-    "render_report",
-    "run_bench",
-    "run_quality",
-]

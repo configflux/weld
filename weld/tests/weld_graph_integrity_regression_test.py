@@ -38,7 +38,22 @@ _GRAPH: dict | None = None
 def _graph() -> dict:
     global _GRAPH
     if _GRAPH is None:
-        _GRAPH = discover(Path(_repo_root), incremental=False)
+        # incremental=False forces a full, independent re-walk of the live
+        # repo's current source on every run, regardless of .weld/graph.json's
+        # freshness or vouch status (weld/_discover_inputs.py's plan_delta
+        # short-circuits to a full pass whenever incremental is explicitly
+        # False) -- this suite exercises real strategies against real
+        # conditions, not a cached graph, so it must never trust stale state.
+        # with_sqlite=False: this test only ever reads the returned dict, so
+        # the .weld/graph.db sidecar discover() would otherwise write
+        # unconditionally (tens of MB on this repo) is pure waste here, and
+        # dropping it shrinks this call's footprint on the shared, live
+        # .weld/ directory a concurrently-running sibling test also touches
+        # (bd 70he: weld_artifact_class_regression_test does the same full
+        # discover() against this same root; the actual concurrency bug that
+        # could ERROR this suite was a fixed-name temp file race in
+        # weld.discovery_state.save_state, fixed at the source).
+        _GRAPH = discover(Path(_repo_root), incremental=False, with_sqlite=False)
     return _GRAPH
 
 def _configured_strategies() -> set[str]:

@@ -23,6 +23,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from weld._notice import emit
+from weld._safe_text import sanitize_terminal_line
+
 
 def format_summary(graph: dict, output_path: Path | None, elapsed_s: float) -> str:
     """Build the one-line discovery success summary.
@@ -59,4 +62,36 @@ def emit_summary(
     """
     if quiet:
         return
-    print(format_summary(graph, output_path, elapsed_s), file=sys.stderr)
+    # One-line summary: it interpolates the output path, so use the
+    # line-strict variant (a smuggled newline must not forge a second line).
+    print(
+        sanitize_terminal_line(format_summary(graph, output_path, elapsed_s)),
+        file=sys.stderr,
+    )
+
+
+def drain_context_warnings(context: dict) -> None:
+    """Print unique strategy warnings to stderr, one line each.
+
+    Strategies append diagnostic messages to ``context["_warnings"]``
+    when they degrade gracefully (e.g. tree-sitter installed but the
+    per-language grammar package missing). Without an explicit drain at
+    the end of discovery, those entries die with the in-memory context
+    and the user sees a silently-successful ``wd discover`` with zero
+    nodes for the affected language.
+
+    Output uses the existing ``[weld] warning:`` prefix established by
+    the unsafe-mode strategy warnings so operators can grep for either
+    source uniformly. Deduplication is by full message text to keep the
+    output bounded when a strategy emits the same line per matched file.
+    """
+    raw = context.get("_warnings", [])
+    if not raw:
+        return
+    seen: set[str] = set()
+    for msg in raw:
+        text = str(msg)
+        if text in seen:
+            continue
+        seen.add(text)
+        emit(f"[weld] warning: {text}")

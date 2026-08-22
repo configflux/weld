@@ -98,17 +98,54 @@ class TestExtractEmitsNodes(unittest.TestCase):
             self.root / "weld" / "tests" / "telemetry_test_helpers.py",
             "x = 1\n",
         )
+        # bd uc43: a test file one directory DOWN, which the single-level
+        # ``weld/tests/*_test.py`` glob missed entirely.
+        _touch(
+            self.root / "weld" / "tests" / "bench" / "weld_public_bench_test.py",
+            "import unittest\n",
+        )
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _run(self) -> StrategyResult:
+    def _run(self, glob: str = "weld/tests/*_test.py") -> StrategyResult:
         source = {
-            "glob": "weld/tests/*_test.py",
+            "glob": glob,
             "type": "file",
             "strategy": "test_peer",
         }
         return extract(self.root, source, {})
+
+    def test_recursive_glob_reaches_a_nested_test_package(self) -> None:
+        """bd uc43: ``**`` must cover ``weld/tests/bench/``, not just its parent.
+
+        The reported symptom was an asymmetry rather than a plain absence:
+        ``wd context`` resolved a file -> test-target edge for ``weld/tests/*``
+        and answered "node not found" for ``weld/tests/bench/*``, which is
+        harder to trust than a lookup that never worked, because nothing tells
+        the caller which case they are in. The cause was this glob: 23 bench
+        test files had no ``file`` node at all, so the ADR 0111 BUILD-srcs
+        referrer edges had nothing to attach to. ``.weld/discover.yaml`` now
+        configures the recursive form, which ADR 0112's single resolver honours
+        (bd t06t: single-directory strategies used to ignore ``**`` silently).
+        """
+        single = self._run()
+        self.assertNotIn(
+            "file:weld/tests/bench/weld_public_bench_test",
+            single.nodes,
+            msg="precondition: the single-level glob is what missed the "
+                "nested package -- if this starts passing, the ** entry below "
+                "is no longer what closes bd uc43",
+        )
+        recursive = self._run("weld/tests/**/*_test.py")
+        self.assertIn(
+            "file:weld/tests/bench/weld_public_bench_test", recursive.nodes
+        )
+        self.assertIn(
+            "file:weld/tests/weld_telemetry_cli_test",
+            recursive.nodes,
+            msg="the recursive glob must still cover the parent directory",
+        )
 
     def test_emits_one_node_per_test_file(self) -> None:
         result = self._run()
@@ -210,6 +247,69 @@ class TestExtractEmitsNodes(unittest.TestCase):
         self.assertEqual(len(edges), 1)
         self.assertEqual(edges[0]["to"], "file:weld/_internal_helper")
         self.assertEqual(edges[0]["type"], "tests")
+
+
+class TestSummaryExtraction(unittest.TestCase):
+    """bd ikof: a Python test file's own docstring becomes ``props.summary``.
+
+    Before this, ``test_peer`` minted a node from the path alone -- a test's
+    own stated purpose (as opposed to whatever its filename happens to
+    spell) was invisible to the query index, the one channel ADR 0114 wired
+    for every ``python_module``-discovered file but never extended here.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        _touch(
+            self.root / "weld" / "tests" / "documented_test.py",
+            '"""Incremental refresh is byte-equivalent to a full discover.\n'
+            "\n"
+            'More prose that must NOT be included -- only the opening\n'
+            'paragraph is a summary.\n"""\n'
+            "import unittest\n",
+        )
+        _touch(
+            self.root / "weld" / "tests" / "undocumented_test.py",
+            "import unittest\n",
+        )
+        _touch(
+            self.root / "weld" / "tests" / "broken_syntax_test.py",
+            "def broken(:\n",
+        )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _run(self) -> StrategyResult:
+        source = {
+            "glob": "weld/tests/*_test.py",
+            "type": "file",
+            "strategy": "test_peer",
+        }
+        return extract(self.root, source, {})
+
+    def test_docstring_opening_paragraph_becomes_summary(self) -> None:
+        result = self._run()
+        node = result.nodes["file:weld/tests/documented_test"]
+        self.assertEqual(
+            node["props"]["summary"],
+            "Incremental refresh is byte-equivalent to a full discover.",
+        )
+
+    def test_summary_key_is_always_present_even_when_empty(self) -> None:
+        # ADR 0114's contract: the key is always present so a consumer never
+        # has to branch on whether it exists.
+        result = self._run()
+        node = result.nodes["file:weld/tests/undocumented_test"]
+        self.assertEqual(node["props"]["summary"], "")
+
+    def test_unparseable_file_still_emits_a_node_with_empty_summary(self) -> None:
+        # A syntax error must cost this one channel, not the node itself --
+        # the file is still a discoverable test module.
+        result = self._run()
+        node = result.nodes["file:weld/tests/broken_syntax_test"]
+        self.assertEqual(node["props"]["summary"], "")
 
 
 class TestExtractGracefulOnEmpty(unittest.TestCase):

@@ -8,10 +8,20 @@ handler module stays under 400 lines.
 All public names are imported back into :mod:`weld.strategies._cmake_targets`
 to preserve the existing import surface; new code should use this
 module directly.
+
+bd tuuve: ``ensure_package_sentinel``'s external dependency LEAF and
+:func:`weld.strategies.cpp_cmake._ensure_project_node`'s PROJECT node
+share the identical ``package:cpp:<name>`` id space -- cpp_cmake has no
+dedicated URL scheme for its leaves, unlike ``cpp_conan``/``cpp_vcpkg``'s
+``package://conan/``/``package://vcpkg/``. See ``ensure_package_sentinel``'s
+docstring for why that is a deliberate choice, not an oversight left
+unfixed, and how the ADR 0103 ``claim_supersedes`` veto keeps the shared
+namespace safe.
 """
 
 from __future__ import annotations
 
+from weld._discover_node_merge import claim_supersedes
 from weld._node_ids import file_id, package_id
 
 __all__ = [
@@ -98,21 +108,59 @@ def bump_unresolved(node: dict, labels: list[str]) -> None:
 def ensure_package_sentinel(
     nodes: dict, nid: str, name: str,
 ) -> None:
-    """Idempotently create a ``package`` sentinel node for an external dep."""
-    nodes.setdefault(
-        nid,
-        {
-            "type": "package",
-            "label": name,
-            "props": {
-                "name": name,
-                "source_strategy": STRATEGY,
-                "authority": "external",
-                "confidence": "inferred",
-                "roles": ["config"],
-            },
+    """Claim a ``package`` sentinel node for an external dep at *nid*.
+
+    Shared by :func:`handle_find_package` (both the base package and each
+    ``COMPONENTS`` entry) and
+    :func:`weld.strategies._cmake_targets.handle_target_link_libraries`'s
+    external-library branch -- every non-in-project ``package:cpp:<name>``
+    leaf this strategy mints goes through here.
+
+    Uses the ADR 0103 confidence-ranked veto
+    (:func:`weld._discover_node_merge.claim_supersedes`), not a blind
+    ``nodes.setdefault``. This id space is shared with
+    :func:`weld.strategies.cpp_cmake._ensure_project_node`'s PROJECT node
+    (no dedicated URL scheme here, unlike ``cpp_conan``/``cpp_vcpkg`` --
+    see the module docstring for why that is deliberate), so a project can
+    collide on this exact id with one of its own, or a sibling's, declared
+    dependencies. Before bd tuuve this call was a plain ``setdefault``: a
+    strategy's own multi-file ``nodes`` accumulation for one glob is built
+    in a single :func:`weld.strategies.cpp_cmake.extract` call, entirely
+    inside this one strategy, so the ADR 0103 veto the orchestrator applies
+    in :mod:`weld.discover` never saw the collision -- it only compares the
+    ONE value each source entry's ``StrategyResult`` already settled on
+    across DIFFERENT source entries, never across files within one. Whichever
+    file :func:`weld.strategies._glob_resolve.resolve_glob` happened to walk
+    first silently won outright, discarding the other claim's entire prop
+    set -- including, when a project lost to a same-named sentinel, its
+    ``props.file`` anchor. A file-less, ``authority: "external"`` node then
+    became reachable by
+    :func:`weld._discover_external_package_purge.emptied_external_package_node_ids`,
+    so an unrelated sibling file's deletion could purge the clobbered id
+    outright even though the real project's own CMakeLists.txt was
+    untouched -- confirmed empirically against the real
+    ``_discover_single_repo`` orchestrator, full and incremental, both file
+    orders.
+
+    ``claim_supersedes`` makes the outcome order-independent instead: this
+    sentinel's ``confidence: "inferred"`` can never overwrite a project's
+    ``confidence: "definite"`` claim on the same id in either processing
+    order, while a project claimed *after* an existing sentinel still
+    correctly upgrades it.
+    """
+    candidate = {
+        "type": "package",
+        "label": name,
+        "props": {
+            "name": name,
+            "source_strategy": STRATEGY,
+            "authority": "external",
+            "confidence": "inferred",
+            "roles": ["config"],
         },
-    )
+    }
+    if claim_supersedes(nodes.get(nid), candidate):
+        nodes[nid] = candidate
 
 
 def join_path(cmake_dir: str, src: str) -> str:

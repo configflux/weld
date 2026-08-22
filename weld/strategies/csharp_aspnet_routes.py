@@ -63,11 +63,9 @@ from weld.strategies._csharp_syntax import (
     namespace_at,
     namespace_spans,
 )
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._provenance import file_provenance
 
 #: HTTP verbs the strategy understands. The list mirrors ASP.NET Core's
 #: ``HttpGetAttribute`` / ``HttpPostAttribute`` family. ``Head`` and
@@ -116,36 +114,25 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     pattern = source.get("glob", "**/*.cs")
     excludes = source.get("exclude", [])
 
-    matched = _resolve_glob(root, pattern)
-    matched = filter_glob_results(root, matched, excludes=excludes)
+    matched = resolve_glob(root, pattern, excludes)
 
     for cs_file in matched:
         if not cs_file.is_file():
             continue
-        if should_skip(cs_file, excludes, root=root):
-            continue
+        # Provenance is this file, recorded before the read (bd od2a): the
+        # parent directory it replaced degenerated to ``"./"`` for a
+        # repo-root match, and recording only files that emitted a route
+        # meant adding the first endpoint to a module never marked it stale.
+        discovered_from.extend(file_provenance(root, [cs_file]))
         try:
             source_text = cs_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
 
         rel_path = cs_file.relative_to(root).as_posix()
-        any_emitted = _process_file(
-            source_text, rel_path, nodes, edges,
-        )
-        if any_emitted:
-            discovered_from.append(
-                cs_file.parent.relative_to(root).as_posix() + "/"
-            )
+        _process_file(source_text, rel_path, nodes, edges)
 
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for d in discovered_from:
-        if d not in seen:
-            seen.add(d)
-            deduped.append(d)
-
-    return StrategyResult(nodes, edges, deduped)
+    return StrategyResult(nodes, edges, discovered_from)
 
 
 def _process_file(
@@ -214,16 +201,6 @@ def _process_file(
         any_emitted = True
 
     return any_emitted
-
-
-def _resolve_glob(root: Path, pattern: str) -> list[Path]:
-    """Expand *pattern* against *root* deterministically (sorted)."""
-    if "**" in pattern:
-        return sorted(root.glob(pattern))
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return []
-    return sorted(parent.glob(Path(pattern).name))
 
 
 def _scan_controllers(source_text: str) -> Iterator[Controller]:

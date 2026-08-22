@@ -1,4 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+load(":runtime_srcs.bzl", "RUNTIME_SRCS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,7 +8,28 @@ package(default_visibility = ["//visibility:public"])
 # Keeping the export line-oriented (rather than a filegroup) mirrors the
 # convention used by the repo root BUILD.bazel for VERSION and similar
 # source-of-truth files.
-exports_files(["pyproject.toml"])
+#
+# BUILD.bazel and runtime_srcs.bzl are exported for the same kind of reason:
+# //weld/tests:weld_package_init_wiring_test stages this package's own
+# declarations in its runfiles and reads them, because the rule it holds --
+# one home for weld/__init__.py, below -- is a property of how the targets are
+# declared and cannot be observed from inside a built one (bd p07k).
+exports_files([
+    "BUILD.bazel",
+    "pyproject.toml",
+    "runtime_srcs.bzl",
+])
+
+# Every .py file that EXISTS in this package, as opposed to every one some
+# target declares. //weld/tests:weld_runtime_srcs_claim_test set-diffs the two
+# to catch a module that is on disk but claimed by no target -- the bd 73xa
+# ModuleNotFoundError shape. A glob is required rather than convenient: staging
+# the declared sources instead would make the test enumerate exactly the set it
+# is supposed to be checking against, and it would pass vacuously (bd tnz3).
+filegroup(
+    name = "all_python_sources",
+    srcs = glob(["*.py"]),
+)
 
 filegroup(
     name = "module_entrypoint",
@@ -22,12 +44,38 @@ filegroup(
     ],
 )
 
+# The one home for weld/__init__.py as a Python source.
+#
+# Every runfiles tree that carries any weld/*.py needs a weld/__init__.py, and
+# Bazel will supply one itself (legacy_create_init) when the target does not
+# bring the real file. That leaves the package with two treatments -- 11 trees
+# holding a GENERATED empty file, 59 holding a symlink to the live source --
+# and the two are not interchangeable at build time: a tree being constructed
+# with the generated form, concurrently with trees holding the symlink form,
+# writes through the symlink and truncates the live source. Serialised
+# (--jobs=2 --local_test_jobs=1) the interleaving never happens; in parallel it
+# does (bd p07k, forensics and the refuted hypotheses in bd w3n6).
+#
+# It is invisible rather than harmless. ADR 0099 requires weld/__init__.py to
+# be empty, so truncating it is byte-identical and `git status` stays clean --
+# but the bumped ctime reads to Bazel as a concurrent modification of an input
+# to hundreds of py targets, and every one of them skips its disk-cache upload.
+#
+# So: exactly one declaration, and every py_ target in this package takes it
+# from here. //weld/tests:weld_package_init_wiring_test fails the gate if a new
+# target skips it.
+py_library(
+    name = "package_init",
+    srcs = ["__init__.py"],
+)
+
 py_library(
     name = "yaml",
     srcs = [
         "_yaml.py",
         "_yaml_block_scalar.py",
     ],
+    deps = [":package_init"],
 )
 
 # Tiny, zero-dep canonical-id library (ADR 0041 § Layer 1). Exposed as
@@ -36,6 +84,26 @@ py_library(
 py_library(
     name = "node_ids",
     srcs = ["_node_ids.py"],
+    deps = [":package_init"],
+)
+
+py_library(
+    name = "safe_text",
+    srcs = ["_safe_text.py"],
+    deps = [":package_init"],
+)
+
+# Tiny, stdlib-only repo-relative path library: the canonical POSIX form, the
+# construction helper that builds it, and the platform-aware fold that repairs
+# a foreign spelling (bd pbi8, bd v552). Its own target, like :node_ids, so the
+# strategies package can spell an index path the same way weld does without a
+# cycle back through :runtime -- ``dirty_matched`` has to agree with
+# ``_source_resolve`` exactly, and an inline second copy of that rule is what
+# the fold exists to survive.
+py_library(
+    name = "rel_path",
+    srcs = ["_rel_path.py"],
+    deps = [":package_init"],
 )
 
 # Stdlib-only stderr notice chokepoint. Its own target so leaf packages
@@ -44,6 +112,10 @@ py_library(
 py_library(
     name = "notice",
     srcs = ["_notice.py"],
+    deps = [
+        ":package_init",
+        ":safe_text",
+    ],
 )
 
 # Low-level registries imported by leaf strategy modules (weld/strategies/*)
@@ -52,6 +124,7 @@ py_library(
 py_library(
     name = "graph_node_registry",
     srcs = ["_graph_node_registry.py"],
+    deps = [":package_init"],
 )
 
 py_library(
@@ -59,23 +132,59 @@ py_library(
     srcs = [
         "_capabilities_registry.py",
         "_capabilities_registry_missing.py",
+        "_capabilities_registry_types.py",
     ],
+    deps = [":package_init"],
+)
+
+# Zero-dep unresolved-sentinel purge predicate (bd oao53). Its own
+# micro-library, like :graph_node_registry above, so
+# weld/strategies:cpp_resolver.py can call it directly (bd 5038-t6mzx)
+# without a cycle through //weld:runtime, which already depends on
+# //weld/strategies.
+py_library(
+    name = "discover_unresolved_symbol_purge",
+    srcs = ["_discover_unresolved_symbol_purge.py"],
+    deps = [":package_init"],
+)
+
+# Zero-dep ADR 0103 node-claim veto (bd tuuve). Its own micro-library, like
+# :discover_unresolved_symbol_purge above, so weld/strategies/cpp_cmake.py
+# and weld/strategies/_cmake_packages.py can call claim_supersedes directly
+# -- guarding their own intra-strategy multi-file node accumulation against
+# the same order-dependent clobber ADR 0103 already vetoes at the
+# orchestrator's cross-source-entry merge -- without a cycle through
+# //weld:runtime, which already depends on //weld/strategies.
+py_library(
+    name = "discover_node_merge",
+    srcs = ["_discover_node_merge.py"],
+    deps = [":package_init"],
 )
 
 py_library(
     name = "git",
-    srcs = ["_git.py"],
+    # _git_worktree.py (ADR 0096) and _git_bookkeeping.py (bd eqc4) are
+    # overflow siblings of _git.py, which is at the 400-line cap: same
+    # zero-dep subprocess-git profile, so they ride the same micro-library
+    # rather than forcing a new target on every dep. _git_bookkeeping.py
+    # imports nothing at all -- it holds only the never-user-source set.
+    srcs = ["_git.py", "_git_bookkeeping.py", "_git_worktree.py"],
+    deps = [":package_init"],
 )
 
 py_library(
     name = "repo_boundary",
     srcs = ["repo_boundary.py"],
+    deps = [":package_init"],
 )
 
 py_library(
     name = "glob_match",
     srcs = ["glob_match.py"],
-    deps = [":repo_boundary"],
+    deps = [
+        ":package_init",
+        ":repo_boundary",
+    ],
 )
 
 py_library(
@@ -83,19 +192,24 @@ py_library(
     srcs = [
         "_confidence_defaults.py",
         "_confidence_warn.py",
+        "_contract_types.py",
         "_contract_validators.py",
         "_federation_validate.py",
         "_graph_doc_validators.py",
         "_validate_diagnostics.py",
         "contract.py",
     ],
-    deps = [":notice"],
+    deps = [
+        ":notice",
+        ":package_init",
+    ],
 )
 
 py_library(
     name = "workspace",
     srcs = [
         "_gitignore_scan.py",
+        "_workspace_schema.py",
         "workspace.py",
         "workspace_dump.py",
         "workspace_scan.py",
@@ -103,259 +217,20 @@ py_library(
     ],
     deps = [
         ":glob_match",
+        ":package_init",
         ":yaml",
     ],
 )
 
 py_library(
     name = "runtime",
-    srcs = [
-        "__init__.py",
-        "_agent_graph_constants.py",
-        "_agent_graph_edge_weights.py",
-        "_agent_graph_strict.py",
-        "_agent_graph_unused_skill.py",
-        "_alias_index.py",
-        "_auto_refresh.py",
-        "_auto_refresh_federated.py",
-        "_bootstrap_adapters.py",
-        "_bootstrap_hosts.py",
-        "_capabilities_cli.py",
-        "_capabilities_local.py",
-        "_cli_render.py",
-        "_cli_render_trust.py",
-        "_coverage_admission.py",
-        "_discover_cli.py",
-        "_discover_empty_guard.py",
-        "_discover_empty_warn.py",
-        "_discover_federate.py",
-        "_discover_federate_origin.py",
-        "_discover_no_change.py",
-        "_discover_origin_reconcile.py",
-        "_discover_postprocess.py",
-        "_discover_recurse.py",
-        "_discover_sidecar.py",
-        "_discover_state_check.py",
-        "_discover_strategies.py",
-        "_discover_summary.py",
-        "_doctor_agent_graph.py",
-        "_doctor_cpp.py",
-        "_doctor_format.py",
-        "_doctor_optional.py",
-        "_doctor_sqlite.py",
-        "_doctor_staleness.py",
-        "_doctor_strategies.py",
-        "_doctor_suppressions.py",
-        "_doctor_trust.py",
-        "_enrich_safe.py",
-        "_enrichment_cost.py",
-        "_envelope_diet.py",
-        "_errors.py",
-        "_events_join.py",
-        "_export_cli.py",
-        "_export_mermaid.py",
-        "_federation_descent.py",
-        "_federation_eager_bm25.py",
-        "_federation_eager_flags.py",
-        "_federation_eager_index.py",
-        "_federation_eager_or_fallback.py",
-        "_federation_find.py",
-        "_federation_flatten.py",
-        "_federation_path.py",
-        "_federation_query.py",
-        "_federation_staleness.py",
-        "_file_index_incremental.py",
-        "_first_run_enrich.py",
-        "_first_run_invoke.py",
-        "_first_run_render.py",
-        "_gitignore_scan.py",
-        "_gitignore_writer.py",
-        "_graph_cli.py",
-        "_graph_cli_errors.py",
-        "_graph_cli_federated.py",
-        "_graph_cli_parser.py",
-        "_graph_closure_invariants.py",
-        "_graph_closure_package_origin.py",
-        "_graph_digest.py",
-        "_graph_meta_sidecar.py",
-        "_graph_migrate.py",
-        "_graph_origin.py",
-        "_graph_schema.py",
-        "_graph_stats.py",
-        "_graph_stats_cli.py",
-        "_graph_stats_trust.py",
-        "_graph_strategy_pair.py",
-        "_graph_write_lock.py",
-        "_impact_git.py",
-        "_impact_git_federated.py",
-        "_incremental_purge.py",
-        "_init_classify.py",
-        "_init_cpp.py",
-        "_init_csharp.py",
-        "_init_framework_scan.py",
-        "_init_framework_sources.py",
-        "_init_go_imports.py",
-        "_init_interfaces.py",
-        "_init_ros2.py",
-        "_mcp_guard.py",
-        "_mcp_read.py",
-        "_mcp_stdio.py",
-        "_mcp_tools.py",
-        "_node_ids.py",
-        "_prime_coverage.py",
-        "_query_envelope.py",
-        "_query_sidecar.py",
-        "_query_surface.py",
-        "_refresh_cache.py",
-        "_review.py",
-        "_review_cli.py",
-        "_review_pattern.py",
-        "_review_state.py",
-        "_security_mcp.py",
-        "_security_posture.py",
-        "_sqlite_index.py",
-        "_sqlite_query.py",
-        "_sqlite_query_bm25.py",
-        "_sqlite_reader.py",
-        "_sqlite_schema.py",
-        "_sqlite_writer.py",
-        "_staleness.py",
-        "_telemetry.py",
-        "_telemetry_allowlist.py",
-        "_telemetry_outcome.py",
-        "_telemetry_redact.py",
-        "_warm_cli.py",
-        "_warm_source.py",
-        "_wiki_export.py",
-        "_wiki_renderers.py",
-        "_workspace_bootstrap.py",
-        "_workspace_bootstrap_cli.py",
-        "_workspace_bootstrap_result.py",
-        "_workspace_inspect.py",
-        "_workspace_lock.py",
-        "agent_graph_assets.py",
-        "agent_graph_audit.py",
-        "agent_graph_authority.py",
-        "agent_graph_authority_audit.py",
-        "agent_graph_cli.py",
-        "agent_graph_discovery.py",
-        "agent_graph_inventory.py",
-        "agent_graph_materialize.py",
-        "agent_graph_metadata.py",
-        "agent_graph_metadata_diagnostics.py",
-        "agent_graph_metadata_permissions.py",
-        "agent_graph_metadata_toml.py",
-        "agent_graph_metadata_utils.py",
-        "agent_graph_plan.py",
-        "agent_graph_render.py",
-        "agent_graph_render_cli.py",
-        "agent_graph_render_pairs.py",
-        "agent_graph_render_writer.py",
-        "agent_graph_storage.py",
-        "arch_lint.py",
-        "arch_lint_boundary.py",
-        "arch_lint_coverage.py",
-        "arch_lint_custom.py",
-        "arch_lint_cycles.py",
-        "arch_lint_format.py",
-        "arch_lint_orphan.py",
-        "bm25.py",
-        "bootstrap.py",
-        "bootstrap_managed.py",
-        "bootstrap_writer.py",
-        "brief.py",
-        "capabilities.py",
-        "cli.py",
-        "demo.py",
-        "demos/__init__.py",
-        "diff.py",
-        "discover.py",
-        "discovery_state.py",
-        "doctor.py",
-        "embeddings.py",
-        "enrich.py",
-        "enrich_edges.py",
-        "enrichment_persistence.py",
-        "export.py",
-        "federation.py",
-        "federation_child_loader.py",
-        "federation_root.py",
-        "federation_support.py",
-        "federation_tools.py",
-        "file_index.py",
-        "file_index_search.py",
-        "graph.py",
-        "graph_closure.py",
-        "graph_communities.py",
-        "graph_communities_cli.py",
-        "graph_communities_helpers.py",
-        "graph_communities_render.py",
-        "graph_context.py",
-        "graph_query.py",
-        "impact.py",
-        "impact_cli.py",
-        "impact_core.py",
-        "impact_surfaces.py",
-        "init.py",
-        "init_detect.py",
-        "init_detect_constants.py",
-        "init_workspace.py",
-        "mcp_config.py",
-        "mcp_helpers.py",
-        "mcp_server.py",
-        "prime.py",
-        "providers/__init__.py",
-        "providers/anthropic.py",
-        "providers/copilot_cli.py",
-        "providers/ollama.py",
-        "providers/openai.py",
-        "query_index.py",
-        "query_state.py",
-        "ranking.py",
-        "read.py",
-        "scaffold.py",
-        "security.py",
-        "serializer.py",
-        "synonyms.py",
-        "telemetry_cli.py",
-        "trace.py",
-        "trace_contract.py",
-        "viz/__init__.py",
-        "viz/_adapter_helpers.py",
-        "viz/_api_params.py",
-        "viz/_diff.py",
-        "viz/_export_route.py",
-        "viz/_git_remote.py",
-        "viz/_search.py",
-        "viz/_views.py",
-        "viz/adapter.py",
-        "viz/agent_api.py",
-        "viz/api.py",
-        "viz/server.py",
-        "warm.py",
-        "warnings.py",
-        "watch.py",
-        "workspace.py",
-        "workspace_dump.py",
-        "workspace_scan.py",
-        "workspace_scan_filter.py",
-        "workspace_state.py",
-    ],
-    data = [
-        "demos/scripts/_demo_common.sh",
-        "demos/scripts/create-monorepo-demo.sh",
-        "demos/scripts/create-polyrepo-demo.sh",
-        "viz/static/app.js",
-        "viz/static/index.html",
-        "viz/static/styles.css",
-        "viz/static/vendor/README.md",
-        "viz/static/vendor/cytoscape-3.33.2.LICENSE",
-        "viz/static/vendor/cytoscape-3.33.2.min.js",
-        "viz/static/vendor/cytoscape-dagre-3.0.0.LICENSE",
-        "viz/static/vendor/cytoscape-dagre-3.0.0.min.js",
-        "viz/static/vendor/cytoscape-navigator-2.0.2.LICENSE",
-        "viz/static/vendor/cytoscape-navigator-2.0.2.css",
-        "viz/static/vendor/cytoscape-navigator-2.0.2.js",
+    srcs = RUNTIME_SRCS,
+    # These two asset directories ship whole -- the viz server serves whatever
+    # is under static/, demos run whatever is under scripts/ -- so they are
+    # globbed rather than enumerated: a new vendor file or demo script cannot
+    # then be added without being packaged. Same convention as
+    # //weld/languages and the //weld/tests fixtures filegroup.
+    data = glob(["demos/scripts/*.sh", "viz/static/**"]) + [
         "//weld/languages:query_files",
         "//weld/templates",
     ],
@@ -366,7 +241,9 @@ py_library(
         ":glob_match",
         ":graph_node_registry",
         ":notice",
+        ":package_init",
         ":repo_boundary",
+        ":safe_text",
         ":yaml",
         "//weld/cross_repo",
         "//weld/strategies",
@@ -378,6 +255,7 @@ py_binary(
     srcs = ["__main__.py"],
     main = "__main__.py",
     deps = [
+        ":package_init",
         ":runtime",
         "//weld/bench:bench_lib",
     ],

@@ -4,7 +4,10 @@ Walks a workspace root looking for nested ``.git`` directories and turns each
 into a :class:`~weld.workspace.ChildEntry` with an auto-derived name and tags
 (ADR 0011). Split out of :mod:`weld.workspace` (which re-exports the public
 ``scan_nested_repos*`` functions) so the schema/loader/validator module stays
-within the line-count cap.
+within the line-count cap. The schema symbols below import from the
+dependency-free :mod:`weld._workspace_schema` leaf rather than from
+``weld.workspace`` directly -- importing them back from ``workspace.py``
+was a real top-level import cycle (bd 5038-zw6w4, ADR 0130 disposition #14).
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from weld.workspace import (
+from weld._workspace_schema import (
     DEFAULT_EXCLUDE_PATHS,
     DEFAULT_MAX_DEPTH,
     ChildEntry,

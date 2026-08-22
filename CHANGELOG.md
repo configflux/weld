@@ -3,6 +3,399 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.23.0 - 2026-08-22
+
+### Added
+
+- `wd doctor` now warns when `.weld/.gitignore` is a recognized template
+  missing lines the current template ships. A recent fix taught `wd init` /
+  `wd workspace bootstrap` to self-heal a stale `.weld/.gitignore` by
+  resyncing it, but only when either command actually runs -- a checkout
+  that runs `wd discover` on every change and never re-runs `wd init` after
+  initial setup got no signal that its ignore file had fallen behind (five prior
+  recurrences of exactly this: `file-index-state.json`, `auto-refresh.jsonl`,
+  `graph.write.lock`, `telemetry.jsonl`, and `.enrichment-prompted` each
+  shipped a template line an existing checkout never picked up). The new
+  check reuses the same recognition read-only: a `.weld/.gitignore` weld can
+  still fully account for (config-only, `--track-graphs`, or `--ignore-all`)
+  that is missing lines gets a `[warn]` naming them and pointing at `wd init`
+  as the fix. A file weld cannot fully account for -- hand-edited, foreign,
+  or simply absent -- stays silent, matching the same leave-alone posture the
+  write path already has.
+  <!-- verify: file=weld/_doctor_gitignore.py grep="def check_gitignore_resync" -->
+- Go source now mints real package nodes, so cross-repo Go imports resolve
+  and every Go file with a declaration satisfies the file-anchor rule. Go
+  previously minted zero `package:go:*` nodes from a repo's own source --
+  the only such node ever seen was a placeholder synthesised for an
+  unresolved import, never a producer declaration -- so a polyrepo
+  workspace's cross-repo import resolver had nothing genuine to match a
+  sibling's import against, and any Go file with a promoted function,
+  method, or type declaration had no parent to anchor it. `wd discover`
+  now mints one `package:go:<import path>` node per Go package directory
+  (derived from `go.mod` plus directory layout, mirroring the existing C#
+  and Python package strategies) and links it to its member files, so a
+  federated polyrepo workspace produces genuine cross-repo dependency edges
+  between Go repos.
+  <!-- verify: file=weld/strategies/go_package.py grep="def extract" -->
+- Discovery now records what a TypeScript / JavaScript test mocks.
+  `jest.mock("./payment-gateway")` and `vi.mock("../lib/thing")` name a module
+  by string, so the test imports nothing from it and the dependency was
+  invisible: asking who touches a module omitted every test that only mocks
+  it. Weld resolves the specifier against the test file's own directory --
+  including the `./a.js` spelling TypeScript's ESM output uses for `a.ts`, and
+  directory imports resolving to `index` -- and records a dependency on the
+  file it names. Only targets that resolve to a file actually on disk are
+  recorded; a bare package name such as `axios` is left alone, because
+  resolving it needs `moduleNameMapper` or `tsconfig` path aliases that weld
+  does not read, and guessing a same-named local file would attribute a mock
+  of an npm package to your own source. Python's equivalent
+  (`unittest.mock.patch("dotted.string")`) is unchanged, and both record the
+  same dependency shape, so one query answers the question in either language.
+  <!-- verify: file=weld/strategies/_mock_module_ts.py grep="doMock" -->
+
+- `wd stale --check` exits non-zero when the graph is stale, so a repository
+  that commits its graph can gate on freshness in one line:
+  `wd stale --check --no-refresh`. Nothing previously stopped a commit whose
+  tracked graph was older than the source beside it -- `wd stale` always
+  exited 0 and `wd doctor` grades staleness a warning. The report is printed
+  either way, so a failing job says why it failed. Without the flag the
+  command is unchanged, so existing scripts keep working.
+  <!-- verify: file=weld/_graph_cli_parser.py grep="--check" -->
+
+- `wd stale` names which source(s) it considers newer, and why. A
+  `source_stale: true` verdict used to give no way to act on it beyond "run
+  `wd discover`" -- the same line whether one file had changed or the signal
+  simply had no basis to settle. `stale_sources` now lists each diverging
+  path with a reason (`changed since last discovery`, `content differs`,
+  `ingested file vanished`, or `in-scope file never ingested`), capped at 50
+  entries with `stale_sources_omitted` reporting how many more there were.
+  Some stale states -- no recorded commit, or unreachable history -- still
+  have no single file to blame and report an empty list rather than a
+  guess. `wd stale`'s text output and `--json` (and `weld_stale` over MCP)
+  all carry the same fields.
+  <!-- verify: file=weld/_staleness.py grep="stale_sources" -->
+
+- `wd` now says when it is not the weld in the tree you are standing in.
+  `wd` is a console script, so it runs whichever copy of weld is installed
+  on your `PATH` — inside a weld source checkout that is a different copy
+  from the one in front of you, and nothing used to say so. A command run to
+  check a change would exercise the installed build and report a perfectly
+  plausible result that owed nothing to the edit, which reads exactly like a
+  correct answer. Weld now prints one line to stderr in that situation,
+  naming the running version and its package directory alongside the
+  checkout and its `VERSION`. The trigger is which package is executing, not
+  a version difference: `VERSION` only moves at release time, so a version
+  comparison would fall silent for every unreleased change. Ordinary use of
+  an installed weld never sees the line — it needs a weld checkout above the
+  current directory — and an editable install of the checkout you are in
+  resolves to the same package and stays silent too. stdout is untouched, so
+  `--json` output is unaffected; `WELD_SOURCE_CHECKOUT_NOTICE=off` silences
+  it.
+  <!-- verify: file=weld/_source_checkout_notice.py grep="def emit_source_checkout_notice" -->
+- A fresh `git worktree add` answers on its first read. A new worktree used
+  to arrive with no graph at all, so the first `wd query` in it exited with
+  first-run guidance and left a cold full discovery as the only way forward.
+  Weld now copies the graph from another checkout of the same repository --
+  the main checkout first, then any other worktree -- and immediately
+  reconciles it against the new tree, so the answer describes the branch you
+  are on and not the one it was seeded from. That reconcile is incremental,
+  costing roughly the branch delta rather than a full pass, and one line on
+  stderr names the source
+  checkout and the resulting `branch@sha`. Sibling checkouts are found
+  through git itself, so nested, sibling, temp-directory, and
+  bare-repository-hub layouts all work regardless of which tool created
+  them -- there are no path conventions to match. The worktree needs its own
+  `.weld/discover.yaml`, because configuration comes from the tree that owns
+  it; a plain clone, having no sibling to seed from, keeps the existing
+  first-run guidance. The optional SQLite index is not copied and rebuilds
+  lazily, and `WELD_AUTO_REFRESH=0` disables seeding along with auto-refresh,
+  so a frozen read still writes nothing under `.weld/`.
+  <!-- verify: file=weld/_worktree_seed_mode_a.py grep="copy_seed_worktree" -->
+- A tracked graph (`wd init --track-graphs`) now carries its own staleness
+  basis into a fresh clone or worktree. The committed `graph.json` arrives
+  without the gitignored bookkeeping that records which commit it was built
+  at, so a fresh checkout used to treat a perfectly good graph as undatable,
+  report it stale, and -- having no incremental state either -- pay a full
+  rediscover, the exact cost that committing the graph exists to avoid. The
+  first read now reconstructs that basis from the graph file's own commit
+  history. The reconstructed value is deliberately conservative: it is at or
+  before the commit the graph truly describes, so it can only over-trigger a
+  refresh, never report a stale graph as fresh. A basis already recorded
+  inside an older graph is preferred over a reconstructed one. Incremental
+  state is borrowed from another checkout only when that checkout's graph is
+  byte-identical to yours, so state can never describe a revision other than
+  the graph it is paired with. With nothing drifted, the first read reports
+  fresh and runs no discovery at all.
+  <!-- verify: file=weld/_worktree_seed.py grep="def _record_tracked_basis" -->
+- Answers now say which branch they came from. `wd stale` reports `branch`
+  -- read live -- beside `graph_branch`, the branch that was checked out when
+  the graph was built, and MCP reads carry `branch` in their `freshness`
+  object. An answer served from the wrong checkout is visible instead of
+  silent. A detached `HEAD` and a non-git tree have no branch to report, and
+  say so (`null` in the JSON forms). The branch is recorded only in the
+  gitignored sidecar and never inside `graph.json`, so a tracked graph stays
+  byte-identical across worktrees sitting at the same commit.
+  <!-- verify: file=weld/_stale_payload.py grep="graph_branch" -->
+- The MCP read tools accept an optional `root`, so one running server can
+  answer from any checkout of the repository it was started against -- the
+  capability `wd --root` has always had on the command line. An agent that
+  creates a git worktree after the server started no longer gets the launch
+  checkout's answers for it. The bound is git's own notion of repository
+  identity: `root` must be an existing directory of that same repository (a
+  linked worktree, the main checkout, or a subdirectory of either), so a
+  separate clone is refused even when its contents are identical, with a new
+  `root_out_of_bounds` error code whose message never repeats the path it was
+  given and reads the same for every reason it was refused. `weld_enrich` and
+  `weld_review` write, so they take no `root` and always act on the server's
+  own root. A named checkout that has no graph yet is bootstrapped on first
+  use, exactly as the CLI bootstraps it. `docs/mcp.md` documents the
+  parameter and the error code.
+  <!-- verify: file=weld/_mcp_guard.py grep="resolve_dispatch_root" -->
+
+### Changed
+
+- `graph.json` is now written one entity per line. It was indented JSON, at
+  roughly 74 lines per node, so any graph change was a six-figure diff on the
+  largest file in the tree and any two branches that both re-discovered
+  conflicted across the whole of it. Every node and every edge now occupies
+  exactly one line (`meta` keeps its indented block), which on a
+  9,000-node graph is 711,368 lines down to 49,303 and 21.1 MB down to
+  15.9 MB. The file is still a single valid JSON document -- not JSON Lines
+  -- so every reader parses it exactly as before, no schema field moved, and
+  graphs written by older and newer weld versions load in each other. It is
+  also faster to write and to parse, because the indentation was a quarter of
+  the bytes. Existing graphs are rewritten once on the next discovery; the
+  derived caches keyed to the old bytes (query-state sidecar, SQLite index,
+  `wd warm` integrity tag) all detect the change and rebuild.
+  <!-- verify: file=weld/serializer.py grep="_dumps_canonical_text" -->
+- `wd init --track-graphs` now commits each artifact together with the record
+  that explains it -- `graph.json` with `discovery-state.json`,
+  `file-index.json` with `file-index-state.json` -- and writes a
+  `.weld/.gitattributes` that resolves conflicts on them by regenerating
+  rather than by hand. A fresh clone previously arrived holding a graph and
+  no account of what that graph had read, so it reported stale on its first
+  read and paid one full discovery before it could answer anything; it now
+  answers straight away, and refreshes only when the sources have actually
+  moved. Because git refuses to clone merge-driver configuration, each clone
+  registers the driver once with
+  `git config merge.weld-regenerable.driver true`; `wd init --track-graphs`
+  does it for the checkout it runs in, and a clone that never runs it simply
+  gets ordinary conflict markers.
+  <!-- verify: file=weld/_gitattributes_writer.py grep="MERGE_DRIVER_NAME" -->
+- The managed `.weld/.gitignore` no longer commits `file-index.json` in the
+  default mode. The filename index is rebuilt from your tree by discovery, so
+  tracking it contradicted that mode's own rule -- track the source-of-truth
+  config, ignore everything weld can rebuild -- and it churned on every
+  discovery. It was tracked by omission rather than by choice: the name
+  appeared in neither policy. It is now ignored by default and tracked only
+  under `--track-graphs`, where a warm `wd find` in a fresh checkout is the
+  point. Repositories initialised by an earlier weld keep their existing
+  policy file and can untrack it with
+  `git rm --cached .weld/file-index.json`.
+  <!-- verify: file=weld/_gitignore_writer.py grep="file-index.json" -->
+
+- `wd` reads resolve which checkout answers instead of assuming the graph
+  sits in the directory the command was run from. A read from a subdirectory
+  now answers from the enclosing project rather than reporting no graph, and
+  the upward walk stops at the boundary of the git worktree you are standing
+  in -- so a worktree created inside another checkout can never climb out and
+  answer from the outer checkout's branch. Outside a git checkout only the
+  current directory is examined, so weld never wanders into an unrelated
+  parent project. Resolution never redirects to a different checkout.
+  `--root` is unchanged and still wins outright, and `wd discover`, `wd init`,
+  and `wd warm` keep explicit-root semantics: commands that write state still
+  default to the current directory.
+  <!-- verify: file=weld/_root_resolver.py grep="resolve_weld_root" -->
+- The MCP stdio server resolves its launch root the way `wd` does. Started
+  without an argument from a subdirectory, it now serves the checkout you are
+  standing in instead of the single directory it happened to start in, which
+  usually held no `.weld/` and so answered nothing. Passing an explicit ROOT
+  is unchanged.
+  <!-- verify: file=weld/_mcp_stdio.py grep="resolve_weld_root" -->
+- `weld_stale` now answers exactly what `wd stale --json` prints in a polyrepo
+  workspace, as it already did in a single repo. This fixes a blind spot and
+  changes a response shape. The blind spot: top-level `stale` was computed
+  from the workspace root's own graph alone, so an agent polling a workspace
+  root could read `stale: false` while a child repository's graph had drifted
+  commits behind its source -- the CLI reported `true` for the same workspace.
+  Child freshness is now folded in, and each child is dated through the same
+  oracle the CLI uses, so `commits_behind` and the reason for staleness are
+  reported rather than the "cannot date this graph" fallback the old path
+  produced for any child whose recorded commit lives in the local sidecar.
+  The shape: `children` changes from an object keyed by child name to a
+  name-sorted list of `{name, state, reason, commits_behind}`, matching the
+  CLI. A child that is missing, uninitialized, or corrupt still reports that
+  word and is still never counted stale, but reports it in `state` rather than
+  `status`; per-child `graph_sha`, `current_sha`, `source_stale`, `sha_behind`,
+  and the `error` string on a corrupt child are no longer included, the last of
+  which `wd workspace status --json` still reports. Code reading
+  `children["name"]` should match on the `name` field instead.
+  <!-- verify: file=weld/_mcp_read.py grep="stale_payload" -->
+- `weld_stale` no longer refreshes the graph before answering. It is the
+  freshness probe, and healing first left it unable to report the thing it
+  measures: with auto-refresh on -- the default -- the tool re-ran discovery,
+  in a polyrepo workspace across every drifted child, and then reported
+  `stale: false`, while `wd stale` at the same root in the same second
+  reported `true`. It now reports the state it finds without rewriting the
+  graph, so the two surfaces agree whether or not auto-refresh is enabled, and a
+  drifted child is visible instead of quietly repaired. Nothing else moves:
+  every graph-backed read still auto-refreshes before serving and still
+  carries the inline `freshness` object, so a `stale: true` here is followed
+  by a self-healing read exactly as before. Anything that used `weld_stale`
+  as its refresh trigger should call a graph-backed read, or `wd discover`,
+  instead.
+  <!-- verify: file=weld/_mcp_read.py grep="_load_single_repo_cached(root_path).stale()" -->
+
+### Security
+
+- The MCP `weld_stale` tool no longer runs discovery. Its published
+  description tells a client the tool is advisory and does not mutate the
+  graph, but refreshing before answering meant it could rewrite
+  `.weld/graph.json` and -- because discovery imports project-local strategy
+  modules from `.weld/strategies/` -- execute repository code, from the one
+  graph tool a client had been told was a read-only probe. It no longer
+  writes the graph or runs project code, so the declared contract and the
+  behavior match. The graph-backed
+  read tools still refresh by design, and `WELD_AUTO_REFRESH=0` still
+  disables that for the whole server.
+  <!-- verify: file=weld/_mcp_tools.py grep="never refreshes" -->
+- The MCP stdio server no longer imports modules from the directory it is
+  launched in. `python -m` places that directory -- for an MCP client, the
+  repository being analyzed -- ahead of the standard library on Python's
+  module search path, so a repository carrying its own `mcp/` package,
+  `json.py`, or any other module weld imports had that code executed when
+  the server started against it. The entry is now removed before anything
+  else loads. The same removal stops a repository from choosing what weld
+  reports about the environment: a crafted `mcp-*.dist-info` in that
+  directory could previously supply the SDK version printed in the
+  install-hint message. A `PYTHONPATH` naming the same directory is
+  deliberately left alone. `docs/mcp.md` gains a trust-model section
+  stating the boundary,
+  including the handful of modules Python's own module runner resolves
+  before weld gets control and the `PYTHONSAFEPATH=1` launch option that
+  closes them.
+  <!-- verify: file=weld/_launch_path.py grep="guard_module_launch" -->
+
+### Fixed
+
+- `wd discover --incremental` no longer leaves a phantom external-dependency
+  node behind after the last file that imported it is deleted. The first
+  file to import something outside the project -- Go's `strings`, Python's
+  `os` -- gets a placeholder node to anchor the import; deleting that file
+  correctly dropped the connecting edge but left the placeholder itself
+  sitting in the graph with nothing pointing at it, which a fresh full
+  discovery of the same tree never produces. Incremental discovery now drops
+  that placeholder too, once nothing imports it any more, matching what full
+  discovery already does -- a placeholder with another surviving importer is
+  untouched.
+  <!-- verify: file=weld/_discover_external_package_purge.py grep="emptied_external_package_node_ids" -->
+- `wd discover --incremental` no longer leaves a phantom "unresolved symbol"
+  node behind after the last file that referenced it is deleted. A call,
+  base class, or trait/interface reference that cannot be resolved to a
+  known symbol gets a placeholder node so the call/inheritance graph stays
+  referentially closed; deleting the file that made the only such reference
+  correctly dropped the connecting edge but left the placeholder itself
+  sitting in the graph with nothing pointing at it, which a fresh full
+  discovery of the same tree never produces. Incremental discovery now drops
+  that placeholder too, once nothing references it any more, matching what
+  full discovery already does -- a placeholder with another surviving
+  reference, in any language, is untouched.
+  <!-- verify: file=weld/_discover_unresolved_symbol_purge.py grep="emptied_unresolved_symbol_node_ids" -->
+- `wd init` and `wd workspace bootstrap` now resync an existing
+  `.weld/.gitignore` instead of leaving it exactly as first written. A
+  checkout initialised before a later weld release started ignoring an
+  additional generated file (`.enrichment-prompted`, `telemetry.jsonl`, and
+  others before it) carried the omission forever -- `git status` stayed
+  noisy until someone deleted the file and reran `wd init` by hand.
+  Re-running either command now recognizes an existing file's policy from
+  its own content and appends whichever lines that policy's template has
+  gained since, leaving every existing line untouched; a hand-edited file,
+  or one that does not cleanly match a known policy, is left alone
+  entirely, and neither command ever switches an existing file to a
+  different policy on its own.
+  <!-- verify: file=weld/_gitignore_writer.py grep="resync_weld_gitignore" -->
+- A Go file's `imports_from` no longer keeps its quotes. The `imports` query in
+  `weld/languages/go.yaml` captures the Go grammar's
+  `interpreted_string_literal` node, which is the verbatim source token,
+  quotes included -- so `props.imports_from` held `'"github.com/spf13/cobra"'`
+  where every sibling language already held the clean
+  `'github.com/spf13/cobra'`. An exact-string consumer of that field, such as
+  the cross-repo `package_import_resolver`, could never match a Go import
+  against anything. `imports_from` and the derived `imports_origin`
+  classification now share one clean, quote-stripped shape.
+  <!-- verify: file=weld/strategies/_go_tree_sitter.py grep="strip_import_quotes" -->
+
+- `wd query` no longer ranks a test above the code it covers. Asking "where is
+  `graph.json` written" returned eight symbols from a lint *test* about
+  `json.dumps` and never showed the module that actually writes the file,
+  which sat past the result limit. The cause was naming rather than scoring: a
+  test states its subject in a whole sentence
+  (`test_unwrapped_graph_dump_is_flagged`) while the subject states itself in
+  a word (`dumps_graph`), so on a prose question the test always carries more
+  of the vocabulary. Test files, test symbols and test build targets now sort
+  below non-test matches of equal relevance. They are re-ranked, never
+  dropped, and the demotion switches off entirely when your query names tests
+  (`test`, `spec`, `fixture`, `unittest`, `pytest`) or matches a test's name
+  exactly -- so searching for a test still finds it first.
+  <!-- verify: file=weld/_test_paths.py grep="test_noise_demotion" -->
+
+- `wd find` now finds field names in Python files. It matched only what a
+  module *defines* -- classes, public functions, imports, `__all__`,
+  module-level constants -- so a schema field was unfindable in `.py` while
+  the same word was found in shell scripts and Markdown, which are indexed by
+  a plain text scan. Searching for a field returned a confident-looking
+  answer that silently omitted every Python file, including the one declaring
+  it. Class attributes, keyword-argument names and identifier-shaped string
+  literals (the dict-key form most field reads take) are now indexed too,
+  bounded per file and required to look like an identifier so prose, paths and
+  values such as `"utf-8"` stay out.
+  <!-- verify: file=weld/_file_index_extractors.py grep="_field_surface_names" -->
+
+- `wd references` no longer discards its text matches when it has no graph
+  match. A name that is not a node of its own -- a dataclass field, a dict key
+  -- printed only `node not found`, while `--json` returned the matching files
+  at that same moment. The two channels are independent, so the text hits are
+  now shown alongside the message rather than instead of it.
+  <!-- verify: file=weld/_cli_render.py grep="textual hits" -->
+
+- The optional MCP stdio server no longer tells users with an
+  installed-but-unusable `mcp` SDK that it is not installed. An SDK that is
+  present but does not provide the MCP SDK 2.x API now gets its own message,
+  naming the version found and the fix that applies -- `pip install -U
+  "mcp>=2"`, or `pip install -U "configflux-weld[mcp]"` -- rather than
+  pointing at an extra those users already have. An absent SDK still points
+  at `pip install "configflux-weld[mcp]"`; both paths keep exit status 2.
+  `README.md` and `docs/mcp.md` now state the `mcp>=2,<3` requirement and
+  cover both cases under troubleshooting.
+  <!-- verify: file=weld/_mcp_stdio.py grep="not provide the MCP SDK 2.x API" -->
+
+- `wd find` now sees a project's extensionless executables. The index
+  admitted a file by its extension or by a known basename, and a script such
+  as `gradlew`, `configure`, `mvnw`, or a git hook has neither -- no suffix
+  to match, and a name each project chooses for itself -- so a repository's
+  most-invoked commands were absent from search while every file around them
+  was indexed. Searching for one answered "no matches", which reads as "this
+  does not exist" rather than "this kind of file is not indexed". An
+  extensionless file that opens with `#!` is now indexed as the script it
+  is. The check reads two bytes, so a binary is rejected on its magic number
+  rather than by decoding it; files with an unrecognised extension are
+  unaffected, and hidden dotfiles stay out regardless of their contents, so
+  a `.env` cannot be drawn into a searchable index.
+  <!-- verify: file=weld/file_index.py grep="_opens_with_shebang" -->
+
+- Editing a source file no longer erases the build targets that declare it.
+  On a Bazel repository, a refresh after any edit dropped that file's
+  `build-target --contains-->` edges, so "which target builds this" and
+  "which target runs this test" went unanswerable for every file anyone had
+  touched since the last full discovery -- and no later refresh brought them
+  back, while freshness reported the graph clean. The edges were declared in
+  a `BUILD` file that had not itself changed, so nothing re-read it to
+  restore them. Every edge read out of a `BUILD` file now records which file
+  declared it, which is what a refresh needs in order to tell "this edge
+  points at a file that changed" from "this edge is out of date". Deleting a
+  declared source still removes its edges, as it always did.
+  <!-- verify: file=weld/strategies/_bazel_labels.py grep="def edge_props" -->
+
 ## v0.22.1 - 2026-08-10
 
 ### Fixed
@@ -12,7 +405,7 @@ All notable user-facing changes to this project are recorded here.
   `.ts` and `.jsonl` as `.json`, producing spurious `broken_reference`
   reports for files that exist. `.tsv` and `.jsonl` references are now
   extracted with their full extension and checked correctly.
-  <!-- verify: file=weld/agent_graph_metadata.py grep="jsonl" -->
+  <!-- verify: file=weld/_agent_graph_asset.py grep="jsonl" -->
 - Concurrent graph mutations no longer lose writes: every mutating
   command (`wd add-node`, `add-edge`, `rm-node`, `rm-edge`, `import`,
   `migrate`, `touch`, `wd enrich`, and the enrichment MCP tool) now

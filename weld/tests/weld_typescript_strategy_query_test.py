@@ -221,16 +221,36 @@ class SubjectIdentityMissPredicateTest(unittest.TestCase):
         self.assertEqual(subject_identity_miss(_TS_EXPORTS, node, self.groups), 0)
 
     def test_subject_absent_is_penalised(self) -> None:
+        """True miss is tier 2 (ADR 0120): 0/1 hit-or-miss became 0/1/2 when
+        bd ght0 inserted a middle "separator-variant-only" tier between a raw
+        hit (0) and absence (now 2, was 1). "typescript" has no separator
+        character, so this case cannot land on the new tier 1 either way --
+        only the true-miss sentinel moved."""
         node = {"type": "symbol", "label": "files_missing_strategy_outputs",
                 "props": {"file": "weld/discovery_state.py",
                           "qualname": "files_missing_strategy_outputs"}}
-        self.assertEqual(subject_identity_miss(_DISCOVERY_SYM, node, self.groups), 1)
+        self.assertEqual(subject_identity_miss(_DISCOVERY_SYM, node, self.groups), 2)
 
     def test_subject_in_description_is_not_penalised(self) -> None:
         """A description mention of the subject still counts as identity."""
         node = {"type": "file", "label": "helper",
                 "props": {"file": "weld/helper.py",
                           "description": "a typescript discovery helper"}}
+        self.assertEqual(subject_identity_miss("file:weld/helper", node, self.groups), 0)
+
+    def test_subject_in_summary_is_not_penalised(self) -> None:
+        """A module's own docstring summary counts as identity (ADR 0116).
+
+        bd dyam: ``props.summary`` (ADR 0114's structural docstring channel)
+        was left out of the identity set when this predicate was written,
+        which is why a rare subject token named only in a module's opening
+        line (e.g. ``weld/serializer`` and ``graph.json``) still lost the
+        subject tie-break -- the same evidence class as ``description``
+        above, just discovery-authored instead of LLM-authored.
+        """
+        node = {"type": "file", "label": "helper",
+                "props": {"file": "weld/helper.py",
+                          "summary": "A typescript discovery helper."}}
         self.assertEqual(subject_identity_miss("file:weld/helper", node, self.groups), 0)
 
     def test_single_token_query_is_inert(self) -> None:
@@ -240,13 +260,17 @@ class SubjectIdentityMissPredicateTest(unittest.TestCase):
         self.assertEqual(subject_identity_miss("file:weld/x", node, groups), 0)
 
     def test_two_token_query_is_active(self) -> None:
-        """The OR-fallback tier fires for N>=2, so the predicate is active there."""
+        """The OR-fallback tier fires for N>=2, so the predicate is active there.
+
+        The miss case is tier 2, not tier 1 -- see
+        ``test_subject_absent_is_penalised`` for why (ADR 0120).
+        """
         groups = expand_token_groups(["typescript", "strategy"])
         miss = {"type": "file", "label": "discovery_state",
                 "props": {"file": "weld/discovery_state.py"}}
         hit = {"type": "file", "label": "typescript_exports",
                "props": {"file": "weld/strategies/typescript_exports.py"}}
-        self.assertEqual(subject_identity_miss(_DISCOVERY_FILE, miss, groups), 1)
+        self.assertEqual(subject_identity_miss(_DISCOVERY_FILE, miss, groups), 2)
         self.assertEqual(subject_identity_miss(_TS_EXPORTS, hit, groups), 0)
 
 
@@ -280,6 +304,14 @@ class PartialCoverageSubjectMissPredicateTest(unittest.TestCase):
                 "props": {"file": "weld/strategies/typescript_exports.py"}}
         self.assertEqual(partial_coverage_subject_miss(node, self.groups), 0)
 
+    def test_admitted_subject_bearing_via_summary_is_not_penalised(self) -> None:
+        """The admission tier reads the same identity set (ADR 0116)."""
+        node = {"id": "file:weld/helper", "type": "file", "label": "helper",
+                "partial_coverage": True,
+                "props": {"file": "weld/helper.py",
+                          "summary": "A typescript discovery helper."}}
+        self.assertEqual(partial_coverage_subject_miss(node, self.groups), 0)
+
     def test_admission_dimension_inert_below_three_groups(self) -> None:
         """The admission tier is empty for N<3, so this dimension is inert there.
 
@@ -297,22 +329,58 @@ class ImplParitySubjectTieBreakTest(unittest.TestCase):
     """The subject tie-break is wired identically across the three query impls.
 
     8rm0.4 requires impl #1 (JSON ranking), impl #2 (sqlite) and impl #3
-    (federation eager) to agree. The admission-tier predicate must be imported
-    and called in all three sort keys.
+    (federation eager) to agree on the admission-tier predicate.
+
+    How that parity is *held* changed with ADR 0113. Impls #2 and #3 used to
+    carry two byte-identical private sort-key closures, and this test grepped
+    each for the predicate name -- which proved both copies mentioned it, not
+    that they agreed. They now share one definition
+    (:func:`weld._rank_strict_and.strict_and_sort_key`), so the assertion is
+    stronger: the two must *delegate* to the shared key, and the shared key
+    must wire the predicate. A future copy-paste of the key back into one impl
+    fails here, which the old string search would have happily allowed.
     """
 
-    def test_predicate_present_in_all_three_sort_keys(self) -> None:
+    def test_impl_one_wires_the_predicate_in_its_own_key(self) -> None:
         import inspect
 
-        from weld import _federation_eager_index, _sqlite_query, ranking
+        from weld import ranking
 
-        for module in (ranking, _sqlite_query, _federation_eager_index):
+        self.assertIn(
+            "partial_coverage_subject_miss", inspect.getsource(ranking),
+            "impl #1 ranks by the ADR 0010 hybrid score and keeps its own sort "
+            "key, so it must wire the admission-tier subject tie-break itself",
+        )
+
+    def test_child_repo_impls_delegate_to_the_shared_key(self) -> None:
+        import inspect
+
+        from weld import _federation_eager_index, _sqlite_query
+
+        for module in (_sqlite_query, _federation_eager_index):
             src = inspect.getsource(module)
             self.assertIn(
-                "partial_coverage_subject_miss", src,
-                f"{module.__name__} must wire the admission-tier subject "
-                "tie-break for impl parity (8rm0.4)",
+                "strict_and_sort_key", src,
+                f"{module.__name__} must rank through the shared strict-AND "
+                "key rather than a private copy of it (8rm0.4 parity)",
             )
+
+    def test_the_shared_key_wires_both_rank_dimensions(self) -> None:
+        import inspect
+
+        from weld import _rank_strict_and
+
+        src = inspect.getsource(_rank_strict_and)
+        self.assertIn(
+            "partial_coverage_subject_miss", src,
+            "the shared strict-AND key must carry the ADR 0075 subject "
+            "tie-break (8rm0.4)",
+        )
+        self.assertIn(
+            "issue_concept_demotion", src,
+            "the shared strict-AND key must carry the ADR 0113 issue-concept "
+            "demotion, or impls #2/#3 let a bd issue title outrank the code",
+        )
 
 
 if __name__ == "__main__":

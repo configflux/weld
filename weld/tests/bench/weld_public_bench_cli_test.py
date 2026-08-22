@@ -10,11 +10,27 @@ from __future__ import annotations
 import io
 import tempfile
 import unittest
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import patch
 
 
+from weld._version import DISTRIBUTION_NAME  # noqa: E402
 from weld.cli import main as cli_main  # noqa: E402
+
+
+def _installed_weld(name: str) -> str:
+    """Stand-in for ``importlib.metadata.version`` on an installed weld.
+
+    The default-report-path cases pin the version rather than reading the
+    ambient one, so a checkout, a wheel and CI all assert the same name.
+    Nothing else on the ``--public`` path asks ``importlib.metadata``
+    anything, so answering only for weld's distribution is enough.
+    """
+    if name != DISTRIBUTION_NAME:
+        raise PackageNotFoundError(name)
+    return "9.9.9"
+
 
 _SMOKE_DIR = (
     Path(__file__).resolve().parent.parent.parent
@@ -45,6 +61,57 @@ class PublicBenchCliTest(unittest.TestCase):
             self.assertIn("# Weld public benchmark", text)
             self.assertIn("## Methodology", text)
             self.assertIn("## Caveats", text)
+
+    def _run_with_default_out(self, root: Path) -> int:
+        """Run ``--public`` with no ``--out``, so the CLI picks the path."""
+        return cli_main(
+            [
+                "bench",
+                "--public",
+                "--corpus",
+                str(_SMOKE_MANIFEST),
+                "--root",
+                str(root),
+            ]
+        )
+
+    def test_default_path_names_the_weld_its_header_names(self) -> None:
+        # Without --out the path is chosen before the run has produced
+        # anything to read a version off, so the version is resolved a
+        # second time -- which is how a report ends up named after one
+        # version and headered with another. Assert the artifact against
+        # its own first line.
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "importlib.metadata.version", _installed_weld,
+        ):
+            root = Path(tmp)
+            self.assertEqual(self._run_with_default_out(root), 0)
+
+            report = root / "docs" / "bench" / "PUBLIC-BENCHMARK-9.9.9.md"
+            self.assertTrue(
+                report.exists(),
+                f"wrote {sorted((root / 'docs' / 'bench').glob('*'))}",
+            )
+            self.assertEqual(
+                report.read_text(encoding="utf-8").splitlines()[0],
+                "# Weld public benchmark (9.9.9)",
+            )
+
+    def test_default_path_ignores_the_benchmarked_repos_version(self) -> None:
+        # --root is someone else's project. Its VERSION dates *that*
+        # project, so it must not end up naming a report about weld.
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "importlib.metadata.version", _installed_weld,
+        ):
+            root = Path(tmp)
+            (root / "VERSION").write_text("7.7.7\n", encoding="utf-8")
+            self.assertEqual(self._run_with_default_out(root), 0)
+
+            written = sorted((root / "docs" / "bench").glob("*.md"))
+            self.assertEqual(
+                [path.name for path in written],
+                ["PUBLIC-BENCHMARK-9.9.9.md"],
+            )
 
     def test_verify_passes_on_smoke_corpus(self) -> None:
         # First run produces the canonical report; --verify reruns and

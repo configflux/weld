@@ -12,12 +12,17 @@ present, so a polyrepo root serves every read command across its children:
 * ``find`` fans out across every child's file-index (ADR 0089).
 
 Kept out of ``weld/_graph_cli.py`` so that module stays within the 400-line cap;
-the ``emit`` writers are passed in to avoid a back-import.
+the ``emit`` writers are passed in rather than imported, so the dependency runs
+one way only -- this module never reaches back into the dispatcher that calls it.
 """
 
 from __future__ import annotations
 
-from weld._query_surface import apply_context_envelope
+from weld._query_surface import (
+    apply_callers_envelope,
+    apply_context_envelope,
+    apply_references_envelope,
+)
 from weld._query_surface import apply_query_envelope as _query_envelope
 from weld.federation import FederatedGraph
 
@@ -29,7 +34,8 @@ FEDERATED_CLI_COMMANDS = frozenset(
 
 def run_federated_cli(cmd, args, *, emit, emit_node_lookup) -> None:
     """Serve one federated read *cmd*. ``emit`` / ``emit_node_lookup`` are the
-    renderer-aware writers owned by :mod:`weld._graph_cli`."""
+    renderer-aware writers from :mod:`weld._graph_cli_emit`, injected by
+    :func:`weld._graph_cli.main`."""
     if cmd == "find":
         # File-index, not graph -- no FederatedGraph needed.
         from weld._cli_render import render_find
@@ -62,7 +68,10 @@ def run_federated_cli(cmd, args, *, emit, emit_node_lookup) -> None:
         from weld.federation_tools import federated_callers
 
         emit_node_lookup(
-            args, federated_callers(fg, args.symbol, depth=args.depth),
+            args,
+            apply_callers_envelope(
+                args, federated_callers(fg, args.symbol, depth=args.depth),
+            ),
             render_callers,
         )
     elif cmd == "references":
@@ -75,7 +84,7 @@ def run_federated_cli(cmd, args, *, emit, emit_node_lookup) -> None:
         refs = federated_references(fg, args.name)
         index = load_file_index(args.root)
         refs["files"] = find_files(index, args.name).get("files", [])
-        emit(args, refs, render_references)
+        emit(args, apply_references_envelope(args, refs), render_references)
     elif cmd == "communities":
         from weld._federation_flatten import flatten_federation
         from weld.graph_communities_cli import run_graph_communities

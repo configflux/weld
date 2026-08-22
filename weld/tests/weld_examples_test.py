@@ -9,12 +9,15 @@ Validates that:
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -174,15 +177,51 @@ class CustomStrategyLoadTest(unittest.TestCase):
         self.assertEqual(len(result.edges), 0)
 
 
+def _tree_fingerprint(root: Path) -> dict[str, tuple[int, int, str]]:
+    """Map each file under *root* to (size, mtime_ns, sha256).
+
+    mtime is part of the fingerprint on purpose. The sibling pip-wheel
+    pollution guard compares content only, and that made it structurally
+    blind: ``weld/__init__.py`` is empty by ADR 0099, so a producer that
+    rewrote it byte-identically passed a SHA check while still bumping
+    the inode's timestamps -- which is exactly what Bazel's
+    concurrent-modification guard keys on (bd w3n6). Content equality is
+    not enough to prove a tree was left alone.
+    """
+    out: dict[str, tuple[int, int, str]] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        out[str(path.relative_to(root))] = (stat.st_size, stat.st_mtime_ns, digest)
+    return out
+
+
 class DiscoverIntegrationTest(unittest.TestCase):
     """wd discover must run successfully against each example."""
 
     def _run_discover(self, example_dir: Path) -> dict:
         env = os.environ.copy()
         env["PYTHONPATH"] = str(_repo_root)
+        # Discover writes .weld/discovery-state.json (and friends) into
+        # its working directory. Run it against a scratch copy, never the
+        # live example: examples/BUILD.bazel exposes the tree as
+        # glob(["**/*"]), so anything written here is a declared Bazel
+        # action input, and rewriting one mid-run bumps its ctime and
+        # trips Bazel's concurrent-modification guard -- which then skips
+        # disk-cache upload for every affected action (bd w3n6). The
+        # sibling weld_examples_discover_golden_test.py already copies
+        # for the same reason.
+        with tempfile.TemporaryDirectory(prefix="weld-example-") as tmp:
+            scratch = Path(tmp) / example_dir.name
+            shutil.copytree(example_dir, scratch)
+            return self._discover_in(scratch, example_dir.name, env)
+
+    def _discover_in(self, workdir: Path, label: str, env: dict) -> dict:
         proc = subprocess.run(
             [sys.executable, "-m", "weld", "discover"],
-            cwd=str(example_dir),
+            cwd=str(workdir),
             capture_output=True,
             text=True,
             timeout=30,
@@ -190,7 +229,7 @@ class DiscoverIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(
             proc.returncode, 0,
-            f"wd discover failed in {example_dir.name}: {proc.stderr}",
+            f"wd discover failed in {label}: {proc.stderr}",
         )
         data = json.loads(proc.stdout)
         self.assertIsInstance(data, dict)
@@ -210,6 +249,37 @@ class DiscoverIntegrationTest(unittest.TestCase):
         self.assertGreater(
             len(data["nodes"]), 0,
             "Custom strategy example should produce at least one node",
+        )
+
+    def test_discover_does_not_write_into_live_example_tree(self) -> None:
+        """Running discover must leave the live examples/ tree untouched.
+
+        Regression guard for bd w3n6: this suite used to run discover with
+        cwd set to the live example directory, which wrote
+        examples/01-python-fastapi/.weld/discovery-state.json into tracked
+        source on every gate. Because examples/ is globbed into a Bazel
+        filegroup, that write landed on a declared action input mid-build
+        and Bazel responded by skipping disk-cache upload for hundreds of
+        targets ("Skipping uploading outputs because of concurrent
+        modifications"). The .gitignore entry for discovery-state.json
+        hid the git-visible half of the symptom but left the producer.
+        """
+        before = _tree_fingerprint(_EXAMPLES_DIR)
+        self._run_discover(_FASTAPI_DIR)
+        self._run_discover(_CUSTOM_DIR)
+        after = _tree_fingerprint(_EXAMPLES_DIR)
+
+        added = sorted(set(after) - set(before))
+        removed = sorted(set(before) - set(after))
+        changed = sorted(
+            name for name in set(before) & set(after)
+            if before[name] != after[name]
+        )
+        self.assertEqual(
+            (added, removed, changed), ([], [], []),
+            "discover mutated the live examples/ tree -- it must run "
+            f"against a scratch copy.\n  added:   {added}\n"
+            f"  removed: {removed}\n  changed: {changed}",
         )
 
     def test_custom_strategy_discover_finds_todos(self) -> None:

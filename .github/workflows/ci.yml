@@ -27,24 +27,38 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          # Must track MODULE.bazel's python.toolchain version. Bazel runs
+          # py_tests on the hermetic rules_python interpreter, and the only
+          # channel from this runner into such a test is the user site
+          # directory -- whose name carries the minor version. A mismatch
+          # here makes the MCP SDK install below invisible to the tests.
+          python-version: "3.12"
 
-      - name: Install tree-sitter Python bindings
-        # Several bench tests gate on _is_tree_sitter_available() and
-        # skip when the umbrella + grammar packages are absent. Install
-        # them here so the runner exercises the tree-sitter-present
-        # path (vs. silently skipping).
+      # A `pip install tree-sitter ...` step used to sit here, and bought
+      # nothing twice over: without --user it landed in the setup-python
+      # prefix, which no Bazel-hosted test reads, and the bench targets it
+      # named are `no-sandbox`-tagged, so the plain `bazelisk test //...`
+      # below filters them out regardless. Targets that really parse now
+      # declare their grammar wheels in BUILD, sourced from
+      # third_party/python/requirements_lock.txt, so every lane parses with
+      # the same pinned grammar instead of whatever pip resolves here.
+      # Bringing an ambient install back would re-open both gaps.
+
+      - name: Install the MCP SDK
+        # The MCP smoke test drives a real initialize + tools/list round
+        # trip against `python -m weld.mcp_server`, but only when a
+        # supported (2.x) SDK is importable -- otherwise it skips, and the
+        # wire surface ships unverified. `--user` puts the SDK in
+        # ~/.local/lib/python3.12/site-packages, which is the one directory
+        # both this runner and the hermetic interpreter Bazel runs tests on
+        # agree about. The Test step sets WELD_TEST_REQUIRE_MCP_SDK=1 so an
+        # install that lands anywhere else fails the test rather than
+        # returning it to a silent skip.
+        # The pip upgrade moved here from the deleted parser-wheel step so
+        # this install keeps resolving on the same pip it was validated on.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install \
-            tree-sitter \
-            tree-sitter-python \
-            tree-sitter-typescript \
-            tree-sitter-go \
-            tree-sitter-rust \
-            tree-sitter-cpp \
-            tree-sitter-c-sharp \
-            tree-sitter-java
+          python -m pip install --user "mcp>=2"
 
       - name: Mount Bazel cache
         uses: actions/cache@v5
@@ -75,4 +89,5 @@ jobs:
             --output_user_root="${HOME}/.cache/bazel-repo" \
             test \
             --disk_cache="${HOME}/.cache/bazel-disk" \
+            --test_env=WELD_TEST_REQUIRE_MCP_SDK=1 \
             //...

@@ -16,6 +16,7 @@ from importlib.resources import files
 from pathlib import PurePosixPath
 from urllib.parse import parse_qs, unquote, urlparse
 
+from weld._safe_text import sanitize_terminal_line
 from weld.viz._export_route import export_response
 from weld.viz._views import views_response
 from weld.viz.adapter import (
@@ -143,7 +144,8 @@ def main(argv: list[str] | None = None, *, graph_kind: str = "code") -> int:
             enable_saved_views=args.enable_saved_views,
         )
     except FileNotFoundError as exc:
-        print(str(exc), file=sys.stderr)
+        # The message carries the missing path, so it is repo-derived text.
+        print(sanitize_terminal_line(str(exc)), file=sys.stderr)
         return 2
 
 
@@ -378,7 +380,3 @@ def _params(query: str) -> dict:
 
 def _has_path_traversal(path: str) -> bool:
     return ".." in PurePosixPath(path.lstrip("/")).parts
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

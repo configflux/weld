@@ -52,11 +52,9 @@ from weld.strategies._gin_routes_helpers import (
     route_id,
     route_node,
 )
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._provenance import file_provenance
 
 #: Matches the gin module import path inside an import string literal.
 #: Covers the root package and any subpackage (``gin-gonic/gin/render``).
@@ -88,19 +86,21 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract gin route nodes and diagnostic exposes edges from Go src."""
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
-    discovered_dirs: set[str] = set()
+    discovered_from: list[str] = []
 
     pattern = source.get("glob", _DEFAULT_GLOB)
     excludes = source.get("exclude", [])
-    candidates = filter_glob_results(
-        root, _resolve_glob(root, pattern), excludes=excludes,
-    )
+    candidates = resolve_glob(root, pattern, excludes)
 
     for go_file in candidates:
         if not go_file.is_file():
             continue
-        if should_skip(go_file, excludes, root=root):
-            continue
+        # Provenance is this file, recorded before the read (bd od2a): the
+        # parent directory it replaced degenerated to ``"./"`` for a
+        # repo-root match (``main.go`` is exactly that), and recording only
+        # files that emitted a route meant adding the first ``r.GET`` to a
+        # module never marked it stale.
+        discovered_from.extend(file_provenance(root, [go_file]))
         try:
             text = go_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -109,20 +109,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             continue
 
         rel_path = go_file.relative_to(root).as_posix()
-        if _emit_for_file(text, rel_path, nodes, edges):
-            discovered_dirs.add(go_file.parent.relative_to(root).as_posix() + "/")
+        _emit_for_file(text, rel_path, nodes, edges)
 
-    return StrategyResult(nodes, edges, sorted(discovered_dirs))
-
-
-def _resolve_glob(root: Path, pattern: str) -> list[Path]:
-    """Expand *pattern* against *root* deterministically (sorted)."""
-    if "**" in pattern:
-        return sorted(root.glob(pattern))
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return []
-    return sorted(parent.glob(Path(pattern).name))
+    return StrategyResult(nodes, edges, discovered_from)
 
 
 def _strip_line_comments(text: str) -> str:

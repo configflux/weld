@@ -194,13 +194,19 @@ GO_STDLIB_PACKAGES: frozenset[str] = frozenset(
 )
 
 
-def _strip_quotes(import_path: str) -> str:
+def strip_quotes(import_path: str) -> str:
     """Return *import_path* with surrounding double quotes removed.
 
     Tree-sitter's Go ``imports`` query captures the literal source
     token ``"fmt"``, including quotes. Callers may also pass the
     pre-stripped form. This helper accepts both shapes so the public
-    API is forgiving.
+    API is forgiving -- and is idempotent, so re-applying it to an
+    already-stripped path is a no-op.
+
+    Public (not ``_strip_quotes``) because :func:`weld.strategies.
+    _go_tree_sitter.strip_import_quotes` also calls it directly (bd
+    bt5m) to clean ``props.imports_from`` itself, not just the
+    classification this module already tolerated both forms for.
     """
     if (
         len(import_path) >= 2
@@ -291,7 +297,7 @@ def classify_go_import(import_path: str, module_path: str) -> str:
         ``"unresolved"``. The function is total: malformed inputs
         always yield ``"unresolved"``.
     """
-    path = _strip_quotes(import_path).strip()
+    path = strip_quotes(import_path).strip()
     if not path:
         return "unresolved"
 
@@ -318,4 +324,5 @@ __all__ = [
     "classify_go_import",
     "is_go_stdlib",
     "parse_go_mod_module_path",
+    "strip_quotes",
 ]

@@ -66,14 +66,17 @@ def branch_b_message(agent: str) -> str:
 
     Names the detected agent harness so the user can confirm it's the
     one they're actually using (vs a CI variable leaking through), and
-    points at the canonical agent-direct entry point documented in
-    ``.claude/commands/enrich-weld.md``.
+    points at the product's own agent-direct entry point (ADR 0098).
+    It used to name ``/enrich-weld``, a Claude Code slash command that
+    ships with this repository and nowhere else -- a dead end for every
+    other harness this branch can detect.
     """
     return (
         f"No enrichment provider configured. Agent host detected "
         f"({agent}).\n"
-        f"Recommend: run /enrich-weld to let the agent enrich the "
-        f"graph directly (no API keys needed).\n"
+        f"Recommend: run 'wd enrich --agent-direct' -- it prints the "
+        f"work plan for the agent to enrich the graph directly (no API "
+        f"keys needed).\n"
     )
 
 
@@ -98,8 +101,9 @@ def branch_c_message(coverage_pct: float = 0.0) -> str:
     * ``>= threshold`` -- coverage is already good; stay silent (return
       ``""``) rather than nag inaccurately.
 
-    Both nudging regimes name ``wd enrich`` and ``/enrich-weld`` so the user
-    keeps a discoverable next step regardless of environment.
+    Both nudging regimes name ``wd enrich --provider`` and ``wd enrich
+    --agent-direct`` so the user keeps a discoverable next step regardless of
+    environment -- with or without provider credentials (ADR 0098).
     """
     if coverage_pct >= _TIP_SILENT_COVERAGE_PCT:
         return ""
@@ -110,5 +114,6 @@ def branch_c_message(coverage_pct: float = 0.0) -> str:
         action = "to raise coverage"
     return (
         f"Tip: {state}. Run 'wd enrich --provider <name>' {action} "
-        "(or run /enrich-weld inside an agent harness).\n"
+        "(or 'wd enrich --agent-direct' to enrich it yourself, no API "
+        "key needed).\n"
     )

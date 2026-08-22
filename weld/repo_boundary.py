@@ -5,6 +5,19 @@ as the source of truth for which files are in scope. This keeps tracked files
 visible even if they also match ``.gitignore``, while dropping ignored
 untracked files by default. Non-git directories fall back to the legacy
 directory-exclusion policy.
+
+**Snapshot lifetime (bd jbpb).** That listing is a *point-in-time* observation
+of the working tree, so it is memoized for the length of one operation and no
+longer. :func:`repo_boundary_scope` opens such an operation; inside it a root is
+snapshotted once, which both bounds the cost to a single ``git ls-files`` and
+keeps one discovery run from seeing the tree drift underneath it. Outside a
+scope every read shells git afresh. That asymmetry is deliberate: a scope that
+someone forgot to open costs subprocesses (loud, measurable), while a snapshot
+that outlives its operation returns a *wrong* answer silently -- which is what a
+process-lifetime cache did here, leaving long-lived hosts (the MCP stdio server,
+weld embedded as a library) blind to every file created after their first walk.
+:func:`filter_repo_paths`, the one helper that asks about many paths at once,
+opens its own scope so a single call costs a single snapshot regardless.
 """
 
 from __future__ import annotations
@@ -12,10 +25,11 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
-from typing import Collection
+from typing import Collection, Iterator
 
 # Directory names that are always excluded from Weld discovery results or the
 # file index, even when they are tracked in git.
@@ -121,7 +135,6 @@ def _strip_prefix(path: str, prefix: str) -> str | None:
         return path[len(prefix_with_sep) :]
     return None
 
-@lru_cache(maxsize=None)
 def _load_repo_boundary(root_str: str) -> RepoBoundary:
     root = Path(root_str)
     context = _git_repo_context(root)
@@ -178,9 +191,54 @@ def _load_repo_boundary(root_str: str) -> RepoBoundary:
         visible_dirs=frozenset(dirs),
     )
 
+# Per-operation memo: ``resolved-root-abspath -> RepoBoundary``, or ``None``
+# when no operation is open. A ContextVar rather than a module global because
+# scope is a property of the operation, not of the process: a global would let
+# one operation's snapshot answer a concurrent one's reads (the same
+# cross-operation leak this scoping exists to close), and it costs nothing in
+# the single-threaded case.
+_BOUNDARY_SCOPE: ContextVar[dict[str, RepoBoundary] | None] = ContextVar(
+    "weld_repo_boundary_scope", default=None,
+)
+
+@contextmanager
+def repo_boundary_scope() -> Iterator[None]:
+    """Memoize repo-boundary snapshots for the duration of one operation.
+
+    Bracket a discovery run, an index build, or any other pass that asks the
+    same root about many paths. Each root is snapshotted on first use inside the
+    scope and reused until it exits, so the operation shells ``git ls-files``
+    once per root and reads one consistent view of the tree.
+
+    Re-entrant: a nested scope joins the enclosing one instead of re-snapshotting,
+    so a self-bounding helper called mid-operation cannot swap the view out from
+    under its caller. Leaving the outermost scope drops the memo -- the next
+    operation observes the tree as it is then, not as it was.
+    """
+    if _BOUNDARY_SCOPE.get() is not None:
+        yield  # Join the enclosing operation; it owns the snapshot.
+        return
+    token = _BOUNDARY_SCOPE.set({})
+    try:
+        yield
+    finally:
+        _BOUNDARY_SCOPE.reset(token)
+
 def get_repo_boundary(root: Path) -> RepoBoundary:
-    """Return the cached repo-boundary snapshot for *root*."""
-    return _load_repo_boundary(str(root.resolve()))
+    """Return the repo-boundary snapshot for *root*.
+
+    Served from the enclosing :func:`repo_boundary_scope` when one is open, and
+    read fresh from git otherwise.
+    """
+    key = str(root.resolve())
+    scope = _BOUNDARY_SCOPE.get()
+    if scope is None:
+        return _load_repo_boundary(key)
+    boundary = scope.get(key)
+    if boundary is None:
+        boundary = _load_repo_boundary(key)
+        scope[key] = boundary
+    return boundary
 
 def path_within_repo_boundary(
     root: Path,
@@ -247,23 +305,32 @@ def filter_repo_paths(
     *,
     fallback_excluded_dir_names: Collection[str] = (),
 ) -> list[Path]:
-    """Filter *paths* down to weld-visible repo paths."""
-    return [
-        path
-        for path in paths
-        if path_within_repo_boundary(
-            root,
-            path,
-            fallback_excluded_dir_names=fallback_excluded_dir_names,
-        )
-    ]
+    """Filter *paths* down to weld-visible repo paths.
+
+    Self-bounding: the whole list is judged against one snapshot even when the
+    caller opened no scope, so this never shells git once per candidate path.
+    """
+    with repo_boundary_scope():
+        return [
+            path
+            for path in paths
+            if path_within_repo_boundary(
+                root,
+                path,
+                fallback_excluded_dir_names=fallback_excluded_dir_names,
+            )
+        ]
 
 def iter_repo_files(
     root: Path,
     *,
     fallback_excluded_dir_names: Collection[str] = (),
 ) -> list[Path]:
-    """Return repo-visible files under *root* in stable order."""
+    """Return repo-visible files under *root* in stable order.
+
+    Asks the boundary once, so this needs no scope of its own: unscoped it
+    reads the tree as it is now, and inside one it joins that snapshot.
+    """
     root = root.resolve()
     boundary = get_repo_boundary(root)
     if boundary.uses_git:

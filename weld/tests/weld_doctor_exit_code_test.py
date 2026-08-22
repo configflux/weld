@@ -112,6 +112,37 @@ class DoctorExitZeroOnWarningsOnly(unittest.TestCase):
                 code = doctor_main(["--root", str(root)])
             self.assertEqual(code, 0)
 
+    def test_outdated_optional_dep_stays_warn_not_fail(self):
+        """An installed-but-unusable optional dep is degraded, not invalid.
+
+        An ``mcp`` SDK below the stdio server's floor is reported at
+        ``warn`` rather than counted as present. Doctor's exit code must
+        not move because of it: the setup is degraded, not invalid, and
+        scripts gating on ``wd doctor`` would otherwise start failing on
+        an optional dependency they may never use.
+        """
+        from weld.doctor import main as doctor_main
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _setup_healthy(root)
+            output = io.StringIO()
+            with patch(
+                "weld._doctor_optional._module_available",
+                side_effect=lambda mod: mod == "mcp",
+            ), \
+                 patch(
+                     "weld._mcp_sdk.installed_version", return_value="1.27.2"
+                 ), \
+                 patch("weld.doctor.is_git_repo", return_value=True), \
+                 patch("weld.doctor.get_git_sha", return_value="abc"), \
+                 patch("weld.doctor.commits_behind", return_value=0), \
+                 patch("sys.stdout", output):
+                code = doctor_main(["--root", str(root)])
+            self.assertEqual(code, 0)
+            printed = output.getvalue()
+            self.assertIn("[warn]", printed)
+            self.assertIn("pip install -U 'mcp>=2'", printed)
+
 
 class DoctorExitOneOnErrors(unittest.TestCase):
     """Any ``fail`` check -> exit code 1."""

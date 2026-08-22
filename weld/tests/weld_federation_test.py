@@ -131,6 +131,13 @@ class FederatedGraphStatusTest(unittest.TestCase):
             self.assertEqual(status["repo-c"]["status"], "missing")
             self.assertEqual(status["repo-d"]["status"], "corrupt")
             self.assertIn("JSONDecodeError", str(status["repo-d"]["error"]))
+            # bd sk3c: non-present states (uninitialized/missing/corrupt) sort
+            # before present ones, alphabetical within each class -- so the
+            # three actionable entries lead even though "repo-a" (present)
+            # sorts first alphabetically overall.
+            self.assertEqual(
+                list(status), ["repo-b", "repo-c", "repo-d", "repo-a"],
+            )
 
 
 class FederatedGraphCliTest(unittest.TestCase):

@@ -301,9 +301,14 @@ class WeldMcpServerToolsTest(unittest.TestCase):
         self.assertEqual(result["depth"], 1)
 
     def test_weld_callers_matches_graph_helper(self) -> None:
+        # Same thin-wrapper invariant as weld_brief above: the tool adds no
+        # logic of its own, it just applies the shared ADR 0082 shaper, so the
+        # parity target is shape_callers(Graph.callers(...)).
+        from weld.read_traversal import shape_callers
+
         g = Graph(self.root)
         g.load()
-        expected = g.callers("symbol:py:m:helper", depth=1)
+        expected = shape_callers(g.callers("symbol:py:m:helper", depth=1))
         result = mcp_server.weld_callers("symbol:py:m:helper", root=self.root)
         self.assertEqual(result, expected)
 

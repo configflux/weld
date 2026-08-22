@@ -8,7 +8,6 @@ Owns argparse, git shelling, the staleness gate, and the entry-point
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -17,6 +16,8 @@ from weld._impact_git import (
     _git_status_files,
     _require_git_repo,
 )
+from weld._root_resolver import ROOT_HELP, resolve_weld_root
+from weld._safe_text import dumps_safe_json, sanitize_terminal_text
 from weld.graph import Graph
 from weld.impact_core import (
     IMPACT_VERSION,
@@ -104,12 +105,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit the stable JSON envelope instead of human-readable text",
     )
     parser.add_argument(
-        "--root", type=Path, default=Path("."),
-        help="Project root containing .weld/graph.json",
+        "--full-size", dest="full_size", action="store_true", default=False,
+        help=(
+            "Skip the read byte budget on --json and emit every "
+            "dependent, however large the payload"
+        ),
     )
+    parser.add_argument("--root", type=Path, default=None, help=ROOT_HELP)
     parser.add_argument(
         "--no-refresh", dest="no_refresh", action="store_true", default=False,
-        help="Skip auto-refresh on stale graph (ADR 0051).",
+        help="Skip auto-refresh on stale graph.",
     )
     return parser
 
@@ -268,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point for ``wd impact``."""
     parser = _build_parser()
     args = parser.parse_args(argv)
+    args.root = resolve_weld_root(args.root)  # ADR 0096
     _validate_seed_inputs(args)
 
     from weld._auto_refresh import auto_refresh_if_stale
@@ -276,7 +282,11 @@ def main(argv: list[str] | None = None) -> int:
     # Surface the friendly first-run message if the graph has not been
     # built. Mirrors trace/diff/enrich behaviour.
     retry_target = args.target if args.target is not None else "<seed>"
-    ensure_graph_exists(args.root, _build_retry_hint("impact", retry_target))
+    ensure_graph_exists(
+        args.root,
+        _build_retry_hint("impact", retry_target),
+        no_refresh=args.no_refresh,
+    )
     # ADR 0051: auto-refresh stale graphs before the existing
     # --allow-stale gate fires. The banner is suppressed under --json.
     auto_refresh_if_stale(
@@ -326,14 +336,21 @@ def main(argv: list[str] | None = None) -> int:
             stale_graph=stale_graph,
         )
     if args.json:
-        json.dump(
-            result,
-            sys.stdout,
-            indent=2,
-            ensure_ascii=False,
-            sort_keys=True,
+        # ADR 0082: bound the *agent-facing* payload only. The byte budget
+        # exists to fit the agent tool-result cap, and only --json crosses it;
+        # ``weld_impact`` applies the same shaping, so the two surfaces agree
+        # (ADR 0083). The human summary below is deliberately left unshaped --
+        # it reports blast-radius *counts*, and a bounded count would
+        # under-report the very number the reader ran the command for.
+        from weld.read_traversal import shape_impact
+
+        sys.stdout.write(
+            dumps_safe_json(
+                shape_impact(result, full_size=args.full_size),
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
         )
-        sys.stdout.write("\n")
     else:
-        sys.stdout.write(format_human(result))
+        sys.stdout.write(sanitize_terminal_text(format_human(result)))
     return 0

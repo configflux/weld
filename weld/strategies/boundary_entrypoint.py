@@ -17,7 +17,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob_with_provenance
+from weld.strategies._helpers import StrategyResult
 
 # -- Framework detection helpers -------------------------------------------
 
@@ -146,31 +148,6 @@ def _detect_boundary(tree: ast.Module, imports: set[str]) -> tuple[str, str] | N
 
 # -- Glob resolution (shared pattern with python_module) -------------------
 
-def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
-    """Resolve a glob pattern that may contain ``**``.
-
-    Returns ``(matched_files, discovered_from_dirs)``.
-    """
-    files: list[Path] = []
-    dirs: set[str] = set()
-
-    if "**" in pattern:
-        raw = sorted(root.glob(pattern))
-        for py in filter_glob_results(root, raw):
-            files.append(py)
-            dirs.add(str(py.parent.relative_to(root)) + "/")
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return [], []
-        name_pat = Path(pattern).name
-        raw = sorted(parent.glob(name_pat))
-        for py in filter_glob_results(root, raw):
-            files.append(py)
-        dirs.add(str(parent.relative_to(root)) + "/")
-
-    return files, sorted(dirs)
-
 def _make_node_id(node_type: str, rel_path: str) -> str:
     """Build node ID like ``entrypoint:services/api/main``."""
     p = Path(rel_path)
@@ -236,15 +213,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     pattern = source["glob"]
     excludes = source.get("exclude", [])
 
-    matched, dirs = _resolve_glob(root, pattern)
+    matched, dirs = resolve_glob_with_provenance(root, pattern, excludes)
     discovered_from.extend(dirs)
 
     if not matched:
         return StrategyResult(nodes, edges, discovered_from)
 
     for py in matched:
-        if should_skip(py, excludes, root=root):
-            continue
         if py.name.startswith("_") and py.name != "__init__.py":
             continue
         try:
@@ -253,7 +228,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         except (SyntaxError, OSError):
             continue
 
-        rel_path = str(py.relative_to(root))
+        rel_path = rel_to_root(py, root)
         imports = _collect_imports(tree)
         service_id = _owning_service_id(rel_path)
 

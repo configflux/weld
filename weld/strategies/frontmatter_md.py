@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract agent definitions from markdown with YAML frontmatter."""
@@ -14,15 +16,12 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     pattern = source["glob"]
     excludes = source.get("exclude", [])
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
-    discovered_from.append(str(parent.relative_to(root)) + "/")
-
-    for md in filter_glob_results(root, sorted(parent.glob(Path(pattern).name)), excludes=excludes):
-        if should_skip(md, excludes, root=root):
-            continue
-        rel_path = str(md.relative_to(root))
+    for md in resolve_glob(root, pattern, excludes):
+        rel_path = rel_to_root(md, root)
+        # Per-file provenance, recorded before the read -- see StrategyResult
+        # (bd 8ia5). The old ``parent``-derived entry was ``"./"`` for any
+        # root-anchored glob, which marks the whole tree as tracked source.
+        discovered_from.append(rel_path)
         try:
             text = md.read_text(encoding="utf-8")
         except OSError:

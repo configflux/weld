@@ -6,8 +6,8 @@
 # sources elsewhere in the demo.
 
 [mcp_servers.weld]
-command = "python"
-args = ["-m", "weld.mcp_server"]
+command = "wd"
+args = ["mcp", "serve"]
 
 [mcp_servers.context7]
 command = "npx"

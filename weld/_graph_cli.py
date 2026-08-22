@@ -1,54 +1,28 @@
 """CLI entry point for the connected structure graph commands.
 
-Houses the argparse-based ``main()`` dispatcher and small helpers used only
-by the CLI path (``_deep_merge``, ``_out``).  Extracted from ``weld.graph``
-to keep the core ``Graph`` class under the 400-line default.
+Parses ``argv``, settles the project root, and routes each command to the
+dispatcher that can serve it: :mod:`weld._graph_cli_federated` at a polyrepo
+root, :mod:`weld._graph_cli_single` otherwise. What stays here is what both
+routes share -- the command sets, the first-run guidance a graph-backed read
+needs when ``.weld/graph.json`` is absent, and the retry-hint builder five
+sibling CLIs (``brief`` / ``trace`` / ``impact`` / ``diff`` / ``enrich``)
+import from this module.
+
+Originally extracted from ``weld.graph`` to keep the core ``Graph`` class
+under the 400-line default; the dispatch chains and the renderer-aware
+writers (:mod:`weld._graph_cli_emit`) have since been split out for the
+same reason.
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
+from weld._graph_cli_emit import _emit, _emit_node_lookup, _out
 from weld._graph_cli_parser import build_parser
-from weld._query_surface import apply_context_envelope
-from weld._query_surface import apply_query_envelope as _query_envelope
-from weld.graph import Graph
-from weld._notice import emit
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    """Recursively merge *override* into a copy of *base*."""
-    result = dict(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-def _out(data: object) -> None:
-    json.dump(data, sys.stdout, indent=2, ensure_ascii=False)
-    sys.stdout.write("\n")
-
-
-def _emit(args, data: object, renderer) -> None:
-    """Write *data* as JSON when ``--json`` is set, else rendered text (ADR 0040)."""
-    if getattr(args, "as_json", False):
-        _out(data)
-        return
-    sys.stdout.write(renderer(data))
-
-
-def _emit_node_lookup(args, data: dict, renderer) -> None:
-    """Thin adapter to :func:`weld._graph_cli_errors.emit_node_lookup`.
-
-    Passes :func:`_emit` so the error module stays free of a back-import.
-    """
-    from weld._graph_cli_errors import emit_node_lookup
-
-    emit_node_lookup(args, data, renderer, _emit)
+from weld._graph_cli_single import run_single_repo
+from weld._root_resolver import resolve_weld_root
+from weld._safe_text import sanitize_terminal_text
 
 
 # Graph-backed read commands. A missing `.weld/graph.json` here yields an
@@ -60,6 +34,29 @@ def _emit_node_lookup(args, data: dict, renderer) -> None:
 _READ_COMMANDS = frozenset(
     {"query", "context", "path", "callers", "references", "communities"}
 )
+
+# Commands that answer from ``.weld/`` state and must therefore get a fresh
+# checkout's seed (ADR 0096 §2) before they answer -- but that must keep
+# answering when the checkout stays graphless, so they take the seed WITHOUT
+# the first-run refusal ``_READ_COMMANDS`` carries.
+#
+# Splitting the two is the bug fix (bd 6osw). ADR 0096 §2 places seeding at
+# "the single funnel all graph-backed read CLIs pass through", but the funnel
+# it was wired into is ``ensure_graph_exists``, whose membership is the set
+# above -- chosen to answer a different question ("who gets first-run
+# guidance?"). A fresh worktree's ``wd stale`` therefore reported ``no graph``
+# and ``wd find`` reported ``no matches`` -- the second a false negative for a
+# file plainly on disk -- while ``wd query`` one keystroke away seeded and
+# answered correctly. That is the exact wrong-branch-class answer the seeding
+# exists to prevent, and it hit the surface agents are told to run *first*
+# (CLAUDE.md: check ``wd stale`` before code work).
+#
+# These commands cannot simply join ``_READ_COMMANDS``: a freshness probe that
+# exits 1 instead of reporting "no graph" is useless, and ``find`` answers off
+# the file-index, which a user may legitimately build without any graph.
+# Mutating commands stay out on ADR 0096's own rule -- commands that create
+# state stay deliberate.
+_SEED_ONLY_COMMANDS = frozenset({"stale", "find", "stats", "list", "dump"})
 
 # Commands that rewrite .weld/graph.json. Each runs load -> mutate -> save,
 # so the whole span must hold the exclusive graph write lock (ADR 0094) --
@@ -124,17 +121,35 @@ def missing_graph_message(retry_cmd: str) -> str:
     )
 
 
-def ensure_graph_exists(root: Path, retry_cmd: str) -> None:
+def ensure_graph_exists(root: Path, retry_cmd: str, *, no_refresh: bool = False) -> None:
     """Exit with an actionable message when ``.weld/graph.json`` is missing.
 
     This is a no-op when the graph file is present (even if empty). Callers
     should invoke this *before* constructing a :class:`~weld.graph.Graph` so
     first-run users get guidance instead of an empty-payload success.
+
+    Seeding runs first (ADR 0096 §2): this is the single funnel every
+    graph-backed read passes through, so it is where a fresh checkout gets
+    the ``.weld/`` state its tracked graph arrived without. It must precede
+    the existence check below, because the Mode B case *has* a graph and
+    would otherwise return before ever being repaired. Imported lazily to
+    keep the module import graph here flat.
+
+    *no_refresh* is the caller's ``--no-refresh``, one of the two opt-outs
+    ADR 0051 gives from the read path's write side-effect. Seeding is a
+    write, so every command offering the flag must hand it on: a dropped
+    hand-off makes the flag mean less there than on its neighbours.
+    Commands with no such flag (``diff``, ``enrich``) take the default.
     """
+    from weld._worktree_seed import ensure_seeded
+
+    ensure_seeded(root, no_refresh=no_refresh)
     graph_path = Path(root) / ".weld" / "graph.json"
     if graph_path.exists():
         return
-    sys.stderr.write(missing_graph_message(retry_cmd) + "\n")
+    # retry_cmd embeds the user's own search term (_build_retry_hint), so this
+    # block is not the fixed string it looks like.
+    sys.stderr.write(sanitize_terminal_text(missing_graph_message(retry_cmd)) + "\n")
     sys.exit(1)
 
 
@@ -163,6 +178,9 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
     if not args.command:
         parser.print_help()
         sys.exit(1)
+    # ADR 0096: an omitted --root means "the checkout I am standing in",
+    # resolved once here so every branch below sees a settled root.
+    args.root = resolve_weld_root(args.root)
     cmd = args.command
     from weld._graph_cli_federated import FEDERATED_CLI_COMMANDS
     if cmd in FEDERATED_CLI_COMMANDS:
@@ -195,7 +213,17 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
     if cmd in _READ_COMMANDS:
         # Single-repo read path: surface a friendly first-run message when
         # the graph has not been built yet (tracked issue).
-        ensure_graph_exists(args.root, _retry_hint(cmd, args))
+        ensure_graph_exists(
+            args.root, _retry_hint(cmd, args),
+            no_refresh=getattr(args, "no_refresh", False),
+        )
+    elif cmd in _SEED_ONLY_COMMANDS:
+        # Same seed, no refusal (bd 6osw). Imported lazily for the same
+        # reason ``ensure_graph_exists`` does it: keep this module's import
+        # graph flat.
+        from weld._worktree_seed import ensure_seeded
+
+        ensure_seeded(args.root, no_refresh=getattr(args, "no_refresh", False))
     # ADR 0051: auto-refresh stale graphs before serving. ``find`` is
     # included even though it reads the file-index (not the graph)
     # because the same incremental discovery pass that refreshes the
@@ -210,167 +238,6 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
     if cmd in _MUTATING_COMMANDS:
         from weld._graph_write_lock import graph_write_lock
         with graph_write_lock(args.root):
-            _run_single_repo(cmd, args)
+            run_single_repo(cmd, args)
         return
-    _run_single_repo(cmd, args)
-
-
-def _run_single_repo(cmd: str, args) -> None:  # noqa: C901 -- CLI dispatch chain
-    from weld._graph_cli_errors import load_graph_or_exit
-    g = load_graph_or_exit(Graph(args.root))
-    mutates = False
-    if cmd == "find":
-        from weld._cli_render import render_find
-        from weld.file_index import find_files, load_file_index
-        index = load_file_index(args.root)
-        _emit(args, find_files(index, args.term, limit=args.limit), render_find)
-    elif cmd == "query":
-        from weld._cli_render import render_query
-        _emit(
-            args,
-            _query_envelope(args, g.query(args.term, args.limit)),
-            render_query,
-        )
-    elif cmd == "context":
-        from weld._cli_render import render_context
-        _emit_node_lookup(
-            args,
-            apply_context_envelope(args, g.context(args.node_id)),
-            render_context,
-        )
-    elif cmd == "callers":
-        from weld._cli_render import render_callers
-        _emit_node_lookup(
-            args, g.callers(args.symbol, depth=args.depth), render_callers,
-        )
-    elif cmd == "references":
-        from weld._cli_render import render_references
-        from weld.file_index import find_files, load_file_index
-        index = load_file_index(args.root)
-        refs = g.references(args.name)
-        refs["files"] = find_files(index, args.name).get("files", [])
-        _emit(args, refs, render_references)
-    elif cmd == "path":
-        from weld._cli_render import render_path
-        _emit(args, g.path(args.from_id, args.to_id), render_path)
-    elif cmd == "add-node":
-        props = json.loads(args.props)
-        if args.merge:
-            existing = g.get_node(args.id)
-            if existing:
-                merged = _deep_merge(existing.get("props", {}), props)
-                label = args.label or existing.get("label", args.id)
-                _out(g.add_node(args.id, args.node_type, label, merged))
-            else:
-                _out(g.add_node(args.id, args.node_type, args.label or args.id, props))
-        else:
-            _out(g.add_node(args.id, args.node_type, args.label or args.id, props))
-        mutates = True
-    elif cmd == "add-edge":
-        props = json.loads(args.props)
-        _out(g.add_edge(args.from_id, args.to_id, args.edge_type, props))
-        mutates = True
-    elif cmd == "rm-node":
-        removed = g.rm_node(args.id)
-        _out({"removed": removed, "id": args.id})
-        mutates = True
-    elif cmd == "rm-edge":
-        count = g.rm_edge(args.from_id, args.to_id, args.edge_type)
-        _out({"removed_count": count})
-        mutates = True
-    elif cmd == "list":
-        _out(g.list_nodes(args.type_filter))
-    elif cmd == "stale":
-        from weld._cli_render import render_stale
-        from weld._federation_staleness import stale_payload
-        # ADR 0066 §2: at a federated root, fold per-child staleness into
-        # the root payload; a single repo returns g.stale() unchanged.
-        _emit(args, stale_payload(args.root, g.stale()), render_stale)
-    elif cmd == "touch":
-        g.save(touch_git_sha=True)
-        _out({
-            "git_sha": g.dump().get("meta", {}).get("git_sha"),
-            "updated_at": g.dump().get("meta", {}).get("updated_at"),
-        })
-    elif cmd == "dump":
-        _out(g.dump())
-    elif cmd == "stats":
-        from weld._cli_render import render_stats
-        from weld._graph_stats_cli import build_stats_payload
-        _emit(args, build_stats_payload(args.root, g, top=args.top), render_stats)
-    elif cmd == "communities":
-        from weld.graph_communities_cli import run_graph_communities
-        run_graph_communities(args, g)
-    elif cmd == "import":
-        raw = sys.stdin.read() if str(args.file) == "-" else args.file.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        from weld.trace_contract import trace_contract_warnings
-
-        warnings = trace_contract_warnings(data)
-        result = g.merge_import(data)
-        if warnings:
-            result["warnings"] = warnings
-            for warning in warnings:
-                emit(f"[weld] warning: {warning}")
-        _out(result)
-        mutates = True
-    elif cmd == "validate":
-        from weld._validate_diagnostics import format_validation_report
-        from weld.contract import validate_graph
-        errs = validate_graph(g.dump())
-        _out({"valid": not errs, "errors": [str(e) for e in errs]})
-        if errs:
-            graph_path = Path(args.root) / ".weld" / "graph.json"
-            sys.stderr.write(format_validation_report(
-                errs, source=str(graph_path),
-            ))
-            sys.exit(1)
-    elif cmd == "migrate":
-        # ADR 0050: --add-confidence backfills missing edge.confidence
-        # props by classifying each edge's source_strategy against the
-        # static defaults map. Future migrations land here as
-        # additional --flag options on the same subcommand.
-        if not getattr(args, "add_confidence", False):
-            sys.stderr.write(
-                "wd migrate: pass --add-confidence (ADR 0050) to "
-                "backfill missing edge confidence props.\n",
-            )
-            sys.exit(2)
-        from weld._graph_migrate import backfill_confidence
-        data = g.dump()
-        report = backfill_confidence(data)
-        # backfill_confidence mutates `data` in place; the in-memory
-        # graph holds the same dict reference, so save() persists it.
-        g.save(touch_git_sha=True)
-        _out(report.to_dict())
-    elif cmd == "validate-fragment":
-        from weld._validate_diagnostics import format_validation_report
-        from weld.contract import validate_fragment
-        raw = sys.stdin.read() if str(args.file) == "-" else args.file.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        errs = validate_fragment(
-            data,
-            source_label=args.source_label,
-            allow_dangling_edges=args.allow_dangling,
-        )
-        warnings = []
-        if not errs:
-            from weld.trace_contract import trace_contract_warnings
-
-            warnings = trace_contract_warnings(data)
-        _out({
-            "valid": not errs,
-            "errors": [str(e) for e in errs],
-            "warnings": warnings,
-        })
-        for warning in warnings:
-            emit(f"[weld] warning: {warning}")
-        if errs:
-            source = "<stdin>" if str(args.file) == "-" else str(args.file)
-            sys.stderr.write(format_validation_report(errs, source=source))
-            sys.exit(1)
-    if mutates:
-        # Mutating CLI paths implicitly advance meta.git_sha to HEAD so
-        # enrichment-only commits do not trigger [stale] false positives
-        # (ADR 0017). Outside a git repo this is a silent no-op.
-        g.save(touch_git_sha=True)
+    run_single_repo(cmd, args)

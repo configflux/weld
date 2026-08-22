@@ -112,13 +112,91 @@ class WorkingTreeDirtySourcesTest(unittest.TestCase):
         # every refresh-on-read rewrites it untracked, so if it were missing
         # from the bookkeeping set a broad ``./`` discovered_from would count
         # it as source drift and leave the repo perpetually ``source_stale``.
+        # ``auto-refresh.jsonl`` (ADR 0051 sidecar log) has the identical
+        # shape: every auto-refresh appends to it. The rest arrived in the
+        # bd eqc4 sweep that enumerated the whole family at once instead of
+        # waiting for each to strand a checkout in turn -- ``telemetry.jsonl``
+        # (ADR 0035, every command) and ``.enrichment-prompted`` (ADR 0052,
+        # first run) being the two that bite with no user action at all.
         for name in (
             "graph.json", "discovery-state.json", "graph-meta.json",
             "graph.db", "file-index.json", "file-index-state.json",
+            "auto-refresh.jsonl", "telemetry.jsonl", "graph-previous.json",
+            "workspace-state.json", "workspace.lock", "agent-graph.json",
+            "graph-communities.json", "graph-community-report.md",
+            "graph-community-index.md", "review-state.json",
+            ".enrichment-prompted",
         ):
             (self.root / ".weld" / name).write_text("x\n", encoding="utf-8")
         self.assertEqual(
             working_tree_dirty_sources(self.root, ["./"]), []
+        )
+
+    def test_auto_refresh_writer_output_is_never_source(self) -> None:
+        # Bound to the *real* writer instead of a hard-coded filename: this
+        # fails both if the sidecar path drops out of the bookkeeping set and
+        # if ``_record_sidecar_event`` ever renames the log out from under it.
+        from weld._auto_refresh import _record_sidecar_event
+        _record_sidecar_event(
+            self.root, files_changed=1, elapsed_ms=7, incremental=True,
+        )
+        written = sorted(p.name for p in (self.root / ".weld").iterdir())
+        self.assertTrue(
+            written, "auto-refresh writer produced no sidecar to test against"
+        )
+        self.assertEqual(
+            working_tree_dirty_sources(self.root, ["./"]), [],
+            f"auto-refresh sidecar counted as source drift: {written}",
+        )
+
+    def test_graph_write_lock_output_is_never_source(self) -> None:
+        # ADR 0096 gate 5 takes the ADR 0094 write lock to seed a fresh
+        # worktree, so a plain read now leaves a lock file where only
+        # mutating verbs used to. Bound to the *real* lock rather than a
+        # hard-coded filename, like the auto-refresh case above: without
+        # the bookkeeping entry, one read makes a checkout whose
+        # ``.weld/.gitignore`` predates ADR 0094 permanently source-stale,
+        # re-discovering on every read thereafter.
+        from weld._graph_write_lock import graph_write_lock
+
+        with graph_write_lock(self.root):
+            pass
+        written = sorted(p.name for p in (self.root / ".weld").iterdir())
+        self.assertTrue(
+            written, "the write lock produced no file to test against"
+        )
+        self.assertEqual(
+            working_tree_dirty_sources(self.root, ["./"]), [],
+            f"graph write lock counted as source drift: {written}",
+        )
+
+    def test_telemetry_writer_output_is_never_source(self) -> None:
+        # bd eqc4, the third writer-bound case. ADR 0035 telemetry is
+        # default-on and appends on *every* ``wd`` command, so a checkout
+        # whose ``.weld/.gitignore`` predates the ``telemetry.jsonl``
+        # template line reads its own log as user source drift and answers
+        # ``source_stale`` forever after. Bound to the real ``Recorder``, so
+        # a rename of the log fails here too. ``graph.json`` (itself
+        # bookkeeping) makes ``resolve_path`` see a weld root;
+        # ``cli_flag=True`` pins telemetry on whatever the ambient opt-out.
+        import io
+
+        from weld._telemetry import Recorder
+
+        (self.root / ".weld" / "graph.json").write_text("{}\n", encoding="utf-8")
+        with Recorder(
+            surface="cli", command="query", flags=[], root=self.root,
+            cli_flag=True, stderr=io.StringIO(),
+        ):
+            pass
+        written = sorted(p.name for p in (self.root / ".weld").iterdir())
+        self.assertIn(
+            "telemetry.jsonl", written,
+            f"telemetry writer produced no log to test against: {written}",
+        )
+        self.assertEqual(
+            working_tree_dirty_sources(self.root, ["./"]), [],
+            f"telemetry log counted as source drift: {written}",
         )
 
     def test_dirty_source_under_root_prefix_still_counts(self) -> None:
@@ -186,6 +264,9 @@ class ComputeStaleInfoDirtyTreeTest(unittest.TestCase):
         self.assertTrue(r["stale"], r)
         # No commit happened, so HEAD is unchanged.
         self.assertFalse(r["sha_behind"], r)
+        # No discovery-state.json here (see module docstring) -- the
+        # undecidable fallback under-reports detail rather than inventing it.
+        self.assertEqual(r["stale_sources"], [])
 
     def test_uncommitted_untracked_prefix_edit_is_not_stale(self) -> None:
         # README is outside discovered_from; an uncommitted edit must
@@ -200,6 +281,26 @@ class ComputeStaleInfoDirtyTreeTest(unittest.TestCase):
         # not flip stale -- bookkeeping is never source.
         (self.root / ".weld" / "graph.json").write_text(
             "{}\n", encoding="utf-8"
+        )
+        r = self._info(discovered_from=["./"])
+        self.assertFalse(r["source_stale"], r)
+        self.assertFalse(r["stale"], r)
+
+    def test_auto_refresh_sidecar_does_not_flip_stale(self) -> None:
+        # The reported failure: one auto-refresh writes its sidecar log, and
+        # from then on a broad ``discovered_from`` (``['./']`` -- the default
+        # ``wd init`` shape) reads weld's own log as user source drift, so
+        # freshness answers ``source_stale`` forever. HEAD never moved, and
+        # no user file changed, so nothing here is stale.
+        from weld._auto_refresh import _record_sidecar_event
+        _record_sidecar_event(
+            self.root, files_changed=2, elapsed_ms=11, incremental=False,
+        )
+        # The writer is failure-isolated (ADR 0035), so assert it actually
+        # produced a log -- otherwise this test would pass vacuously.
+        self.assertTrue(
+            sorted((self.root / ".weld").iterdir()),
+            "auto-refresh writer produced no sidecar to test against",
         )
         r = self._info(discovered_from=["./"])
         self.assertFalse(r["source_stale"], r)

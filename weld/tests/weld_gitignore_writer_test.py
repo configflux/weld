@@ -60,11 +60,55 @@ class WriteWeldGitignoreTest(unittest.TestCase):
             "graph-communities.json",
             "graph-community-report.md",
             "graph-community-index.md",
+            "auto-refresh.jsonl",  # ADR 0051 refresh sidecar log
+            # ADR 0110: the file index is rebuilt from the tree by
+            # discovery, so "ignore everything weld can rebuild" covers it
+            # too. It used to be tracked here purely by omission -- absent
+            # from both constants -- which contradicted this mode's own
+            # stated principle in every downstream repo (bd hvht).
+            "file-index.json",
+            "file-index-state.json",
+            # ADR 0052 first-run-enrichment sentinel (bd lt96): per-machine
+            # "was the user already prompted" flag, never rebuildable and
+            # never shareable -- must be ignored like every other sidecar.
+            ".enrichment-prompted",
         ):
             self.assertIn(
                 f"\n{must_ignore}\n", "\n" + CONFIG_ONLY_GITIGNORE,
                 f"config-only default missing required ignore for {must_ignore}",
             )
+
+    def test_config_only_ignores_every_artifact_track_graphs_adds(self) -> None:
+        """The two modes differ by exactly the warm-checkout artifact set.
+
+        Stated as a relation rather than two lists, so an artifact added
+        to Mode B can never be left tracked in Mode A by omission -- the
+        failure mode bd hvht found.
+        """
+        tracked_in_b = {
+            "graph.json",
+            "agent-graph.json",
+            "discovery-state.json",
+            "file-index.json",
+            "file-index-state.json",
+        }
+        ignored_in_a = set(CONFIG_ONLY_GITIGNORE.split())
+        self.assertEqual(tracked_in_b - ignored_in_a, set())
+
+    def test_persisted_user_intent_files_stay_tracked_by_design(self) -> None:
+        """viz-views.json / telemetry.disabled are user intent, not output.
+
+        bd lt96: both hold a decision the user made (saved viz-server views;
+        an explicit telemetry opt-out), not something weld can regenerate
+        from source. Neither gitignore template may ignore them -- that is
+        a deliberate, already-made decision (see the module docstring), not
+        an oversight. This test is the pin so a future sweep does not
+        re-litigate it by adding either line to a template.
+        """
+        for template in (CONFIG_ONLY_GITIGNORE, TRACK_GRAPHS_GITIGNORE):
+            names = set(template.split())
+            self.assertNotIn("viz-views.json", names)
+            self.assertNotIn("telemetry.disabled", names)
 
     def test_track_graphs_keeps_graphs_visible(self) -> None:
         """Opt-in flip: graph.json + agent-graph.json are tracked again."""
@@ -76,8 +120,17 @@ class WriteWeldGitignoreTest(unittest.TestCase):
                 (weld_dir / ".gitignore").read_text(encoding="utf-8"),
                 TRACK_GRAPHS_GITIGNORE,
             )
-        # Generated graphs are NOT in the ignore list under track-graphs.
-        for must_track in ("graph.json", "agent-graph.json"):
+        # Generated graphs are NOT in the ignore list under track-graphs --
+        # and neither is the record that explains each of them (ADR 0110).
+        # A graph shipped without its inventory is the ADR 0101 hole: the
+        # clone holds a complete graph and no account of what it read.
+        for must_track in (
+            "graph.json",
+            "agent-graph.json",
+            "discovery-state.json",
+            "file-index.json",
+            "file-index-state.json",
+        ):
             self.assertNotIn(
                 f"\n{must_track}\n", "\n" + TRACK_GRAPHS_GITIGNORE,
                 f"track-graphs unexpectedly ignores {must_track}",
@@ -86,7 +139,6 @@ class WriteWeldGitignoreTest(unittest.TestCase):
         # the volatile-meta sidecar (ADR 0065) stays ignored even when the
         # graph itself is tracked -- that split is the whole point.
         for must_ignore in (
-            "discovery-state.json",
             "graph-previous.json",
             "workspace-state.json",
             "workspace.lock",
@@ -95,6 +147,12 @@ class WriteWeldGitignoreTest(unittest.TestCase):
             "graph-communities.json",
             "graph-community-report.md",
             "graph-community-index.md",
+            "auto-refresh.jsonl",  # ADR 0051 refresh sidecar log
+            # ADR 0052 first-run-enrichment sentinel (bd lt96): per-machine
+            # state, stays ignored even in track-graphs mode -- Mode B
+            # tracks graph artifacts and their claims, not arbitrary
+            # per-machine flags.
+            ".enrichment-prompted",
         ):
             self.assertIn(
                 f"\n{must_ignore}\n", "\n" + TRACK_GRAPHS_GITIGNORE,

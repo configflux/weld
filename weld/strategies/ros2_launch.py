@@ -48,11 +48,9 @@ from pathlib import Path
 
 from weld._graph_node_registry import ensure_node
 from weld._node_ids import file_id, package_id
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 _STRATEGY = "ros2_launch"
 _DERIVED = {"source_strategy": _STRATEGY, "authority": "derived"}
@@ -339,15 +337,20 @@ def _extract_launch_file(
         )
     return True
 
-def _resolve_sources(root: Path, pattern: str) -> list[Path]:
-    if "**" in pattern:
-        return filter_glob_results(root, sorted(root.glob(pattern)))
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return []
-    return filter_glob_results(
-        root, sorted(parent.glob(Path(pattern).name))
-    )
+def _resolve_sources(
+    root: Path,
+    pattern: str,
+    excludes: list[str] | None = None,
+) -> list[Path]:
+    """Resolve *pattern* under *root*, pruning excluded directories.
+
+    Delegates to :func:`weld.strategies._glob_resolve.resolve_glob`, which
+    prunes matching directories during descent (bd 9gdq). Filtering the
+    resolved list instead only ever tested the file path, so a
+    directory-form exclude (``pkg/tests``) never matched
+    ``pkg/tests/foo.launch.py``.
+    """
+    return resolve_glob(root, pattern, excludes)
 
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract ROS2 launch nodes and edges from ``*.launch.py`` files."""
@@ -358,8 +361,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     excludes = source.get("exclude", [])
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
-    for path in _resolve_sources(root, pattern):
-        if not path.is_file() or should_skip(path, excludes):
+    for path in _resolve_sources(root, pattern, excludes):
+        if not path.is_file():
             continue
         if not path.name.endswith(".launch.py"):
             continue
@@ -367,7 +370,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        rel_path = str(path.relative_to(root))
+        rel_path = rel_to_root(path, root)
         if _extract_launch_file(rel_path, text, nodes, edges):
             discovered_from.append(rel_path)
     return StrategyResult(nodes, edges, discovered_from)

@@ -5,8 +5,10 @@ seed nodes (or from a single ``target`` resolved to seeds) and summarises
 which public surfaces are affected. Output is graph-shaped so the engine
 stays language- and build-system-agnostic.
 
-Surface bucketing lives in :mod:`weld.impact_surfaces`. The CLI wrapper
-lives in :mod:`weld.impact_cli` and calls into this module.
+Surface bucketing lives in :mod:`weld.impact_surfaces`, human rendering in
+:mod:`weld.impact_format` (re-exported here, since ``weld.impact`` and
+``weld.impact_cli`` both address ``format_human`` through this module). The CLI
+wrapper lives in :mod:`weld.impact_cli` and calls into this module.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from collections import deque
 
 from weld.capabilities import compute_capabilities_for_graph as _capabilities_for_graph
 from weld.graph import Graph
+from weld.impact_format import format_human
 from weld.impact_surfaces import (
     _collect_surfaces,
     _empty_surfaces,
@@ -23,9 +26,29 @@ from weld.impact_surfaces import (
     _risk_level,
 )
 
+__all__ = ["IMPACT_VERSION", "format_human", "impact"]
+
 IMPACT_VERSION = 2
 
 _LOW_CAPABILITY_EDGE_TYPES = frozenset(["calls", "tests", "depends_on"])
+
+# ADR 0107: node types the reverse walk records but does not expand through.
+# A ``package`` node is not a participant in the dependency graph -- across this
+# repo's graph its inbound edges are 843 ``depends_on`` and nothing else, and its
+# outbound edges are 650 ``contains`` and nothing else. So it is a pure
+# aggregation junction, and *every* path through one composes "this file imports
+# from that namespace" (which is what a ``depends_on`` into a package means --
+# discovery could not resolve which member) with "that namespace holds these
+# files", manufacturing a dependency nobody recorded. Measured: it made 65
+# unrelated ``tools/*`` siblings dependents of one release script (bd arge).
+#
+# Keyed on node type, not on the ``contains`` edge type, and the distinction is
+# load-bearing: a build target's inbound ``depends_on`` is *declared* at target
+# granularity, so "A depends on B" really does mean A depends on all of B's
+# sources. Cutting the edge type instead severs those declared build chains and
+# loses 17 of weld/graph.py's 26 affected test-targets -- see the rejected
+# alternatives in ADR 0107.
+_AGGREGATION_NODE_TYPES = frozenset(["package"])
 
 
 def _edge_key(edge: dict) -> str:
@@ -99,6 +122,7 @@ def _reverse_bfs(
     depth: int,
 ) -> tuple[dict[str, int], list[dict]]:
     data = graph.dump()
+    nodes: dict[str, dict] = data.get("nodes", {})
     reverse_adj: dict[str, list[dict]] = {}
     for edge in data.get("edges", []):
         reverse_adj.setdefault(edge["to"], []).append(edge)
@@ -124,6 +148,9 @@ def _reverse_bfs(
             next_hop = hop + 1
             seen.add(src)
             dependents[src] = next_hop
+            # ADR 0107: aggregation nodes are recorded, never expanded through.
+            if (nodes.get(src) or {}).get("type") in _AGGREGATION_NODE_TYPES:
+                continue
             queue.append((src, next_hop))
 
     return dependents, edges
@@ -349,51 +376,3 @@ def impact(
             graph, seed_ids, list(input_paths),
         )
     return result
-
-
-def format_human(result: dict) -> str:
-    """Render an impact result as a short human-readable summary."""
-    target_input = result["target"]["input"]
-    if isinstance(target_input, list):
-        target_str = ", ".join(target_input) if target_input else "(none)"
-    else:
-        target_str = str(target_input)
-    lines = [
-        f"Target: {target_str}",
-        f"Resolved nodes: {len(result['target']['resolved_nodes'])}",
-        f"Risk: {result['risk_level']}",
-        f"Direct dependents: {len(result['direct_dependents'])}",
-        f"Transitive dependents: {len(result['transitive_dependents'])}",
-    ]
-    surfaces = result["affected_surfaces"]
-    if any(surfaces.values()):
-        lines.append("Affected surfaces:")
-        lines.append(f"- CLI commands: {len(surfaces['cli_commands'])}")
-        lines.append(f"- MCP tools: {len(surfaces['mcp_tools'])}")
-        lines.append(f"- API endpoints: {len(surfaces['api_endpoints'])}")
-        lines.append(f"- Entry points: {len(surfaces['entrypoints'])}")
-        lines.append(f"- Boundaries: {len(surfaces['boundaries'])}")
-        lines.append(f"- Tests: {len(surfaces.get('tests', []))}")
-    warnings = result.get("warnings") or {}
-    if isinstance(warnings, dict):
-        for message in warnings.get("messages") or []:
-            lines.append(f"Warning: {message}")
-        if warnings.get("stale_graph"):
-            lines.append("Warning: graph is stale (--allow-stale)")
-        if warnings.get("unresolved_callsites"):
-            lines.append(
-                f"Warning: unresolved callsites touched: {warnings['unresolved_callsites']}",
-            )
-        if warnings.get("speculative_edges"):
-            lines.append(
-                f"Warning: speculative edges traversed: {warnings['speculative_edges']}",
-            )
-        out_of_scope = warnings.get("out_of_scope_inputs") or []
-        if out_of_scope:
-            lines.append(f"Warning: out-of-scope inputs: {', '.join(out_of_scope)}")
-        low_capability = warnings.get("low_capability_inputs") or []
-        if low_capability:
-            lines.append(
-                f"Warning: low-capability inputs: {', '.join(low_capability)}",
-            )
-    return "\n".join(lines) + "\n"

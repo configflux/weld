@@ -228,7 +228,7 @@
   ],
   "meta": {
     "schema_version": 1,
-    "version": 5
+    "version": 8
   },
   "nodes": {
     "adr/0001-monorepo-layout": {
@@ -916,7 +916,7 @@
       },
       "type": "test-target"
     },
-    "workflow:ci": {
+    "workflow:.github/workflows/ci": {
       "label": "ci",
       "props": {
         "authority": "canonical",

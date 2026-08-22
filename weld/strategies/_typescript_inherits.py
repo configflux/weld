@@ -191,7 +191,11 @@ def stage_inheritance(
     seeded for TypeScript). Records carry the declaring symbol's module
     path so :func:`finalise` can mint the correct
     ``symbol:typescript:<module>:<decl>`` origin id without re-deriving
-    it.
+    it, and the raw ``rel_path`` so :func:`finalise` can stamp
+    ``props.provenance.file`` on the emitted edge (ADR 0074): an
+    ``extends``/``implements`` clause is declared at exactly one point in
+    exactly one file, so the record that clause lands in unambiguously
+    names the edge's producing file (bd rifzk).
     """
     if inherit_records is None:
         return
@@ -202,6 +206,7 @@ def stage_inheritance(
         inherit_records.append(
             {
                 "module_path": module_path,
+                "rel_path": rel_path,
                 "decl_short": decl_short,
                 "base_short": base_short,
                 "base_full": base_full,
@@ -296,19 +301,20 @@ def finalise(
                     },
                 },
             )
+        props: dict = {
+            "source_strategy": source_strategy,
+            "confidence": "definite" if resolved else "speculative",
+            "resolved": resolved,
+            "base_name": record["base_full"],
+            "impl_type": record["decl_short"],
+        }
+        rel_path = record.get("rel_path", "")
+        if rel_path:
+            # ADR 0074: attribute to the file whose extends/implements
+            # clause produced this edge (bd rifzk).
+            props["provenance"] = {"file": rel_path}
         edges.append(
-            {
-                "from": from_id,
-                "to": target_id,
-                "type": edge_type,
-                "props": {
-                    "source_strategy": source_strategy,
-                    "confidence": "definite" if resolved else "speculative",
-                    "resolved": resolved,
-                    "base_name": record["base_full"],
-                    "impl_type": record["decl_short"],
-                },
-            }
+            {"from": from_id, "to": target_id, "type": edge_type, "props": props}
         )
 
 

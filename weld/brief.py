@@ -9,11 +9,12 @@ and interaction-relevant context ahead of generic matches.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
+from weld._root_resolver import ROOT_HELP, resolve_weld_root
+from weld._safe_text import dumps_safe_json
 from weld.contract import (
     BOUNDARY_KIND_VALUES,
     PROTOCOL_VALUES,
@@ -73,11 +74,11 @@ _INTERFACE_TYPES: frozenset[str] = frozenset([
     "ros_service", "ros_action", "ros_topic", "ros_interface",
 ])
 
-# Roles that signal doc-like content.
-_DOC_ROLES: frozenset[str] = frozenset(["doc", "policy"])
+# Roles that signal doc-like content (ROLE_VALUES members only).
+_DOC_ROLES: frozenset[str] = frozenset(["doc"])
 
-# Roles that signal build/verification content.
-_BUILD_ROLES: frozenset[str] = frozenset(["build", "test", "gate"])
+# Roles that signal build/verification content (ROLE_VALUES members only).
+_BUILD_ROLES: frozenset[str] = frozenset(["build", "test"])
 
 # Query tokens that indicate the caller is asking about interaction surfaces.
 # Hitting any of these flips interaction-aware ranking on so that interfaces
@@ -361,24 +362,20 @@ def main(argv: list[str] | None = None) -> None:
         prog="wd brief",
         description="Agent-facing context briefing with stable JSON contract",
     )
-    parser.add_argument(
-        "term", help="Search term (same tokenization as query)"
-    )
-    parser.add_argument(
-        "--root", type=Path, default=Path("."),
-        help="Project root directory",
-    )
+    parser.add_argument("term", help="Search term (same tokenization as query)")
+    parser.add_argument("--root", type=Path, default=None, help=ROOT_HELP)
     parser.add_argument("--limit", type=int, default=20, help="Max nodes per section")
     parser.add_argument(
         "--no-refresh", dest="no_refresh", action="store_true", default=False,
-        help="Skip auto-refresh on stale graph (ADR 0051).",
+        help="Skip auto-refresh on stale graph.",
     )
     parser.add_argument(
         "--full-size", dest="full_size", action="store_true", default=False,
-        help="Skip the ADR 0082 read byte budget and emit the full (edge-de-"
+        help="Skip the read byte budget and emit the full (edge-de-"
         "dangled) brief.",
     )
     args = parser.parse_args(argv)
+    args.root = resolve_weld_root(args.root)  # ADR 0096
 
     from weld._auto_refresh import auto_refresh_if_stale
     from weld._graph_cli import _build_retry_hint, ensure_graph_exists
@@ -386,7 +383,9 @@ def main(argv: list[str] | None = None) -> None:
     from weld.graph import Graph
 
     # Friendly first-run message when the graph has not been built.
-    ensure_graph_exists(args.root, _build_retry_hint("brief", args.term))
+    ensure_graph_exists(
+        args.root, _build_retry_hint("brief", args.term), no_refresh=args.no_refresh,
+    )
     # ADR 0051: auto-refresh stale graphs. ``brief`` always emits JSON,
     # so the human banner is unconditionally suppressed.
     auto_refresh_if_stale(args.root, no_refresh=args.no_refresh, json_output=True)
@@ -396,5 +395,4 @@ def main(argv: list[str] | None = None) -> None:
     from weld.read import shape_brief
 
     result = shape_brief(brief(g, args.term, limit=args.limit), full_size=args.full_size)
-    json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-    sys.stdout.write("\n")
+    sys.stdout.write(dumps_safe_json(result, indent=2) + "\n")

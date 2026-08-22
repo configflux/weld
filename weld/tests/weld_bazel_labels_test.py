@@ -1,65 +1,101 @@
-"""Tests for Bazel label resolution and Layer C1 edge emission (ADR 0044).
+"""Tests for the pure Bazel label resolvers (ADR 0044, 0121).
 
-Two scopes covered:
-
-- :mod:`weld.strategies._bazel_labels` -- pure label resolvers, one
-  ``resolve_src_label`` and one ``resolve_dep_label``.
-- :mod:`weld.strategies.bazel` -- the Layer C1 edge wiring on top of the
-  resolvers (``contains`` for srcs, ``depends_on`` for deps,
-  ``unresolved_labels_dropped`` props for visibility, sort-based
-  determinism).
+Covers :mod:`weld.strategies._bazel_labels`'s resolvers: one
+``resolve_src_path`` / ``resolve_src_labels`` pair, one ``resolve_dep_label``
+(in-repo ``deps``), and one ``resolve_external_dep_label``
+(external-workspace ``deps``, ADR 0121). The edge/node wiring these
+resolvers feed in :mod:`weld.strategies.bazel` is covered separately in
+``weld_bazel_labels_edges_test.py`` (split out to keep both files under the
+400-line cap, bd vgmu).
 """
 
 from __future__ import annotations
 
-import json
-import tempfile
 import unittest
-from pathlib import Path
 
 from weld.strategies._bazel_labels import (
     resolve_dep_label,
-    resolve_src_label,
+    resolve_external_dep_label,
+    resolve_src_labels,
+    resolve_src_path,
 )
-from weld.strategies.bazel import extract
 
 
-class TestResolveSrcLabel(unittest.TestCase):
-    """Unit tests for the srcs label -> file: ID resolver."""
+class TestResolveSrcPath(unittest.TestCase):
+    """Unit tests for the srcs label -> repo-relative path resolver."""
 
     def test_bare_filename_resolves_against_pkg(self) -> None:
         self.assertEqual(
-            resolve_src_label("foo.py", "//weld"), "file:weld/foo",
+            resolve_src_path("foo.py", "//weld"), "weld/foo.py",
         )
 
     def test_bare_filename_at_root_pkg(self) -> None:
-        self.assertEqual(resolve_src_label("foo.py", "//"), "file:foo")
+        self.assertEqual(resolve_src_path("foo.py", "//"), "foo.py")
 
     def test_relative_label_resolves_against_pkg(self) -> None:
         self.assertEqual(
-            resolve_src_label(":bar.py", "//weld"), "file:weld/bar",
+            resolve_src_path(":bar.py", "//weld"), "weld/bar.py",
         )
 
     def test_absolute_label_resolves_to_other_pkg(self) -> None:
         self.assertEqual(
-            resolve_src_label("//other/path:baz.py", "//weld"),
-            "file:other/path/baz",
+            resolve_src_path("//other/path:baz.py", "//weld"),
+            "other/path/baz.py",
         )
 
     def test_absolute_label_at_root_target_pkg(self) -> None:
         self.assertEqual(
-            resolve_src_label("//:top.py", "//weld"), "file:top",
+            resolve_src_path("//:top.py", "//weld"), "top.py",
         )
 
     def test_external_label_returns_none(self) -> None:
         self.assertIsNone(
-            resolve_src_label("@external//foo:bar.py", "//weld"),
+            resolve_src_path("@external//foo:bar.py", "//weld"),
         )
 
     def test_malformed_label_returns_none(self) -> None:
-        self.assertIsNone(resolve_src_label("", "//weld"))
+        self.assertIsNone(resolve_src_path("", "//weld"))
         # No filename portion at all -- not a src form we can resolve.
-        self.assertIsNone(resolve_src_label("//path", "//weld"))
+        self.assertIsNone(resolve_src_path("//path", "//weld"))
+
+
+class TestResolveSrcLabels(unittest.TestCase):
+    """The srcs resolver offers every plausible spelling (ADR 0111)."""
+
+    def test_python_src_offers_the_file_spelling(self) -> None:
+        self.assertIn("file:weld/foo", resolve_src_labels("foo.py", "//weld"))
+
+    def test_shell_src_offers_tool_not_file(self) -> None:
+        """A ``.sh`` src reaches the graph as ``tool:``, never ``file:``.
+
+        Both halves matter. Offering ``tool:`` is what recovers the edge
+        ``tool_script`` minted the node for; withholding ``file:`` is what
+        stops ``publish.sh``'s edge landing on an unrelated
+        ``publish.py``, since ``file_id`` strips the extension and both
+        spell ``file:tools/publish``.
+        """
+        spellings = resolve_src_labels("publish.sh", "//tools")
+        self.assertIn("tool:tools/publish", spellings)
+        self.assertNotIn("file:tools/publish", spellings)
+
+    def test_extensionless_src_offers_tool(self) -> None:
+        self.assertIn("tool:gradlew", resolve_src_labels("gradlew", "//"))
+
+    def test_markdown_src_offers_doc_not_file(self) -> None:
+        spellings = resolve_src_labels("mcp.md", "//docs")
+        self.assertIn("doc:docs/mcp", spellings)
+        self.assertNotIn("file:docs/mcp", spellings)
+
+    def test_unresolvable_label_yields_no_spellings(self) -> None:
+        """Empty, not ``[None]`` -- the caller counts it as unresolved."""
+        self.assertEqual(resolve_src_labels("@ext//foo:bar.py", "//weld"), [])
+        self.assertEqual(resolve_src_labels("//path", "//weld"), [])
+
+    def test_spellings_are_order_stable(self) -> None:
+        self.assertEqual(
+            resolve_src_labels("foo.py", "//weld"),
+            resolve_src_labels("foo.py", "//weld"),
+        )
 
 
 class TestResolveDepLabel(unittest.TestCase):
@@ -92,147 +128,63 @@ class TestResolveDepLabel(unittest.TestCase):
         self.assertIsNone(resolve_dep_label("not-a-label", "//weld"))
 
 
-class TestLayerC1EdgeEmission(unittest.TestCase):
-    """Integration tests for build-target -> contains/depends_on edges."""
+class TestResolveExternalDepLabel(unittest.TestCase):
+    """Unit tests for the external-workspace deps label resolver (ADR 0121)."""
 
-    def test_srcs_emit_contains_edges_to_file_nodes(self) -> None:
-        """srcs entries become build-target -> contains -> file:<src> edges.
+    def test_implicit_target_name_from_package_path(self) -> None:
+        self.assertEqual(
+            resolve_external_dep_label("@pypi//tree_sitter_cpp"),
+            ("external-dep:pypi:tree_sitter_cpp", "pypi", "tree_sitter_cpp"),
+        )
 
-        Three label forms must resolve correctly:
-        - bare ``foo.py``      -> ``file:<pkg>/foo``
-        - ``:bar.py`` (relative) -> ``file:<pkg>/bar``
-        - ``//other/path:baz.py`` (absolute) -> ``file:other/path/baz``
-        """
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            pkg = root / "weld"
-            pkg.mkdir()
-            (pkg / "BUILD.bazel").write_text('''\
-py_library(
-    name = "lib",
-    srcs = [
-        "foo.py",
-        ":bar.py",
-        "//other/path:baz.py",
-    ],
-)
-''')
-            source = {"glob": "weld/BUILD.bazel"}
-            result = extract(root, source, {})
+    def test_explicit_colon_name_same_id_as_implicit(self) -> None:
+        """Both bazel spellings of one wheel collapse to the same node."""
+        implicit = resolve_external_dep_label("@pypi//tree_sitter_cpp")
+        explicit = resolve_external_dep_label(
+            "@pypi//tree_sitter_cpp:tree_sitter_cpp",
+        )
+        self.assertEqual(implicit, explicit)
 
-            contains = [e for e in result.edges if e["type"] == "contains"]
-            tos = sorted(e["to"] for e in contains)
-            self.assertEqual(
-                tos,
-                [
-                    "file:other/path/baz",
-                    "file:weld/bar",
-                    "file:weld/foo",
-                ],
-            )
-            for edge in contains:
-                self.assertEqual(edge["from"], "build-target://weld:lib")
-                self.assertEqual(edge["props"]["source_strategy"], "bazel")
-                self.assertEqual(edge["props"]["confidence"], "definite")
+    def test_root_of_repo_colon_form(self) -> None:
+        self.assertEqual(
+            resolve_external_dep_label("@pypi//:tree_sitter_cpp"),
+            ("external-dep:pypi:tree_sitter_cpp", "pypi", "tree_sitter_cpp"),
+        )
 
-    def test_deps_emit_depends_on_edges_to_build_targets(self) -> None:
-        """deps entries become build-target -> depends_on -> build-target edges.
+    def test_id_folds_case_repo_and_name_stay_raw(self) -> None:
+        """The node id is case-insensitive (PEP 503); the raw pair is not."""
+        node_id, repo, name = resolve_external_dep_label("@PyPI//Tree_Sitter")
+        self.assertEqual(node_id, "external-dep:pypi:tree_sitter")
+        self.assertEqual((repo, name), ("PyPI", "Tree_Sitter"))
 
-        Two label forms must resolve to the existing build-target ID
-        convention ``build-target://<pkg>:<name>``:
-        - ``:foo`` (relative)       -> ``build-target://<pkg>:foo``
-        - ``//other:bar`` (absolute) -> ``build-target://other:bar``
-        """
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            pkg = root / "weld"
-            pkg.mkdir()
-            (pkg / "BUILD.bazel").write_text('''\
-py_library(
-    name = "lib",
-    srcs = ["lib.py"],
-    deps = [
-        ":foo",
-        "//other:bar",
-    ],
-)
-''')
-            source = {"glob": "weld/BUILD.bazel"}
-            result = extract(root, source, {})
+    def test_different_ecosystem_is_a_different_node_with_no_new_code(self) -> None:
+        """The resolver is ecosystem-agnostic: the repo name IS the tag."""
+        self.assertEqual(
+            resolve_external_dep_label("@npm//left-pad"),
+            ("external-dep:npm:left-pad", "npm", "left-pad"),
+        )
+        self.assertEqual(
+            resolve_external_dep_label("@crates//serde"),
+            ("external-dep:crates:serde", "crates", "serde"),
+        )
 
-            depends_on = [
-                e for e in result.edges if e["type"] == "depends_on"
-            ]
-            tos = sorted(e["to"] for e in depends_on)
-            self.assertEqual(
-                tos,
-                [
-                    "build-target://other:bar",
-                    "build-target://weld:foo",
-                ],
-            )
+    def test_in_repo_label_returns_none(self) -> None:
+        """No leading ``@`` -- :func:`resolve_dep_label`'s job, not this one's."""
+        self.assertIsNone(resolve_external_dep_label("//weld:foo"))
+        self.assertIsNone(resolve_external_dep_label(":foo"))
 
-    def test_external_labels_dropped_with_count_in_props(self) -> None:
-        """``@external//foo:bar`` labels emit no edge but bump dropped count."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            pkg = root / "weld"
-            pkg.mkdir()
-            (pkg / "BUILD.bazel").write_text('''\
-py_library(
-    name = "lib",
-    srcs = ["lib.py"],
-    deps = [
-        "@external//foo:bar",
-        ":local",
-    ],
-)
-''')
-            source = {"glob": "weld/BUILD.bazel"}
-            result = extract(root, source, {})
+    def test_bare_repo_with_no_package_path_returns_none(self) -> None:
+        self.assertIsNone(resolve_external_dep_label("@pypi"))
 
-            depends_on = [
-                e for e in result.edges if e["type"] == "depends_on"
-            ]
-            self.assertEqual(len(depends_on), 1)
-            self.assertEqual(depends_on[0]["to"], "build-target://weld:local")
+    def test_bzlmod_self_reference_returns_none(self) -> None:
+        """``@//...`` names the root module itself -- not an external dep."""
+        self.assertIsNone(resolve_external_dep_label("@//foo:bar"))
 
-            node = result.nodes["build-target://weld:lib"]
-            self.assertEqual(node["props"]["unresolved_labels_dropped"], 1)
-            self.assertEqual(
-                node["props"]["unresolved_labels"],
-                ["@external//foo:bar"],
-            )
+    def test_empty_label_returns_none(self) -> None:
+        self.assertIsNone(resolve_external_dep_label(""))
 
-    def test_emit_is_deterministic_double_run_byte_identical(self) -> None:
-        """Running extract twice yields byte-identical edges (sorted)."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            pkg = root / "weld"
-            pkg.mkdir()
-            (pkg / "BUILD.bazel").write_text('''\
-py_library(
-    name = "lib",
-    srcs = ["c.py", "a.py", "b.py"],
-    deps = ["//z:z", ":a", "//m:m"],
-)
-''')
-            source = {"glob": "weld/BUILD.bazel"}
-            r1 = extract(root, source, {})
-            r2 = extract(root, source, {})
-            j1 = json.dumps(
-                {"nodes": r1.nodes, "edges": r1.edges},
-                sort_keys=True,
-            )
-            j2 = json.dumps(
-                {"nodes": r2.nodes, "edges": r2.edges},
-                sort_keys=True,
-            )
-            self.assertEqual(j1, j2)
-            # Order check: contains edges must be sorted by 'to'.
-            contains = [e for e in r1.edges if e["type"] == "contains"]
-            tos = [e["to"] for e in contains]
-            self.assertEqual(tos, sorted(tos))
+    def test_repo_with_no_package_or_name_returns_none(self) -> None:
+        self.assertIsNone(resolve_external_dep_label("@pypi//"))
 
 
 if __name__ == "__main__":

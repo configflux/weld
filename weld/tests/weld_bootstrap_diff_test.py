@@ -107,7 +107,7 @@ class DifferingFileWordingTest(unittest.TestCase):
             config = _seed_codex_tree(root)
             text = config.read_text(encoding="utf-8")
             # In-region edit on the mcp-servers region.
-            text = text.replace('command = "python"', 'command = "python3"')
+            text = text.replace('command = "wd"', 'command = "wd-wrapper"')
             config.write_text(text, encoding="utf-8")
             buf = io.StringIO()
             with patch("sys.stdout", buf):
@@ -116,7 +116,9 @@ class DifferingFileWordingTest(unittest.TestCase):
             self.assertIn("differs", output)
             self.assertIn("--diff", output)
             self.assertIn("--force", output)
-            self.assertIn('command = "python3"', config.read_text(encoding="utf-8"))
+            self.assertIn(
+                'command = "wd-wrapper"', config.read_text(encoding="utf-8")
+            )
 
     def test_differing_readme_points_at_diff_and_force(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -202,7 +204,7 @@ class DiffFlagTest(unittest.TestCase):
             config = _seed_codex_tree(root)
             text = config.read_text(encoding="utf-8")
             # In-region edit so --diff emits a region-scoped unified diff.
-            text = text.replace('command = "python"', 'command = "python3"')
+            text = text.replace('command = "wd"', 'command = "wd-wrapper"')
             config.write_text(text, encoding="utf-8")
             buf = io.StringIO()
             with patch("sys.stdout", buf):
@@ -215,7 +217,7 @@ class DiffFlagTest(unittest.TestCase):
             self.assertIn("+++", output)
             # Content untouched.
             self.assertIn(
-                'command = "python3"',
+                'command = "wd-wrapper"',
                 config.read_text(encoding="utf-8"),
             )
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from weld._rel_path import rel_to_root
 from weld.strategies._helpers import (
     StrategyResult,
     enum_members,
@@ -12,6 +13,7 @@ from weld.strategies._helpers import (
     filter_glob_results,
     inherits,
 )
+from weld.strategies._strategy_failure import note_strategy_failure
 
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract Pydantic BaseModel contracts and contract-level enums."""
@@ -20,19 +22,35 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     discovered_from: list[str] = []
 
     pattern = source["glob"]
+    # ``contracts_dir`` drives the traversal below; it is not provenance.
+    # The old ``contracts_dir``-derived entry was ``"./"`` for a root-anchored
+    # glob, which marks the whole tree as tracked source (bd 8ia5).
     contracts_dir = (root / pattern).parent
     if not contracts_dir.is_dir():
         return StrategyResult(nodes, edges, discovered_from)
-    discovered_from.append(str(contracts_dir.relative_to(root)) + "/")
 
     for py in filter_glob_results(root, sorted(contracts_dir.glob(Path(pattern).name))):
         if py.name.startswith("_"):
             continue
+        rel_path = rel_to_root(py, root)
+        # Recorded before the parse: a file that yields no contract today
+        # must still be re-read once someone adds one (see StrategyResult).
+        discovered_from.append(rel_path)
         try:
             tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-        except SyntaxError:
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            # bd o642, applying bd pt38's fix here: ``read_text`` raises
+            # ``OSError`` -- never ``SyntaxError`` -- so guarding the parse
+            # alone let a file that vanished between the listing above and this
+            # read abort the entire run. ``UnicodeDecodeError`` is a
+            # ``ValueError``, so widening to ``OSError`` alone would still
+            # abort on non-UTF-8 bytes. Recorded as a *failure*, not as this
+            # strategy deciding the file holds no contract: a decision is keyed
+            # on the path and exempts the file from the ADR 0008 per-file
+            # repair for good, so one that came back unchanged would never be
+            # re-read (bd hch4).
+            note_strategy_failure(context, [rel_path])
             continue
-        rel_path = str(py.relative_to(root))
         for contract in extract_contracts(tree):
             nid = f"contract:{contract['name']}"
             nodes[nid] = {

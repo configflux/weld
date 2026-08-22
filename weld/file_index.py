@@ -6,6 +6,18 @@ files. Rich extractors handle Python, TypeScript, Markdown, and YAML; a bounded
 generic extractor covers the broader text surfaces that agents often need to
 locate by filename or token.
 
+This module owns *which* files are surface, how one file's tokens are
+assembled, and the index artifact itself. The raw per-extension token
+algorithms live in :mod:`weld._file_index_extractors` (re-exported here so a
+caller reads one module) and the read-side matcher lives in
+:mod:`weld.file_index_search` (also re-exported); each half stays within the
+line cap. :func:`tokens_for_file` -- the per-file assembly step both a full
+walk here and an incremental refresh call -- lives in this module rather
+than in :mod:`weld._file_index_incremental`: that module is a one-directional
+consumer of this one's build/save/load surface, and a primitive shared by
+two callers belongs with the module that owns the artifact, not with the one
+feature that happened to introduce it (bd 5038-kxx79).
+
 Output: .weld/file-index.json
 
 Usage (via weld wrapper):
@@ -15,16 +27,31 @@ Usage (via weld wrapper):
 
 from __future__ import annotations
 
-import ast
 import argparse
 import json
 import os
-import re
 import sys
 import tempfile
 from pathlib import Path
 
-from weld._git import get_git_sha
+# Re-exported whole, not selectively: the carve promised that no existing
+# ``from weld.file_index import <name>`` stops resolving, and the per-file
+# bounds are imported by their own tests under this module's name.
+from weld._file_index_extractors import (  # noqa: F401
+    _GENERIC_TOKEN_RE,
+    _MAX_GENERIC_TOKENS,
+    _MAX_PYTHON_CONSTANT_NAME_LEN,
+    _MAX_PYTHON_CONSTANTS,
+    _PY_CONSTANT_NAME_RE,
+    _extract_generic_tokens,
+    _extract_markdown_tokens,
+    _extract_python_tokens,
+    _extract_typescript_tokens,
+    _extract_yaml_tokens,
+    _is_python_constant_name,
+    _module_constant_names,
+    _tokenize_path,
+)
 from weld.repo_boundary import iter_repo_files
 
 # File extensions to index. Discovery coverage is still driven by
@@ -42,183 +69,121 @@ INDEXED_FILENAMES = frozenset({
     "package.json", "package.xml", "pom.xml", "pyproject.toml",
     "requirements.txt",
 })
-_GENERIC_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_:-]{1,80}")
-_MAX_GENERIC_TOKENS = 512
+#: Opening bytes of an interpreter directive. An extensionless file that
+#: starts with them is a script; the two allow-lists above cannot express
+#: that class, because an extensionless file has no suffix to match and its
+#: basename is whatever the project called its entry point.
+_SHEBANG = b"#!"
 
-# Module-level Python constants (UPPER_CASE or _UPPER_CASE) are part of the
-# practical "what does this module own" surface that ``wd find`` and
-# ``wd query`` must illuminate. Module-level constants are bounded in two
-# axes to keep the index small and DoS-safe on pathological inputs:
-#
-#   * ``_MAX_PYTHON_CONSTANTS`` -- per-file cap on how many constant names
-#     enter the token list.
-#   * ``_MAX_PYTHON_CONSTANT_NAME_LEN`` -- per-name length cap; an absurdly
-#     long identifier is dropped rather than embedded.
-#
-# The convention regex is intentionally linear (no nested quantifiers) and
-# anchored to the full identifier, so it is ReDoS-free regardless of input.
-_PY_CONSTANT_NAME_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
-_MAX_PYTHON_CONSTANTS = 64
-_MAX_PYTHON_CONSTANT_NAME_LEN = 80
 
-def _tokenize_path(rel_path: str) -> list[str]:
-    """Tokenize *rel_path* into path segments, filename stem, and (when
-    the filename has an extension) the raw basename so a literal-with-dot
-    ``wd find`` query like ``install.sh`` matches the file by name."""
-    parts = Path(rel_path).parts
-    tokens = [Path(part).stem if part == parts[-1] else part for part in parts]
-    if parts and parts[-1] != tokens[-1]:
-        tokens.append(parts[-1])
-    return tokens
+def _opens_with_shebang(filepath: Path) -> bool:
+    """Return True if *filepath* begins with an interpreter directive.
 
-def _is_python_constant_name(name: str) -> bool:
-    """Return True if *name* matches the Python constant convention.
+    Two bytes decide, so an extensionless binary is rejected on its magic
+    number rather than on a decode error and costs the same as a tiny
+    script. Offset 0 only: a ``#!`` further down is ordinary content.
 
-    Constants are top-level identifiers whose names are ``UPPER_CASE`` or
-    a leading-underscore variant (``_UPPER_CASE``). The convention regex
-    is anchored and linear (no nested quantifiers) so it remains
-    ReDoS-free regardless of input.
+    Never raises -- this runs mid-walk, where a path can vanish, be a
+    directory, or be unreadable. Each of those means "not text surface",
+    not "abort the index build".
     """
-    if not name or len(name) > _MAX_PYTHON_CONSTANT_NAME_LEN:
-        return False
-    return _PY_CONSTANT_NAME_RE.match(name) is not None
-
-
-def _module_constant_names(tree: ast.Module) -> list[str]:
-    """Return the module-level constants declared in *tree*.
-
-    Walks ``tree.body`` only -- class- and function-body assignments are
-    intentionally ignored, even if they look like constants. Both
-    ``ast.Assign`` (``X = 1``) and ``ast.AnnAssign`` (``X: int = 1``)
-    targets are supported. Output is bounded by ``_MAX_PYTHON_CONSTANTS``
-    so a generated module cannot blow up the index. ``__all__`` is
-    explicitly skipped because it is already harvested as a list of
-    string exports.
-    """
-    found: list[str] = []
-    seen: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            targets = [t for t in node.targets if isinstance(t, ast.Name)]
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            targets = [node.target]
-        else:
-            continue
-        for target in targets:
-            name = target.id
-            if name == "__all__":
-                continue
-            if name in seen:
-                continue
-            if not _is_python_constant_name(name):
-                continue
-            seen.add(name)
-            found.append(name)
-            if len(found) >= _MAX_PYTHON_CONSTANTS:
-                return found
-    return found
-
-
-def _extract_python_tokens(content: str) -> list[str]:
-    """Extract class names, function names, import targets, and
-    module-level constants from Python."""
-    tokens: list[str] = []
     try:
-        tree = ast.parse(content)
-    except SyntaxError:
-        return tokens
+        with filepath.open("rb") as handle:
+            return handle.read(2) == _SHEBANG
+    except OSError:
+        return False
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            tokens.append(node.name)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if not node.name.startswith("_"):
-                tokens.append(node.name)
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                tokens.append(alias.name.split(".")[-1])
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                tokens.append(node.module.split(".")[-1])
-            for alias in node.names:
-                tokens.append(alias.name)
-
-    # Also extract __all__ exports
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "__all__":
-                    if isinstance(node.value, ast.List):
-                        for elt in node.value.elts:
-                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                tokens.append(elt.value)
-
-    # Module-level constants by Python convention -- the residual surface
-    # missed by class/function/import/__all__ extraction. Bounded for
-    # safety; see ``_module_constant_names`` for caps and rationale.
-    tokens.extend(_module_constant_names(tree))
-
-    return tokens
-
-def _extract_markdown_tokens(content: str) -> list[str]:
-    """Extract headings from markdown content."""
-    tokens: list[str] = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            # Remove leading #s and whitespace
-            heading = stripped.lstrip("#").strip()
-            if heading:
-                # Add the full heading and individual words
-                for word in heading.split():
-                    # Strip common punctuation
-                    clean = word.strip("*`_()[]{}:,;.!?\"'")
-                    if clean and len(clean) > 1:
-                        tokens.append(clean)
-    return tokens
-
-def _extract_yaml_tokens(content: str) -> list[str]:
-    """Extract top-level keys from YAML content."""
-    tokens: list[str] = []
-    for line in content.splitlines():
-        # Match top-level keys (no leading whitespace)
-        if line and not line[0].isspace() and ":" in line:
-            key = line.split(":")[0].strip()
-            if key and not key.startswith("#"):
-                tokens.append(key)
-    return tokens
-
-def _extract_typescript_tokens(content: str) -> list[str]:
-    """Extract exported symbol names and import targets from TypeScript."""
-    tokens: list[str] = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        # export function/const/class/interface/type
-        m = re.match(
-            r"export\s+(?:default\s+)?(?:async\s+)?(?:function|const|let|var|class|interface|type|enum)\s+(\w+)",
-            stripped,
-        )
-        if m:
-            tokens.append(m.group(1))
-            continue
-        # import ... from "module"
-        m = re.match(r"import\s+.*from\s+['\"]([^'\"]+)['\"]", stripped)
-        if m:
-            mod = m.group(1).split("/")[-1]
-            tokens.append(mod)
-    return tokens
-
-def _extract_generic_tokens(content: str) -> list[str]:
-    """Extract a bounded, deterministic token set from general text files."""
-    tokens = {
-        match.group(0).strip("_:-")
-        for match in _GENERIC_TOKEN_RE.finditer(content)
-    }
-    return [token for token in sorted(tokens) if token][:_MAX_GENERIC_TOKENS]
 
 def _is_indexed_file(filepath: Path) -> bool:
-    """Return True if *filepath* belongs to the ``wd find`` text surface."""
-    return filepath.suffix in INDEXED_EXTENSIONS or filepath.name in INDEXED_FILENAMES
+    """Return True if *filepath* belongs to the ``wd find`` text surface.
+
+    Rules in ascending cost: a symlink gate answers from an ``lstat``, the
+    two allow-lists answer from the path, and the last opens the file, so
+    it is reached only for a name neither list claims.
+
+    The third exists because the allow-lists structurally cannot carry a
+    repo's extensionless entry points -- ``gradlew``, ``configure``,
+    ``mvnw``, git hooks, a project's own top-level task runner. Such a file
+    has no suffix to match and a basename that is whatever the project
+    chose, so no static list anticipates it, and a repo's most-invoked
+    commands stayed invisible to ``wd find`` (bd 0edz).
+
+    Narrow on two deliberate axes. **Extensionless only**: widening to any
+    unrecognized extension would head-read every image and archive in the
+    tree, for a class already servable by extending
+    :data:`INDEXED_EXTENSIONS`. **Non-hidden only**: ``Path(".env").suffix``
+    is ``""``, so every dotfile shares the property this keys on -- the
+    exclusion keeps secret-bearing dotfiles out of a searchable index
+    whatever their first bytes, and an entry point is never hidden anyway.
+    Dotfiles that do belong (``.bazelrc``) are admitted above by name.
+
+    **A symlink is never index surface**, and that rule comes first so no
+    allow-list can route around it. Git tracks a symlink as an ordinary
+    entry, so ``repo/linked.sh -> /outside/outside.sh`` reached the
+    extension rule and the index then tokenized a file from outside the
+    checkout into a searchable ``.weld/file-index.json`` (bd a2gr). The
+    repo boundary is the whole contract this walk is bounded by; a path
+    that leaves it is not weld's to read.
+
+    Skipping every symlink rather than only the escaping ones is
+    deliberate and matches the two places that already state this posture:
+    ``validator_targets._safe_direct_path`` drops symlinks outright and
+    ``glob_match.walk_glob`` never follows them. A containment check would
+    make the index a third, weaker policy -- one that has to resolve
+    correctly through chains, races, and bind mounts to be worth anything,
+    where ``is_symlink`` cannot be argued with. What it costs is small and
+    recoverable: an in-repo alias like ``docs/latest.md -> docs/v2.md``
+    loses its own entry, while the target it points at is tracked and
+    indexed on its own name.
+    """
+    if filepath.is_symlink():
+        return False
+    if filepath.suffix in INDEXED_EXTENSIONS or filepath.name in INDEXED_FILENAMES:
+        return True
+    if filepath.suffix or filepath.name.startswith("."):
+        return False
+    return _opens_with_shebang(filepath)
+
+def tokens_from_content(rel_path: str, content: str) -> list[str]:
+    """Canonical sorted token list for *rel_path* given its *content*.
+
+    The pure tokenizer with no I/O, so a caller that already holds the
+    bytes (and their hash) can tokenize the exact same bytes -- closing
+    the read-twice race where a file edited mid-refresh could be hashed
+    and tokenized from different contents
+    (:mod:`weld._file_index_incremental`, bd 85tb.2). Dispatches to the
+    per-extension extractors re-exported above.
+    """
+    suffix = Path(rel_path).suffix
+    tokens = _tokenize_path(rel_path)
+    if suffix == ".py":
+        tokens.extend(_extract_python_tokens(content))
+    elif suffix in (".ts", ".tsx", ".js", ".jsx"):
+        tokens.extend(_extract_typescript_tokens(content))
+    elif suffix == ".md":
+        tokens.extend(_extract_markdown_tokens(content))
+    elif suffix in (".yaml", ".yml"):
+        tokens.extend(_extract_yaml_tokens(content))
+    else:
+        tokens.extend(_extract_generic_tokens(content))
+    return sorted(set(tokens))
+
+def tokens_for_file(root: Path, rel_path: str) -> list[str]:
+    """Return the canonical sorted token list for one indexed file.
+
+    The single per-file tokenizer shared by this module's own
+    :func:`build_file_index` walk and
+    :mod:`weld._file_index_incremental`'s patch path, so both emit
+    byte-identical per-file token lists (ADR 0012 §3). Returns an empty
+    list when the file is unreadable; callers treat an empty result as
+    "drop this path", matching the full walk which only stores files with
+    a non-empty token set.
+    """
+    try:
+        content = (root / rel_path).read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeDecodeError):
+        return []
+    return tokens_from_content(rel_path, content)
 
 def build_file_index(root: Path) -> dict[str, list[str]]:
     """Walk the repo and build a file-to-tokens mapping.
@@ -229,14 +194,11 @@ def build_file_index(root: Path) -> dict[str, list[str]]:
     determinism contract: any downstream consumer -- ``save_file_index``,
     the brief builder, CLI ``find``, or MCP tools -- sees the same token
     sequence regardless of AST visit order or dict insertion order. File
-    iteration order is already stable via ``iter_repo_files``. The
-    per-file tokenization lives in
-    :func:`weld._file_index_incremental.tokens_for_file` so the
-    incremental updater reuses the exact same logic (byte-identical
-    output).
+    iteration order is already stable via ``iter_repo_files``. Uses
+    :func:`tokens_for_file` for the per-file tokenization so this full walk
+    and :mod:`weld._file_index_incremental`'s patch path emit
+    byte-identical output.
     """
-    from weld._file_index_incremental import tokens_for_file
-
     root = root.resolve()
     index: dict[str, list[str]] = {}
 
@@ -253,8 +215,19 @@ def build_file_index(root: Path) -> dict[str, list[str]]:
 def save_file_index(root: Path, index: dict[str, list[str]]) -> Path:
     """Write the file index to .weld/file-index.json atomically.
 
-    The output envelope is ``{"meta": {...}, "files": {...}}`` so that
-    the git SHA captured at index time can be stored alongside the data.
+    The output envelope is ``{"meta": {...}, "files": {...}}``. ``meta``
+    intentionally carries no ``git_sha``: earlier it recorded ``get_git_sha``
+    at write time, but that value names the commit the file is written
+    *under*, and the file is then committed *into* the next commit -- so a
+    Mode B (``--track-graphs``) repo could never reach a zero-diff steady
+    state, restamping on every single no-change ``wd discover`` (bd nwbn). A
+    repo-wide search found no reader of the field on either this file or its
+    ``file-index-state.json`` companion, so it was dropped rather than moved
+    to a sidecar -- the same shape bd lrfu already used for
+    ``discovery-state.json``'s unread ``created_at``. Nothing downstream
+    needs a migration: this function has always built ``meta`` fresh rather
+    than merging onto a prior on-disk value, so a legacy file carrying the
+    old key simply stops carrying it the next time anything writes here.
 
     Serialization follows the determinism contract from ADR 0012 §3:
     every dict emits keys with ``sort_keys=True`` at every level of
@@ -265,15 +238,12 @@ def save_file_index(root: Path, index: dict[str, list[str]]) -> Path:
     0012 targets ``graph.json`` normatively; ``file-index.json`` is a
     sibling artifact consumed by the same audience and rides the same
     contract to keep diffs, caching, and byte-level regression guards
-    meaningful.
+    meaningful -- and, since bd nwbn, commit-independent too.
     """
     out_path = root / ".weld" / "file-index.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     meta: dict = {"version": 1}
-    git_sha = get_git_sha(root)
-    if git_sha is not None:
-        meta["git_sha"] = git_sha
 
     # Sort each file's tokens so list contents are canonical regardless
     # of AST visit / insertion order.
@@ -343,6 +313,3 @@ def main(argv: list[str] | None = None) -> None:
     index = build_file_index(root)
     out = save_file_index(root, index)
     print(f"Indexed {len(index)} files -> {out}", file=sys.stderr)
-
-if __name__ == "__main__":
-    main()

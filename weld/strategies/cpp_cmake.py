@@ -37,6 +37,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from weld._discover_node_merge import claim_supersedes
 from weld._node_ids import package_id
 from weld.strategies._cmake_lexer import iter_calls, strip_comments
 from weld.strategies._cmake_targets import (
@@ -51,11 +52,8 @@ from weld.strategies._cmake_targets import (
     handle_target_sources,
 )
 from weld.strategies._cmake_vars import apply_set, expand
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 # Detect a ROS2 CMakeLists. Either of these markers means the file is
 # owned by the ``ros2_cmake`` strategy and ``cpp_cmake`` must defer.
@@ -118,20 +116,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    if "**" in pattern:
-        matched = filter_glob_results(root, sorted(root.glob(pattern)))
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return StrategyResult(nodes, edges, discovered_from)
-        matched = filter_glob_results(
-            root, sorted(parent.glob(Path(pattern).name)),
-        )
+    matched = resolve_glob(root, pattern, excludes)
 
     for cmake in matched:
         if not cmake.is_file():
-            continue
-        if should_skip(cmake, excludes, root=root):
             continue
 
         rel = cmake.relative_to(root).as_posix()
@@ -237,22 +225,38 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
 
 def _ensure_project_node(nodes: dict, project: str, file_rel: str) -> str:
-    """Mint a ``package:cpp:<project>`` node and return its ID."""
+    """Claim the ``package:cpp:<project>`` node id and return it.
+
+    Uses the ADR 0103 confidence-ranked veto
+    (:func:`weld._discover_node_merge.claim_supersedes`), not a blind
+    ``nodes.setdefault``: this PROJECT id lives in the same
+    ``package:cpp:<name>`` space
+    :func:`weld.strategies._cmake_packages.ensure_package_sentinel` mints
+    ``find_package``/external ``target_link_libraries`` dependency LEAVES
+    at -- see that function's docstring for the full rationale (bd tuuve)
+    and why cpp_cmake deliberately has no dedicated URL scheme for those
+    leaves, unlike ``cpp_conan``/``cpp_vcpkg``. A project's
+    ``confidence: "definite"`` always outranks a sentinel's
+    ``confidence: "inferred"``, so a project whose name collides with one
+    of its own (or a sibling's) dependencies claims this id regardless of
+    which file :func:`weld.strategies._glob_resolve.resolve_glob` happens
+    to walk first -- the previous ``setdefault`` let file order alone
+    decide, silently discarding whichever claim lost.
+    """
     nid = package_id("cpp", project)
-    nodes.setdefault(
-        nid,
-        {
-            "type": "package",
-            "label": project,
-            "props": {
-                "name": project,
-                "file": file_rel,
-                "source_strategy": STRATEGY,
-                "authority": "canonical",
-                "confidence": "definite",
-                "roles": ["config"],
-                "build_system": "cmake",
-            },
+    candidate = {
+        "type": "package",
+        "label": project,
+        "props": {
+            "name": project,
+            "file": file_rel,
+            "source_strategy": STRATEGY,
+            "authority": "canonical",
+            "confidence": "definite",
+            "roles": ["config"],
+            "build_system": "cmake",
         },
-    )
+    }
+    if claim_supersedes(nodes.get(nid), candidate):
+        nodes[nid] = candidate
     return nid

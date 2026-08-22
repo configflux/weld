@@ -13,7 +13,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from weld._git import git_main_checkout_path
+from weld._git_worktree import git_main_checkout_path
+from weld._graph_schema import GraphShapeError, validate_dict_payload
 
 
 def resolve_child_root(root: Path, rel_path: str) -> Path:
@@ -128,6 +129,14 @@ def _graph_status(
 
     ``counts`` is ``(node_count, edge_count)`` for a ``present`` graph and
     ``(None, None)`` otherwise (ADR 0011 §5 self-describing ledger fields).
+
+    The top-level dict-shape check is routed through
+    :func:`weld._graph_schema.validate_dict_payload` -- the same guard
+    :func:`weld._graph_schema.load_graph_file` and
+    :func:`weld.federation_support.load_graph_bytes` call -- so its wording
+    can't drift into a second, hand-typed copy (bd 5038-9jz2). The raised
+    :class:`~weld._graph_schema.GraphShapeError` is caught right here: this
+    stays a tuple-returning classifier and never raises outward.
     """
     if not graph_path.is_file():
         return "uninitialized", None, None, (None, None)
@@ -144,12 +153,10 @@ def _graph_status(
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         return "corrupt", digest, f"{type(exc).__name__}: {exc}", (None, None)
 
-    if not isinstance(payload, dict):
-        return (
-            "corrupt", digest,
-            "ValueError: top-level graph payload must be a JSON object",
-            (None, None),
-        )
+    try:
+        validate_dict_payload(payload)
+    except GraphShapeError as exc:
+        return "corrupt", digest, f"{type(exc).__name__}: {exc}", (None, None)
 
     nodes = payload.get("nodes")
     edges = payload.get("edges")

@@ -2,7 +2,20 @@
 
 Walks every Python module under a glob, records ``symbol`` nodes for each
 top-level and nested ``def`` / ``async def`` / ``ClassDef``, and emits a
-``calls`` edge for each call site inside a function body.
+``calls`` edge for each call site inside a function body. ADR 0122 extends
+call-site coverage beyond function bodies: a ``calls`` edge sourced at the
+module's ``file:`` node for module-level statements, a ``calls`` edge
+sourced at a class's own symbol for class-body statements (including a
+direct def's own parameter defaults, at any enclosing scope -- module,
+class, or function, per the ADR 0122 2026-08-21 amendment / bd z0fh), and a
+distinct ``decorates`` edge (decorator's resolved target -> decorated
+symbol) for every ``decorator_list`` entry at any nesting depth. ADR 0127
+(bd lid2) adds a third, distinct edge: ``references``, for a bare-name
+VALUE reference (not a call, e.g. a class passed by name as a
+keyword-argument value) that resolves to a same-module top-level symbol --
+sourced the same way ``calls`` is (the referencing symbol, or the
+module's ``file:`` anchor for a module-level statement), but never for a
+cross-module or unresolved hit (see ``_python_references.py``).
 
 Resolution is best-effort and explicitly partial -- see ADR
 ``weld/docs/adr/0004-call-graph-schema-extension.md``:
@@ -24,14 +37,20 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob_with_provenance
+from weld.strategies._helpers import StrategyResult
 from weld.strategies._python_callgraph_incremental import (
     dirty_matched,
     get_incremental_hint,
     reconstruct_project_modules,
 )
 from weld.strategies._python_callgraph_visitor import _CallGraphVisitor
+from weld.strategies._python_decorates import emit_decorates_edges
 from weld.strategies._python_inherits import emit_inherits_edges
+from weld.strategies._python_output_sink import mark_output_sink_callers
+from weld.strategies._python_references import emit_reference_edges
+from weld.strategies._python_scope_calls import emit_module_scope_call_edges
 from weld.strategies._python_origin import (
     is_builtin_name,
     make_resolved_target_node,
@@ -85,30 +104,6 @@ def _unresolved_id(name: str) -> str:
     return f"{UNRESOLVED_PREFIX}{name}"
 
 # ---------------------------------------------------------------------------
-# Glob resolution (mirrors python_module._resolve_glob to keep strategies
-# behaviourally identical at the discovery level)
-# ---------------------------------------------------------------------------
-
-def _resolve_glob(root: Path, pattern: str) -> tuple[list[Path], list[str]]:
-    files: list[Path] = []
-    dirs: set[str] = set()
-    if "**" in pattern:
-        raw = sorted(root.glob(pattern))
-        for py in filter_glob_results(root, raw):
-            files.append(py)
-            dirs.add(str(py.parent.relative_to(root)) + "/")
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return [], []
-        name_pat = Path(pattern).name
-        raw = sorted(parent.glob(name_pat))
-        for py in filter_glob_results(root, raw):
-            files.append(py)
-        dirs.add(str(parent.relative_to(root)) + "/")
-    return files, sorted(dirs)
-
-# ---------------------------------------------------------------------------
 # Import-table extraction
 # ---------------------------------------------------------------------------
 
@@ -155,7 +150,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         return StrategyResult(nodes, edges, discovered_from)
     excludes = source.get("exclude", [])
 
-    matched, dirs = _resolve_glob(root, pattern)
+    matched, dirs = resolve_glob_with_provenance(root, pattern, excludes)
     discovered_from.extend(dirs)
     if not matched:
         return StrategyResult(nodes, edges, discovered_from)
@@ -182,22 +177,19 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         # mis-tag origins from an empty set.
         if not project_modules and parse_files:
             project_modules = project_module_set(
-                root, matched, excludes,
-                should_skip=should_skip,
+                root, matched,
                 module_dotted_path=_module_dotted_path,
             )
     else:
         # Project-membership set per ADR 0042 §"Per-language detection rules"
         # (Python). The "project file set" for an extract() call is the set
-        # of dotted module paths derived from the matched (non-skipped)
-        # source files. Imports whose target module matches any of these
-        # paths classify as ``project``; imports outside both this set and
+        # of dotted module paths derived from the matched source files.
+        # Imports whose target module matches any of these paths classify
+        # as ``project``; imports outside both this set and
         # ``sys.stdlib_module_names`` classify as ``external``.
         project_modules = project_module_set(
             root,
             matched,
-            excludes,
-            should_skip=should_skip,
             module_dotted_path=_module_dotted_path,
         )
 
@@ -208,8 +200,9 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     # that does not contain it and is mislabelled ``external``. The
     # post-discovery reconciliation pass uses this union -- which is keyed
     # on the source file set, not on node survival -- to heal those tags
-    # even when the orchestrator's last-batch-wins merge clobbered the
-    # owning batch's definite ``project`` node.
+    # even when no batch left a surviving definite ``project`` node for the
+    # module (ADR 0103 stops the stub clobbering one that exists; it cannot
+    # invent one where the owning glob emitted none).
     if isinstance(context, dict):
         run_set = context.get("python_project_modules")
         if not isinstance(run_set, set):
@@ -218,15 +211,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         run_set.update(project_modules)
 
     for py in parse_files:
-        if should_skip(py, excludes, root=root):
-            continue
         try:
             source_text = py.read_text(encoding="utf-8")
             tree = ast.parse(source_text, filename=str(py))
         except (OSError, UnicodeDecodeError, SyntaxError):
             continue
 
-        rel_path = str(py.relative_to(root))
+        rel_path = rel_to_root(py, root)
         module_path = _module_dotted_path(rel_path)
         if not module_path:
             continue
@@ -255,6 +246,15 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     # (description_coverage) cannot find any meaningful
                     # symbols to score.
                     "kind": meta["kind"],
+                    # bd p6ke: the symbol's own opening docstring
+                    # paragraph, always present (empty when there is no
+                    # docstring) so the node shape does not vary with the
+                    # source -- the same contract ``python_module`` makes
+                    # for ``file:`` nodes' ``props.summary`` (bd ph1g).
+                    # The read path (query_index.node_tokens,
+                    # weld._match_surface) already keys on this prop
+                    # generically; only the write side was missing.
+                    "summary": meta["summary"],
                     "language": "python",
                     "source_strategy": "python_callgraph",
                     "authority": "derived",
@@ -326,6 +326,46 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                         },
                     }
                 )
+
+        # ADR 0122: decorator_list attribution (a distinct ``decorates``
+        # relationship, not ``calls`` -- see the ADR for why) and
+        # module-level statement calls (sourced at the ``file:`` node).
+        # Class-body calls need no separate emission call: the visitor
+        # already folded them into ``visitor.calls`` above.
+        emit_decorates_edges(
+            visitor=visitor,
+            module_path=module_path,
+            rel_path=rel_path,
+            project_modules=project_modules,
+            nodes=nodes,
+            edges=edges,
+        )
+        emit_module_scope_call_edges(
+            visitor=visitor,
+            rel_path=rel_path,
+            project_modules=project_modules,
+            nodes=nodes,
+            edges=edges,
+        )
+        # ADR 0127 (bd lid2): same-module bare-name VALUE references (not
+        # calls) -- e.g. a class passed by name as a keyword-argument
+        # value. Sourced at the referencing symbol, or the module's
+        # ``file:`` anchor for a module-level statement.
+        emit_reference_edges(
+            visitor=visitor,
+            module_path=module_path,
+            rel_path=rel_path,
+            project_modules=project_modules,
+            nodes=nodes,
+            edges=edges,
+        )
+
+    # ADR 0129 (bd mnhl): mark every caller of the terminal-sanitizer
+    # chokepoint. A pure derivation over the calls edges just assembled
+    # above -- no new AST walk, and correct for both a full-glob run and an
+    # incremental (dirty-file) one, since each file's own resolved calls
+    # already carry the whole answer for that file.
+    mark_output_sink_callers(nodes, edges)
 
     return StrategyResult(nodes, edges, discovered_from)
 

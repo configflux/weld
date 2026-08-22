@@ -7,12 +7,19 @@ call only knows the modules *its own* glob matched (its local
 a ``weld/strategies/*.py`` symbol calling ``weld.discover.discover`` --
 resolves the target module against a set that does not contain it,
 classifies it ``external``, and mints the speculative target node with
-``origin="external"``. The orchestrator then merges batches with
-``dict.update`` (last-batch-wins, ``weld/discover.py``), so that
-speculative ``external`` node clobbers the definite ``project`` node the
-``weld/*.py`` batch walked. The result is first-party project symbols
+``origin="external"``. The result is first-party project symbols
 mislabelled third-party, which breaks the viz "Hide third-party
 dependencies" filter and inflates the external origin count.
+
+Two things used to let that mislabelled stub reach the final graph. The
+orchestrator merged batches with ``dict.update`` (last-batch-wins), so the
+stub simply clobbered the definite ``project`` node the ``weld/*.py`` batch
+walked; ADR 0103 closed that, and a definite node now survives the stub. What
+remains -- and what keeps this pass necessary -- is the case where *no* batch
+walked the module at all under an ``origin="project"`` tag, so there is no
+better-evidenced node to win: the ``context["python_project_modules"]``
+evidence source below is keyed on the source *file set* rather than on node
+survival, and covers exactly that.
 
 ADR 0042 §"Per-language detection rules" (Python) defines the contract
 this restores: "Target resolves to a path inside any project file set
@@ -86,9 +93,8 @@ def reconcile_intra_repo_origins(
     2. The run-level Python project module set the ``python_callgraph``
        strategy published into ``context["python_project_modules"]`` --
        keyed on the *source file set*, so it still names a module even
-       when the orchestrator's last-batch-wins merge clobbered every
-       surviving ``project`` node for that module (the single-symbol
-       module case).
+       when no ``project``-tagged node for it survived the run at all
+       (the single-symbol module case).
 
     Mutates *nodes* in place and returns the number of nodes whose
     ``origin`` was changed. Returns ``0`` -- rewriting nothing -- when

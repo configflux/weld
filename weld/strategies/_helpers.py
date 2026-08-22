@@ -58,7 +58,20 @@ def filter_glob_results(
     return kept
 
 class StrategyResult(NamedTuple):
-    """Return type for every strategy extract() function."""
+    """Return type for every strategy extract() function.
+
+    ``discovered_from`` is provenance: the repo-relative path of every file
+    the strategy read (ADR 0017 reads it as a source-*file* model). Append
+    one per file as it is selected and *before* it is read -- a file that
+    parses to nothing today must still be re-read once someone adds a
+    contract to it. ``bazel`` and ``runbook`` are the reference shape.
+
+    Never derive it from a directory: at the repo root that degenerates to
+    ``"./"``, which widens ``source_stale`` to the whole tree permanently.
+    :mod:`weld.strategies._provenance` owns that rule and the two functions
+    that keep it -- ``file_provenance`` for a resolved match list, and
+    ``directory_provenance`` for the one node type that *is* a directory.
+    """
 
     nodes: dict[str, dict]
     edges: list[dict]

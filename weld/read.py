@@ -27,21 +27,38 @@ are never dropped, so the same graph + query yields a byte-identical envelope.
 
 from __future__ import annotations
 
-import json
-
 from weld._envelope_diet import diet_envelope, neighbor_cap_sort_key
+from weld._read_budget import (
+    DEFAULT_READ_BUDGET_BYTES,
+    EFFECTIVE_READ_BUDGET_BYTES,
+    SIZE_CAPPED_KEY,
+    dedangle as _dedangle,
+    envelope_bytes as _envelope_bytes,
+    largest_fitting_prefix,
+)
 
-#: Default byte budget for the agent-facing read envelope. 64 KiB is a
-#: conservative fraction of the agent tool-result cap (~a quarter of a typical
-#: 25 K-token budget) that bounds every observed 6dmc overflow while leaving a
-#: normal multi-match query essentially whole. Measured against a canonical
-#: ``indent=2`` serialization (the CLI's emit shape, larger than MCP's compact
-#: one) so a fit here fits on both surfaces. Tests pass an explicit ``budget``.
-DEFAULT_READ_BUDGET_BYTES: int = 65_536
+#: Re-exported so this module stays the import path for the budget its callers
+#: (``weld._query_surface``, ``weld.mcp_server``) already reach through. The
+#: number itself, the canonical byte measurement, and the edge de-dangle live
+#: in :mod:`weld._read_budget`, shared with the traversal surfaces bounded in
+#: :mod:`weld.read_traversal` -- one budget, so the two cannot drift.
+#: ``DEFAULT_READ_BUDGET_BYTES`` is the contract (bytes the client receives);
+#: the functions below default their own ``budget`` parameter to the smaller
+#: :data:`weld._read_budget.EFFECTIVE_READ_BUDGET_BYTES` so a dispatched MCP
+#: read still fits the contract after its transport stamps land (bd hwwo).
+__all__ = [
+    "DEFAULT_READ_BUDGET_BYTES",
+    "EFFECTIVE_READ_BUDGET_BYTES",
+    "SIZE_CAPPED_REASON",
+    "read_query",
+    "shape_brief",
+    "shape_read_envelope",
+]
 
 #: Appended after ADR 0078's four ``omitted_neighbors`` reasons, in fixed order,
-#: so the shaped envelope is byte-identical across runs (ADR 0012).
-SIZE_CAPPED_REASON: str = "size_capped"
+#: so the shaped envelope is byte-identical across runs (ADR 0012). The same
+#: word the traversal surfaces report under (``_read_budget.SIZE_CAPPED_KEY``).
+SIZE_CAPPED_REASON: str = SIZE_CAPPED_KEY
 
 #: Brief buckets carrying node dicts, in the order the size budget walks them.
 _BRIEF_BUCKETS: tuple[str, ...] = (
@@ -53,17 +70,6 @@ _SIZE_WARNING: str = (
     "read envelope (size_capped); pass --full-size / full_size=True for the "
     "unbounded brief."
 )
-
-
-def _envelope_bytes(obj: object) -> int:
-    """Return the canonical serialized byte length of *obj* (ADR 0012).
-
-    Uses ``indent=2`` / ``ensure_ascii=False`` -- the CLI's ``_out`` emit shape,
-    which is larger than the MCP server's compact ``json.dumps`` -- so a payload
-    that fits this budget fits under either surface's actual serialization. A
-    pure function of content: no wall-clock, no randomness, stable key order.
-    """
-    return len(json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8"))
 
 
 def _node_id(node: dict) -> object:
@@ -86,14 +92,6 @@ def _anchor_ids(envelope: dict) -> set:
     if isinstance(node, dict) and node.get("id") is not None:
         ids.add(node["id"])
     return ids
-
-
-def _dedangle(edges: list[dict], keep_ids: set) -> list[dict]:
-    """Keep only edges whose *both* endpoints are in *keep_ids* (no dangles)."""
-    return [
-        edge for edge in edges
-        if edge.get("from") in keep_ids and edge.get("to") in keep_ids
-    ]
 
 
 def _size_cap_neighbors(
@@ -131,14 +129,9 @@ def _size_cap_neighbors(
             },
         }
 
-    lo, hi, best = 0, total, 0
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        if _envelope_bytes(_candidate(mid)) <= budget:
-            best = mid
-            lo = mid + 1
-        else:
-            hi = mid - 1
+    best = largest_fitting_prefix(
+        total, lambda k: _envelope_bytes(_candidate(k)) <= budget,
+    )
     keep_ids = {_node_id(n) for n in ranked[:best]}
     neighbors_out = [n for n in kept if _node_id(n) in keep_ids]
     edges_out = _dedangle(edges, anchors | keep_ids)
@@ -147,7 +140,7 @@ def _size_cap_neighbors(
 
 def shape_read_envelope(
     envelope: dict, *, full: bool = False, full_size: bool = False,
-    budget: int = DEFAULT_READ_BUDGET_BYTES,
+    budget: int = EFFECTIVE_READ_BUDGET_BYTES,
 ) -> dict:
     """Return the bounded, shaped copy of a ``query`` / ``context`` *envelope*.
 
@@ -208,7 +201,7 @@ def _filter_speculative_matches(envelope: dict) -> dict:
 
 def read_query(
     envelope: dict, *, include_speculative: bool = False, full: bool = False,
-    full_size: bool = False, budget: int = DEFAULT_READ_BUDGET_BYTES,
+    full_size: bool = False, budget: int = EFFECTIVE_READ_BUDGET_BYTES,
 ) -> dict:
     """Return the shaped ``query`` read answer (ADR 0083 thin-wrapper invariant).
 
@@ -274,20 +267,15 @@ def _size_cap_brief(brief_env: dict, budget: int) -> tuple[dict, int]:
         env["edges"] = _dedangle(brief_env.get("edges") or [], keep)
         return env
 
-    lo, hi, best = 0, total, 0
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        if _envelope_bytes(_candidate(mid)) <= budget:
-            best = mid
-            lo = mid + 1
-        else:
-            hi = mid - 1
+    best = largest_fitting_prefix(
+        total, lambda k: _envelope_bytes(_candidate(k)) <= budget,
+    )
     return _candidate(best), total - best
 
 
 def shape_brief(
     brief_env: dict, *, full: bool = False, full_size: bool = False,
-    budget: int = DEFAULT_READ_BUDGET_BYTES,
+    budget: int = EFFECTIVE_READ_BUDGET_BYTES,
 ) -> dict:
     """Return the bounded, shaped copy of a ``brief`` envelope (ADR 0082).
 

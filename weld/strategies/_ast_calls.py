@@ -27,6 +27,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
+from weld._rel_path import rel_to_root
 from weld.strategies._helpers import filter_glob_results
 
 #: A classifier rule: ``(receiver_names, verb_names, transport)``. A rule
@@ -174,4 +175,4 @@ def iter_python_asts(
             tree = ast.parse(text, filename=str(py))
         except SyntaxError:
             continue
-        yield str(py.relative_to(root)), tree
+        yield rel_to_root(py, root), tree

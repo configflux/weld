@@ -8,26 +8,20 @@ the matching adapter function.
 
 from __future__ import annotations
 
+from weld._mcp_enrich import build_enrich_tool as _build_enrich_tool
+from weld._mcp_tool_props import (
+    ROOTLESS_TOOLS,
+    _FULL_SIZE_PROPERTY,
+    _ROOT_PROPERTY,
+    with_shared as _with_shared,
+)
 from weld.mcp_helpers import (
-    build_enrich_tool as _build_enrich_tool,
     build_impact_tool as _build_impact_tool,
     build_review_tool as _build_review_tool,
     build_trace_tool as _build_trace_tool,
 )
 
-#: Shared ``full_size`` schema property for the bounded read tools (ADR 0082).
-#: Skips the byte budget; the diet/edge-de-dangle still apply. Kept identical
-#: across weld_query / weld_context / weld_brief so the surface stays symmetric.
-_FULL_SIZE_PROPERTY: dict = {
-    "type": "boolean",
-    "description": (
-        "Skip the read byte budget (ADR 0082). Default false: the shaped "
-        "envelope is pruned to fit the agent tool cap, reported via "
-        "omitted_neighbors.size_capped (query/context) or a warnings entry "
-        "(brief). Set true to keep every dieted/de-dangled item."
-    ),
-    "default": False,
-}
+__all__ = ["ROOTLESS_TOOLS", "build_tools"]
 
 
 def build_tools(
@@ -104,6 +98,7 @@ def build_tools(
                         "default": False,
                     },
                     "full_size": _FULL_SIZE_PROPERTY,
+                    "root": _ROOT_PROPERTY,
                 },
                 "required": ["term"],
                 "additionalProperties": False,
@@ -126,6 +121,7 @@ def build_tools(
                         "type": "integer",
                         "minimum": 1,
                     },
+                    "root": _ROOT_PROPERTY,
                 },
                 "required": ["term"],
                 "additionalProperties": False,
@@ -156,6 +152,7 @@ def build_tools(
                         "default": False,
                     },
                     "full_size": _FULL_SIZE_PROPERTY,
+                    "root": _ROOT_PROPERTY,
                 },
                 "required": ["node_id"],
                 "additionalProperties": False,
@@ -173,6 +170,7 @@ def build_tools(
                 "properties": {
                     "from_id": {"type": "string"},
                     "to_id": {"type": "string"},
+                    "root": _ROOT_PROPERTY,
                 },
                 "required": ["from_id", "to_id"],
                 "additionalProperties": False,
@@ -199,6 +197,7 @@ def build_tools(
                         "default": 20,
                     },
                     "full_size": _FULL_SIZE_PROPERTY,
+                    "root": _ROOT_PROPERTY,
                 },
                 "required": ["area"],
                 "additionalProperties": False,
@@ -209,11 +208,11 @@ def build_tools(
             name="weld_stale",
             description=(
                 "Report whether the on-disk connected structure is stale relative "
-                "to the current git HEAD. Advisory; does not mutate the graph."
+                "to git HEAD. Advisory; never refreshes, never mutates the graph."
             ),
             input_schema={
                 "type": "object",
-                "properties": {},
+                "properties": {"root": _ROOT_PROPERTY},
                 "required": [],
                 "additionalProperties": False,
             },
@@ -239,6 +238,8 @@ def build_tools(
                         "default": 1,
                         "minimum": 1,
                     },
+                    "full_size": _FULL_SIZE_PROPERTY,
+                    "root": _ROOT_PROPERTY,
                 },
                 "required": ["symbol_id"],
                 "additionalProperties": False,
@@ -248,17 +249,19 @@ def build_tools(
         tool_cls(
             name="weld_references",
             description=(
-                "Return callers and file-index references for a bare symbol "
-                "name. Combines call-graph callers (across resolved + "
-                "unresolved targets) with weld_find textual hits."
+                "What points at a symbol or node id, plus weld_find hits. "
+                "A symbol yields call-graph callers; any other type yields "
+                "every inbound neighbour. Unknown id returns an error."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "symbol_name": {
                         "type": "string",
-                        "description": "Bare symbol name, e.g. _load_strategy",
+                        "description": "Bare symbol name or full node id",
                     },
+                    "full_size": _FULL_SIZE_PROPERTY,
+                    "root": _ROOT_PROPERTY,
                 },
                 "required": ["symbol_name"],
                 "additionalProperties": False,
@@ -286,6 +289,7 @@ def build_tools(
                         "minimum": 0,
                         "description": "BFS depth for subgraph (default 1).",
                     },
+                    "root": _ROOT_PROPERTY,
                 },
                 "required": ["format"],
                 "additionalProperties": False,
@@ -297,15 +301,22 @@ def build_tools(
     _td = _build_trace_tool()
     tools.append(tool_cls(
         name=_td["name"], description=_td["description"],
-        input_schema=_td["input_schema"],
+        input_schema=_with_shared(
+            _td["input_schema"], full_size=_FULL_SIZE_PROPERTY, root=_ROOT_PROPERTY,
+        ),
         handler=weld_trace if weld_trace is not None else _td["handler"],
     ))
     _id = _build_impact_tool()
     tools.append(tool_cls(
         name=_id["name"], description=_id["description"],
-        input_schema=_id["input_schema"],
+        input_schema=_with_shared(
+            _id["input_schema"], full_size=_FULL_SIZE_PROPERTY, root=_ROOT_PROPERTY,
+        ),
         handler=weld_impact if weld_impact is not None else _id["handler"],
     ))
+    # No _with_shared below: weld_enrich and weld_review mutate the graph, so
+    # they answer only from the root the operator launched the server against
+    # -- enforced at dispatch via ROOTLESS_TOOLS, not by the schema alone.
     _ed = _build_enrich_tool()
     tools.append(tool_cls(
         name=_ed["name"], description=_ed["description"],
@@ -322,7 +333,7 @@ def build_tools(
             ),
             input_schema={
                 "type": "object",
-                "properties": {},
+                "properties": {"root": _ROOT_PROPERTY},
                 "required": [],
                 "additionalProperties": False,
             },

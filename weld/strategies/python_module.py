@@ -6,9 +6,17 @@ import ast
 from pathlib import Path
 
 from weld._node_ids import file_id as _canonical_file_id
+from weld._rel_path import rel_to_root
 from weld.file_index import _module_constant_names
-from weld.strategies._helpers import StrategyResult, should_skip
+from weld.strategies._glob_resolve import resolve_glob_with_provenance
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._python_anchor import (
+    module_exports,
+    module_summary,
+    yields_file_anchor,
+)
 from weld.strategies._python_module_incremental import dirty_scoped_matched
+from weld.strategies._strategy_failure import note_strategy_failure
 
 def _looks_like_sibling_module(name: str) -> bool:
     """Heuristic: does *name* look like a private sibling module?
@@ -97,36 +105,6 @@ def _extract_imports(tree: ast.Module) -> list[str]:
                 packages.add(".".join(qualified[:3]))
     return sorted(packages)
 
-def _resolve_glob(
-    root: Path,
-    pattern: str,
-    excludes: list[str] | None = None,
-) -> tuple[list[Path], list[str]]:
-    """Resolve a glob pattern that may contain ``**``.
-
-    Returns ``(matched_files, discovered_from_dirs)``. Uses the shared
-    prune-during-descent walker so excluded subtrees (``.cache/bazel``,
-    ``node_modules``, and user *excludes*) are never visited.
-    """
-    from weld.glob_match import walk_glob
-
-    files: list[Path] = []
-    dirs: set[str] = set()
-
-    if "**" in pattern:
-        for py in walk_glob(root, pattern, excludes=excludes):
-            files.append(py)
-            dirs.add(str(py.parent.relative_to(root)) + "/")
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return [], []
-        for py in walk_glob(root, pattern, excludes=excludes):
-            files.append(py)
-        dirs.add(str(parent.relative_to(root)) + "/")
-
-    return files, sorted(dirs)
-
 def _make_node_id(rel_path: str, id_prefix: str) -> str:
     """Build the canonical file-anchor ID for a Python module.
 
@@ -184,7 +162,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     package_id = source.get("package", "")
     id_prefix = source.get("id_prefix", "")
 
-    matched, dirs = _resolve_glob(root, pattern, excludes)
+    matched, dirs = resolve_glob_with_provenance(root, pattern, excludes)
     discovered_from.extend(dirs)
 
     if not matched:
@@ -201,28 +179,38 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     parse_files = dirty_scoped_matched(matched, root, context)
 
     for py in parse_files:
-        # ADR 0041 § Layer 3: the ``_*``-skip rule was a unilateral
-        # decision in this strategy that drifted from the paired
-        # ``python_callgraph`` strategy and produced file anchors with
-        # no inbound edges (the ``_ros2_py`` symptom). Both strategies
-        # now defer to the config-driven ``should_skip`` so the pair
-        # processes the same file set.
-        if should_skip(py, excludes, root=root):
-            continue
         try:
             source_text = py.read_text(encoding="utf-8")
             tree = ast.parse(source_text, filename=str(py))
-        except SyntaxError:
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            # bd hch4: a file we could not parse is a *failure*, not this
+            # strategy deciding the file anchors nothing -- ``yields_file_anchor``
+            # below is that decision. Recording a parse failure as a decision
+            # exempted it from the ADR 0008 per-file repair for good, so the
+            # day weld's parser grows to accept the file, nothing would ever
+            # re-read it.
+            #
+            # bd pt38: the same holds for a file we could not *read*, which is
+            # why this catches what ``python_callgraph`` catches rather than
+            # ``SyntaxError`` alone. ``read_text`` raises ``OSError``, never
+            # ``SyntaxError``, so a file removed between the walk and the read
+            # used to take the whole run down with it. That window is never
+            # zero -- the run walks once and reads later (``build_file_hashes``
+            # at run start, strategies after), and the per-run glob memo
+            # (bd cjij) widens it to the length of the run -- so a concurrent
+            # editor, worktree switch, or CI checkout is enough to hit it.
+            # A vanished file is the repairable kind of failure by definition:
+            # if it comes back the next pass anchors it, and if it does not it
+            # leaves ``state.files`` and stops being asked about.
+            note_strategy_failure(context, [rel_to_root(py, root)])
             continue
-        rel_path = str(py.relative_to(root))
-        exports: list[str] = []
-        for node in tree.body:
-            if isinstance(node, ast.ClassDef):
-                exports.append(node.name)
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if not node.name.startswith("_"):
-                    exports.append(node.name)
-        if not exports and py.name == "__init__.py":
+        rel_path = rel_to_root(py, root)
+        # The export collection and the "does this file anchor at all?"
+        # rule both live in ``_python_anchor`` so ``python_package`` can
+        # ask the same question without restating it (issue ``ddsy``).
+        # Restating it is the drift ADR 0041 § Layer 3 exists to prevent.
+        exports = module_exports(tree)
+        if not yields_file_anchor(py.name, exports):
             continue
 
         nid = _make_node_id(rel_path, id_prefix)
@@ -237,6 +225,16 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         # Sorted + deduplicated so the graph artifact is canonical
         # (ADR 0012 §3).
         constants = sorted(set(_module_constant_names(tree)))
+        # bd ph1g: the opening paragraph of the module docstring -- the one
+        # sentence the author wrote to say what this module is. Read here for
+        # the same reason ``constants`` is: it feeds ``wd query`` through
+        # ``query_index.node_tokens``. Before this, discovery kept a module's
+        # exports and threw its summary away, so the graph's only prose came
+        # from an enrichment pass covering 1.96% of nodes -- which is why a
+        # query for a filename stated plainly in ``weld/serializer.py``'s first
+        # line matched nothing at all. Always emitted, empty when there is no
+        # docstring, so the node shape does not vary with the source.
+        summary = module_summary(tree)
 
         # ADR 0041 § Migration: record the pre-rename ``file:<stem>``
         # form on ``aliases`` when the canonical full-path ID differs
@@ -252,6 +250,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 "file": rel_path,
                 "exports": exports,
                 "constants": constants,
+                "summary": summary,
                 "imports_from": imports_from,
                 "line_count": line_count,
                 "source_strategy": "python_module",

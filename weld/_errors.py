@@ -10,10 +10,17 @@ missing-graph case (``graph_missing`` -> "Run: wd init"). The code list:
 
 * ``graph_missing``   -- ``.weld/graph.json`` is absent (first run).
 * ``graph_corrupt``   -- the file exists but is not valid JSON (truncated /
-  half-written / hand-edited). Surfaced from ``json.JSONDecodeError``.
+  half-written / hand-edited), the path exists but is not a regular file
+  (e.g. a directory), or the parsed payload is missing (or has the wrong
+  type for) ``nodes``/``edges``. Surfaced from ``json.JSONDecodeError``,
+  ``IsADirectoryError``, or ``weld._graph_schema.GraphShapeError``.
 * ``schema_mismatch`` -- ``meta.schema_version`` is newer than this build can
   read. Surfaced from ``weld._graph_schema.SchemaVersionError``.
 * ``node_not_found``  -- a requested node id resolves to nothing.
+* ``invalid_enrichment`` -- a write carries a ``props.enrichment`` record that
+  is missing required fields, which discovery would silently drop (ADR 0097).
+* ``root_out_of_bounds`` -- a request asked a server to answer from a
+  directory outside the repository it serves (ADR 0096 §4).
 
 Safety contract (ADR 0025 trust posture / ADR 0035 local-only no-leak): the
 *detail* attached to a corrupt-graph error is derived only from the parser's
@@ -21,7 +28,12 @@ own positional metadata (byte offset, line, column) -- it never echoes the
 raw bytes that failed to parse, so a secret living in a half-written graph
 cannot leak into stderr, terminal scrollback, or an MCP payload. The
 schema-mismatch message is operator-facing structural text (a version number
-and the word "upgrade") and is safe to surface verbatim.
+and the word "upgrade") and is safe to surface verbatim. The same rule governs
+``invalid_enrichment``: a rejected record can hold arbitrary author text, so
+the detail names the missing *field names* and never echoes their values.
+``root_out_of_bounds`` goes one step further: its summary is a constant, so a
+refused request cannot reflect the path it asked for and the refusal cannot be
+used to probe which directories exist on the server's disk.
 """
 
 from __future__ import annotations
@@ -29,6 +41,8 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+
+from weld._safe_text import sanitize_terminal_line
 
 # -- Error-code vocabulary -------------------------------------------------
 #: ``.weld/graph.json`` absent. Mirrors the legacy ``_mcp_guard`` code so the
@@ -40,6 +54,14 @@ GRAPH_CORRUPT = "graph_corrupt"
 SCHEMA_MISMATCH = "schema_mismatch"
 #: A requested node id resolves to no node.
 NODE_NOT_FOUND = "node_not_found"
+#: A write carries a ``props.enrichment`` that is not a structurally-complete
+#: record, so discovery would silently drop it (ADR 0097).
+INVALID_ENRICHMENT = "invalid_enrichment"
+#: A request named a root the serving process may not answer from: not an
+#: existing directory of the same repository (ADR 0096 §4). Server surfaces
+#: only -- an operator running the CLI already has the process's own
+#: filesystem authority, so there is nothing there to bound.
+ROOT_OUT_OF_BOUNDS = "root_out_of_bounds"
 
 #: Stable, copy-pasteable remediation hint per code. Wording is matched
 #: against by tests and onboarding docs -- keep it stable.
@@ -51,6 +73,17 @@ ERROR_HINTS: dict[str, str] = {
         "with this version: wd discover."
     ),
     NODE_NOT_FOUND: "Check the node id (wd query <term> to find it).",
+    INVALID_ENRICHMENT: (
+        "props.enrichment needs non-empty provider, model, timestamp and "
+        'description. For an agent-written record use provider "manual", '
+        'model "agent-reviewed" and an ISO-8601 UTC timestamp.'
+    ),
+    ROOT_OUT_OF_BOUNDS: (
+        "root must name an existing directory in the same repository the "
+        "server was started against -- a linked worktree or the main "
+        "checkout. Omit root to use the server's own root; child repos of a "
+        "polyrepo workspace are not addressable this way."
+    ),
 }
 
 #: Default human-readable summary per code, used when no parser detail is
@@ -61,6 +94,8 @@ _DEFAULT_ERROR: dict[str, str] = {
     GRAPH_CORRUPT: "Weld graph file is corrupt (invalid JSON).",
     SCHEMA_MISMATCH: "Weld graph schema version is unsupported.",
     NODE_NOT_FOUND: "Node not found.",
+    INVALID_ENRICHMENT: "Enrichment record is structurally incomplete.",
+    ROOT_OUT_OF_BOUNDS: "Requested root is outside the served repository.",
 }
 
 
@@ -97,10 +132,20 @@ def format_error_line(code: str, detail: str | None = None) -> str:
     multi-line scraping. *detail* is the safe summary (parser position for
     corrupt, the version text for schema mismatch); it never carries raw file
     bytes.
+
+    Some details legitimately interpolate a *node id*
+    (``invalid_enrichment`` names the node whose write was refused), and node
+    ids are derived from scanned paths and symbol names -- so a hostile repo
+    can smuggle ANSI/control bytes into one. This is the stderr write boundary
+    for every code, so the terminal-safety escape lands here
+    (:mod:`weld._safe_text`), in the single-line variant: a CR or LF in the
+    detail must not overwrite the line or forge a second diagnostic. Only the
+    *text* surface is escaped; :func:`structured_payload` stays raw so the
+    MCP/JSON contract is unchanged.
     """
     summary = detail or _DEFAULT_ERROR.get(code, "Weld error.")
     hint = ERROR_HINTS.get(code, "")
-    return f"error[{code}]: {summary} | hint: {hint}"
+    return sanitize_terminal_line(f"error[{code}]: {summary} | hint: {hint}")
 
 
 def _safe_json_detail(exc: json.JSONDecodeError) -> str:
@@ -142,15 +187,37 @@ def _safe_schema_detail(exc: BaseException, path: Path) -> str:
     return redacted.replace(str(path), "graph.json")
 
 
+#: Detail for a graph path that exists but is not a regular file (e.g. a
+#: directory). Fixed and path-free by construction -- unlike the JSON-decode
+#: and schema-mismatch details, it carries no dynamic content at all, so
+#: there is nothing derived from the exception (which, via ``OSError.
+#: filename``, would otherwise embed the absolute path) to redact.
+_NOT_A_FILE_DETAIL = "graph.json is not a regular file (found a directory)."
+
+
 def classify_graph_load_error(
     exc: BaseException, path: Path,
 ) -> tuple[str | None, str]:
     """Map a graph-load exception to ``(error_code, safe_message)``.
 
-    Recognizes the two load-time failures both surfaces must handle:
+    Recognizes the load-time failures both surfaces must handle:
 
     * :class:`json.JSONDecodeError` -> :data:`GRAPH_CORRUPT` with a position
       detail (never the raw bytes).
+    * :class:`IsADirectoryError` -> :data:`GRAPH_CORRUPT` with a fixed,
+      path-free detail. ``Graph.load`` gates on ``Path.exists()`` (true for a
+      directory too), so a directory left at ``.weld/graph.json`` raises this
+      from the ``read_text()`` call rather than from a JSON parse -- but the
+      graph is equally unusable and the remedy is identical (``wd
+      discover``), so it is classified the same as corrupt rather than
+      escaping as a raw exception carrying a filesystem path (bd 9yc8).
+    * :class:`weld._graph_schema.GraphShapeError` -> :data:`GRAPH_CORRUPT`
+      with the validator's own message. Raised when a syntactically valid
+      JSON object is missing ``nodes``/``edges`` or holds the wrong type for
+      either (e.g. ``{"meta": {...}}`` alone) -- structurally unusable the
+      same way a decode failure is, and the message already names only a
+      fixed key and a Python type, never file content, so it needs no
+      further redaction (unlike the schema-mismatch path below).
     * :class:`weld._graph_schema.SchemaVersionError` -> :data:`SCHEMA_MISMATCH`
       with the structural version detail, the absolute graph path stripped
       (see :func:`_safe_schema_detail`).
@@ -160,10 +227,14 @@ def classify_graph_load_error(
     ``.weld/graph.json`` location used to redact the schema message.
     """
     # Import locally to avoid a runtime import cycle (graph -> _errors).
-    from weld._graph_schema import SchemaVersionError
+    from weld._graph_schema import GraphShapeError, SchemaVersionError
 
     if isinstance(exc, json.JSONDecodeError):
         return GRAPH_CORRUPT, _safe_json_detail(exc)
+    if isinstance(exc, IsADirectoryError):
+        return GRAPH_CORRUPT, _NOT_A_FILE_DETAIL
+    if isinstance(exc, GraphShapeError):
+        return GRAPH_CORRUPT, str(exc)
     if isinstance(exc, SchemaVersionError):
         return SCHEMA_MISMATCH, _safe_schema_detail(exc, path)
     return None, ""

@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Atomically write canonical graph JSON to this path "
              "(parent directories are created). When set, stdout is "
-             "empty; human status still goes to stderr. (ADR 0019)",
+             "empty; human status still goes to stderr.",
     )
     parser.add_argument(
         "--safe",
@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Refuse project-local strategies under .weld/strategies/ and "
              "the external_json subprocess adapter. Use this when scanning "
-             "an untrusted repository. (ADR 0024)",
+             "an untrusted repository.",
     )
     parser.add_argument(
         "--allow-empty",
@@ -55,13 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bypass the federated empty-graph guard. By default, a "
              "federated discover that would overwrite a non-empty graph "
              "with a 0-node meta-graph is refused; pass this flag to "
-             "intentionally tear the workspace graph down. (ADR 0028)",
+             "intentionally tear the workspace graph down.",
     )
     parser.add_argument(
         "--no-sqlite", action="store_true", default=False,
         help="Skip writing the sqlite sidecar (.weld/graph.db); graph.json "
              "is always written. The sidecar is a derived index that speeds "
-             "up federation reads. (ADR 0058)",
+             "up federation reads.",
     )
     parser.add_argument(
         "--quiet", action="store_true", default=False,
@@ -72,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-enrich",
         action="store_true",
         default=False,
-        help="Skip the first-run enrichment prompt entirely (ADR 0052). "
+        help="Skip the first-run enrichment prompt entirely. "
              "Use for scripted callers or when the user has already "
              "decided how they will enrich. Also respected via the "
              "WELD_NO_ENRICH=1 environment variable.",
@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--emit-compile-db-stub", action="store_true", default=False,
         help="Write a placeholder compile_commands.json documenting how to "
-             "generate a real one for libclang (ADR 0057 Wave 3); exits.",
+             "generate a real one for libclang; exits.",
     )
     return parser
 

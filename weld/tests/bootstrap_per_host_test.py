@@ -137,9 +137,12 @@ class GenerationCursorTest(unittest.TestCase):
             bootstrap("cursor", root, force=True)
             mcp = root / ".cursor" / "mcp.json"
             payload = json.loads(mcp.read_text(encoding="utf-8"))
-            self.assertEqual(
-                payload["mcpServers"]["weld"]["command"], "python",
-            )
+            entry = payload["mcpServers"]["weld"]
+            # The console-script form, not `python -m`: a script's sys.path[0]
+            # is its own directory, so a client launching this entry from a
+            # repository never puts that repository on the import path.
+            self.assertEqual(entry["command"], "wd")
+            self.assertEqual(entry["args"], ["mcp", "serve"])
 
 
 class GenerationAiderTest(unittest.TestCase):

@@ -29,12 +29,10 @@ import re
 from pathlib import Path
 
 from weld._graph_node_registry import ensure_node
+from weld._rel_path import rel_to_root
 from weld.strategies import _ros2_cpp as _cpp
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 _STRATEGY = "ros2_topology"
 _CPP_EXTS = frozenset({".cpp", ".cc", ".cxx", ".hpp", ".h", ".hh"})
@@ -341,15 +339,20 @@ def _extract_cpp_file(
         )
     _handle_composable(src, config, rel_path, nodes)
 
-def _resolve_sources(root: Path, pattern: str) -> list[Path]:
-    if "**" in pattern:
-        return filter_glob_results(root, sorted(root.glob(pattern)))
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return []
-    return filter_glob_results(
-        root, sorted(parent.glob(Path(pattern).name))
-    )
+def _resolve_sources(
+    root: Path,
+    pattern: str,
+    excludes: list[str] | None = None,
+) -> list[Path]:
+    """Resolve *pattern* under *root*, pruning excluded directories.
+
+    Delegates to :func:`weld.strategies._glob_resolve.resolve_glob`, which
+    prunes matching directories during descent (bd 9gdq). Filtering the
+    resolved list instead only ever tested the file path, so a
+    directory-form exclude (``pkg/tests``) never matched
+    ``pkg/tests/node.py``.
+    """
+    return resolve_glob(root, pattern, excludes)
 
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     """Extract the ROS2 runtime topology from C++ and Python source files."""
@@ -363,8 +366,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         return StrategyResult(nodes, edges, discovered_from)
     cpp_config: dict | None = None
     py_config: dict | None = None
-    for path in _resolve_sources(root, pattern):
-        if not path.is_file() or should_skip(path, excludes):
+    for path in _resolve_sources(root, pattern, excludes):
+        if not path.is_file():
             continue
         suffix = path.suffix
         if suffix not in _CPP_EXTS and suffix not in _PY_EXTS:
@@ -373,7 +376,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        rel_path = str(path.relative_to(root))
+        rel_path = rel_to_root(path, root)
         if suffix in _CPP_EXTS:
             if cpp_config is None:
                 cpp_config = _cpp.load_cpp_ros2_config()

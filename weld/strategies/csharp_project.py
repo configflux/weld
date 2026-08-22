@@ -43,11 +43,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from weld.strategies._csharp_project_files import resolve_owned_files
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 from weld.strategies._tree_sitter_ids import canonical_file_node_id
 
 #: Properties we surface on project nodes when declared in the csproj
@@ -82,8 +79,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     pattern = source.get("glob", "**/*.csproj")
     excludes = source.get("exclude", [])
 
-    matched = _resolve_glob(root, pattern)
-    matched = filter_glob_results(root, matched)
+    matched = resolve_glob(root, pattern, excludes)
 
     # Two-pass walk so we can resolve nested-csproj ownership: the
     # deepest csproj that contains a file wins. First pass mints node
@@ -93,8 +89,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     for project_file in matched:
         if not project_file.is_file():
-            continue
-        if should_skip(project_file, excludes):
             continue
 
         rel_path = project_file.relative_to(root).as_posix()
@@ -203,22 +197,6 @@ def _emit_contains_file_edges(
                 },
             })
     return out
-
-
-def _resolve_glob(root: Path, pattern: str) -> list[Path]:
-    """Expand *pattern* against *root* into a sorted file list.
-
-    Mirrors :func:`weld.strategies.bazel.extract`'s glob handling: a
-    ``**`` pattern walks recursively, otherwise the pattern is
-    treated as a single-directory wildcard. Sorting keeps the
-    discovery output deterministic.
-    """
-    if "**" in pattern:
-        return sorted(root.glob(pattern))
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return []
-    return sorted(parent.glob(Path(pattern).name))
 
 
 def _csproj_id(project_name: str) -> str:

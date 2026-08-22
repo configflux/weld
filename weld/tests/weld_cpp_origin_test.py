@@ -222,6 +222,35 @@ class IsStdlibIncludePathTest(unittest.TestCase):
             ),
         )
 
+    # --- Multiarch libstdc++ split (bd nts6): the arch-specific
+    # /usr/include/<triple>/c++/<version>/ root has no common triple
+    # prefix across architectures (bd d3et resolves the path; this
+    # closes the classification gap that left it "external").
+
+    def test_multiarch_triple_libstdcpp(self) -> None:
+        self.assertTrue(is_stdlib_include_path(
+            "/usr/include/x86_64-linux-gnu/c++/13/bits/c++config.h",
+        ))
+        # /usr/local/include/ root, dotted version (as for Nix/Conda).
+        self.assertTrue(is_stdlib_include_path(
+            "/usr/local/include/aarch64-linux-gnu/c++/12.2.0/vector",
+        ))
+
+    def test_multiarch_non_numeric_version_rejected(self) -> None:
+        # Real root + real-looking triple, non-version 3rd segment.
+        self.assertFalse(is_stdlib_include_path(
+            "/usr/include/x86_64-linux-gnu/c++/vNext/foo.h",
+        ))
+
+    def test_multiarch_vendored_sysroot_lookalike_rejected(self) -> None:
+        # A vendored cross-compilation sysroot can embed this shape
+        # deep inside a project path; anchoring on the *start* of the
+        # string (not "found anywhere") keeps it external.
+        self.assertFalse(is_stdlib_include_path(
+            "/repo/third_party/rpi-sysroot/usr/include/"
+            "arm-linux-gnueabihf/c++/12/vector",
+        ))
+
 
 class IsStdNamespaceCalleeTest(unittest.TestCase):
     """``is_std_namespace_callee`` accepts qualified ``std::`` callees."""

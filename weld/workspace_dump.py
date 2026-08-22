@@ -4,7 +4,12 @@ The dumper is the ground truth for any round-trip: the same
 :class:`~weld.workspace.WorkspaceConfig` always produces byte-identical
 output. It is split out of :mod:`weld.workspace` (which re-exports
 :func:`dump_workspaces_yaml`) so the schema/loader/validator module stays
-within the line-count cap.
+within the line-count cap. The ``TYPE_CHECKING``-only import below points at
+the dependency-free :mod:`weld._workspace_schema` leaf rather than
+``weld.workspace`` -- pointing it back at ``workspace.py`` was still a
+real edge in the discovery graph (the AST walker does not special-case a
+``TYPE_CHECKING`` guard) and completed a 3-member import cycle with
+``workspace_scan.py`` (bd 5038-zw6w4, ADR 0130 disposition #14).
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from weld.workspace import WorkspaceConfig
+    from weld._workspace_schema import WorkspaceConfig
 
 __all__ = ["dump_workspaces_yaml"]
 

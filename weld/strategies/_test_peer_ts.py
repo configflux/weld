@@ -11,6 +11,14 @@ Peer resolution looks for the same stem with one of the supported
 source extensions in the parent directory (or the parent of the
 ``__tests__`` directory). The extension search order is fixed at
 ``.ts -> .tsx -> .js -> .jsx`` so the first hit is deterministic.
+
+bd cw4f (ADR 0125 follow-up):
+:func:`file_summary_for_test` gives a TS/JS test file the same
+``props.summary`` channel bd ikof gave Python test files -- its own leading
+comment run, read with the ``typescript`` grammar for all four extensions
+(a strict-superset parse of plain JS, the same grammar choice
+``weld/languages/typescript.yaml`` already makes). See
+:mod:`weld.strategies._ts_file_doc_comments` for the extraction mechanism.
 """
 
 from __future__ import annotations
@@ -18,6 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from weld._node_ids import file_id as _canonical_file_id
+from weld.strategies._ts_file_doc_comments import typescript_file_summary
 
 #: Recognized source/test file extensions, in deterministic search
 #: order. The order matters because the resolver returns the *first*
@@ -101,3 +110,15 @@ def resolve_peer(root: Path, rel: Path) -> tuple[str, str] | None:
     else:
         parent = rel.parent
     return _find_first_existing(root, parent, stem)
+
+
+def file_summary_for_test(root: Path, rel_path: Path) -> str:
+    """Return the collapsed leading comment run of *rel_path*.
+
+    Delegates to :func:`weld.strategies._ts_file_doc_comments.
+    typescript_file_summary`, which already degrades to ``""`` on any parse
+    or grammar failure -- the same "always present, empty when absent"
+    contract :func:`weld.strategies._test_peer_python.module_summary_for_test`
+    documents for Python.
+    """
+    return typescript_file_summary(root / rel_path)

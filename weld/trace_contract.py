@@ -17,6 +17,9 @@ TRACE_EDGE_TYPES: frozenset[str] = frozenset([
     "verifies", "tests", "documents",
     "depends_on", "invokes", "feeds_into",
     "enforces", "orchestrates", "configures", "builds", "calls",
+    # ADR 0122: decorator registration is the same class of code
+    # relationship ``calls``/``invokes`` already participate in trace as.
+    "decorates",
 ])
 
 TRACE_SERVICE_TYPES: frozenset[str] = frozenset(["service", "package"])

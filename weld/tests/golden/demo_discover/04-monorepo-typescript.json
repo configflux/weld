@@ -230,23 +230,28 @@
     "discovered_from": [
       ".github/workflows/ci.yml",
       "apps/web/package.json",
-      "apps/web/src/",
+      "apps/web/src/App.tsx",
+      "apps/web/src/layout.tsx",
       "docker/Dockerfile.orders-api",
       "docker/docker-compose.yml",
-      "docs/",
-      "docs/adr/",
+      "docs/adr/0001-monorepo-layout.md",
+      "docs/architecture.md",
       "libs/shared-types/package.json",
-      "libs/shared-types/src/",
+      "libs/shared-types/src/index.ts",
       "package.json",
       "packages/api/package.json",
-      "packages/api/src/",
+      "packages/api/src/client.ts",
+      "packages/api/src/types.ts",
       "packages/ui/package.json",
-      "packages/ui/src/",
+      "packages/ui/src/Button.tsx",
+      "packages/ui/src/Card.tsx",
+      "packages/ui/src/index.ts",
       "services/orders-api/package.json",
-      "services/orders-api/src/"
+      "services/orders-api/src/routes.ts",
+      "services/orders-api/src/server.ts"
     ],
     "schema_version": 1,
-    "version": 5
+    "version": 8
   },
   "nodes": {
     "adr/0001-monorepo-layout": {
@@ -934,7 +939,7 @@
       },
       "type": "test-target"
     },
-    "workflow:ci": {
+    "workflow:.github/workflows/ci": {
       "label": "ci",
       "props": {
         "authority": "canonical",

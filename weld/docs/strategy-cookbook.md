@@ -338,8 +338,8 @@ Use the standard vocabularies:
 
 - `authority`: `canonical`, `derived`, `manual`, `external`
 - `confidence`: `definite`, `inferred`, `speculative`
-- `roles`: `implementation`, `test`, `config`, `doc`, `build`,
-  `migration`, `fixture`, `script`
+- `roles`: `implementation`, `entrypoint`, `package`, `test`, `config`,
+  `doc`, `build`, `migration`, `fixture`, `script`
 
 If the strategy cannot justify a value, omit it rather than guessing.
 

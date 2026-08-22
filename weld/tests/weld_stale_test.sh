@@ -154,8 +154,15 @@ assert 'not a git repo' in d['reason'].lower(), f'unexpected reason: {d[\"reason
 print('PASS: wd stale handles non-git directory correctly')
 "
 
-# --- Test 6: file-index.json includes meta.git_sha ---
-echo "--- Test 6: file-index.json includes meta.git_sha ---"
+# --- Test 6: file-index.json meta never carries git_sha (bd nwbn / ADR 0110) ---
+# meta.git_sha named the commit the file was written UNDER, but the file
+# is then committed INTO the next commit -- so in a Mode B (--track-graphs)
+# repo the tracked bytes always disagreed with their own history and every
+# no-change `wd discover` restamped the file forever. Dropped outright by
+# weld/file_index.py:save_file_index (see weld_file_index_no_git_sha_test.py
+# for the root-cause unit pin); this integration test must assert the same
+# contract instead of the older one it used to check.
+echo "--- Test 6: file-index.json meta never carries git_sha ---"
 cd "${ROOT}"
 weld_in_root "${REPO_ROOT}" "${ROOT}" build-index 2>/dev/null
 
@@ -163,13 +170,12 @@ python3 -c "
 import json
 with open('${ROOT}/.weld/file-index.json') as f:
     data = json.load(f)
-# New format has meta key
+# Envelope has a meta key alongside files.
 assert 'meta' in data, f'file-index.json should have meta key; keys={list(data.keys())[:5]}'
-sha = data['meta'].get('git_sha')
-assert sha is not None, f'meta.git_sha missing from file-index.json'
+assert 'git_sha' not in data['meta'], f'meta.git_sha should never be stamped: {data[\"meta\"]}'
 # files should also be present
 assert 'files' in data, f'file-index.json should have files key'
-print('PASS: file-index.json includes meta.git_sha')
+print('PASS: file-index.json meta never carries git_sha')
 "
 
 # --- Test 7: find_files works with new file-index format ---

@@ -14,6 +14,12 @@ Covers the policy documented in ADR 0011 section 11 and ADR 0012 section 4:
 The tests are independent of the canonical serializer implementation and
 operate on the ``Graph`` public surface (``add_node``, ``save``, ``load``)
 plus the validator (``validate_graph``).
+
+``load_graph_file``'s malformed-``graph.json``-shape rejection tests (bd
+5038-1c7o, bd 5038-w0r4) live in the sibling
+``weld_load_graph_file_shape_test.py`` -- split out to keep each file
+under the line-count cap and because shape-malformation is a distinct
+concern from schema-version gating.
 """
 
 from __future__ import annotations

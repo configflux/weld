@@ -6,6 +6,7 @@ import argparse
 import re
 from pathlib import Path
 from weld._notice import emit
+from weld._safe_text import sanitize_terminal_line
 
 _TEMPLATE_FILES = {
     "external-adapter": "external_adapter.py",
@@ -113,5 +114,5 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1) from exc
 
     cwd = Path.cwd().resolve()
-    print(f"Wrote {_display_path(output_path, cwd=cwd)}")
+    print(sanitize_terminal_line(f"Wrote {_display_path(output_path, cwd=cwd)}"))
     print("Remember to wire this into .weld/discover.yaml.")

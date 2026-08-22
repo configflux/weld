@@ -237,6 +237,37 @@ class CppResolverLayer2OriginTest(unittest.TestCase):
                 nodes[resolved_id]["props"].get("origin"), "stdlib",
             )
 
+    def test_layer2_rewrite_to_synthetic_multiarch_stdlib_header(self) -> None:
+        """Resolved include under the Debian/Ubuntu/Fedora arch-specific
+        ``/usr/include/<triple>/c++/<version>/`` split (bd d3et) is
+        stdlib-origin end to end, not external (bd nts6)."""
+        callee = "c++config"
+        synthetic_hdr = Path(
+            "/usr/include/x86_64-linux-gnu/c++/13/bits/c++config.h",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "src").mkdir()
+            impl = root / "src" / "main.cpp"
+            impl.write_text('#include "system_hdr.h"\n')
+            per_file, nodes, edges = _build_state(
+                impl, callee, synthetic_hdr,
+                "system.cxxconfig", "system.cxxconfig",
+            )
+            with mock.patch.object(
+                cpp_resolver,
+                "resolve_cpp_include",
+                return_value=synthetic_hdr,
+            ):
+                cpp_resolver.resolve_includes_pass(
+                    root, per_file, nodes, edges,
+                )
+            resolved_id = f"symbol:cpp:system.cxxconfig:{callee}"
+            self.assertIn(resolved_id, nodes)
+            self.assertEqual(
+                nodes[resolved_id]["props"].get("origin"), "stdlib",
+            )
+
     def test_layer2_rewrite_to_synthetic_external_header(self) -> None:
         """Resolved include under ``/usr/include/boost/...`` -> external."""
         callee = "io_context"

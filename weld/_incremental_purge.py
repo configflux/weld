@@ -22,6 +22,8 @@ edge it cannot attribute).
 
 from __future__ import annotations
 
+from weld._rel_path import canonical_rel_path, canonical_rel_paths
+
 
 def edge_provenance_file(edge: dict) -> str:
     """Return an edge's producing-file provenance, or ``""`` if absent.
@@ -33,6 +35,10 @@ def edge_provenance_file(edge: dict) -> str:
     is reliably the *originating* file -- never the endpoint -- and "is this
     provenance file stale" never misfires on a clean caller that merely
     targets a dirty file's symbol.
+
+    Returned in the canonical form (:mod:`weld._rel_path`), because the
+    strategy that stamped it and the index that builds the stale set spell a
+    repo-relative path differently off POSIX. Identity on POSIX.
     """
     props = edge.get("props")
     if not isinstance(props, dict):
@@ -40,8 +46,7 @@ def edge_provenance_file(edge: dict) -> str:
     prov = props.get("provenance")
     if not isinstance(prov, dict):
         return ""
-    f = prov.get("file")
-    return f if isinstance(f, str) and f else ""
+    return canonical_rel_path(prov.get("file"))
 
 
 def purge_edges_by_provenance(
@@ -60,12 +65,20 @@ def purge_edges_by_provenance(
     dirty parse (target genuinely deleted) does not dangle: the orchestrator
     post-process (:func:`weld._discover_postprocess._clean_and_dedup_edges`)
     drops every edge whose endpoint is absent from the final node set.
+
+    *stale_files* arrives in the index spelling and the provenance in whichever
+    spelling its strategy chose, so both sides are canonicalized for the
+    membership test (:mod:`weld._rel_path`; identity on POSIX). Skipping that
+    off POSIX puts every attributable edge on the ``not in stale_files``
+    branch, retaining it unconditionally -- silent staleness rather than the
+    over-purge the endpoint floor would have given (bd pbi8).
     """
+    stale = canonical_rel_paths(stale_files)
     surviving: list[dict] = []
     for e in edges:
         prov_file = edge_provenance_file(e)
         if prov_file:
-            if prov_file not in stale_files:
+            if prov_file not in stale:
                 surviving.append(e)
         elif e["from"] not in removed_ids and e["to"] not in removed_ids:
             surviving.append(e)

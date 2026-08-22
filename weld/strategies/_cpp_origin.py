@@ -96,21 +96,80 @@ def _matches_exotic_stdlib_layout(header_path_str: str) -> bool:
     return False
 
 
+#: Parent roots for the Debian/Ubuntu/Fedora arch-specific libstdc++
+#: split (``/usr/include/<triple>/c++/<version>/...``, bd d3et / bd
+#: nts6). Deliberately duplicated from ``_SYSTEM_C_INCLUDE_ROOTS`` in
+#: ``_cpp_system_include.py`` rather than imported: that module
+#: imports ``STDLIB_INCLUDE_ROOTS`` *from* this one, so the reverse
+#: import would cycle, and classification must stay a pure function
+#: of the path string regardless of which resolver root actually
+#: found the file (see module docstring).
+_MULTIARCH_CXX_PARENT_ROOTS: tuple[str, ...] = (
+    "/usr/include/",
+    "/usr/local/include/",
+)
+
+
+def _matches_multiarch_cxx_layout(header_path_str: str) -> bool:
+    """Return True for the Debian/Ubuntu/Fedora multiarch libstdc++ split.
+
+    Recognises ``<root>/<triple>/c++/<version>/...`` -- e.g.
+    ``/usr/include/x86_64-linux-gnu/c++/13/bits/c++config.h`` -- where
+    the multiarch triple (``x86_64-linux-gnu``, ``aarch64-linux-gnu``,
+    ...) has no common literal spelling across architectures, so
+    ``STDLIB_INCLUDE_ROOTS`` cannot list it as a prefix (bd d3et).
+
+    Unlike :func:`_matches_exotic_stdlib_layout`, this anchors with
+    ``startswith`` rather than "found anywhere in the string": ``/usr/
+    include/`` and ``/usr/local/include/`` are short, generic-looking
+    prefixes a project could easily embed several levels deep in a
+    vendored cross-compilation sysroot (e.g. ``/repo/third_party/
+    rpi-sysroot/usr/include/arm-linux-gnueabihf/c++/12/vector``);
+    matching that substring anywhere, the way the Nix/Conda/``/opt/``
+    markers do, would misclassify a project's own vendored copy as
+    stdlib. Requiring the root at position 0, plus an exact
+    ``<one-segment>/c++/<version>/`` shape immediately after it (a
+    numeric-leading version -- ``13``, or dotted like the ``13.2.0``
+    already accepted elsewhere in this module's Nix/Conda fixtures --
+    never a project-style name such as ``vNext``), keeps the match
+    bound to a real system include root the same way the ADR 0042
+    markers bound theirs.
+    """
+    for root in _MULTIARCH_CXX_PARENT_ROOTS:
+        if not header_path_str.startswith(root):
+            continue
+        remainder = header_path_str[len(root):]
+        parts = remainder.split("/")
+        if len(parts) < 3:
+            continue
+        triple, cxx, version = parts[0], parts[1], parts[2]
+        is_version = version[:1].isdigit() and all(
+            c.isdigit() or c == "." for c in version
+        )
+        if triple and cxx == "c++" and is_version:
+            return True
+    return False
+
+
 def is_stdlib_include_path(header_path_str: str) -> bool:
     """Return True if *header_path_str* lives under a known stdlib root.
 
     Operates on a posix-form string so callers can pass either a real
     path or a synthetic test fixture (e.g. ``/usr/include/c++/13/vector``).
-    Recognises both the literal ``STDLIB_INCLUDE_ROOTS`` prefixes and
-    the exotic-layout families (Nix, Conda, ``/opt/<tool>/``, Bazel
+    Recognises the literal ``STDLIB_INCLUDE_ROOTS`` prefixes, the
+    exotic-layout families (Nix, Conda, ``/opt/<tool>/``, Bazel
     hermetic ``external/<repo>/``) handled by
-    :func:`_matches_exotic_stdlib_layout`.
+    :func:`_matches_exotic_stdlib_layout`, and the Debian/Ubuntu/
+    Fedora arch-specific multiarch split handled by
+    :func:`_matches_multiarch_cxx_layout`.
     """
     if not header_path_str:
         return False
     if any(header_path_str.startswith(root) for root in STDLIB_INCLUDE_ROOTS):
         return True
-    return _matches_exotic_stdlib_layout(header_path_str)
+    if _matches_exotic_stdlib_layout(header_path_str):
+        return True
+    return _matches_multiarch_cxx_layout(header_path_str)
 
 
 def is_std_namespace_callee(callee: str) -> bool:

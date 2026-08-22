@@ -173,6 +173,45 @@ class EmitBaseEdgesTest(unittest.TestCase):
         # No symbol placeholder when the base resolves to a project file.
         self.assertNotIn("symbol:csharp:Sample.Base", nodes)
 
+    def test_stamps_provenance_when_rel_path_given(self) -> None:
+        # ADR 0074 / bd rifzk: a base-list entry has exactly one declaring
+        # file, so finalise's per-record rel_path can attribute the edge
+        # -- letting an incremental purge downgrade to symbol:unresolved
+        # instead of dropping the edge outright when the base's own file
+        # is deleted.
+        nodes: dict = {}
+        edges: list = []
+        emit_base_edges(
+            nodes,
+            edges,
+            file_node_id="file:src/Foo",
+            namespace="Sample",
+            derived_class="Foo",
+            base_name="Base",
+            source_strategy="tree_sitter",
+            project_file_index={},
+            rel_path="src/Foo.cs",
+        )
+        self.assertEqual(edges[0]["props"]["provenance"], {"file": "src/Foo.cs"})
+
+    def test_omits_provenance_when_rel_path_absent(self) -> None:
+        # Legacy direct callers with no rel_path to offer must not stamp a
+        # misleading provenance -- they keep today's endpoint-membership
+        # purge, unchanged.
+        nodes: dict = {}
+        edges: list = []
+        emit_base_edges(
+            nodes,
+            edges,
+            file_node_id="file:src/Foo",
+            namespace="Sample",
+            derived_class="Foo",
+            base_name="Base",
+            source_strategy="tree_sitter",
+            project_file_index={},
+        )
+        self.assertNotIn("provenance", edges[0]["props"])
+
 
 class BuildProjectFileIndexTest(unittest.TestCase):
     """The file index keys on declared class names of C# file nodes."""
@@ -251,6 +290,29 @@ class FinaliseEntryPointTest(unittest.TestCase):
         finalise(nodes, edges, caches, "tree_sitter")
         edge_types = sorted(e["type"] for e in edges)
         self.assertEqual(edge_types, ["implements", "inherits"])
+
+    def test_six_tuple_record_stamps_provenance_end_to_end(self) -> None:
+        # The production record_base_pairs shape (6-tuple, rel_path
+        # populated) must carry through finalise -> emit_base_edges to a
+        # stamped edge, not just the direct emit_base_edges unit path
+        # (bd rifzk).
+        nodes: dict = {
+            "file:src/Foo": {
+                "type": "file",
+                "props": {"language": "csharp", "types": ["Foo"]},
+            },
+        }
+        edges: list = []
+        caches = {
+            "inheritance_records": [
+                ("file:src/Foo", "src/Foo.cs", "Sample", "Foo", "Base", []),
+            ],
+        }
+        finalise(nodes, edges, caches, "tree_sitter")
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(
+            edges[0]["props"]["provenance"], {"file": "src/Foo.cs"},
+        )
 
 
 if __name__ == "__main__":

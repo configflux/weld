@@ -25,10 +25,10 @@ attaches ``suppressed_count`` to the lint envelope.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable
+from typing import Iterable
 
-if TYPE_CHECKING:
-    from weld.arch_lint import Violation
+from weld._arch_lint_types import Violation
+from weld._test_paths import is_test_node
 
 # Node types whose orphans are almost always intentional leaves rather
 # than dead code.  Kept centralised so the runner and the formatter
@@ -38,35 +38,12 @@ _DEFAULT_SUPPRESSED_TYPES: frozenset[str] = frozenset(
 )
 
 
-def _looks_like_test_path(path: str) -> bool:
-    """Return True when *path* looks like a test source file."""
-    if not path:
-        return False
-    p = path.replace("\\", "/").lower()
-    if "_test.py" in p or "_test.go" in p:
-        return True
-    if ".test.ts" in p or ".test.tsx" in p or ".test.js" in p:
-        return True
-    segments = p.split("/")
-    if "tests" in segments or "__tests__" in segments:
-        return True
-    base = segments[-1]
-    if base.startswith("test_"):
-        return True
-    return False
-
-
-def _is_test_node(node: dict) -> bool:
-    """Return True when *node* should be classified as a test node."""
-    props = node.get("props") or {}
-    file_path = str(props.get("file") or "")
-    if _looks_like_test_path(file_path):
-        return True
-    # Roles tagged 'test' (rare but possible).
-    roles = props.get("roles") or []
-    if isinstance(roles, list) and "test" in roles:
-        return True
-    return False
+# The convention list this rule documents above now lives in
+# :mod:`weld._test_paths`, imported rather than restated: ``wd query`` needs
+# the same answer to demote test material below the code it covers (bd to8x),
+# and a second hand-maintained copy of "what does a test file look like" is
+# how the two would drift apart. Nothing outside this module addressed the
+# private spellings, so they are gone rather than aliased.
 
 
 def _is_suppressed(node: dict) -> bool:
@@ -74,14 +51,12 @@ def _is_suppressed(node: dict) -> bool:
     node_type = node.get("type") or ""
     if node_type in _DEFAULT_SUPPRESSED_TYPES:
         return True
-    if _is_test_node(node):
+    if is_test_node(node):
         return True
     return False
 
 
-def _make_violation(node_id: str, label: str) -> "Violation":
-    from weld.arch_lint import Violation  # late import to break cycle
-
+def _make_violation(node_id: str, label: str) -> Violation:
     return Violation(
         rule="orphan-detection",
         node_id=node_id,
@@ -94,7 +69,7 @@ def _make_violation(node_id: str, label: str) -> "Violation":
 
 def detect_orphans(
     data: dict, *, include_noisy: bool = False
-) -> tuple[list["Violation"], int]:
+) -> tuple[list[Violation], int]:
     """Return (violations, suppressed_count) for the orphan-detection rule.
 
     ``data`` is the dict returned by ``Graph.dump()``.  When
@@ -115,7 +90,7 @@ def detect_orphans(
         if isinstance(to, str):
             touched.add(to)
 
-    violations: list["Violation"] = []
+    violations: list[Violation] = []
     suppressed = 0
     for node_id in sorted(node_id for node_id in nodes if node_id not in touched):
         node = nodes.get(node_id) or {}
@@ -127,7 +102,7 @@ def detect_orphans(
     return violations, suppressed
 
 
-def rule_orphan_detection(data: dict) -> Iterable["Violation"]:
+def rule_orphan_detection(data: dict) -> Iterable[Violation]:
     """Backwards-compatible entrypoint -- yields visible orphans only.
 
     The runner uses ``detect_orphans`` directly so it can capture the

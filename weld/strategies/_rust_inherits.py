@@ -127,7 +127,11 @@ def stage_trait_impls(
     No-op when *impl_records* is ``None`` (the accumulator is only seeded
     for Rust). Records carry the implementing type's module path so
     :func:`finalise` can mint the correct ``symbol:rust:<module>:<type>``
-    origin id without re-deriving it.
+    origin id without re-deriving it, and the raw ``rel_path`` so
+    :func:`finalise` can stamp ``props.provenance.file`` on the emitted
+    ``implements`` edge (ADR 0074): an ``impl Trait for Type`` block is
+    declared at exactly one point in exactly one file, so the record that
+    block lands in unambiguously names the edge's producing file (bd rifzk).
     """
     if impl_records is None:
         return
@@ -136,6 +140,7 @@ def stage_trait_impls(
         impl_records.append(
             {
                 "module_path": module_path,
+                "rel_path": rel_path,
                 "type_short": type_short,
                 "trait_short": trait_short,
                 "trait_full": trait_full,
@@ -226,19 +231,22 @@ def finalise(
                     },
                 },
             )
+        props: dict = {
+            "source_strategy": source_strategy,
+            "confidence": "definite" if resolved else "speculative",
+            "resolved": resolved,
+            "trait_name": record["trait_full"],
+            "impl_type": record["type_short"],
+        }
+        rel_path = record.get("rel_path", "")
+        if rel_path:
+            # ADR 0074: attributes the edge to the file whose ``impl Trait
+            # for Type`` block produced it, so a purge can tell "this file
+            # is stale" from "this file is clean" instead of only "this
+            # edge's endpoint node is gone" (bd rifzk).
+            props["provenance"] = {"file": rel_path}
         edges.append(
-            {
-                "from": from_id,
-                "to": target_id,
-                "type": "implements",
-                "props": {
-                    "source_strategy": source_strategy,
-                    "confidence": "definite" if resolved else "speculative",
-                    "resolved": resolved,
-                    "trait_name": record["trait_full"],
-                    "impl_type": record["type_short"],
-                },
-            }
+            {"from": from_id, "to": target_id, "type": "implements", "props": props}
         )
 
 

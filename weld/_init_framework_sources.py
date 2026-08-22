@@ -124,7 +124,7 @@ def _add_go_framework_sources(
     canonical ``"github.com/gin-gonic/gin"`` import path); when present we
     emit a ``gin`` source entry over ``**/*.go``. The entry is appended
     *before* the tree-sitter Go entry by the caller so the canonical
-    tree-sitter ``file:`` node wins the later ``nodes.update`` merge over
+    tree-sitter ``file:`` node wins the later orchestrator merge over
     gin's thin boundary-file placeholder.
     """
     detected = {fw for fw, _strategy, _path in frameworks}
@@ -145,7 +145,7 @@ def _add_rust_framework_sources(
     ``use axum::`` / ``use axum;`` declaration); when present we emit an
     ``axum`` source entry over ``**/*.rs``. The entry is appended
     *before* the tree-sitter Rust entry by the caller so the canonical
-    tree-sitter ``file:`` node wins the later ``nodes.update`` merge over
+    tree-sitter ``file:`` node wins the later orchestrator merge over
     axum's thin boundary-file placeholder.
     """
     detected = {fw for fw, _strategy, _path in frameworks}

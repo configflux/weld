@@ -4,7 +4,13 @@ Reads a JSON-lines issue store at the path given by ``source['path']``
 (relative to the repo root) and emits one ``concept`` node per open issue
 that carries the ``weld-dogfood-gap`` label. For each cited repo-relative
 file path inside the issue description, a ``relates_to`` edge is added
-from the concept node to ``file:<path>``.
+from the concept node to every plausible spelling of that path's node id
+(:func:`weld.strategies._target_ids.target_ids`); the discovery
+post-processor drops the spellings that do not resolve. That rule is shared
+with ``validator_targets`` rather than restated here: this strategy used to
+keep its own copy, that copy predated the ADR 0041 ``file:`` rename, and so
+every edge it emitted was swept as dangling and every concept node it minted
+was an orphan.
 
 Boundary and safety rules (see ADR 0037):
 
@@ -29,6 +35,7 @@ import unicodedata
 from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
+from weld.strategies._target_ids import target_ids
 
 # Strip a leading "weld dogfood gap:" tag (case-insensitive, optional
 # whitespace) from issue titles before slugifying. The label that drives
@@ -71,33 +78,6 @@ def _slugify_concept(title: str) -> str:
     if not collapsed:
         return "untitled"
     return collapsed[:_SLUG_MAX_LEN]
-
-
-def _candidate_node_ids(rel_path: str) -> list[str]:
-    """Return plausible node ids for a cited repo-relative file path.
-
-    The repository emits file/config nodes under several conventions
-    today: ``file:<rel_path>`` (most strategies), ``file:<stem>`` (the
-    Python module strategy), and ``config:<safe_name>`` (the static
-    config-file strategy for root-level files). Cited paths in dogfood
-    issues are written by humans as repo-relative paths, so the
-    strategy emits one ``relates_to`` edge per plausible target
-    spelling and lets the post-processor drop the spellings that do
-    not resolve. The graph thus picks up whichever convention the
-    actually-emitted file node uses without requiring any change to
-    the file-emitting strategies.
-    """
-    out: list[str] = [f"file:{rel_path}"]
-    p = Path(rel_path)
-    stem = p.stem
-    if stem and stem != rel_path:
-        out.append(f"file:{stem}")
-    # config_file strategy normalization: leading dots stripped, slashes
-    # and dots replaced with underscores (see weld/strategies/config_file.py).
-    safe = rel_path.lstrip(".").replace("/", "_").replace(".", "_")
-    if safe:
-        out.append(f"config:{safe}")
-    return out
 
 
 def _cited_paths(root: Path, text: str) -> list[str]:
@@ -232,7 +212,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             },
         }
         for cited in _cited_paths(root, issue.get("description") or ""):
-            for target in _candidate_node_ids(cited):
+            for target in target_ids(cited):
                 edges.append(
                     {
                         "from": nid,
@@ -242,6 +222,14 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                             "source_strategy": "concept_from_bd",
                             "authority": "derived",
                             "confidence": "inferred",
+                            # ADR 0074: the issue store this edge was
+                            # derived from, never the cited target -- so a
+                            # clean-provenance edge into a dirtied target
+                            # survives the incremental purge instead of
+                            # being dropped by endpoint membership and never
+                            # re-minted (the issue store rarely changes
+                            # alongside an unrelated cited file; bd 57lra).
+                            "provenance": {"file": rel},
                         },
                     }
                 )

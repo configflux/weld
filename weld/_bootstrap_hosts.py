@@ -182,7 +182,7 @@ def add_framework_subparser(
         dest="include_unmanaged",
         help=(
             "With --diff, fall back to the whole-file unified diff "
-            "(default --diff is region-scoped per ADR 0033). "
+            "(default --diff is region-scoped). "
             "Requires --diff; rejected otherwise."
         ),
     )

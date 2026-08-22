@@ -29,6 +29,7 @@ from typing import Callable
 # ``python_callgraph`` keeps importing them from this module unchanged.
 # ``reconstruct_project_modules`` below is the callgraph-specific piece --
 # ``python_module`` has no cross-file state and needs no equivalent.
+from weld._rel_path import rel_to_root
 from weld.strategies._incremental_hint import (  # noqa: F401 -- re-export
     dirty_matched,
     get_incremental_hint,
@@ -69,7 +70,7 @@ def reconstruct_project_modules(
             modules.add(module)
     for py in dirty_parse_files:
         try:
-            rel = str(py.relative_to(root))
+            rel = rel_to_root(py, root)
         except ValueError:
             continue
         dotted = module_dotted_path(rel)

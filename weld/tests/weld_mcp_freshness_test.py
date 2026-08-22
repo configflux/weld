@@ -13,7 +13,8 @@ These tests lock the unified contract on the MCP boundary:
    ``WELD_AUTO_REFRESH=0`` opt-out).
 2. Every successful read payload returned through the dispatch boundary (the
    path MCP clients actually hit) carries an additive ``freshness`` object
-   ``{stale, commits_behind}``.
+   ``{stale, commits_behind, branch}`` (``branch`` per ADR 0096 §3; its
+   semantics are pinned in ``weld_freshness_branch_test``).
 3. The freshness object leaks no paths / SHAs / secrets.
 4. Error payloads (corrupt / missing graph, node-not-found) are NOT stamped.
 5. Repeat reads against an unchanged graph hit the in-process cache rather than
@@ -191,6 +192,9 @@ class FreshnessStampedOnReadsTest(_FreshnessTestBase):
         self.assertIsInstance(fr["stale"], bool)
         self.assertIn("commits_behind", fr)
         self.assertIsInstance(fr["commits_behind"], int)
+        # ADR 0096 §3: the live branch, or None outside git / on detached HEAD.
+        self.assertIn("branch", fr)
+        self.assertIsInstance(fr["branch"], (str, type(None)))
 
     def test_every_read_tool_carries_freshness(self) -> None:
         for name, args in _READ_DISPATCHES:
@@ -227,11 +231,13 @@ class FreshnessNoLeakTest(unittest.TestCase):
         _mcp_read.clear_graph_cache()
         self.addCleanup(_mcp_read.clear_graph_cache)
 
-    def test_freshness_object_is_only_stale_and_commits_behind(self) -> None:
+    def test_freshness_object_is_only_the_whitelisted_scalars(self) -> None:
         result = mcp_server.dispatch("weld_query", {"term": "Store"}, root=self.root)
         fr = result["freshness"]
-        # Exactly the two whitelisted scalar keys -- no paths/SHAs/secrets.
-        self.assertEqual(set(fr.keys()), {"stale", "commits_behind"})
+        # Exactly the three whitelisted scalar keys -- no paths/SHAs/secrets.
+        # ``branch`` joined the whitelist in ADR 0096 §3; it is checkout
+        # identity the caller already holds, not graph content.
+        self.assertEqual(set(fr.keys()), {"stale", "commits_behind", "branch"})
 
     def test_freshness_does_not_echo_graph_secret(self) -> None:
         result = mcp_server.dispatch("weld_query", {"term": "Store"}, root=self.root)
@@ -342,12 +348,14 @@ class FederatedFreshnessTest(_FreshnessTestBase):
         (self.root / ".weld" / "workspaces.yaml").write_text(
             "version: 1\n", encoding="utf-8",
         )
-        with mock.patch(
-            "weld.federation_tools.federated_stale"
-        ) as fed_stale:
+        # Asserted against the constructor itself rather than a shaper that
+        # calls it: since ADR 0100 removed the MCP-only ``federated_stale``,
+        # the cost this pins has exactly one gate left, and building the
+        # object *is* the fan-out (every child graph is loaded).
+        with mock.patch.object(_mcp_read, "_FederatedGraph") as fed_graph:
             fr = _mcp_read.freshness_for(self.root)
-        fed_stale.assert_not_called()  # no expensive child fan-out
-        self.assertEqual(set(fr.keys()), {"stale", "commits_behind"})
+        fed_graph.assert_not_called()  # no expensive child fan-out
+        self.assertEqual(set(fr.keys()), {"stale", "commits_behind", "branch"})
         self.assertNotIn("deadbeef", json.dumps(fr))  # recorded git_sha
 
 

@@ -9,10 +9,12 @@ from pathlib import Path
 
 from weld._alias_index import build_alias_index as _build_alias_index
 from weld._git import get_git_sha, is_git_repo
+from weld._graph_match import match_token_groups, match_tokens, resolve_symbol_name
 from weld._graph_meta_sidecar import merge_sidecar_meta, write_graph_with_meta
 from weld._staleness import compute_stale_info as _compute_stale_info
 from weld._graph_schema import (
     CHILD_SCHEMA_VERSION,
+    GraphShapeError,
     ROOT_FEDERATED_SCHEMA_VERSION,
     SchemaVersionError,
     load_graph_file,
@@ -24,9 +26,10 @@ from weld.graph_context import context_with_fallback as _context_with_fallback
 from weld.graph_context import simple_exact_context as _simple_exact_context
 from weld.graph_query import query_graph as _query_graph
 from weld.query_state import build_query_state as _build_query_state
+from weld import graph_referrers as _referrers
 
 # Re-export schema symbols for backward compatibility -- some tests import directly from weld.graph.
-__all__ = ["CHILD_SCHEMA_VERSION", "ROOT_FEDERATED_SCHEMA_VERSION", "SchemaVersionError", "Graph", "load_graph_file", "main"]
+__all__ = ["CHILD_SCHEMA_VERSION", "ROOT_FEDERATED_SCHEMA_VERSION", "GraphShapeError", "SchemaVersionError", "Graph", "load_graph_file", "main"]
 
 # Backward-compat alias kept private; used only by internal callers.
 _has_repo_nodes = __import__("weld._graph_schema", fromlist=["has_repo_nodes"]).has_repo_nodes
@@ -201,133 +204,36 @@ class Graph:
         """Synonym-expanded tokenized search across id, label, file, exports, description."""
         return _query_graph(self, term, limit)
 
+    # bd jkir: the three matching primitives live in weld._graph_match, which
+    # is where they went when this module hit the 400-line cap. These stay as
+    # delegates because graph_query, federation and four test modules address
+    # them through the class.
+
     @staticmethod
     def _match_tokens(tokens: list[str], nid: str, node: dict) -> int:
         """Count matched tokens; returns 0 if any token misses all fields."""
-        return Graph._match_token_groups([[t] for t in tokens], nid, node)
+        return match_tokens(tokens, nid, node)
 
     @staticmethod
     def _match_token_groups(token_groups: list[list[str]], nid: str, node: dict) -> int:
         """Match synonym-expanded token groups; 0 if any group misses."""
-        nid_l, label_l = nid.lower(), node.get("label", "").lower()
-        props = node.get("props") or {}
-        file_l = (props.get("file") or "").lower()
-        qualname_l = str(props.get("qualname") or "").lower()
-        exports_l = [e.lower() for e in props.get("exports", []) if isinstance(e, str)]
-        constants_l = [c.lower() for c in props.get("constants", []) if isinstance(c, str)]
-        headings_l = [h.lower() for h in props.get("headings", []) if isinstance(h, str)]
-        desc_l = (props.get("description") or "").lower()
-        hits = 0
-        for group in token_groups:
-            if any(
-                t in nid_l or t in label_l or t in file_l
-                or t in qualname_l or t in desc_l
-                or any(t in e for e in exports_l)
-                or any(t in c for c in constants_l)
-                or any(t in h for h in headings_l)
-                for t in group
-            ):
-                hits += 1
-            else:
-                return 0
-        return hits
+        return match_token_groups(token_groups, nid, node)
 
     def _resolve_symbol_name(self, symbol_name: str) -> list[dict]:
-        """Resolve a bare symbol *name* to matching graph nodes.
-
-        Matches symbol nodes on ``props.qualname`` (with a trailing
-        ``.<name>`` suffix check) and additionally includes the
-        ``symbol:unresolved:<name>`` sentinel. Shared by :meth:`callers`
-        and :meth:`references` so both use one bare-name rule.
-        """
-        matches: list[dict] = []
-        for nid, n in self._data["nodes"].items():
-            if n.get("type") != "symbol":
-                continue
-            qual = (n.get("props") or {}).get("qualname") or n.get("label", "")
-            if qual == symbol_name or qual.endswith("." + symbol_name):
-                matches.append({"id": nid, **n})
-            elif nid == f"symbol:unresolved:{symbol_name}":
-                matches.append({"id": nid, **n})
-        return matches
+        """Resolve a bare symbol *name* to matching graph nodes."""
+        return resolve_symbol_name(self._data["nodes"], symbol_name)
 
     def callers(self, symbol_id: str, depth: int = 1) -> dict:
-        """Return the set of symbols that call *symbol_id*, up to *depth*.
-
-        Walks ``calls`` edges in reverse. ``symbol_id`` accepts either a
-        fully-qualified node id (e.g.
-        ``symbol:py:weld.discover:_load_strategy``) or a bare name
-        (e.g. ``_load_strategy``); bare names use the same resolution
-        rule as :meth:`references`, with callers aggregated and
-        deduplicated across matches. An unknown name still surfaces an
-        ``error`` so callers can distinguish "no match" from "no callers".
-        """
-        if depth < 1:
-            depth = 1
-        if symbol_id in self._data["nodes"]:
-            seeds = [symbol_id]
-        else:
-            matches = self._resolve_symbol_name(symbol_id)
-            if not matches:
-                return {
-                    "symbol": symbol_id, "depth": depth,
-                    "callers": [], "edges": [],
-                    "error": f"node not found: {symbol_id}",
-                }
-            seeds = [m["id"] for m in matches]
-        # Build reverse adjacency for calls edges only.
-        rev: dict[str, list[dict]] = {}
-        for e in self._data["edges"]:
-            if e.get("type") == "calls":
-                rev.setdefault(e["to"], []).append(e)
-        seen: set[str] = set(seeds)
-        frontier: list[str] = list(seeds)
-        out_callers: list[dict] = []
-        out_edges: list[dict] = []
-        for _ in range(depth):
-            next_frontier: list[str] = []
-            for node_id in frontier:
-                for edge in rev.get(node_id, []):
-                    src = edge["from"]
-                    out_edges.append(edge)
-                    if src in seen:
-                        continue
-                    seen.add(src)
-                    n = self.get_node(src)
-                    if n is not None:
-                        out_callers.append(n)
-                    next_frontier.append(src)
-            frontier = next_frontier
-            if not frontier:
-                break
-        return {
-            "symbol": symbol_id,
-            "depth": depth,
-            "callers": out_callers,
-            "edges": out_edges,
-        }
+        """Symbols that call *symbol_id*, up to *depth* (weld.graph_referrers)."""
+        return _referrers.callers(self, symbol_id, depth)
 
     def references(self, symbol_name: str) -> dict:
-        """Return callers + textual references for a symbol *name*.
+        """What points at *symbol_name*; accepts a bare name or a node id.
 
-        ``symbol_name`` is the bare identifier (e.g. ``_load_strategy``)
-        rather than a full id. The result combines resolved callers and
-        file-index textual occurrences.
+        See :func:`weld.graph_referrers.references` for the node-id rule and
+        the read-path disagreement it closes (bd nywd).
         """
-        matches = self._resolve_symbol_name(symbol_name)
-        all_callers: dict[str, dict] = {}
-        all_edges: list[dict] = []
-        for m in matches:
-            res = self.callers(m["id"], depth=1)
-            for c in res["callers"]:
-                all_callers.setdefault(c["id"], c)
-            all_edges.extend(res["edges"])
-        return {
-            "symbol": symbol_name,
-            "matches": matches,
-            "callers": list(all_callers.values()),
-            "edges": all_edges,
-        }
+        return _referrers.references(self, symbol_name)
 
     def context(self, node_id: str, *, fallback: bool = True) -> dict:
         """Node + 1-hop neighborhood; alias-aware per ADR 0041."""
@@ -394,7 +300,3 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:
     """CLI entry point -- delegates to :mod:`weld._graph_cli`."""
     from weld._graph_cli import main as _cli_main
     _cli_main(argv, prog=prog)
-
-
-if __name__ == "__main__":
-    main()

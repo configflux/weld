@@ -19,7 +19,7 @@
       ".weld/workspaces.yaml"
     ],
     "schema_version": 2,
-    "version": 5
+    "version": 8
   },
   "nodes": {
     "repo:libs-shared-models": {

@@ -1,7 +1,8 @@
 """Enrichment persistence across rediscovery (ADR 0079).
 
 ``props.enrichment`` is authoritative semantic provenance written by
-``wd enrich`` (provider-backed) or the agent-direct ``/enrich-weld`` path.
+``wd enrich --provider`` (provider-backed) or by an agent following the
+``wd enrich --agent-direct`` work plan (ADR 0098).
 ``wd discover`` rebuilds structural nodes from source and would otherwise
 clobber that investment. This module re-attaches persisted enrichment onto a
 freshly built graph, keyed by node id and validated by a *node-only* source
@@ -24,6 +25,20 @@ import json
 # would let enrichment invalidate itself.
 FINGERPRINT_EXCLUDED_PROPS = frozenset(["description", "purpose", "enrichment"])
 
+# POSITIONAL props, excluded from the fingerprint (ADR 0097): they say where a
+# node sits, not what it is. `line` (symbols), `span`/`start_line`/`end_line`
+# (doc sections) and `line_count` (files) all move when text is inserted
+# ABOVE a node -- the one edit that provably cannot change it -- while staying
+# put when its own body is rewritten. Hashing them drops enrichment for nodes
+# whose source never changed, which is the opposite of the ADR 0079 contract.
+FINGERPRINT_EXCLUDED_POSITIONAL_PROPS = frozenset(
+    ["line", "start_line", "end_line", "span", "line_count"]
+)
+
+_EXCLUDED_FROM_FINGERPRINT = (
+    FINGERPRINT_EXCLUDED_PROPS | FINGERPRINT_EXCLUDED_POSITIONAL_PROPS
+)
+
 # Structurally-required fields on a persisted enrichment record (ADR 0009 §3).
 _REQUIRED_ENRICHMENT_FIELDS = ("provider", "model", "timestamp", "description")
 
@@ -32,7 +47,7 @@ def _stable_props(props: dict) -> dict:
     return {
         key: value
         for key, value in props.items()
-        if key not in FINGERPRINT_EXCLUDED_PROPS
+        if key not in _EXCLUDED_FROM_FINGERPRINT
     }
 
 
@@ -45,6 +60,13 @@ def enrichment_fingerprint(node: dict) -> str:
     invalidate a node's own enrichment -- only a change to the node's own source
     does. ``node`` is the ``{"id", "type", "label", "props"}`` shape produced by
     :func:`weld.enrich._snapshot_node` and by :func:`reattach_enrichment`.
+
+    IDENTITY, NOT COORDINATES (ADR 0097): positional props are excluded too, so
+    inserting text above a node does not invalidate it. What remains is the
+    node's declared identity -- for a symbol its qualname/kind/module/file, for
+    a file its exports/constants/imports. The graph carries no body hash, so a
+    body-only rewrite that leaves that identity intact is not detected here;
+    ``wd enrich --force`` is the deliberate refresh.
     """
     payload = {
         "id": node.get("id"),
@@ -56,15 +78,36 @@ def enrichment_fingerprint(node: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def valid_enrichment(enrichment: object) -> bool:
-    """True when *enrichment* is a structurally-complete record (ADR 0009 §3)."""
+def missing_enrichment_fields(enrichment: object) -> list[str]:
+    """Required fields *enrichment* lacks, in declaration order (ADR 0009 §3).
+
+    Empty list means structurally complete. A non-dict lacks everything. This
+    is the detail behind the write-time rejection (ADR 0097): callers name the
+    returned fields so the author learns exactly what to supply, and
+    :func:`valid_enrichment` is defined in terms of it so the boolean gate and
+    the rejection message can never disagree.
+    """
     if not isinstance(enrichment, dict):
-        return False
-    for key in _REQUIRED_ENRICHMENT_FIELDS:
-        value = enrichment.get(key)
-        if not isinstance(value, str) or not value.strip():
-            return False
-    return True
+        return list(_REQUIRED_ENRICHMENT_FIELDS)
+    return [
+        key
+        for key in _REQUIRED_ENRICHMENT_FIELDS
+        if not isinstance(enrichment.get(key), str)
+        or not enrichment[key].strip()
+    ]
+
+
+def valid_enrichment(enrichment: object) -> bool:
+    """True when *enrichment* is a structurally-complete record (ADR 0009 §3).
+
+    Defined in terms of :func:`missing_enrichment_fields` so the gate and the
+    rejection detail cannot drift. The ``isinstance`` term is a short-circuit
+    for the overwhelmingly common "no enrichment on this node" case --
+    :func:`enrichment_records` calls this once per node of the previous graph
+    on every discover, and it agrees with the field walk by construction (a
+    non-dict is missing every field).
+    """
+    return isinstance(enrichment, dict) and not missing_enrichment_fields(enrichment)
 
 
 def enrichment_records(previous_graph: dict | None) -> dict[str, dict]:
@@ -143,7 +186,9 @@ def reattach_enrichment(
 
 __all__ = [
     "FINGERPRINT_EXCLUDED_PROPS",
+    "FINGERPRINT_EXCLUDED_POSITIONAL_PROPS",
     "enrichment_fingerprint",
+    "missing_enrichment_fields",
     "valid_enrichment",
     "enrichment_records",
     "reattach_enrichment",

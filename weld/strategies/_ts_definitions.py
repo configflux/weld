@@ -91,8 +91,20 @@ def promote_definition_symbols(
     symbols: dict[str, list[str]],
     file_node_id: str,
     source_strategy: str,
+    summaries: dict[str, str] | None = None,
 ) -> tuple[dict[str, dict], list[dict]]:
-    """Emit symbol nodes and file containment edges for parsed definitions."""
+    """Emit symbol nodes and file containment edges for parsed definitions.
+
+    *summaries* (bd 5038-009x, ADR 0118 follow-up) is the optional
+    name -> doc-comment-summary map from
+    :func:`weld.strategies._ts_doc_comments.extract_definition_summaries`.
+    ``None`` (the default, and every caller before this change) leaves
+    ``props.summary`` entirely absent, matching today's shape for every
+    language this function does not yet have a doc-comment convention for.
+    When supplied, every promoted symbol gets the key -- ``""`` when the
+    map has no entry for that name -- mirroring ADR 0118's "always present
+    within a covered language" contract for Python symbols.
+    """
     if language not in T1_DEFINITION_LANGUAGES:
         return {}, []
     module_path = ts_module_from_path(rel_path)
@@ -112,6 +124,7 @@ def promote_definition_symbols(
                     name=name,
                     kind=kind,
                     source_strategy=source_strategy,
+                    summary=None if summaries is None else summaries.get(name, ""),
                 ),
             },
         )
@@ -150,6 +163,7 @@ def _symbol_props(
     name: str,
     kind: str | None,
     source_strategy: str,
+    summary: str | None = None,
 ) -> dict:
     props: dict = {
         "file": rel_path,
@@ -164,6 +178,8 @@ def _symbol_props(
     }
     if kind:
         props["kind"] = kind
+    if summary is not None:
+        props["summary"] = summary
     return props
 
 

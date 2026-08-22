@@ -16,12 +16,13 @@ in the index surface as of the last write. On the next refresh we:
    verbatim from the prior ``file-index.json``.
 
 Determinism (ADR 0012 §3): the result is byte-identical to a full
-``build_file_index`` because (a) ``tokens_for_file`` is the single
-tokenizer used by both the full walk and this updater, and (b)
-:func:`weld.file_index.save_file_index` re-sorts and re-serializes the
-final ``{path: tokens}`` map with ``sort_keys=True`` -- so the output
-bytes depend only on the final map's *content*, never on the order in
-which entries were produced or patched.
+``build_file_index`` because (a) :func:`weld.file_index.tokens_from_content`
+is the single tokenizer, used via :func:`weld.file_index.tokens_for_file`
+by the full walk and directly (on bytes this module already read) by this
+updater's patch path, and (b) :func:`weld.file_index.save_file_index`
+re-sorts and re-serializes the final ``{path: tokens}`` map with
+``sort_keys=True`` -- so the output bytes depend only on the final map's
+*content*, never on the order in which entries were produced or patched.
 
 Safety: the state companion is a pure optimization hint. If it is
 missing, malformed, schema-mismatched, or does not describe the current
@@ -53,7 +54,6 @@ import os
 import tempfile
 from pathlib import Path
 
-from weld._git import get_git_sha
 from weld.repo_boundary import iter_repo_files
 from weld._notice import emit
 
@@ -83,57 +83,6 @@ def _index_sha256(root: Path) -> str | None:
         return hashlib.sha256((root / ".weld" / INDEX_FILENAME).read_bytes()).hexdigest()
     except OSError:
         return None
-
-
-def tokens_from_content(rel_path: str, content: str) -> list[str]:
-    """Canonical sorted token list for *rel_path* given its *content*.
-
-    The pure tokenizer with no I/O, so a caller that already holds the
-    bytes (and their hash) can tokenize the exact same bytes -- closing
-    the read-twice race where a file edited mid-refresh could be hashed
-    and tokenized from different contents (bd 85tb.2).
-    """
-    # Imported lazily to avoid a circular import: ``file_index`` imports
-    # this module's tokenizer from inside ``build_file_index``.
-    from weld.file_index import (
-        _extract_generic_tokens,
-        _extract_markdown_tokens,
-        _extract_python_tokens,
-        _extract_typescript_tokens,
-        _extract_yaml_tokens,
-        _tokenize_path,
-    )
-
-    suffix = Path(rel_path).suffix
-    tokens = _tokenize_path(rel_path)
-    if suffix == ".py":
-        tokens.extend(_extract_python_tokens(content))
-    elif suffix in (".ts", ".tsx", ".js", ".jsx"):
-        tokens.extend(_extract_typescript_tokens(content))
-    elif suffix == ".md":
-        tokens.extend(_extract_markdown_tokens(content))
-    elif suffix in (".yaml", ".yml"):
-        tokens.extend(_extract_yaml_tokens(content))
-    else:
-        tokens.extend(_extract_generic_tokens(content))
-    return sorted(set(tokens))
-
-
-def tokens_for_file(root: Path, rel_path: str) -> list[str]:
-    """Return the canonical sorted token list for one indexed file.
-
-    The single per-file tokenizer shared by the full
-    :func:`weld.file_index.build_file_index` walk and this incremental
-    updater, so both paths emit byte-identical per-file token lists
-    (ADR 0012 §3). Returns an empty list when the file is unreadable;
-    callers treat an empty result as "drop this path", matching the full
-    walk which only stores files with a non-empty token set.
-    """
-    try:
-        content = (root / rel_path).read_text(encoding="utf-8", errors="replace")
-    except (OSError, UnicodeDecodeError):
-        return []
-    return tokens_from_content(rel_path, content)
 
 
 def _surface_hashes(root: Path) -> dict[str, str]:
@@ -210,6 +159,22 @@ def _save_state_hashes(root: Path, hashes: dict[str, str]) -> None:
     rejected on the next read regardless, so writing one only litters
     ``.weld`` with an artifact that forces a rebuild anyway. The invariant
     is therefore: a companion that exists on disk is always bound.
+
+    ``meta`` intentionally carries no ``git_sha``. It used to record
+    ``get_git_sha`` at write time, but that value names the commit the file
+    is written *under*, and the file is then committed *into* the next
+    commit -- so in a Mode B (``--track-graphs``) repo the tracked companion
+    could never agree with its own history and restamped on every single
+    no-change ``wd discover`` (bd nwbn). Nothing reads the field on this
+    file (only ``index_sha256`` is load-bearing, via
+    :func:`weld._file_index_coverage.index_uncovered_files` and
+    :func:`refresh_file_index` below), so it was dropped outright -- the
+    same shape bd lrfu already used for ``discovery-state.json``'s unread
+    ``created_at`` -- rather than moved to a sidecar. This function has
+    always built ``meta`` fresh rather than merging onto a prior on-disk
+    value, so a legacy companion carrying the old key simply stops carrying
+    it the next time anything writes here; no migration and no
+    ``STATE_VERSION`` bump are needed.
     """
     index_sha = _index_sha256(root)
     if index_sha is None:
@@ -217,9 +182,6 @@ def _save_state_hashes(root: Path, hashes: dict[str, str]) -> None:
     out_path = root / ".weld" / STATE_FILENAME
     out_path.parent.mkdir(parents=True, exist_ok=True)
     meta: dict = {"version": STATE_VERSION, "index_sha256": index_sha}
-    git_sha = get_git_sha(root)
-    if git_sha is not None:
-        meta["git_sha"] = git_sha
     envelope = {"version": STATE_VERSION, "meta": meta, "hashes": dict(hashes)}
     fd, tmp = tempfile.mkstemp(prefix=f"{STATE_FILENAME}.tmp.", dir=str(out_path.parent))
     try:
@@ -256,6 +218,8 @@ def _patched_index(
     holding stale tokens (bd 85tb.2 4-eye review). Unchanged files keep
     their pre-walk hash, which already matches their carried-over tokens.
     """
+    from weld.file_index import tokens_from_content
+
     new_index: dict[str, list[str]] = {}
     authoritative: dict[str, str] = {}
     for path, sha in current_hashes.items():

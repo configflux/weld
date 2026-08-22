@@ -23,13 +23,11 @@ the migration-alias scheme, and the per-rule rationale.
 from __future__ import annotations
 
 import fnmatch
-from typing import TYPE_CHECKING, Iterable, Iterator, Mapping, Sequence
+from typing import Iterable, Iterator, Mapping, Sequence
 
+from weld._arch_lint_types import Violation
 from weld._graph_strategy_pair import check_strategy_pair_consistency
 from weld._node_ids import canonical_slug, canonical_slug_case_sensitive
-
-if TYPE_CHECKING:
-    from weld.arch_lint import Violation
 
 
 #: Built-in entrypoint basename allow-list for ``file-anchor-symmetry``.
@@ -57,10 +55,8 @@ _CHILD_EDGE_TYPES: frozenset[str] = frozenset({"contains"})
 
 def _make_violation(
     rule: str, node_id: str, message: str, severity: str = "error"
-) -> "Violation":
-    """Build a :class:`weld.arch_lint.Violation` (late import breaks cycle)."""
-    from weld.arch_lint import Violation  # noqa: WPS433 (local import OK)
-
+) -> Violation:
+    """Build a :class:`weld._arch_lint_types.Violation`."""
     return Violation(
         rule=rule,
         node_id=node_id,
@@ -163,7 +159,7 @@ def _canonical_base(node_id: str, node: Mapping) -> str:
 
 def check_canonical_id_uniqueness(
     nodes: Mapping[str, Mapping],
-) -> Iterator["Violation"]:
+) -> Iterator[Violation]:
     """Flag pairs of nodes that share a canonical base but no alias link.
 
     Two nodes share a canonical base when
@@ -175,7 +171,7 @@ def check_canonical_id_uniqueness(
     nodes are logically merged (the alias index resolves either ID to
     the live node) and the rule passes.
 
-    Yields :class:`weld.arch_lint.Violation` objects in deterministic
+    Yields :class:`weld._arch_lint_types.Violation` objects in deterministic
     order (sorted by lowest-ID-in-group, then by group contents) so
     repeated runs produce byte-identical output.
     """
@@ -277,7 +273,7 @@ def check_file_anchor_symmetry(
     data: Mapping,
     *,
     allowlist: Sequence[Mapping] | None = None,
-) -> Iterator["Violation"]:
+) -> Iterator[Violation]:
     """Flag ``file:`` nodes with outgoing children but no inbound edge.
 
     A ``file:*`` node that emits a ``contains`` edge to a typed child
@@ -296,7 +292,7 @@ def check_file_anchor_symmetry(
     ``.weld/discover.yaml`` by the runner) to whitelist intentional
     asymmetries with a justifying comment.
 
-    Yields :class:`weld.arch_lint.Violation` objects in deterministic
+    Yields :class:`weld._arch_lint_types.Violation` objects in deterministic
     sorted-by-node-id order so repeated runs produce byte-identical
     output.
     """

@@ -206,6 +206,12 @@ federation-scoped and self-heals):
 | No content change (the common refresh-on-read case) | 5.9–8.4 s | **~1.5 s** (first refresh) / ~0.6 s (subsequent reads short-circuit on `stale=False`) |
 | 1–5 source files changed (incremental rebuild) | ~6–8 s | ~6 s |
 
+Both rows are the refresh-on-read optimization's before/after and are kept as the historical
+baseline. The content-change row has since improved well past the `~6 s`
+recorded here — the strategy-parse and glob-traversal levers described below
+landed after it was written, and each was measured against its own contemporary
+baseline rather than against this table.
+
 The no-change collapse from ~6–8 s to ~1.5 s is the win that makes
 refresh-on-read viable: once a refresh writes fresh state, later reads see
 `stale=False` and skip discovery entirely (~0.6 s CLI floor). A genuine
@@ -218,7 +224,7 @@ for the no-content-change steady state and the strategy-parse lever is
 landed, but post-process + serialization keep a real edit above sub-second
 on a graph this size; see the caveat below.
 
-What changed (bd 85tb.2):
+What changed:
 
 - **No-change is the dominant real case.** The live
   `.weld/auto-refresh.jsonl` showed ~6.5 s even for *zero* changed files,
@@ -254,6 +260,32 @@ the dirty files (it has no cross-file state, so it needs no reconstruction --
 a warm ~370 ms/glob saving on this repo). The remaining levers (post-process
 scoping, partial/delta
 serialization) are tracked separately.
+
+**Glob traversals are shared across one run.** Parsing only the dirty files
+still left each strategy *resolving* its glob from scratch. Discovery asks for
+one `(root, pattern, excludes)` triple in two places: once when the source-file
+resolver builds the file map, and once more inside every strategy that
+re-resolves the same glob in its own `extract()`.
+`_source_resolve.resolve_source_file_map` already collapses the source entries
+sharing a glob, but that memo cannot reach inside a strategy — so this repo's
+three sources on `weld/**/*.py` (`python_module`, `python_callgraph`,
+`python_package`) cost **four** whole-tree `os.walk` traversals per refresh,
+each followed by a per-path repo-boundary filter, for a result that cannot
+change mid-run.
+
+`weld.glob_match.glob_scope` memoizes `walk_glob` for the duration of one
+operation, and `_discover_single_repo` opens it alongside the repo-boundary
+scope. The lifetime rule is the boundary snapshot's, for the same reason: a
+glob result is a point-in-time observation of the tree, so it is bound to an
+operation and never to the process — a long-lived host (the MCP stdio server,
+weld embedded as a library) must not inherit an earlier run's file listing.
+Measured here, `weld/**/*.py` drops from 4 traversals to 1 (16 requests → 13
+traversals per refresh), worth **~0.5–0.8 s** off a warm content-change
+refresh across two interleaved A/B runs (paired-delta medians +0.51 s and
++0.65 s; min-to-min +0.65 s and +0.80 s; best observed refresh 3.23 s → 2.58 s).
+Wall-clock on a shared host is noisy, so the load-independent number is the
+traversal count. Entries whose excludes differ keep their own traversal — the
+memo is keyed on the whole triple.
 
 Determinism is the hard bar: the incrementally-refreshed graph and every
 index are byte-identical to a full `wd discover` at the same state. The

@@ -22,7 +22,7 @@ from __future__ import annotations
 import difflib
 from typing import Iterable, Sequence
 
-from weld.contract import ValidationError
+from weld._contract_types import ValidationError
 
 # Canonical fix hint shared by any diagnostic whose remedy is to rebuild the
 # graph file from source-of-truth discovery (tracked issue). Kept as a module

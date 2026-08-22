@@ -172,9 +172,21 @@ class PrimeCustomerFiveStepReproTest(unittest.TestCase):
                 "wd discover --output .weld/graph.json", out3, out3,
             )
 
-            # Step 4: touch then commit graph (state may also rewrite).
+            # Step 4: touch, then a commit that moves HEAD past the SHA
+            # the touch just recorded.
+            #
+            # What makes step 5 report fresh is that this commit carries
+            # *only* weld bookkeeping, which ``drift_is_graph_only``
+            # collapses -- otherwise prime would ask for another touch,
+            # which needs another commit, which bumps HEAD again. The
+            # file is force-added because the config-only policy ignores
+            # it (ADR 0110), matching what the customer's repo did:
+            # commit weld's files. It used to be staged incidentally by
+            # `git add -A`, back when `file-index.json` was neither
+            # tracked nor ignored, which made the precondition of this
+            # step an accident rather than a statement.
             self._wd(["touch"], root)
-            _run(["git", "add", "-A", ".weld/"], root)
+            _run(["git", "add", "-f", ".weld/file-index.json"], root)
             _run(["git", "commit", "-qm", "touch graph"], root)
 
             # Step 5: prime must still report fresh.

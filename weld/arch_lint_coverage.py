@@ -8,15 +8,13 @@ resolve globs against the file system.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import Iterable
 
-if TYPE_CHECKING:
-    from weld.arch_lint import Violation
+from weld._arch_lint_types import Violation
 
 
-def rule_strategy_coverage(data: dict, root: Path) -> Iterable["Violation"]:
+def rule_strategy_coverage(data: dict, root: Path) -> Iterable[Violation]:
     """Flag source entries in discover.yaml whose globs match zero files."""
-    from weld.arch_lint import Violation  # late import breaks cycle
     from weld._yaml import parse_yaml
 
     config_path = root / ".weld" / "discover.yaml"

@@ -281,15 +281,13 @@ def auto_refresh_if_stale(
         _emit_no_refresh_warning(err)
         return None
 
-    # bd o18k: skip re-running discovery (~0.7-6s) when the working-tree
-    # signature and graph identity are unchanged since our last refresh, so
-    # repeated reads *between* edits do not each re-discover.
-    from weld._refresh_cache import refresh_with_cache
-    return refresh_with_cache(
-        root, graph_path, meta,
-        lambda: _do_refresh(root, safe=safe, json_output=json_output, stderr=err),
-        head_sha=info.get("current_sha"),  # bd q3le: reuse HEAD, no re-shell
-    )
+    # Reached only when stale, and owed at most once per tree state: the
+    # refresh settles the signal, so the guard above returns before this line
+    # on every following read (bd 0jay). bd o18k's signature cache sat here
+    # for that job while the working-tree dimension could never settle; it
+    # measured 0 hits in 60 reads afterwards and was removed (bd hmaz, ADR
+    # 0017 second amendment). ``auto_refresh_settles_once_test`` pins this.
+    return _do_refresh(root, safe=safe, json_output=json_output, stderr=err)
 
 
 def _do_refresh(

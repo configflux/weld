@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from weld._rel_path import rel_to_root
 from weld.strategies._helpers import filter_glob_results
 from weld.strategies.events_shared import (
     channel_id,
@@ -169,7 +170,7 @@ def extract_compose_env(
             text = cf.read_text(encoding="utf-8")
         except OSError:
             continue
-        rel_path = str(cf.relative_to(root))
+        rel_path = rel_to_root(cf, root)
         declarations = _iter_env_declarations(text)
         matched = False
         for key, value in declarations:

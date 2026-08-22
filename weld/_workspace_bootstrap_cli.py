@@ -10,9 +10,9 @@ imports and delegates.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from weld._notice import emit
+from weld._safe_text import dumps_safe_json, sanitize_terminal_text
 
 __all__ = ["add_bootstrap_subparser", "run_bootstrap"]
 
@@ -113,9 +113,17 @@ def run_bootstrap(args: argparse.Namespace) -> int:
             "skipped_by_gitignore": result.skipped_by_gitignore,
             "errors": result.errors,
         }
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                payload, indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
     else:
-        sys.stdout.write("\n".join(result.summary_lines()) + "\n")
+        # Names the workspace children declared in .weld/workspaces.yaml,
+        # same material as the sanitized `wd workspace status` render.
+        sys.stdout.write(
+            sanitize_terminal_text("\n".join(result.summary_lines()) + "\n")
+        )
 
     missing = set(result.children_discovered) - set(result.children_present)
     if result.children_discovered and missing:

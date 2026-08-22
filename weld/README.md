@@ -37,12 +37,13 @@ Optional extras:
 
 ```bash
 pip install "configflux-weld[tree-sitter]"  # broader language extraction
-pip install "configflux-weld[mcp]"          # run python -m weld.mcp_server
+pip install "configflux-weld[mcp]"          # run wd mcp serve (stdio MCP server)
 pip install "configflux-weld[openai]"       # or [anthropic], [ollama], [llm]
 ```
 
 MCP config generation (`wd mcp config`) works in the default install. Running
-the stdio MCP server requires the `mcp` extra.
+the stdio MCP server requires the `mcp` extra, which pins `mcp>=2,<3`; a
+pre-2.0 SDK is rejected with an upgrade hint (`pip install -U "mcp>=2"`).
 
 ## Quickstart
 
@@ -174,13 +175,20 @@ wd mcp config --client=vscode
 wd mcp config --client=cursor
 ```
 
-Run the stdio MCP server from an environment that includes the optional SDK:
+Run the stdio MCP server from an environment that includes the optional SDK
+at `mcp>=2,<3`:
 
 ```bash
 uv tool install "configflux-weld[mcp]"
-python -m weld.mcp_server --help
-python -m weld.mcp_server
+wd mcp serve --help
+wd mcp serve
 ```
+
+`wd` is a console script, so the directory the server is launched in -- the
+repository being served -- is never placed on its module search path.
+`python -m weld.mcp_server` remains supported for running from a source
+checkout, where serving the checkout rather than an installed copy is the
+point.
 
 MCP documentation:
 
@@ -191,7 +199,9 @@ https://github.com/configflux/weld/blob/main/docs/mcp.md
 - Default discovery reads repository files and writes local graph data. It does
   not execute discovered application code and does not open network connections.
 - `wd discover --safe` disables project-local strategies and external adapters.
-- `wd enrich --safe` refuses network and LLM providers.
+- `wd enrich --safe` refuses network and LLM providers. `wd enrich
+  --agent-direct` still works under it: it prints the enrichment work plan for
+  the calling agent to follow and makes no network call.
 - Project-local strategies and `external_json` adapters are trusted-repository
   features because they can execute code or commands during discovery.
 
@@ -221,6 +231,25 @@ Opt out with any one of: `WELD_TELEMETRY=off`, `--no-telemetry`, or
 `wd telemetry disable`. Use `wd telemetry --help` to inspect, export, or
 clear the file. The full event schema and design are documented in
 [`docs/telemetry.md`](https://github.com/configflux/weld/blob/main/docs/telemetry.md).
+
+## Worktrees and multiple checkouts
+
+Graph-backed reads answer from the checkout you are standing in. The root is
+resolved from the current directory -- nearest enclosing `.weld/`, bounded by
+the current git worktree, then the worktree root -- so a subdirectory of a
+worktree never answers from another checkout, and the walk never crosses into
+one. `--root` overrides it; `wd discover`, `wd init`, and `wd warm` keep
+explicit-root semantics and default to the current directory.
+
+A fresh `git worktree add` starts without a graph, so the first read seeds one
+from another checkout of the same repository that already has a graph,
+reconciles it to your branch, and prints a one-line notice. `wd stale` reports
+the live `branch` beside the `graph_branch` the graph was built on.
+`WELD_AUTO_REFRESH=0` disables the seeding along with auto-refresh.
+
+Details:
+
+https://github.com/configflux/weld/blob/main/README.md#worktrees-and-multiple-checkouts
 
 ## Polyrepo Federation
 

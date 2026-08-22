@@ -15,13 +15,26 @@ conventions are recognised:
 
 Per ADR 0046 (multi-language test-peer edges), each language helper is a
 private module so it does not register as its own discovery strategy.
+
+bd ikof: :func:`module_summary_for_test` gives a Python test module the same
+``props.summary`` channel ADR 0114 gave every ``python_module``-discovered
+file -- its own opening docstring paragraph. Test files never had it: the
+public dispatcher (:mod:`weld.strategies.test_peer`) mints their node from
+the path alone, so a test's *own stated purpose* (as opposed to whatever its
+filename happens to spell) was invisible to the query index. Read here,
+Python-specific, rather than in the dispatcher, because that is where every
+other per-language test-file read already lives (bd gyve's mock-patch
+harvester is the sibling precedent) -- the dispatcher stays read-free for
+languages that have not grown the same channel yet.
 """
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from weld._node_ids import file_id as _canonical_file_id
+from weld.strategies._python_anchor import module_summary
 
 #: ``_test.py`` is the Bazel / Go-style trailing-suffix convention used
 #: throughout this repository. Helper modules drop the suffix so they
@@ -253,3 +266,28 @@ def first_candidate_peer_id(rel_path: Path) -> str | None:
     if parent and parent != ".":
         return _canonical_file_id(f"{parent}/{candidates[0]}")
     return _canonical_file_id(candidates[0])
+
+
+def module_summary_for_test(root: Path, rel_path: Path) -> str:
+    """Return the opening paragraph of *rel_path*'s own module docstring.
+
+    Same contract as :func:`weld.strategies._python_anchor.module_summary`,
+    read one level up: parse the file, hand its tree to the shared reducer.
+    An unreadable or unparseable file (removed mid-walk, a syntax error)
+    yields ``""`` rather than raising -- ``test_peer`` records a *test*
+    node either way; a missing summary just means this one channel is
+    inert for it, the same "always present, empty when absent" contract
+    ADR 0114 already documents for ``props.summary`` in general.
+
+    Deliberately not routed through :func:`weld.strategies._strategy_failure.
+    note_strategy_failure` the way ``python_module``'s parse failure is:
+    that call records a file as anchoring *nothing*, which would be wrong
+    here -- the file node still gets built from its path alone regardless
+    of whether this read succeeds.
+    """
+    try:
+        source_text = (root / rel_path).read_text(encoding="utf-8")
+        tree = ast.parse(source_text, filename=str(root / rel_path))
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return ""
+    return module_summary(tree)

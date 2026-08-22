@@ -17,6 +17,7 @@ from pathlib import Path
 from weld._discover_sidecar import finalize_single_repo as _finalize_single_repo
 from weld.contract import SCHEMA_VERSION
 from weld._git import get_git_sha
+from weld._git_worktree import get_git_branch
 
 
 def no_change_refresh(
@@ -28,6 +29,7 @@ def no_change_refresh(
     *,
     with_sqlite: bool,
     write_graph: bool,
+    config_fingerprint: str | None = None,
 ) -> dict:
     """Return the refreshed graph for the no-change path and finalize it.
 
@@ -49,6 +51,19 @@ def no_change_refresh(
     sha = get_git_sha(root)
     if sha is not None:
         refreshed["meta"]["git_sha"] = sha
+    # ADR 0096 §3: refresh branch identity on this path too. A branch switch at
+    # an unchanged commit produces no source diff, so it lands *here* rather
+    # than in the ``post_process`` stamp -- and because ``existing_graph`` is a
+    # raw parse of ``graph.json`` (the sidecar's volatile keys are not merged
+    # back in), skipping this would drop ``git_branch`` from the sidecar
+    # entirely on every no-change refresh. Popped rather than nulled when there
+    # is no branch (detached HEAD / non-git) so that a value arriving in a
+    # full-meta graph body cannot survive as a stale identity.
+    branch = get_git_branch(root)
+    if branch is not None:
+        refreshed["meta"]["git_branch"] = branch
+    else:
+        refreshed["meta"].pop("git_branch", None)
     prior_meta = existing_graph.get("meta", {})
     unchanged = (
         prior_meta.get("version") == SCHEMA_VERSION
@@ -60,6 +75,7 @@ def no_change_refresh(
         root, current_hashes, refreshed, with_sqlite, write_graph,
         prior_graph_bytes=existing_graph_bytes,
         content_unchanged=unchanged,
+        config_fingerprint=config_fingerprint,
     )
     return refreshed
 

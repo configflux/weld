@@ -66,8 +66,8 @@ class TestYamlMetaHappyPath(unittest.TestCase):
             wf.mkdir(parents=True)
             (wf / "ci.yml").write_text(_HAPPY_WORKFLOW, encoding="utf-8")
             result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
-            self.assertIn("workflow:ci", result.nodes)
-            node = result.nodes["workflow:ci"]
+            self.assertIn("workflow:.github/workflows/ci", result.nodes)
+            node = result.nodes["workflow:.github/workflows/ci"]
             self.assertEqual(node["type"], "workflow")
             self.assertEqual(node["label"], "Build and Test")
             props = node["props"]
@@ -91,7 +91,7 @@ class TestYamlMetaHappyPath(unittest.TestCase):
             )
             result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
             self.assertEqual(
-                result.nodes["workflow:pipeline"]["label"], "CI Pipeline"
+                result.nodes["workflow:.github/workflows/pipeline"]["label"], "CI Pipeline"
             )
 
 
@@ -107,11 +107,11 @@ class TestYamlMetaEdgeCases(unittest.TestCase):
                 _NO_NAME_WORKFLOW, encoding="utf-8"
             )
             result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
-            self.assertIn("workflow:untitled", result.nodes)
+            self.assertIn("workflow:.github/workflows/untitled", result.nodes)
             self.assertEqual(
-                result.nodes["workflow:untitled"]["label"], "untitled"
+                result.nodes["workflow:.github/workflows/untitled"]["label"], "untitled"
             )
-            triggers = result.nodes["workflow:untitled"]["props"]["triggers"]
+            triggers = result.nodes["workflow:.github/workflows/untitled"]["props"]["triggers"]
             self.assertIn("workflow_dispatch", triggers)
 
     def test_exclude_pattern_drops_matching_file(self) -> None:
@@ -126,8 +126,96 @@ class TestYamlMetaEdgeCases(unittest.TestCase):
                 "exclude": ["drop.yml"],
             }
             result = extract(root, source, {})
-            self.assertIn("workflow:keep", result.nodes)
-            self.assertNotIn("workflow:drop", result.nodes)
+            self.assertIn("workflow:.github/workflows/keep", result.nodes)
+            self.assertNotIn("workflow:.github/workflows/drop", result.nodes)
+
+
+class TestYamlMetaInvokesEdges(unittest.TestCase):
+    """``run:`` steps that invoke a repo script by path get an edge (bd lwrh).
+
+    Mirrors ``TestToolScriptInvokes`` (``weld_tool_script_invokes_test.py``):
+    the same evidence rule, reused rather than re-derived, now sourced from a
+    workflow file's ``run:`` steps instead of a whole script's body.
+    """
+
+    def _invokes(self, result) -> list[dict]:
+        return [e for e in result.edges if e["type"] == "invokes"]
+
+    def test_inline_run_becomes_an_inferred_invokes_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wf = root / ".github" / "workflows"
+            wf.mkdir(parents=True)
+            (root / "tools").mkdir()
+            (root / "tools" / "audit.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            (wf / "ci.yml").write_text(
+                "name: CI\non: push\njobs:\n  x:\n    steps:\n"
+                "      - run: tools/audit.sh --dry-run\n",
+                encoding="utf-8",
+            )
+            result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
+            edges = self._invokes(result)
+            self.assertTrue(edges)
+            self.assertEqual(
+                {e["from"] for e in edges}, {"workflow:.github/workflows/ci"}
+            )
+            self.assertIn("tool:tools/audit", {e["to"] for e in edges})
+            for edge in edges:
+                self.assertEqual(edge["props"]["confidence"], "inferred")
+                self.assertEqual(edge["props"]["source_strategy"], "yaml_meta")
+                # ADR 0074 (bd 57lra): provenance names the workflow file
+                # this edge was scanned from, never the invoked target --
+                # see incremental_inbound_edge_provenance_purge_test.py for
+                # the incremental-purge contract this stamp exists to keep.
+                self.assertEqual(
+                    edge["props"]["provenance"], {"file": ".github/workflows/ci.yml"}
+                )
+
+    def test_conditional_block_run_is_followed(self) -> None:
+        # The exact shape the gap was filed against: a `run: |` block that
+        # conditionally invokes a script.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wf = root / ".github" / "workflows"
+            wf.mkdir(parents=True)
+            (root / "tools").mkdir()
+            (root / "tools" / "verify.py").write_text("", encoding="utf-8")
+            (wf / "release.yml").write_text(
+                "name: Release\non: push\njobs:\n  verify:\n    steps:\n"
+                "      - name: Verify\n"
+                "        run: |\n"
+                "          if [ -f tools/verify.py ]; then\n"
+                "            python tools/verify.py --strict\n"
+                "          fi\n",
+                encoding="utf-8",
+            )
+            result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
+            targets = {e["to"] for e in self._invokes(result)}
+            self.assertIn("file:tools/verify", targets)
+
+    def test_unresolvable_variable_path_yields_no_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wf = root / ".github" / "workflows"
+            wf.mkdir(parents=True)
+            (root / "tools").mkdir()
+            (root / "tools" / "real.py").write_text("", encoding="utf-8")
+            (wf / "ci.yml").write_text(
+                "name: CI\non: push\njobs:\n  x:\n    steps:\n"
+                '      - run: python "tools/${SCRIPT}.py"\n',
+                encoding="utf-8",
+            )
+            result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
+            self.assertEqual(self._invokes(result), [])
+
+    def test_no_run_steps_yields_no_edges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wf = root / ".github" / "workflows"
+            wf.mkdir(parents=True)
+            (wf / "ci.yml").write_text(_HAPPY_WORKFLOW, encoding="utf-8")
+            result = extract(root, {"glob": ".github/workflows/*.yml"}, {})
+            self.assertEqual(self._invokes(result), [])
 
 
 if __name__ == "__main__":

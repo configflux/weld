@@ -9,10 +9,19 @@ the 400-line cap. Covers:
 - The standalone GitHub Copilot CLI binary (``copilot``) used by
   the ``copilot-cli`` enrichment provider.
 
+Importable is not always the same as usable. The ``mcp`` SDK has a
+version floor -- the stdio server drives an API that arrived in 2.0 --
+so an installed 1.x SDK satisfies the import and satisfies nothing else.
+Reporting it as present sent users to launch a server that refuses to
+start; it is now reported as the degraded state it is, with the upgrade
+that fixes it. The floor itself lives in :mod:`weld._mcp_sdk`, shared
+with the server's own guard so the two cannot tell different stories.
+
 Security posture: this module never prints filesystem paths or
-environment variables. It only reports import availability, the
-``pip install`` extra name for Python deps, or the github-docs install
-URL for ``copilot-cli``.
+environment variables. It reports import availability, the ``pip
+install`` extra name for Python deps, the github-docs install URL for
+``copilot-cli``, and -- for a dep that is installed but too old -- the
+version of that dep as its own metadata already declares it.
 """
 
 from __future__ import annotations
@@ -23,6 +32,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from weld import _mcp_sdk
+from weld._mcp_sdk import REQUIRED_SPEC, UPGRADE_COMMAND
 from weld._yaml import parse_yaml
 from weld.strategies._ts_parse import grammar_module_name, grammar_package_name
 
@@ -59,11 +70,19 @@ class _Probe:
     is the human-readable installation instruction shown when the dep is
     missing -- a ``pip install`` line for Python deps, a github-docs URL
     for the ``copilot-cli`` binary.
+
+    ``usability`` is an optional second stage for deps that can be
+    installed and still be unusable. It runs only after ``check`` has
+    passed, and returns ``None`` when the dep is fine or the clause
+    describing the degradation -- remedy included -- when it is not. Only
+    the ``mcp`` SDK needs it today: it has a version floor. Probes that
+    leave it ``None`` keep the plain present/missing split.
     """
 
     display: str
     check: object  # Callable[[], bool], typed loosely for cheap closures.
     install_hint: str
+    usability: object | None = None  # Callable[[], str | None]
 
 
 def _module_available(mod_name: str) -> bool:
@@ -83,17 +102,45 @@ def _copilot_available() -> bool:
     return shutil.which(name) is not None
 
 
-def _python_probe(module: str, display: str, extra: str) -> _Probe:
+def _mcp_usability() -> str | None:
+    """Describe an installed ``mcp`` SDK the stdio server cannot drive.
+
+    Returns ``None`` for an SDK weld can use. The wording tells the same
+    story as the server's own refusal in :mod:`weld._mcp_stdio`: the SDK is
+    installed, so the remedy is an upgrade -- never a reinstall of an extra
+    the user demonstrably already has.
+
+    Both readings -- the verdict and the version quoted back with it -- go
+    through the :mod:`weld._mcp_sdk` module rather than through names copied
+    into this namespace at import. One environment then has exactly one place
+    that answers "which SDK is installed", so the two readings cannot come
+    from different sources and disagree. They once could, and the line that
+    produced said an SDK was installed *and* below a floor it plainly
+    cleared.
+    """
+    if _mcp_sdk.sdk_usable():
+        return None
+    version = _mcp_sdk.installed_version() or "version unknown"
+    return (
+        f"installed ({version}) but the MCP stdio server requires "
+        f"{REQUIRED_SPEC} -- {UPGRADE_COMMAND}"
+    )
+
+
+def _python_probe(
+    module: str, display: str, extra: str, usability: object | None = None
+) -> _Probe:
     return _Probe(
         display=display,
         check=lambda mod=module: _module_available(mod),
         install_hint=f"pip install 'configflux-weld[{extra}]'",
+        usability=usability,
     )
 
 
 def _build_probes() -> tuple[_Probe, ...]:
     return (
-        _python_probe("mcp", "mcp SDK", "mcp"),
+        _python_probe("mcp", "mcp SDK", "mcp", usability=_mcp_usability),
         _python_probe("anthropic", "anthropic", "anthropic"),
         _python_probe("openai", "openai", "openai"),
         _python_probe("ollama", "ollama", "ollama"),
@@ -173,16 +220,32 @@ def check_optional_deps(result_cls: type) -> list:
     install hint. The ``copilot-cli`` probe walks the binary on ``PATH``
     (honouring ``WELD_COPILOT_BINARY``), so its hint is the github-docs
     URL rather than a ``pip install`` line.
+
+    A dep that is installed but unusable -- today only an ``mcp`` SDK
+    below the stdio server's version floor -- belongs to neither summary
+    and gets its own ``warn``. It is not "missing", because saying so
+    would send someone who installed it to install it again; and it is
+    not "present", because the capability it stands for does not work.
+    ``warn`` rather than ``note`` follows this command's documented
+    vocabulary: a currently-degraded state, non-fatal like every other
+    Optional finding.
     """
     probes = _build_probes()
 
     present: list[str] = []
     missing: list[_Probe] = []
+    degraded: list[tuple[_Probe, str]] = []
     for probe in probes:
-        if probe.check():
+        if not probe.check():
+            missing.append(probe)
+            continue
+        # Second stage runs only on a dep that is actually installed, so an
+        # absent dep can never be reported as one needing an upgrade.
+        detail = probe.usability() if probe.usability is not None else None
+        if detail is None:
             present.append(probe.display)
         else:
-            missing.append(probe)
+            degraded.append((probe, detail))
 
     results: list = []
     if present:
@@ -192,6 +255,10 @@ def check_optional_deps(result_cls: type) -> list:
                 f"optional deps present: {', '.join(present)}",
                 "Optional",
             )
+        )
+    for probe, detail in degraded:
+        results.append(
+            result_cls("warn", f"{probe.display} {detail}", "Optional")
         )
     if missing:
         names = ", ".join(p.display for p in missing)
@@ -215,7 +282,7 @@ def check_optional_deps(result_cls: type) -> list:
                     note_id=note_id,
                 )
             )
-    if not present and not missing:
+    if not present and not missing and not degraded:
         results.append(
             result_cls("ok", "no optional deps configured", "Optional")
         )

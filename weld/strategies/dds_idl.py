@@ -39,12 +39,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from weld._node_ids import canonical_slug, entity_id, file_id
+from weld._rel_path import rel_to_root
 from weld.strategies._dds_idl_parser import IdlFile, parse_idl_text
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 from weld.strategies.events_shared import channel_id
 
 _STRATEGY = "dds_idl"
@@ -154,15 +152,20 @@ def _build_fragment(
     return emitted
 
 
-def _iter_sources(root: Path, pattern: str) -> list[Path]:
-    if "**" in pattern:
-        matched = sorted(root.glob(pattern))
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return []
-        matched = sorted(parent.glob(Path(pattern).name))
-    return filter_glob_results(root, matched)
+def _iter_sources(
+    root: Path,
+    pattern: str,
+    excludes: list[str] | None = None,
+) -> list[Path]:
+    """Resolve *pattern* under *root*, pruning excluded directories.
+
+    Delegates to :func:`weld.strategies._glob_resolve.resolve_glob`, which
+    prunes matching directories during descent rather than filtering the
+    resolved list (bd 9gdq): ``matches_exclude`` tests the file path with
+    no ancestor-directory check, so the directory form (``pkg/tests``)
+    never matched ``pkg/tests/foo.idl`` and the subtree leaked.
+    """
+    return resolve_glob(root, pattern, excludes)
 
 
 def extract(root: Path, source: dict, context: dict) -> StrategyResult:
@@ -176,10 +179,8 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         return StrategyResult(nodes, edges, discovered_from)
     excludes = source.get("exclude", [])
 
-    for path in _iter_sources(root, pattern):
+    for path in _iter_sources(root, pattern, excludes):
         if not path.is_file() or path.suffix != ".idl":
-            continue
-        if should_skip(path, excludes):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -188,7 +189,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         parsed = parse_idl_text(text)
         if not (parsed.structs or parsed.enums):
             continue
-        rel_path = str(path.relative_to(root))
+        rel_path = rel_to_root(path, root)
         if _build_fragment(parsed, rel_path, nodes, edges):
             discovered_from.append(rel_path)
 

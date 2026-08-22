@@ -48,11 +48,9 @@ from weld.strategies._csharp_syntax import (
     namespace_at,
     namespace_spans,
 )
-from weld.strategies._helpers import (
-    StrategyResult,
-    filter_glob_results,
-    should_skip,
-)
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._provenance import file_provenance
 
 #: Map: method-level attribute name -> framework label. The match is
 #: case-sensitive (matching .NET attribute conventions). ``Theory`` is
@@ -102,21 +100,23 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     pattern = source.get("glob", "**/*.cs")
     excludes = source.get("exclude", [])
 
-    matched = _resolve_glob(root, pattern)
-    matched = filter_glob_results(root, matched, excludes=excludes)
+    matched = resolve_glob(root, pattern, excludes)
 
     for cs_file in matched:
         if not cs_file.is_file():
             continue
-        if should_skip(cs_file, excludes, root=root):
-            continue
+        # Provenance is this file, recorded before the read (bd od2a): the
+        # parent directory it replaced degenerated to ``"./"`` for a
+        # repo-root match, and recording only files that emitted a suite
+        # meant adding the first ``[Fact]`` to a module never marked it
+        # stale.
+        discovered_from.extend(file_provenance(root, [cs_file]))
         try:
             source_text = cs_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
 
         rel_path = cs_file.relative_to(root).as_posix()
-        any_suite_emitted = False
         for class_name, namespace, framework, methods in _scan_test_suites(
             source_text,
         ):
@@ -156,12 +156,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                     },
                 }
             )
-            any_suite_emitted = True
-
-        if any_suite_emitted:
-            discovered_from.append(
-                cs_file.parent.relative_to(root).as_posix() + "/"
-            )
 
     seen: set[str] = set()
     deduped: list[str] = []
@@ -171,16 +165,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             deduped.append(d)
 
     return StrategyResult(nodes, edges, deduped)
-
-
-def _resolve_glob(root: Path, pattern: str) -> list[Path]:
-    """Expand *pattern* against *root* deterministically (sorted)."""
-    if "**" in pattern:
-        return sorted(root.glob(pattern))
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return []
-    return sorted(parent.glob(Path(pattern).name))
 
 
 def _test_suite_id(namespace: str, class_name: str) -> str:

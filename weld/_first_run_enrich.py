@@ -11,7 +11,7 @@ enrichment through one of three branches:
   shown again.
 * **Branch B** -- no provider but an agent host is detected (Claude
   Code, Cursor, Codex). The user sees a one-line recommendation to
-  run ``/enrich-weld``.
+  run ``wd enrich --agent-direct`` (ADR 0098).
 * **Branch C** -- neither. A single-line tip is printed; no prompt.
 
 Suppression chain (top-wins): ``--safe`` (ADR 0024), ``--no-enrich``,
@@ -43,6 +43,7 @@ from weld._first_run_render import (
 )
 from weld._graph_stats import meaningful_coverage_pct
 from weld._notice import emit
+from weld._safe_text import sanitize_terminal_text
 
 # Provider detection ─────────────────────────────────────────────────
 
@@ -64,10 +65,10 @@ _COPILOT_BINARY_NAME: Final[str] = "copilot"
 
 # Agent-host detection ───────────────────────────────────────────────
 
-# Agent hosts that wire ``/enrich-weld`` (or an equivalent slash
-# command) and so are the right Branch B destination. The value of
-# the env var is checked only for "set and non-empty" -- the harness
-# owns whatever sentinel it uses.
+# Agent hosts capable of running the agent-direct flow themselves, and
+# so the right Branch B destination. The value of the env var is checked
+# only for "set and non-empty" -- the harness owns whatever sentinel it
+# uses.
 _AGENT_HOST_ENV_MARKERS: Final[tuple[tuple[str, str], ...]] = (
     ("CLAUDE_CODE_HARNESS", "claude-code"),
     ("CURSOR_AGENT", "cursor"),
@@ -79,9 +80,7 @@ _AGENT_HOST_ENV_MARKERS: Final[tuple[tuple[str, str], ...]] = (
 # Opt-outs and persistence ───────────────────────────────────────────
 
 _NO_ENRICH_ENV: Final[str] = "WELD_NO_ENRICH"
-_NO_ENRICH_OFF_VALUES: Final[frozenset[str]] = frozenset(
-    {"0", "off", "false", "no", "disabled", ""}
-)
+_NO_ENRICH_OFF_VALUES: Final[frozenset[str]] = frozenset({"0", "off", "false", "no", "disabled", ""})
 _PROMPTED_FILENAME: Final[str] = ".enrichment-prompted"
 
 
@@ -167,8 +166,8 @@ def _parse_ollama_host(raw: str) -> tuple[str, int]:
 def detect_provider(
     env: dict | None = None,
     *,
-    ollama_probe=_ollama_reachable,
-    which=shutil.which,
+    ollama_probe=None,
+    which=None,
 ) -> str | None:
     """Return the highest-priority detected provider, or ``None``.
 
@@ -179,6 +178,7 @@ def detect_provider(
     and *which* are injection points for tests.
     """
     e = env if env is not None else os.environ
+    probe, which_fn = ollama_probe or _ollama_reachable, which or shutil.which
 
     override = e.get("WELD_ENRICH_PROVIDER", "").strip().lower()
     if override:
@@ -191,13 +191,13 @@ def detect_provider(
     raw_host = e.get(_OLLAMA_HOST_ENV, "").strip()
     if raw_host:
         host, port = _parse_ollama_host(raw_host)
-        if ollama_probe(host, port):
+        if probe(host, port):
             return "ollama"
-    elif ollama_probe(_OLLAMA_DEFAULT_HOST, _OLLAMA_DEFAULT_PORT):
+    elif probe(_OLLAMA_DEFAULT_HOST, _OLLAMA_DEFAULT_PORT):
         return "ollama"
 
     explicit_binary = e.get(_COPILOT_BINARY_ENV, "").strip()
-    if explicit_binary or which(_COPILOT_BINARY_NAME):
+    if explicit_binary or which_fn(_COPILOT_BINARY_NAME):
         return "copilot-cli"
 
     return None
@@ -269,8 +269,8 @@ def evaluate_first_run(
     safe: bool,
     no_enrich_flag: bool,
     env: dict | None = None,
-    ollama_probe=_ollama_reachable,
-    which=shutil.which,
+    ollama_probe=None,
+    which=None,
 ) -> FirstRunDecision:
     """Classify the first-run policy outcome without printing anything.
 
@@ -369,7 +369,7 @@ def run_first_run(
     *,
     root: Path,
     stderr: IO[str],
-    input_fn=input,
+    input_fn=None,
 ) -> bool:
     """Render *decision* and, for Branch A within-cap, prompt the user.
 
@@ -385,11 +385,13 @@ def run_first_run(
     """
     text = render_decision(decision)
     if text:
-        stderr.write(text)
+        # Carries the configured provider/agent name into a tty.
+        stderr.write(sanitize_terminal_text(text))
     if decision.branch != "A" or not decision.within_cap:
         return False
+    reader = input_fn if input_fn is not None else input  # see detect_provider
     try:
-        answer = input_fn("")
+        answer = reader("")
     except EOFError:
         answer = ""
     normalized = answer.strip().lower()

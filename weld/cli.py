@@ -82,11 +82,12 @@ Live commands:
   watch          Watch source files and auto-rediscover on change
 
 MCP commands:
-  mcp            MCP server tooling (e.g. `wd mcp config --client=claude`)
+  mcp            Run the MCP stdio server (`wd mcp serve`) or generate a
+                 client config (`wd mcp config --client=claude`)
   telemetry      show / export / clear local telemetry
 
 Global flags:
-  --no-telemetry Disable local telemetry for this invocation (ADR 0035)
+  --no-telemetry Disable local telemetry for this invocation
 
 Graph commands (`wd graph X` is an alias for `wd X` for graph operations):
   graph stats              Graph summary counts
@@ -164,6 +165,15 @@ def _is_telemetry_clear(args: list[str]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     _install_sigpipe_handler()
+    # Warn when `wd` is not the weld in the checkout the caller is standing in
+    # (bd emmg). Isolated the same way telemetry is below: a notice may never
+    # decide whether `wd` runs.
+    try:
+        from weld._source_checkout_notice import emit_source_checkout_notice
+
+        emit_source_checkout_notice()
+    except Exception:
+        pass
     raw = list(sys.argv[1:] if argv is None else argv)
     stripped, flag_seen = _strip_no_telemetry(raw)
     # Skip telemetry entirely for ``wd telemetry clear`` so the file
@@ -215,16 +225,10 @@ def _dispatch(argv: list[str] | None) -> int:
         return 0
 
     if args[0] in {"--version", "-V"}:
-        try:
-            from importlib.metadata import version
+        from weld._version import weld_version
 
-            print(f"wd {version('configflux-weld')}")
-        except Exception:
-            version_file = Path(__file__).resolve().parent.parent / "VERSION"
-            if version_file.exists():
-                print(f"wd {version_file.read_text().strip()}")
-            else:
-                print("wd (version unknown)")
+        resolved = weld_version()
+        print(f"wd {resolved}" if resolved else "wd (version unknown)")
         return 0
 
     subcmd = args[0]
@@ -303,7 +307,7 @@ def _dispatch(argv: list[str] | None) -> int:
         return 0
 
     if subcmd == "bench":
-        from weld.bench.runner import main as bench_main
+        from weld.bench.bench_cli import main as bench_main
 
         return bench_main(rest)
 
@@ -357,9 +361,9 @@ def _dispatch(argv: list[str] | None) -> int:
         return arch_lint_mod.main(rest)
 
     if subcmd == "mcp":
-        from weld import mcp_config as mcp_config_mod
+        from weld import _mcp_cli
 
-        return mcp_config_mod.main(rest)
+        return _mcp_cli.main(rest)
 
     if subcmd == "telemetry":
         from weld import telemetry_cli

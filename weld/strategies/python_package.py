@@ -40,11 +40,37 @@ from pathlib import Path
 
 from weld._node_ids import file_id as _canonical_file_id
 from weld._node_ids import package_id as _canonical_package_id
-from weld.glob_match import walk_glob
-from weld.strategies._helpers import StrategyResult, should_skip
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._provenance import directory_provenance
+from weld.strategies._python_anchor import path_yields_file_anchor
 from weld.strategies._python_origin import origin_for_resolved
 
 _STRATEGY = "python_package"
+
+
+def _has_anchoring_member(files: list[Path]) -> bool:
+    """Return True when at least one of *files* becomes a ``file:`` anchor.
+
+    A package node's whole job is to parent file anchors, so a directory
+    that produces none must not produce a package node either (issue
+    ``ddsy``: ``package:python:weld.demos`` was emitted for a directory
+    whose only module is a docstring-only ``__init__.py``, leaving a
+    node with no edge in either direction for ``wd lint`` to trip over).
+    This is the parent-layer mirror of ADR 0041 Rule 2 -- file anchors
+    need an inbound ``contains``, package nodes need an outgoing one.
+
+    ``python_module`` skips exactly one shape, an ``__init__.py`` with no
+    exports, so any member that is not an ``__init__.py`` settles the
+    question without touching the disk. Only the single-``__init__.py``
+    directory needs the file parsed, which keeps this check off
+    discovery's hot path: no directory is parsed twice and the common
+    package (an ``__init__.py`` beside real modules) is decided by name
+    alone.
+    """
+    if any(py.name != "__init__.py" for py in files):
+        return True
+    return any(path_yields_file_anchor(py) for py in files)
 
 
 def _dotted_name(rel_dir: str) -> str:
@@ -70,7 +96,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         Override the inferred package name. Used for synthetic packages
         like ``tools`` where no ``__init__.py`` exists.
     ``exclude`` (optional)
-        List of patterns passed to ``should_skip`` (same semantics as
+        List of patterns passed to ``resolve_glob`` (same semantics as
         the paired ``python_module`` strategy).
     """
     nodes: dict[str, dict] = {}
@@ -84,7 +110,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    matched: list[Path] = list(walk_glob(root, pattern, excludes=excludes))
+    matched: list[Path] = resolve_glob(root, pattern, excludes)
     if not matched:
         return StrategyResult(nodes, edges, discovered_from)
 
@@ -92,8 +118,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     # exactly one package node regardless of file count.
     by_dir: dict[str, list[Path]] = defaultdict(list)
     for py in sorted(matched):
-        if should_skip(py, excludes, root=root):
-            continue
         try:
             rel = py.relative_to(root)
         except ValueError:
@@ -115,6 +139,16 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     project_packages: set[str] = set()
     for rel_dir in sorted(by_dir.keys()):
         files = by_dir[rel_dir]
+        # A directory that contributes no file anchor gets no package
+        # node: there is nothing for it to contain, and the ``contains``
+        # edges it would emit are dropped downstream as dangling
+        # references, leaving an edgeless orphan (issue ``ddsy``).
+        # Checked before the name is derived so a suppressed directory
+        # also stays out of ``project_packages`` -- its name must not
+        # influence the ``origin`` classification of the packages that
+        # survive.
+        if not _has_anchoring_member(files):
+            continue
         # Derive the package name. Priority:
         #   1. explicit ``package`` from source config (synthetic case)
         #   2. dotted form of the directory if it contains __init__.py
@@ -174,8 +208,15 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 "origin": origin,
             },
         }
-        if rel_dir:
-            discovered_from.append(rel_dir.rstrip("/") + "/")
+        # One of the two places a directory entry is load-bearing rather
+        # than a stand-in for the files under it: this node *is* the
+        # directory, and a package's membership changes when a file appears
+        # beside its siblings. The root package is still not allowed to say
+        # ``"./"`` -- ``directory_provenance`` records the member files
+        # there (bd od2a). The old ``if rel_dir:`` guard dropped the entry
+        # outright instead, leaving a root-level package with no provenance
+        # at all, which is a package no source change can mark stale.
+        discovered_from.extend(directory_provenance(root, rel_dir, files))
 
         # Sort children by canonical file ID so the edge list is
         # byte-identical across runs.

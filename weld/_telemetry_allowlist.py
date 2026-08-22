@@ -184,6 +184,7 @@ CLI_FLAGS: Final[frozenset[str]] = frozenset(
     {
         # Long flags scanned from every ``add_argument`` call under weld/.
         "--agent",
+        "--agent-direct",
         "--allow-dangling",
         "--allow-empty",
         "--allow-remote",

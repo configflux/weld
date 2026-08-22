@@ -8,8 +8,11 @@ ui package or apps/web sources.
 
 These tests verify that:
 
-1. ``_resolve_glob`` expands brace alternatives and returns both .ts and
-   .tsx files when the pattern is ``**/*.{ts,tsx}``.
+1. ``resolve_glob_with_provenance`` expands brace alternatives and returns
+   both .ts and .tsx files when the pattern is ``**/*.{ts,tsx}``. Since
+   ADR 0112 that resolution lives in the one shared module rather than in
+   this strategy's own copy, so the pin now names the shared entry point
+   -- the behaviour under test is the strategy's, and unchanged.
 2. ``extract`` emits file nodes for .tsx files when the glob uses brace
    expansion (regex fallback path, since tree-sitter TypeScript grammar
    is not a declared dependency).
@@ -26,7 +29,7 @@ from unittest import mock
 
 
 class BraceExpandResolveGlobTest(unittest.TestCase):
-    """``_resolve_glob`` must honour brace alternatives."""
+    """The shared resolver must honour brace alternatives."""
 
     def _make_monorepo(self, tmp: str) -> Path:
         root = Path(tmp)
@@ -44,11 +47,13 @@ class BraceExpandResolveGlobTest(unittest.TestCase):
         return root
 
     def test_brace_glob_matches_both_ts_and_tsx(self) -> None:
-        from weld.strategies import typescript_exports
+        from weld.strategies._glob_resolve import (
+            resolve_glob_with_provenance,
+        )
 
         with tempfile.TemporaryDirectory() as td:
             root = self._make_monorepo(td)
-            matched, _dirs = typescript_exports._resolve_glob(
+            matched, _dirs = resolve_glob_with_provenance(
                 root, "packages/ui/src/**/*.{ts,tsx}"
             )
         rels = sorted(p.relative_to(root).as_posix() for p in matched)
@@ -59,22 +64,26 @@ class BraceExpandResolveGlobTest(unittest.TestCase):
 
     def test_brace_glob_deduplicates(self) -> None:
         """Repeated alternatives must not double-count a file."""
-        from weld.strategies import typescript_exports
+        from weld.strategies._glob_resolve import (
+            resolve_glob_with_provenance,
+        )
 
         with tempfile.TemporaryDirectory() as td:
             root = self._make_monorepo(td)
-            matched, _dirs = typescript_exports._resolve_glob(
+            matched, _dirs = resolve_glob_with_provenance(
                 root, "packages/ui/src/**/*.{ts,ts,tsx}"
             )
         rels = [p.relative_to(root).as_posix() for p in matched]
         self.assertEqual(sorted(rels), sorted(set(rels)))
 
     def test_plain_glob_without_braces_still_works(self) -> None:
-        from weld.strategies import typescript_exports
+        from weld.strategies._glob_resolve import (
+            resolve_glob_with_provenance,
+        )
 
         with tempfile.TemporaryDirectory() as td:
             root = self._make_monorepo(td)
-            matched, _dirs = typescript_exports._resolve_glob(
+            matched, _dirs = resolve_glob_with_provenance(
                 root, "packages/ui/src/**/*.ts"
             )
         rels = sorted(p.relative_to(root).as_posix() for p in matched)

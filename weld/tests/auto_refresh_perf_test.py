@@ -103,19 +103,19 @@ class NoOpAutoRefreshPerfGateTest(unittest.TestCase):
     def test_fresh_graph_short_circuit_under_budget(self) -> None:
         from weld._auto_refresh import auto_refresh_if_stale
         from weld.discover import _discover_single_repo
-        from weld.serializer import dumps_graph
-        from weld.workspace_state import atomic_write_text
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _git_init(root)
             _build_fixture(root, _FIXTURE_FILE_COUNT)
             _commit_all(root)
-            graph = _discover_single_repo(
-                root, incremental=False, safe=False,
-            )
-            atomic_write_text(
-                root / ".weld" / "graph.json", dumps_graph(graph),
+            # Seed through the publish path (``write_graph=True``) -- the
+            # same one auto-refresh itself uses. Writing graph.json beside a
+            # state that never claimed it is the graph<->inventory divergence
+            # ADR 0101's amended coverage probe reports, so a hand-assembled
+            # seed would measure the repair path, not the steady state.
+            _discover_single_repo(
+                root, incremental=False, safe=False, write_graph=True,
             )
 
             # No source changes -> ``stale=False`` -> helper short-circuits

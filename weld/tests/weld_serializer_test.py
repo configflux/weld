@@ -6,7 +6,9 @@ Covers the six serializer rules from ADR 0012 §3:
 2. Edges sorted by ``(from, to, type, json.dumps(props, sort_keys=True))``.
 3. Props serialized with ``sort_keys=True`` at every level of nesting.
 4. Top-level object keys serialized with ``sort_keys=True``.
-5. Whitespace and indentation fixed (``indent=2``, ``ensure_ascii=False``).
+5. Whitespace fixed and line-oriented -- one entity per line, still a
+   single valid JSON document (ADR 0110, amending rule 5's original
+   ``indent=2``), ``ensure_ascii=False``.
 6. Trailing newline -- exactly one ``\\n`` at end of file.
 
 These tests drive the implementation of ``weld/serializer.py``.
@@ -182,33 +184,79 @@ class DumpsGraphTest(unittest.TestCase):
             ],
         }
         text = dumps_graph(graph)
-        # Serialising the parsed output with sort_keys=True must be
-        # byte-identical to the input -- i.e. every dict at every level
-        # already emits keys in sorted order.
-        parsed = json.loads(text)
-        resorted = json.dumps(parsed, indent=2, ensure_ascii=False, sort_keys=True)
-        # The emitted text omits only the trailing newline (dumps_graph adds it).
-        self.assertEqual(text.rstrip("\n"), resorted)
+        # Re-emitting the parsed output through the same serializer must be
+        # byte-identical -- i.e. every dict at every level already emits keys
+        # in sorted order, so a round trip is a fixed point.
+        self.assertEqual(dumps_graph(json.loads(text)), text)
+        # And the ordering claim itself: every object in the emitted text,
+        # at every nesting depth, already lists its keys in sorted order.
+        unsorted: list[list[str]] = []
+
+        def _check(pairs: list[tuple]) -> dict:
+            keys = [k for k, _ in pairs]
+            if keys != sorted(keys):
+                unsorted.append(keys)
+            return dict(pairs)
+
+        json.loads(text, object_pairs_hook=_check)
+        self.assertEqual(unsorted, [], f"unsorted objects in emitted text: {unsorted}")
 
     def test_trailing_newline_exactly_one(self) -> None:
         text = dumps_graph(self._sample())
         self.assertTrue(text.endswith("\n"))
         self.assertFalse(text.endswith("\n\n"))
 
-    def test_indent_two_spaces(self) -> None:
+    def test_one_line_per_node_and_per_edge(self) -> None:
+        """ADR 0110: rule 5 is entity-per-line, and it is the whole point.
+
+        Every node and every edge is exactly one line, so a graph change
+        diffs as the entities it touched rather than as the whole file.
+        """
+        graph = {
+            "meta": {"version": 4},
+            "nodes": {
+                f"n:{i}": {"type": "file", "label": str(i), "props": {"i": i}}
+                for i in range(5)
+            },
+            "edges": [
+                {"from": f"n:{i}", "to": f"n:{i + 1}", "type": "next", "props": {}}
+                for i in range(4)
+            ],
+        }
+        text = dumps_graph(graph)
+        node_lines = [ln for ln in text.splitlines() if ln.startswith('"n:')]
+        edge_lines = [ln for ln in text.splitlines() if ln.startswith('{"from"')]
+        self.assertEqual(len(node_lines), 5)
+        self.assertEqual(len(edge_lines), 4)
+        # Each such line carries the entity whole: strip the trailing
+        # separator and it parses on its own.
+        for line in edge_lines:
+            json.loads(line.rstrip(","))
+        for line in node_lines:
+            key, _, body = line.rstrip(",").partition(": ")
+            json.loads(key)
+            json.loads(body)
+
+    def test_emitted_text_is_one_valid_json_document(self) -> None:
+        """Line-oriented, but NOT JSON Lines: every reader keeps json.loads.
+
+        This is the compatibility claim the format change rests on -- the
+        40+ graph readers, the three whole-file-hash surfaces, and any
+        older weld all parse the whole file as one object.
+        """
+        parsed = json.loads(dumps_graph(self._sample()))
+        self.assertEqual(parsed, canonical_graph(self._sample()))
+
+    def test_no_tabs_and_no_trailing_whitespace(self) -> None:
         text = dumps_graph(self._sample())
-        # indent=2: top-level keys have no leading space; first-nesting
-        # level keys (e.g. inside the ``meta`` dict or a list element) have
-        # exactly two leading spaces. Pick any non-blank line except
-        # the first/last brace and assert its leading whitespace is a
-        # multiple of two spaces.
-        lines = [ln for ln in text.splitlines() if ln.strip()]
-        self.assertTrue(len(lines) >= 4, "Sample graph is too small to probe indent")
-        probe = lines[1]  # the first key after the opening "{"
-        leading = len(probe) - len(probe.lstrip(" "))
-        self.assertEqual(leading, 2, f"Expected 2-space indent, got {leading}: {probe!r}")
-        # Also verify that no line uses tabs.
         self.assertNotIn("\t", text)
+        for line in text.splitlines():
+            self.assertEqual(line, line.rstrip(), f"trailing whitespace: {line!r}")
+
+    def test_meta_header_keeps_an_indented_block(self) -> None:
+        """The small, human-read half stays readable at indent=2."""
+        text = dumps_graph(self._sample())
+        self.assertIn('"meta": {\n  "', text)
 
     def test_ensure_ascii_false_preserves_unicode(self) -> None:
         graph = {

@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from weld._rel_path import rel_to_root
+
 #: Names that resolve to a Python built-in via implicit lookup.
 _BUILTIN_NAMES: frozenset[str] = frozenset(dir(builtins))
 #: Top-level module names exported by the Python standard library.
@@ -41,23 +43,19 @@ def is_builtin_name(name: str) -> bool:
 def project_module_set(
     root: Path,
     matched: list[Path],
-    excludes: list[str],
     *,
-    should_skip: Callable[..., bool],
     module_dotted_path: Callable[[str], str],
 ) -> frozenset[str]:
     """Return the dotted module paths for project-local files in *matched*.
 
-    Mirrors the per-file skip + ``module_dotted_path`` derivation used
-    by the main extraction loop so the membership test is consistent
-    with the IDs the strategy actually mints (ADR 0042 Python rule 3).
+    Mirrors the ``module_dotted_path`` derivation used by the main
+    extraction loop so the membership test is consistent with the IDs
+    the strategy actually mints (ADR 0042 Python rule 3).
     """
     out: set[str] = set()
     for py in matched:
-        if should_skip(py, excludes, root=root):
-            continue
         try:
-            rel_path = str(py.relative_to(root))
+            rel_path = rel_to_root(py, root)
         except ValueError:
             continue
         dotted = module_dotted_path(rel_path)
@@ -127,8 +125,11 @@ def make_resolved_target_node(target_id: str, origin: str) -> dict[str, Any]:
     :func:`qualname_from_symbol_id`); we do *not* leak the ``module:qualname``
     composite, so this speculative node's identifying shape matches a
     same-glob definite node's. ``props.file`` is intentionally absent: a
-    cross-glob target's defining file is unknown at single-glob mint time and
-    is restored by the orchestrator's post-merge reconciliation.
+    cross-glob target's defining file is unknown at single-glob mint time.
+    When another source entry did walk that definition, the orchestrator's
+    merge keeps its definite node rather than this stub (ADR 0103), so the
+    file is never lost in the first place; when nothing walked it, there is no
+    file to know and the stub stands.
     """
     qualname = qualname_from_symbol_id(target_id)
     module = module_from_symbol_id(target_id)

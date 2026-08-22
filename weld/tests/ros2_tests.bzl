@@ -1,7 +1,7 @@
 """ROS 2 contract and strategy test targets.
 
-Extracted verbatim from weld/tests/BUILD.bazel (line-count policy: the test
-BUILD is shrink-only). Target names, srcs, data, and deps are unchanged so
+Extracted verbatim from weld/tests/BUILD.bazel, which indexes subjects rather
+than listing targets. Target names, srcs, data, and deps are unchanged so
 every label stays //weld/tests:<name>.
 """
 

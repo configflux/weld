@@ -29,6 +29,7 @@ import unittest
 from pathlib import Path
 
 
+from weld.contract import validate_node  # noqa: E402
 from weld.strategies.csharp_package import extract  # noqa: E402
 
 
@@ -171,6 +172,25 @@ class CsharpPackageStrategyTest(unittest.TestCase):
             if not nid.startswith("package:csharp:"):
                 continue
             self.assertEqual(node["props"]["origin"], "project")
+
+    def test_emitted_nodes_satisfy_the_contract(self) -> None:
+        """Every node this strategy emits must pass ``validate_node``.
+
+        Mirrors the ``python_package`` guard: this strategy stamps
+        ``roles: ["package"]``, and while that value was absent from the
+        contract vocabulary, discovering any C# repo produced a graph the
+        product's own ``wd validate`` rejected.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _make_tree(root)
+            result = extract(root, {"glob": "src/**/*.cs"}, {})
+        self.assertTrue(result.nodes, "fixture must emit at least one node")
+        for node_id, node in result.nodes.items():
+            self.assertEqual(
+                validate_node(node_id, node), [],
+                f"{node_id} violates the node contract",
+            )
 
     def test_determinism_repeated_runs_identical(self) -> None:
         """Two extract() calls on the same tree must produce byte-identical

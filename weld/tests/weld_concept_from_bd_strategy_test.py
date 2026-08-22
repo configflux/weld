@@ -15,7 +15,6 @@ from pathlib import Path
 
 from weld.strategies._helpers import StrategyResult
 from weld.strategies.concept_from_bd import (
-    _candidate_node_ids,
     _cited_paths,
     _slugify_concept,
     extract,
@@ -100,25 +99,6 @@ class TestSlugifyConcept(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # cited-path extraction (path-traversal hardened)
 # ---------------------------------------------------------------------------
-
-
-class TestCandidateNodeIds(unittest.TestCase):
-    """Each cited path expands to several plausible target spellings."""
-
-    def test_python_module_path_yields_stem_form(self) -> None:
-        ids = _candidate_node_ids("weld/discover.py")
-        self.assertIn("file:weld/discover.py", ids)
-        self.assertIn("file:discover", ids)
-
-    def test_root_config_yields_config_form(self) -> None:
-        ids = _candidate_node_ids("CLAUDE.md")
-        self.assertIn("file:CLAUDE.md", ids)
-        self.assertIn("config:CLAUDE_md", ids)
-
-    def test_dotfile_normalization(self) -> None:
-        ids = _candidate_node_ids(".bazelrc")
-        # Leading dot stripped, no dot in the safe name.
-        self.assertIn("config:bazelrc", ids)
 
 
 class TestCitedPaths(unittest.TestCase):
@@ -211,12 +191,17 @@ class TestExtract(unittest.TestCase):
                 (e["from"], e["type"], e["to"]) for e in result.edges
             }
             # The strategy emits one edge per plausible target spelling
-            # so it lands on whichever convention the file-emitting
-            # strategy used (file:<rel>, file:<stem>, config:<safe>).
-            self.assertIn((nid, "relates_to", "file:CLAUDE.md"), edge_targets)
-            self.assertIn((nid, "relates_to", "file:CLAUDE"), edge_targets)
+            # so it lands on whichever ID class the file-emitting strategy
+            # used; the post-processor drops the rest. ``CLAUDE.md`` is
+            # markdown, so the ``doc:`` and ``config:`` spellings are
+            # offered and the ``file:`` one deliberately is not (a
+            # same-stem ``CLAUDE.py`` would otherwise capture the edge).
+            self.assertIn((nid, "relates_to", "doc:CLAUDE"), edge_targets)
             self.assertIn(
                 (nid, "relates_to", "config:CLAUDE_md"), edge_targets
+            )
+            self.assertNotIn(
+                (nid, "relates_to", "file:CLAUDE"), edge_targets
             )
 
     def test_skips_closed_issues(self) -> None:

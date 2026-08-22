@@ -13,12 +13,28 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Sequence
 
 from weld.strategies._helpers import StrategyResult
 from weld.strategies._incremental_hint import (  # noqa: F401 -- re-export
     INCREMENTAL_HINT_KEY,
     IncrementalHint,
 )
+from weld.strategies._strategy_failure import (
+    KIND_BAD_COMMAND_STRING,
+    KIND_COMMAND_NOT_FOUND,
+    KIND_INVALID_JSON,
+    KIND_INVALID_OUTPUT_SHAPE,
+    KIND_MISSING_COMMAND,
+    KIND_NONZERO_EXIT,
+    KIND_SAFE_MODE_SKIPPED,
+    KIND_STRATEGY_UNAVAILABLE,
+    KIND_TIMEOUT,
+    KIND_VALIDATION_FAILED,
+    note_source_failure,
+    note_strategy_failure,
+)
+from weld._discover_basis import entry_fingerprint
 from weld._notice import emit
 
 # ---------------------------------------------------------------------------
@@ -102,26 +118,53 @@ def load_strategy(name: str, root: Path, *, safe: bool = False):
 _EXTERNAL_JSON_TIMEOUT: int = 30
 
 
-def run_external_json(root: Path, source: dict, *, safe: bool = False) -> StrategyResult:
+def run_external_json(
+    root: Path,
+    source: dict,
+    *,
+    safe: bool = False,
+    context: dict | None = None,
+    source_files: Sequence[str] = (),
+) -> StrategyResult:
     """Run an external command, validate its JSON stdout as a graph fragment.
 
     When *safe* is True, the subprocess is never spawned (ADR 0024). An
     empty :class:`StrategyResult` is returned and a single notice is
     written to stderr.
+
+    Every early return below is a refusal or an error -- never this source
+    deciding it contributes nothing -- so *source_files* are noted on
+    *context* as files no strategy spoke for (bd hch4). A command-only entry
+    (no ``glob``/``path``/``files`` key) resolves *source_files* to nothing,
+    which makes that channel a no-op -- so every early return also notes the
+    entry itself, by fingerprint, on the sibling channel (bd um00), and that
+    one is never a no-op for this shape of entry. Only the tail return is a
+    real answer, including when the command legitimately emits an empty
+    fragment. Both parameters are optional: a caller with no shared context
+    (the direct-call tests) gets exactly the previous behaviour.
     """
     from weld.contract import validate_fragment
 
     empty = StrategyResult(nodes={}, edges=[], discovered_from=[])
+
+    def unspoken(kind: str, reason: str = "") -> StrategyResult:
+        note_strategy_failure(context, source_files)
+        if not source_files:
+            note_source_failure(
+                context, entry_fingerprint(source), kind=kind, reason=reason,
+            )
+        return empty
+
     cmd_str = source.get("command", "")
     if not cmd_str:
         emit("[weld] warning: external_json source missing 'command' key")
-        return empty
+        return unspoken(KIND_MISSING_COMMAND, "missing 'command' key")
 
     if safe:
         emit(
             f"[weld] safe mode: skipped external_json '{cmd_str}'"
         )
-        return empty
+        return unspoken(KIND_SAFE_MODE_SKIPPED, f"safe mode: skipped '{cmd_str}'")
 
     # Unsafe mode: a configured subprocess is about to run. Surface a
     # stable, grep-friendly warning so operators can see what local code
@@ -136,7 +179,7 @@ def run_external_json(root: Path, source: dict, *, safe: bool = False) -> Strate
         argv = shlex.split(cmd_str)
     except ValueError as exc:
         emit(f"[weld] warning: external_json bad command string: {exc}")
-        return empty
+        return unspoken(KIND_BAD_COMMAND_STRING, f"bad command string: {exc}")
 
     env = {**os.environ, "LC_ALL": "C"}
     try:
@@ -146,12 +189,12 @@ def run_external_json(root: Path, source: dict, *, safe: bool = False) -> Strate
         )
     except FileNotFoundError:
         emit(f"[weld] warning: external_json command not found: {argv[0]}")
-        return empty
+        return unspoken(KIND_COMMAND_NOT_FOUND, f"command not found: {argv[0]}")
     except subprocess.TimeoutExpired:
         emit(
             f"[weld] warning: external_json command timed out after {timeout}s"
         )
-        return empty
+        return unspoken(KIND_TIMEOUT, f"timed out after {timeout}s")
 
     if proc.returncode != 0:
         snippet = (proc.stderr or "").strip()[:200]
@@ -159,7 +202,8 @@ def run_external_json(root: Path, source: dict, *, safe: bool = False) -> Strate
             f"[weld] warning: external_json command exited {proc.returncode}"
             + (f": {snippet}" if snippet else "")
         )
-        return empty
+        reason = f"exited {proc.returncode}" + (f": {snippet}" if snippet else "")
+        return unspoken(KIND_NONZERO_EXIT, reason)
 
     try:
         data = json.loads(proc.stdout)
@@ -167,18 +211,18 @@ def run_external_json(root: Path, source: dict, *, safe: bool = False) -> Strate
         emit(
             f"[weld] warning: external_json command emitted invalid JSON: {exc}"
         )
-        return empty
+        return unspoken(KIND_INVALID_JSON, f"invalid JSON: {exc}")
 
     if not isinstance(data, dict):
         emit("[weld] warning: external_json output must be a JSON object")
-        return empty
+        return unspoken(KIND_INVALID_OUTPUT_SHAPE, "output must be a JSON object")
 
     label = f"external_json:{cmd_str.split()[0] if cmd_str else '?'}"
     errs = validate_fragment(data, source_label=label, allow_dangling_edges=True)
     if errs:
         for e in errs:
             emit(f"[weld] validation: {e}")
-        return empty
+        return unspoken(KIND_VALIDATION_FAILED, "; ".join(str(e) for e in errs))
 
     return StrategyResult(
         nodes=data.get("nodes", {}),
@@ -198,11 +242,21 @@ def run_source(
     *,
     safe: bool = False,
     incremental_hint: IncrementalHint | None = None,
+    source_files: Sequence[str] = (),
 ) -> StrategyResult:
     """Run a single source entry through its strategy.
 
     When *safe* is True, project-local strategy overrides and the
     ``external_json`` subprocess adapter are refused (ADR 0024).
+
+    *source_files* are the repo-relative paths this entry resolved. They are
+    used only when no strategy runs -- refused, missing, or without an
+    ``extract`` -- to note on *context* that nothing spoke for them, so the
+    state records a failure rather than a decision (bd hch4). The orchestrator
+    passes them; callers that only want the fragment may omit them. When
+    *source_files* is empty (no ``glob``/``path``/``files`` key at all), the
+    entry itself is additionally noted by fingerprint (bd um00), since that
+    channel has no file to record.
 
     *incremental_hint* (ADR 0074), when present, carries the dirty-file
     scope and the post-purge prior node set for incremental-aware
@@ -215,9 +269,18 @@ def run_source(
     """
     name = source.get("strategy", "")
     if name == "external_json":
-        return run_external_json(root, source, safe=safe)
+        return run_external_json(
+            root, source, safe=safe, context=context, source_files=source_files,
+        )
     extract_fn = load_strategy(name, root, safe=safe)
     if not extract_fn:
+        note_strategy_failure(context, source_files)
+        if not source_files:
+            note_source_failure(
+                context, entry_fingerprint(source),
+                kind=KIND_STRATEGY_UNAVAILABLE,
+                reason=f"strategy '{name}' unavailable",
+            )
         return StrategyResult(nodes={}, edges=[], discovered_from=[])
     if incremental_hint is None or not isinstance(context, dict):
         return extract_fn(root, source, context)

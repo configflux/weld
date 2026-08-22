@@ -10,13 +10,16 @@ Three layers of coverage:
    parser returns USE-site captures. Mocks the parser.
 3. ``CppTypeUsesRealParseTest`` -- the investigation "no churn in
    cpp.yaml without a failing-test repro first" guardrail expressed as
-   a concrete real-grammar test. Skips when tree-sitter or
-   tree-sitter-cpp is unavailable (e.g. inside the Bazel hermetic
-   sandbox).
+   a concrete real-grammar test. Its Bazel target declares both wheels
+   from ``requirements_lock.txt``, so under Bazel the grammars are
+   present by construction and their absence is a dropped dep rather
+   than an environment fact: the gate fails there instead of skipping.
 """
 
 from __future__ import annotations
 
+import os
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -25,12 +28,23 @@ from unittest import mock
 
 
 
-# Import TREE_SITTER_AVAILABLE through weld.strategies so weld/__init__.py
-# runs first and the hermetic blocker (if any) is installed before the
-# probe evaluates. A direct ``try: import tree_sitter`` here would race
-# the WELD_HERMETIC_BLOCK_TREE_SITTER blocker and skip-decide on the
-# pre-blocker state.
+# Read the umbrella's availability through weld.strategies rather than
+# probing ``import tree_sitter`` directly, so this file decides on the same
+# constant the strategy itself branches on -- including when a harness has
+# blocked the import out from under both.
 from weld.strategies.tree_sitter import TREE_SITTER_AVAILABLE  # noqa: E402
+
+# The skip-or-fail-on-missing-grammar branch policy itself lives in
+# tier_check_grammar_gate (bd 9txq consolidated three identical
+# copies there; see that module's docstring for the placement rationale).
+# This file keeps its own availability probe below -- it differs from the
+# shared module's (bare ``import tree_sitter_cpp`` vs. going through
+# weld.strategies._ts_parse) and that difference is deliberately out of
+# this consolidation's scope.
+import tier_check_grammar_gate as grammar_gate  # noqa: E402
+
+_DECLARED_IN = "weld/tests/treesitter_tests.bzl"
+_REQUIRED_LABELS = ("@pypi//tree_sitter", "@pypi//tree_sitter_cpp")
 
 
 def _grammars_available() -> bool:
@@ -41,6 +55,30 @@ def _grammars_available() -> bool:
     except Exception:
         return False
     return True
+
+
+def _skip_or_fail_without_grammars(case: unittest.TestCase) -> None:
+    """Skip only where absence is legitimate; otherwise fail loudly.
+
+    This target names ``@pypi//tree_sitter`` and ``@pypi//tree_sitter_cpp``
+    in its deps, so under Bazel the wheels are in the runfiles or the build
+    fails -- meaning a missing grammar there is wiring that regressed, not a
+    host that lacks an optional extra. Skipping on that is how this guardrail
+    sat inert on every public CI run since it was added (bd c42b), so under
+    Bazel it fails instead. Outside Bazel, and where the caller declares a
+    tree-sitter blocker of its own, absence is expected and skipping is the
+    correct answer. The branching that decides which of those applies is
+    ``tier_check_grammar_gate.skip_or_fail_without_grammar``; *case*
+    is accepted for call-site stability but the shared helper raises
+    directly rather than through it (see that function's docstring).
+    """
+    if _grammars_available():
+        return
+    grammar_gate.skip_or_fail_without_grammar(
+        reason="tree-sitter or tree-sitter-cpp is not importable",
+        labels=_REQUIRED_LABELS,
+        declared_in=_DECLARED_IN,
+    )
 
 
 # Synthetic header that mirrors the nlohmann/json.hpp <-> json_pointer
@@ -183,16 +221,13 @@ class CppTypeUsesStrategyStampTest(unittest.TestCase):
             self.assertNotIn("type_uses", node["props"])
 
 
-@unittest.skipUnless(
-    _grammars_available(),
-    "tree-sitter or tree-sitter-cpp not installed (Bazel sandbox)",
-)
 class CppTypeUsesRealParseTest(unittest.TestCase):
     """Real-grammar repro for ADR 0061. This is the investigation
     "no churn in cpp.yaml without a failing-test repro first"
     guardrail expressed as a concrete test."""
 
     def setUp(self) -> None:
+        _skip_or_fail_without_grammars(self)
         from weld.strategies._ts_parse import parse_file_symbols
         from weld.strategies.tree_sitter import load_language_queries
 
@@ -259,6 +294,63 @@ class CppTypeUsesRealParseTest(unittest.TestCase):
             classes,
             "json_pointer is not defined here -- classes must not list it",
         )
+
+
+class CppTypeUsesGrammarGateTest(unittest.TestCase):
+    """Pin every branch of the skip-or-fail gate on every host.
+
+    The branch that matters only fires where the grammars are missing --
+    which, now that the target declares them, is the one host that cannot
+    also prove the diagnostic still works. So drive the branches directly
+    instead of waiting for such a host to appear.
+    """
+
+    def _run_gate(self, *, available: bool, env: dict[str, str]) -> None:
+        with mock.patch(
+            __name__ + "._grammars_available", return_value=available
+        ), mock.patch.dict(os.environ, env, clear=True):
+            _skip_or_fail_without_grammars(self)
+
+    def test_returns_when_grammars_are_importable(self) -> None:
+        # Not assertRaises-free by accident: a stray SkipTest here would
+        # report this case as skipped, i.e. green, which is the very
+        # outcome under test. Convert it to a failure.
+        try:
+            self._run_gate(available=True, env={})
+        except unittest.SkipTest as skipped:
+            raise AssertionError(
+                f"gate skipped with grammars present: {skipped}"
+            ) from skipped
+
+    def test_skips_when_a_blocker_is_deliberately_active(self) -> None:
+        with self.assertRaises(unittest.SkipTest):
+            self._run_gate(
+                available=False,
+                env={
+                    "WELD_HERMETIC_BLOCK_TREE_SITTER": "1",
+                    "TEST_SRCDIR": "/somewhere",
+                },
+            )
+
+    def test_skips_when_not_running_under_bazel(self) -> None:
+        with self.assertRaises(unittest.SkipTest):
+            self._run_gate(available=False, env={})
+
+    def test_fails_under_bazel_because_the_deps_promise_the_grammars(
+        self,
+    ) -> None:
+        try:
+            self._run_gate(available=False, env={"TEST_SRCDIR": "/somewhere"})
+        except unittest.SkipTest as skipped:
+            raise AssertionError(
+                f"gate skipped under Bazel instead of failing: {skipped}"
+            ) from skipped
+        except AssertionError as failure:
+            message = str(failure)
+        else:
+            self.fail("gate neither skipped nor failed with grammars missing")
+        self.assertIn("treesitter_tests.bzl", message)
+        self.assertIn(sys.executable, message)
 
 
 if __name__ == "__main__":

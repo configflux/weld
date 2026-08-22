@@ -31,7 +31,9 @@ from pathlib import Path
 
 from weld._graph_node_registry import ensure_node
 from weld._node_ids import file_id, package_id
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 _DEPEND_TAGS: tuple[str, ...] = (
     "depend",
@@ -76,23 +78,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    if "**" in pattern:
-        matched = filter_glob_results(root, sorted(root.glob(pattern)))
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return StrategyResult(nodes, edges, discovered_from)
-        matched = filter_glob_results(
-            root, sorted(parent.glob(Path(pattern).name))
-        )
+    matched = resolve_glob(root, pattern, excludes)
 
     for manifest in matched:
         if not manifest.is_file():
             continue
-        if should_skip(manifest, excludes):
-            continue
 
-        rel_path = str(manifest.relative_to(root))
+        rel_path = rel_to_root(manifest, root)
         discovered_from.append(rel_path)
 
         try:
@@ -176,7 +168,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         for child in children:
             if not child.is_file():
                 continue
-            rel_child = str(child.relative_to(root))
+            rel_child = rel_to_root(child, root)
             file_nid = file_id(rel_child)
             legacy_file_nid = f"file:{rel_child}"
             ensure_node(

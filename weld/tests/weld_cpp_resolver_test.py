@@ -93,6 +93,29 @@ class CppIncludeResolverFixtureTest(unittest.TestCase):
         self.assertTrue(edge["props"].get("resolved"))
         self.assertEqual(edge["props"].get("confidence"), "definite")
 
+    def test_fully_resolved_sentinel_node_is_dropped(self) -> None:
+        """The sentinel NODE, not just its inbound edges, must go too.
+
+        ``Foo::bar`` is called only from ``main.cpp`` in this fixture
+        (``cpp_resolver_fakes.fake_call_edges``), so once that single
+        call resolves across the ``#include "foo.h"`` boundary, the
+        ``symbol:unresolved:Foo::bar`` sentinel has zero remaining
+        inbound edges of any kind and ``resolve_includes_pass``'s
+        "drop unresolved sentinel nodes that no longer have any inbound
+        edges" block (bd 5038-t6mzx) must remove the node itself -- a
+        full discover of the same post-resolution tree would never
+        mint it. Characterizes the exact behavior bd 5038-t6mzx's
+        predicate-sharing refactor must preserve byte-for-byte.
+        """
+        result = self._run()
+        self.assertNotIn(
+            "symbol:unresolved:Foo::bar",
+            result.nodes,
+            "sentinel node must be dropped once its only inbound edge "
+            "resolves -- a stray node here is exactly the discrepancy "
+            "a full discover of the same tree would never produce",
+        )
+
     def test_resolved_node_carries_definite_confidence(self) -> None:
         result = self._run()
         node = result.nodes["symbol:cpp:include.foo:Foo::bar"]

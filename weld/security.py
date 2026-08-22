@@ -9,10 +9,10 @@ output for the same root, with identical exit codes (1 when any signal is
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
+from weld._safe_text import dumps_safe_json, sanitize_terminal_text
 from weld._security_posture import assess, format_human, has_high, to_json
 
 
@@ -45,9 +45,13 @@ def run_security(root: Path, *, as_json: bool) -> int:
     """
     report = assess(root.resolve())
     if as_json:
-        sys.stdout.write(json.dumps(to_json(report), indent=2, sort_keys=True) + "\n")
+        sys.stdout.write(
+            dumps_safe_json(
+                to_json(report), indent=2, sort_keys=True, ensure_ascii=True,
+            ) + "\n"
+        )
     else:
-        sys.stdout.write(format_human(report) + "\n")
+        sys.stdout.write(sanitize_terminal_text(format_human(report)) + "\n")
     return 1 if has_high(report) else 0
 
 
@@ -56,7 +60,3 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser("wd security")
     args = parser.parse_args(argv)
     return run_security(args.root, as_json=args.json)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

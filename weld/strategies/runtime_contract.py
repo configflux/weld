@@ -37,7 +37,9 @@ import re
 from pathlib import Path
 
 from weld._node_ids import canonical_slug
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 #: Well-known boundaries from runtime-contract.md that map to service nodes.
 _BOUNDARY_TO_SERVICE: dict[str, str] = {
@@ -156,19 +158,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    if "**" in pattern:
-        matched = sorted(root.glob(pattern))
-        matched = filter_glob_results(root, matched)
-    else:
-        parent = (root / pattern).parent
-        if not parent.is_dir():
-            return StrategyResult(nodes, edges, discovered_from)
-        matched = sorted(parent.glob(Path(pattern).name))
+    matched = resolve_glob(root, pattern, excludes)
 
     for md_file in matched:
         if not md_file.is_file():
-            continue
-        if should_skip(md_file, excludes, root=root):
             continue
 
         try:
@@ -181,7 +174,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             # anything else the glob dragged in.
             continue
 
-        rel_path = str(md_file.relative_to(root))
+        rel_path = rel_to_root(md_file, root)
         discovered_from.append(rel_path)
 
         # The markdown strategy already creates this doc node; we only

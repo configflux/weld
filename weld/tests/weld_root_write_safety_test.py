@@ -367,14 +367,18 @@ class ConcurrentDiscoverSubprocessTest(unittest.TestCase):
             # Hold the lock, then invoke `wd discover` in a subprocess --
             # it must refuse cleanly. The holder's PID (this process)
             # must appear in the error message so operators can identify
-            # the stuck run without reading the lockfile by hand.
+            # the stuck run without reading the lockfile by hand. Launched
+            # as `-m weld discover`: the package entry is the only `-m` form
+            # weld documents, and weld/discover.py deliberately carries no
+            # `__main__` block of its own (ADR 0099).
             held = WorkspaceLock(root).acquire()
             try:
                 proc = subprocess.run(
                     [
                         sys.executable,
                         "-m",
-                        "weld.discover",
+                        "weld",
+                        "discover",
                         str(root),
                     ],
                     capture_output=True,

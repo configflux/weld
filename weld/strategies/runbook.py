@@ -11,7 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from weld.strategies._helpers import StrategyResult, filter_glob_results, should_skip
+from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
+from weld.strategies._markdown_fence import iter_headings
 
 # -- Service / stage association mapping ------------------------------------
 
@@ -27,11 +30,15 @@ _SERVICE_ASSOCIATIONS: dict[str, str] = {
 }
 
 def _extract_title(text: str) -> str | None:
-    """Extract the first H1 heading from markdown text."""
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            return stripped[2:].strip()
+    """Extract the first H1 heading from markdown text.
+
+    Fenced blocks are skipped (bd ve41): "first ``#`` line" is the same scan
+    the doc strategy runs, and a runbook that opens with a sample command
+    block would otherwise be titled after a shell comment.
+    """
+    for _index, level, heading in iter_headings(text):
+        if level == 1:
+            return heading
     return None
 
 def _infer_associations(stem: str) -> list[str]:
@@ -55,18 +62,12 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     if not pattern:
         return StrategyResult(nodes, edges, discovered_from)
 
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
-
-    for md in filter_glob_results(root, sorted(parent.glob(Path(pattern).name))):
+    for md in resolve_glob(root, pattern, excludes):
         # Always skip README.md
         if md.name == "README.md":
             continue
-        if should_skip(md, excludes):
-            continue
 
-        rel_path = str(md.relative_to(root))
+        rel_path = rel_to_root(md, root)
         discovered_from.append(rel_path)
 
         try:

@@ -26,6 +26,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# ``weld._rel_path`` is stdlib-only and is also exposed as its own Bazel
+# target (//weld:rel_path), which is what this package depends on -- the same
+# arrangement //weld:node_ids already has, and the reason this import does not
+# reverse the layering the docstring above describes: strategies depend on the
+# leaf target, never on //weld:runtime.
+from weld._rel_path import rel_to_root
+
 # Reserved ``context`` key carrying the incremental hint into ``extract``.
 INCREMENTAL_HINT_KEY = "_incremental_hint"
 
@@ -66,11 +73,18 @@ def dirty_matched(
     Order is preserved from *matched* so the parse loop and any
     order-sensitive downstream behaviour are unchanged relative to the
     full-glob path for the surviving subset.
+
+    The re-derived path must be spelled exactly the way the orchestrator
+    spelled ``dirty_files``, so both go through
+    :func:`weld._rel_path.rel_to_root` (bd v552). This side used ``str()``
+    and so did the index, which is why they agreed on every platform anyone
+    tests on; POSIX-ifying only the index would have left this one matching
+    nothing off POSIX, and ``python_callgraph`` would parse nothing.
     """
     out: list[Path] = []
     for py in matched:
         try:
-            rel = str(py.relative_to(root))
+            rel = rel_to_root(py, root)
         except ValueError:
             continue
         if rel in dirty_files:

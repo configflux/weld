@@ -30,17 +30,36 @@ Usage as a CLI::
 The generator only writes files; it does not run discovery. Callers run
 ``wd discover`` (or ``wd workspace bootstrap`` for polyrepo) on the
 output directory and time it themselves. See ``docs/performance.md``.
+
+``python -m weld.bench.synthetic_large_repo`` is a launch-path guarded entry
+point (ADR 0099, bd 4g0d). It has no repository to read as input -- it only
+writes to ``--output`` -- but the guard still matters: it also protects the
+standard-library imports below (``argparse``, ``subprocess``, etc.), any of
+which a launch directory could otherwise shadow. That only became possible
+once ``weld/bench/__init__.py`` stopped re-exporting the bench stack; a
+parent package's own imports would otherwise have resolved first, same as
+they would for any other module in this package.
 """
 
-from __future__ import annotations
+# Must stay first, and is imported for its effect: this module is a
+# ``python -m`` target, so the launch directory sits ahead of the standard
+# library on ``sys.path`` until this import removes it. Every import below
+# would otherwise be answerable by a file in the directory this was launched
+# from. Nothing may be added above it, which is why this module carries no
+# ``from __future__ import annotations``: a future statement must be a
+# module's first statement and is a real import at runtime, so it would run
+# that directory's own ``__future__.py``. See :mod:`weld._launch_path`.
+from weld._launch_path import guard_module_launch
 
-import argparse
-import os
-import shutil
-import subprocess
-import sys
-from dataclasses import dataclass
-from pathlib import Path
+guard_module_launch("weld.bench.synthetic_large_repo")
+
+import argparse  # noqa: E402  (guarded: must stay below the guard)
+import os  # noqa: E402  (guarded: must stay below the guard)
+import shutil  # noqa: E402  (guarded: must stay below the guard)
+import subprocess  # noqa: E402  (guarded: must stay below the guard)
+import sys  # noqa: E402  (guarded: must stay below the guard)
+from dataclasses import dataclass  # noqa: E402  (guarded: must stay below the guard)
+from pathlib import Path  # noqa: E402  (guarded: must stay below the guard)
 
 # Module body template. Keep it small but include the shapes Weld
 # discovery cares about: imports (edges), function defs (symbols),

@@ -10,6 +10,13 @@ import os
 import subprocess
 from pathlib import Path
 
+# The bookkeeping-path policy lives in its own module (this file is at the
+# 400-line cap) but is referenced unqualified throughout, as before the split.
+from weld._git_bookkeeping import (
+    WELD_BOOKKEEPING_PATHS as _WELD_BOOKKEEPING_PATHS,
+)
+
+
 def get_git_sha(root: Path) -> str | None:
     """Return the current HEAD SHA for the repo at *root*, or None.
 
@@ -30,50 +37,6 @@ def get_git_sha(root: Path) -> str | None:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
     return None
-
-def git_main_checkout_path(root: Path) -> Path | None:
-    """Return the main git worktree's checkout for *root*, or ``None``.
-
-    When *root* lives inside a linked git worktree (created via
-    ``git worktree add ...``), ``git rev-parse --git-common-dir`` resolves
-    to the main checkout's ``.git`` directory; the parent of that path is
-    the main worktree itself -- where sibling repositories registered in
-    a federated ``workspaces.yaml`` actually live (ADR 0028).
-
-    Returns ``None`` when *root* is not inside a git repository, when
-    ``git`` is not available, when the lookup fails, or when the resolved
-    main checkout is the same directory as *root* (i.e. *root* is already
-    the main worktree, so there is nothing to fall back to).
-    """
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
-            capture_output=True,
-            text=True,
-            cwd=str(root),
-            timeout=5,
-            env={**os.environ, "LC_ALL": "C"},
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
-    if result.returncode != 0:
-        return None
-    common_dir = result.stdout.strip()
-    if not common_dir:
-        return None
-    # ``git rev-parse --git-common-dir`` may return a path relative to
-    # *root* (the typical case is just ".git"); resolve it before taking
-    # the parent so the result is absolute and stable.
-    common_path = (Path(root) / common_dir).resolve()
-    main_checkout = common_path.parent
-    try:
-        if main_checkout.resolve() == Path(root).resolve():
-            # *root* is already the main worktree; nothing to fall back to.
-            return None
-    except OSError:
-        return None
-    return main_checkout
-
 
 def is_git_repo(root: Path) -> bool:
     """Return True if *root* is inside a git working tree."""
@@ -143,50 +106,6 @@ def commits_behind(root: Path, old_sha: str, new_sha: str) -> int:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError, ValueError):
         pass
     return -1
-
-
-# Weld's own bookkeeping files written by ``wd discover`` / ``wd touch``.
-# These are never user *source*: they are outputs of discovery and must
-# not contribute to ``source_stale`` (tracked issue), even when a broad
-# ``discovered_from`` (e.g. ``['./']`` from default ``wd init``) would
-# otherwise match them. Keep this set small and explicit; do not extend
-# it to user-visible files.
-_WELD_BOOKKEEPING_PATHS = frozenset({
-    ".weld/graph.json",
-    ".weld/discovery-state.json",
-    # Persisted query-state cache written alongside graph.json by
-    # ``wd discover`` and refreshed on cache misses by ``Graph.load``
-    # (ADR 0031). Same trust boundary, same "never user source" rule.
-    ".weld/query_state.bin",
-    # Keyword-to-file index written by ``wd discover`` and ``wd
-    # build-index``. Functionally a sibling of graph.json -- output of
-    # discovery, never user source. Without this entry a user who
-    # commits .weld/file-index.json alongside graph.json would see
-    # ``wd prime`` report spurious source drift and fall into the same
-    # touch/commit loop the other bookkeeping entries already prevent.
-    ".weld/file-index.json",
-    # SQLite sidecar written alongside graph.json by ``wd discover``
-    # (ADR 0058). Pure derived index; same trust boundary as graph.json
-    # itself. Must be in this set so a commit that includes graph.db
-    # alongside a wd-touched graph.json does not trip the source-drift
-    # detector and force a spurious rebuild.
-    ".weld/graph.db",
-    # Volatile-meta sidecar written alongside graph.json by ``wd discover``
-    # / ``wd touch`` (ADR 0065): holds the wall-clock ``updated_at`` and the
-    # ``git_sha`` that used to live in graph.json. Gitignored by default,
-    # but a user (or a test) who commits it alongside graph.json must not
-    # see it counted as a changed *source* file -- it is pure weld output,
-    # the same trust boundary as graph.json itself.
-    ".weld/graph-meta.json",
-    # Surface-hash companion to file-index.json written by ``wd discover``
-    # (bd 85tb.2): records the SHA of every indexed file so the next refresh
-    # re-tokenizes only what changed. Pure weld output, same trust boundary
-    # as file-index.json. Without this entry every read self-heal writes a
-    # fresh, untracked ``.weld/file-index-state.json`` that the working-tree
-    # drift probe counts as source change -- making every repo perpetually
-    # ``source_stale`` and defeating the cheap refresh-on-read contract.
-    ".weld/file-index-state.json",
-})
 
 
 def drift_is_graph_only(root: Path, graph_sha: str) -> bool:
@@ -353,8 +272,14 @@ def working_tree_dirty_sources(
     the bookkeeping-only case -- never trips the signal.
 
     *detect_renames* (bd o18k): ``False`` adds ``--no-renames`` so a rename
-    surfaces its vacated original as an explicit deletion -- needed by a caller
-    keying a content cache on the dirty *set* (:mod:`weld._refresh_cache`).
+    surfaces its vacated original as an explicit deletion -- needed by any
+    caller that reads the dirty *set* as a statement about content. Porcelain
+    v2 reports only a rename's new path, so with detection on, a rename of an
+    ingested file to an out-of-scope name reads as "no source input changed".
+    :func:`weld._staleness_worktree.dirty_sources_diverge` is the caller that
+    requires it today; bd o18k's refresh cache was the original one and needed
+    it so a rename and a copy-then-restore could not collapse to one signature
+    (removed in bd hmaz).
 
     Cheap by construction: an empty *tracked* short-circuits before any
     git call, and a clean tree returns the empty list after a single

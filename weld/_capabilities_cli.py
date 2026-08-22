@@ -8,10 +8,10 @@ delegates to.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
+from weld._safe_text import dumps_safe_json, sanitize_terminal_text
 from weld.capabilities import (
     compute_capabilities,
     detect_missing,
@@ -25,7 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Print the runtime capability matrix: per-language and "
             "per-framework evidence weld actually has for the loaded "
-            "graph (ADR 0043 Layer B)."
+            "graph."
         ),
     )
     parser.add_argument(
@@ -146,8 +146,10 @@ def main(argv: list[str] | None = None) -> int:
             payload: dict | list = missing or []
         else:
             payload = matrix
-        json.dump(payload, sys.stdout, indent=2, ensure_ascii=False, sort_keys=True)
-        sys.stdout.write("\n")
+        sys.stdout.write(
+            dumps_safe_json(payload, indent=2, sort_keys=True) + "\n"
+        )
     else:
-        sys.stdout.write(_format_human(matrix, missing))
+        # Names strategies and capabilities declared by project config.
+        sys.stdout.write(sanitize_terminal_text(_format_human(matrix, missing)))
     return 0
