@@ -13,8 +13,8 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.23.0 -->
-> **Evaluators: start with v0.23.0.** v0.23.0 is the current
+<!-- evaluator-note: latest=v0.23.1 -->
+> **Evaluators: start with v0.23.1.** v0.23.1 is the current
 > recommended starting point. Headline features added since v0.14.0:
 > a 14-tool MCP server for graph-backed agent context
 > (`weld_query`, `weld_find`, `weld_context`, `weld_path`,
@@ -1720,7 +1720,7 @@ the CLI.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.23.0`.
+terminal snippets captured against `wd 0.23.1`.
 
 ## Install
 

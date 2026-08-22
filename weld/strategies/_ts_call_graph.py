@@ -68,10 +68,17 @@ def extract_call_edges(
     Returns ``(nodes, edges)``. ``nodes`` and ``edges`` may be empty if
     the language file has no ``calls`` query or the parser fails.
     """
-    import tree_sitter  # noqa: F811
-
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
+
+    # Guarded like every other lazy tree-sitter import (ADR 0002): callers
+    # can reach this with a mocked-in parser, so absence must degrade to
+    # empty results, never escape (bd uaz2d).
+    try:
+        import tree_sitter  # noqa: F811
+    except ImportError:
+        return nodes, edges
+
     if "calls" not in queries:
         return nodes, edges
 

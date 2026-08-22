@@ -3,6 +3,20 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.23.1 - 2026-08-22
+
+### Fixed
+
+- Symbol doc-comment extraction (the `props.summary` channel for Go and
+  Rust symbols) now degrades to "no summary" when the optional
+  tree-sitter dependency cannot be imported, instead of raising
+  `ModuleNotFoundError` from inside extraction. The call-graph and
+  symbol-capture helpers on the same path received the same hardening:
+  every lazy tree-sitter import in the strategy layer is guarded, and a
+  repository lint now enforces that contract so an unguarded import
+  cannot ship again.
+  <!-- verify: file=weld/strategies/_ts_doc_comments.py grep="except ImportError" -->
+
 ## v0.23.0 - 2026-08-22
 
 ### Added

@@ -309,7 +309,13 @@ def parse_file_symbols(
     Returns:
         Dict mapping query name to list of captured symbol names.
     """
-    import tree_sitter  # noqa: F811
+    # Guarded like every other lazy tree-sitter import (ADR 0002): callers
+    # can reach this with a mocked-in parser, so absence must degrade to
+    # no captures, never escape (bd uaz2d).
+    try:
+        import tree_sitter  # noqa: F811
+    except ImportError:
+        return {}
 
     loader = _language_loader or load_ts_language
 

@@ -184,7 +184,10 @@ def treesitter_tests():
         name = "weld_ts_doc_comments_integration_test",
         srcs = ["weld_ts_doc_comments_integration_test.py"],
         data = _QUERY_FILES,
-        deps = ["//weld:runtime", "//weld/strategies", "//weld/strategies:helpers", "@pypi//tree_sitter", "@pypi//tree_sitter_go", "@pypi//tree_sitter_rust"],
+        # tree_sitter_typescript too: the deferred-language case really
+        # parses a .ts file and asserts its symbol is minted, which only
+        # the ambient interpreter provided before (bd uaz2d).
+        deps = ["//weld:runtime", "//weld/strategies", "//weld/strategies:helpers", "@pypi//tree_sitter", "@pypi//tree_sitter_go", "@pypi//tree_sitter_rust", "@pypi//tree_sitter_typescript"],
     )
 
     # bd 5038-cw4f (ADR 0125 follow-up): test_peer's file-level

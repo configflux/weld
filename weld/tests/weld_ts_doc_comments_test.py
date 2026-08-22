@@ -136,5 +136,31 @@ class LeadingDocCommentsWalkTest(unittest.TestCase):
         self.assertEqual(chain, [])
 
 
+class MissingTreeSitterDegradesTest(unittest.TestCase):
+    """The lazy import must degrade, never escape (bd uaz2d).
+
+    extract() reaches extract_definition_summaries even when the parser
+    was mocked in, so an environment without the tree_sitter umbrella --
+    public CI, a base install without the extra -- must get "no
+    summaries", not ModuleNotFoundError. This is the regression that
+    turned public CI red at v0.23.0. sys.modules[name] = None is the
+    stdlib-sanctioned way to force `import tree_sitter` to raise inside
+    this process even though the wheel is in our runfiles.
+    """
+
+    def test_extract_definition_summaries_returns_none_without_umbrella(self) -> None:
+        import sys
+        from pathlib import Path
+        from unittest import mock
+
+        from weld.strategies import _ts_doc_comments
+
+        with mock.patch.dict(sys.modules, {"tree_sitter": None}):
+            result = _ts_doc_comments.extract_definition_summaries(
+                Path("whatever.go"), "go", {"exports": "(source_file) @x"},
+            )
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()

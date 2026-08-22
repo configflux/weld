@@ -304,7 +304,15 @@ def extract_definition_summaries(
     if not export_query_str:
         return None
 
-    import tree_sitter  # noqa: F811
+    # Guarded like every other lazy tree-sitter import (ADR 0002): the
+    # caller reaches this from extract() even when the parser was mocked
+    # in, so an absent umbrella package must degrade to "no summaries",
+    # never escape. An unguarded import here is what turned public CI red
+    # at v0.23.0 (bd uaz2d).
+    try:
+        import tree_sitter  # noqa: F811
+    except ImportError:
+        return None
 
     try:
         if cache is not None:
