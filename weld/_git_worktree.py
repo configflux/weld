@@ -4,7 +4,9 @@ Sibling of :mod:`weld._git`, which sits at its line-count cap. ADR 0096
 names this module as the home for the worktree-resolution helpers
 (``get_git_branch``, ``git_common_dir``, ``same_git_repo``,
 ``git_toplevel``, ``graph_is_tracked``, ``tracked_graph_commit``,
-``list_worktrees``, ``is_linked_worktree``).
+``list_worktrees``, ``is_linked_worktree``), and the sibling probe
+``discover_config_is_ignored`` that asks whether git will carry the
+discovery config into a new checkout at all.
 ``git_main_checkout_path`` -- introduced by
 ADR 0028 and originally landed in :mod:`weld._git` -- was relocated here
 under that same charter: it is a worktree-resolution probe built on
@@ -28,6 +30,7 @@ import subprocess
 from pathlib import Path
 
 __all__ = [
+    "discover_config_is_ignored",
     "get_git_branch",
     "git_common_dir",
     "git_main_checkout_path",
@@ -43,6 +46,11 @@ __all__ = [
 #: after ``--`` so it can never be re-read as an option, and kept a
 #: literal constant so no caller value reaches argv.
 _GRAPH_PATHSPEC = ".weld/graph.json"
+
+#: Repo-relative pathspec of the discovery config, same constant discipline.
+#: Whether git carries this file into a new checkout is what decides if a
+#: linked worktree can ever seed (ADR 0096 §2 gate 5).
+_DISCOVER_CONFIG_PATHSPEC = ".weld/discover.yaml"
 
 
 def _git_text(root: Path | str, *args: str, timeout: int = 5) -> str | None:
@@ -210,6 +218,38 @@ def graph_is_tracked(root: Path | str) -> bool:
     """
     return _git_text(
         root, "ls-files", "--error-unmatch", "--", _GRAPH_PATHSPEC,
+    ) is not None
+
+
+def discover_config_is_ignored(root: Path | str) -> bool:
+    """Return True when git's ignore rules keep ``.weld/discover.yaml`` out.
+
+    This is the *proactive* half of ADR 0096 §2 gate 5. Seeding reads the
+    worktree's own ``discover.yaml``, and git only puts that file in a new
+    checkout when it is tracked -- so a repository whose ignore policy
+    covers it has silently disabled worktree seeding for every checkout it
+    will ever have. ``wd init --ignore-all`` writes exactly such a policy
+    (``*`` plus ``!.gitignore``), and a repo-level ``.gitignore`` naming
+    ``.weld/`` does the same thing from further out; ``git check-ignore``
+    answers for both without this module having to parse either file.
+
+    Tracked wins over ignored, and is asked first: ignore rules do not
+    apply to a path already in the index, so a config force-added into an
+    ignore-all repository *does* reach every worktree. Reporting that as
+    ignored would be a false alarm about a repository that works.
+
+    False whenever the question cannot be answered -- *root* is not a
+    repository, ``git`` is unavailable, either probe failed -- because the
+    caller uses this to decide whether to *report a problem*, and an
+    unknown must never read as one.
+    """
+    tracked = _git_text(
+        root, "ls-files", "--error-unmatch", "--", _DISCOVER_CONFIG_PATHSPEC,
+    )
+    if tracked is not None:
+        return False
+    return _git_text(
+        root, "check-ignore", "-q", "--", _DISCOVER_CONFIG_PATHSPEC,
     ) is not None
 
 

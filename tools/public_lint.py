@@ -49,6 +49,7 @@ SKIP_PREFIXES = (
     ".git/",
     ".weld/",
     "bazel-",
+    "docs/field-reports/",
     "public/",
     "third_party/",
     "weld/tests/fixtures/",

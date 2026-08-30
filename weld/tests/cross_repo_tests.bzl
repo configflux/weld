@@ -86,3 +86,12 @@ def cross_repo_tests():
         srcs = ["weld_polyrepo_integration_test.py"],
         deps = ["//weld/cross_repo", "//weld:workspace"],
     )
+
+    # Finding 06 (field-eval v0.23.1): package_graph joins manifest package
+    # dependencies (PackageReference / pyproject / go.mod) to the producing
+    # repo node. Reads manifests off disk, so the test writes real files.
+    py_test(
+        name = "weld_cross_repo_package_graph_test",
+        srcs = ["weld_cross_repo_package_graph_test.py"],
+        deps = ["//weld/cross_repo", "//weld:workspace"],
+    )

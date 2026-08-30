@@ -149,6 +149,49 @@ def root_resolution_tests():
         env = {"PYTHONHASHSEED": "0"},
     )
 
+    # Field eval 0.23.1 finding 09: what a *declined* gate 5 tells the user.
+    # The suite above pins the decline; this one pins the sentence, because
+    # the reported failure was not the decline (correct -- a worktree with no
+    # config cannot seed) but that nothing in the message named the
+    # repository-wide policy that caused it. Its own file, and its own
+    # repository shape: the fixture builds the ignore-all repo the finding was
+    # filed from, which the gate suites' config-only repo cannot express.
+    py_test(
+        name = "weld_worktree_seed_message_test",
+        srcs = _MODE_A_SUITE + ["weld_worktree_seed_message_test.py"],
+        deps = _SEED_DEPS,
+        env = {"PYTHONHASHSEED": "0"},
+    )
+
+    # The same finding on the other surface. Its own target because the
+    # subject is not the sentence but whether MCP carries it: an agent has
+    # no terminal to read a second opinion from, so a payload that omits
+    # the cause leaves it with nothing (ADR 0134). Rides the Mode A suite
+    # for the ignore-all repository, and asserts CLI parity by rebuilding
+    # the CLI block from the payload's own fields.
+    py_test(
+        name = "weld_mcp_missing_graph_cause_test",
+        srcs = _MODE_A_SUITE + ["weld_mcp_missing_graph_cause_test.py"],
+        deps = _SEED_DEPS,
+        env = {"PYTHONHASHSEED": "0"},
+    )
+
+    # bd kgx83, the third surface of the same finding. The two targets above
+    # both fix `ensure_graph_exists`, the _READ_COMMANDS funnel; `stale` is a
+    # _SEED_ONLY_COMMANDS member and must stay one (a probe that exits instead
+    # of reporting is useless), so the cause never reached the command
+    # CLAUDE.md tells an agent to run FIRST in a new worktree. Its own target
+    # because the subject is a pinned payload shape -- ADR 0100 conformance --
+    # rather than a message: what is asserted is that one optional key appears
+    # under `reason: no graph`, that CLI --json and weld_stale stay equal
+    # whole, and that every other field is byte-identical.
+    py_test(
+        name = "weld_stale_no_graph_cause_test",
+        srcs = _MODE_A_SUITE + ["weld_stale_no_graph_cause_test.py"],
+        deps = _SEED_DEPS,
+        env = {"PYTHONHASHSEED": "0"},
+    )
+
     py_test(
         name = "weld_seed_source_resolution_test",
         srcs = _MODE_A_SUITE + ["weld_seed_source_resolution_test.py"],

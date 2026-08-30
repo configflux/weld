@@ -15,7 +15,9 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
 
-from weld._cli_render_freshness import stale_sources_lines
+from weld._cli_render_freshness import (
+    child_roster_lines, seed_blocked_lines, stale_sources_lines,
+)
 from weld._cli_render_prose import prose_line
 from weld._cli_render_seeds import callers_seeds_lines
 from weld._cli_render_trust import stats_trust_lines
@@ -225,6 +227,9 @@ def render_stale(payload: Mapping[str, Any]) -> str:
     counterparts: live checkout identity next to recorded graph identity,
     so a wrong-branch answer is readable without ``--json``. ``stale_sources``
     names the diverging path(s) and why (:mod:`weld._cli_render_freshness`).
+    ``seed_blocked_reason`` follows ``reason``: it elaborates the one value
+    ``reason`` takes that points at the wrong remedy -- ``no graph`` in a
+    worktree that can never seed one (ADR 0100 amendment).
     """
     lines = [_header("stale")]
     keys = (
@@ -234,17 +239,11 @@ def render_stale(payload: Mapping[str, Any]) -> str:
     for key in keys:
         if key in payload:
             lines.append(f"  {key}: {_format_scalar(payload[key])}")
+    lines.extend(seed_blocked_lines(payload))
     lines.extend(stale_sources_lines(payload))
     children = payload.get("children")
     if isinstance(children, list):
-        stale = [c for c in children if isinstance(c, Mapping) and c.get("state") == "stale"]
-        lines.append(f"  children: {len(children)} ({len(stale)} stale)")
-        for child in stale:
-            behind = child.get("commits_behind")
-            suffix = f", {behind} behind" if isinstance(behind, int) and behind > 0 else ""
-            lines.append(
-                f"    {child.get('name')}: stale ({child.get('reason')}{suffix})",
-            )
+        lines.extend(child_roster_lines(children))
     return _join(lines)
 
 

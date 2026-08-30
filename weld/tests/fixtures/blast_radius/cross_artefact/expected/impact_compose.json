@@ -262,35 +262,35 @@
       },
       "csharp": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "go": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "java": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "javascript": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "python": {
         "calls": true,
@@ -302,19 +302,19 @@
       },
       "rust": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "typescript": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       }
     }
   },

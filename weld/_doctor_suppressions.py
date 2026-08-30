@@ -28,18 +28,33 @@ _SCHEMA_VERSION = 1
 
 # Allow-list of note ids the codebase may emit. ``--ack`` / ``--unack``
 # refuse any id not in this set so a typo cannot silently end up in the
-# sidecar. Keep this in sync with the ``note_id=`` arguments threaded
-# through ``weld.doctor`` and ``weld._doctor_optional``.
+# sidecar -- which means an id doctor *does* emit but that is missing here
+# gets refused right after doctor printed it as ack-able.
+#
+# Do not keep this in sync by grepping for ``note_id=``: that habit is what
+# let ``agent-graph-missing`` drift (bd 5038-ilefv), because
+# ``weld._doctor_agent_graph`` passes the id to ``result_cls``
+# *positionally*. ``weld/tests/weld_doctor_note_id_drift_test.py`` derives
+# the emitted set from the package AST and fails when this list falls
+# behind; the README "valid note ids are ..." list is the other half.
 VALID_NOTE_IDS: frozenset[str] = frozenset(
     {
+        "agent-graph-missing",
         "mcp-config-missing",
         "optional-mcp-missing",
         "optional-anthropic-missing",
         "optional-openai-missing",
         "optional-ollama-missing",
         "optional-copilot-cli-missing",
+        "worktree-seeding-config-ignored",
     }
 )
+
+# Prefixes for note-id *families* whose members are generated at runtime and
+# so cannot be enumerated in ``VALID_NOTE_IDS``. ``unclaimed-source-<language>``
+# (ADR 0135) mints one id per language present on disk; the language set is not
+# fixed, so the id is validated by family prefix instead of exact membership.
+_VALID_NOTE_ID_PREFIXES: tuple[str, ...] = ("unclaimed-source-",)
 
 
 def _path_for(weld_dir: Path) -> Path:
@@ -115,10 +130,17 @@ def remove_suppression(weld_dir: Path, note_id: str) -> bool:
 # ── CLI handler ──────────────────────────────────────────────────────
 
 
+def _is_valid_note_id(note_id: str) -> bool:
+    """True if ``note_id`` is an exact allow-list member or a family member."""
+    return note_id in VALID_NOTE_IDS or note_id.startswith(
+        _VALID_NOTE_ID_PREFIXES
+    )
+
+
 def _validate_ids(ids: Sequence[str]) -> str | None:
     """Return an error message for the first unknown id, else ``None``."""
     for note_id in ids:
-        if note_id not in VALID_NOTE_IDS:
+        if not _is_valid_note_id(note_id):
             return f"unknown note id: {note_id}"
     return None
 

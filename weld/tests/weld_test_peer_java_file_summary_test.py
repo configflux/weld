@@ -11,6 +11,13 @@ green under a sandbox that carries none, matching every other Java real-parse
 target in ``weld/tests/treesitter_tests.bzl``. See
 weld_test_peer_file_summary_test.py's module docstring for the full layer
 breakdown this file's classes mirror.
+
+The self-skip itself reuses the inline try/import/``skipTest`` guard
+``weld_csharp_treesitter_test.py``'s real-grammar case
+(``test_real_csharp_grammar_emits_disjoint_decl_buckets``) already
+established for this exact "ambient grammar may be absent" situation --
+factored here into one helper since every real-parse case in this module
+needs it, rather than the single case that file has.
 """
 
 from __future__ import annotations
@@ -24,6 +31,14 @@ from weld.strategies import test_peer as test_peer_strategy
 from weld.strategies._ts_file_doc_comments import java_file_summary
 
 
+def _skip_without_java_grammar(case: unittest.TestCase) -> None:
+    try:
+        import tree_sitter  # noqa: F401
+        import tree_sitter_java  # noqa: F401
+    except Exception:
+        case.skipTest("tree_sitter / tree_sitter_java not available")
+
+
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -31,6 +46,7 @@ def _write(path: Path, content: str) -> None:
 
 class JavaFileSummaryTest(unittest.TestCase):
     def test_block_comment_before_package_is_summary(self) -> None:
+        _skip_without_java_grammar(self)
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "ShapeTest.java"
             _write(
@@ -42,6 +58,7 @@ class JavaFileSummaryTest(unittest.TestCase):
             self.assertEqual(java_file_summary(f), "Smoke test for shapes.")
 
     def test_javadoc_block_strips_star_prefixes(self) -> None:
+        _skip_without_java_grammar(self)
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "ShapeTest.java"
             _write(
@@ -56,6 +73,7 @@ class JavaFileSummaryTest(unittest.TestCase):
         """Unlike Go, Java has no ``go doc``-style zero-gap convention --
         the forward walk tolerates a blank line, matching TypeScript's own
         pin in weld_test_peer_file_summary_test.py."""
+        _skip_without_java_grammar(self)
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "ShapeTest.java"
             _write(
@@ -66,6 +84,7 @@ class JavaFileSummaryTest(unittest.TestCase):
             self.assertEqual(java_file_summary(f), "Line comment header.")
 
     def test_no_leading_comment_is_empty(self) -> None:
+        _skip_without_java_grammar(self)
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "ShapeTest.java"
             _write(f, "package com.example.shapes;\npublic class ShapeTest {}\n")
@@ -76,6 +95,7 @@ class TestPeerExtractSummaryTest(unittest.TestCase):
     """The real ``weld.strategies.test_peer.extract()`` entry point."""
 
     def test_java_summary_lands_on_test_peer_node(self) -> None:
+        _skip_without_java_grammar(self)
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _write(root / "pkg/Foo.java", "package pkg;\npublic class Foo {}\n")
@@ -90,6 +110,7 @@ class TestPeerExtractSummaryTest(unittest.TestCase):
     def test_repeated_extraction_is_identical(self) -> None:
         """Determinism: pure function of the parsed tree, like ADR 0118's
         Python equivalent (``symbol_summary``)."""
+        _skip_without_java_grammar(self)
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             _write(

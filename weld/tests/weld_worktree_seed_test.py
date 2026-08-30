@@ -21,7 +21,6 @@ import io
 import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from pathlib import Path
 from unittest import mock
 
 from weld._graph_cli import ensure_graph_exists
@@ -29,24 +28,23 @@ from weld._worktree_seed import ensure_seeded
 from weld.tests._mode_a_fixture import (
     ALPHA_NODE,
     BETA_NODE,
+    ROOT,
     SIDECAR,
     ModeAFixture,
     add_branch_file,
     git,
     graph_nodes,
     read,
+    run_read,
     sidecar,
     stale_info,
     weld_listing,
 )
 
-#: Placeholder for the checkout under test inside the argv tables below.
-_ROOT = "<root>"
-
 #: The invocation the single-surface tests drive, and the table's first
 #: row. Spelled out rather than indexed out of the table so reordering
 #: the table cannot quietly change what those tests exercise.
-_QUERY = ("--root", _ROOT, "query", "alpha")
+_QUERY = ("--root", ROOT, "query", "alpha")
 
 #: Read entry points that expose ``--no-refresh`` *and* funnel through
 #: ``ensure_graph_exists``. Each builds its own parser and makes its own
@@ -61,29 +59,10 @@ _QUERY = ("--root", _ROOT, "query", "alpha")
 #: themselves, after. Entries are ``(label, argv-after-wd)``.
 _NO_REFRESH_READS = (
     ("query", _QUERY),
-    ("brief", ("brief", "alpha", "--root", _ROOT)),
-    ("trace", ("trace", "--node", ALPHA_NODE, "--root", _ROOT)),
-    ("impact", ("impact", ALPHA_NODE, "--root", _ROOT)),
+    ("brief", ("brief", "alpha", "--root", ROOT)),
+    ("trace", ("trace", "--node", ALPHA_NODE, "--root", ROOT)),
+    ("impact", ("impact", ALPHA_NODE, "--root", ROOT)),
 )
-
-
-def run_read(root: Path, argv: tuple[str, ...], *extra: str) -> tuple[int, str]:
-    """Drive the real read CLI at *root*; return ``(exit_code, stderr)``.
-
-    The shared ``read`` helper asserts success, but a *declined* seed ends
-    in first-run guidance and a nonzero exit -- which is the observable
-    under test here, so it needs the code rather than an assertion.
-    """
-    from weld.cli import main as cli_main
-
-    resolved = [str(root) if tok == _ROOT else tok for tok in (*argv, *extra)]
-    out, err = io.StringIO(), io.StringIO()
-    with redirect_stdout(out), redirect_stderr(err):
-        try:
-            code = cli_main(resolved) or 0
-        except SystemExit as exc:
-            code = exc.code or 0
-    return code, err.getvalue()
 
 
 class FreshWorktreeReadTests(ModeAFixture):

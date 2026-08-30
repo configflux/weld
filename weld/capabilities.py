@@ -24,7 +24,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from weld._capabilities_local import load_local_capabilities
+from weld._capabilities_active import (
+    active_strategies,
+    known_capabilities,
+    list_disk_strategies,  # noqa: F401 -- re-exported (see __all__)
+    read_yaml_wiring,
+)
+from weld._capabilities_language import (
+    language_has_evidence_in_graph,
+    tree_sitter_language_rows,
+)
 from weld._capabilities_registry import (
     EXPECTED_STRATEGIES,
     FRAMEWORK_EVIDENCE,
@@ -63,111 +72,6 @@ def compute_capabilities_for_graph(graph: object) -> dict:
         return compute_capabilities(graph._data, repo_root)  # type: ignore[attr-defined]
     except Exception:
         return {"languages": {}, "frameworks": {}}
-
-
-# ---------------------------------------------------------------------------
-# Active-strategy detection
-# ---------------------------------------------------------------------------
-
-# Strategy-directory modules that are imported by other strategies but
-# are NOT themselves registered in ``.weld/discover.yaml`` (and so do
-# not need a registry entry). The naming convention is loose -- some
-# helpers carry an ``_`` prefix, this set captures the rest. Adding a
-# new shared helper without a leading underscore requires extending
-# this list and is intentional friction.
-_STRATEGY_DIR_HELPERS: frozenset[str] = frozenset({"events_shared"})
-
-
-def list_disk_strategies(repo_root: Path) -> frozenset[str]:
-    """Return the set of public strategy module stems on disk.
-
-    Mirrors the discovery loader: files under ``weld/strategies/`` whose
-    name does not start with ``_``, ends in ``.py``, is not
-    ``__init__``, and is not a known shared helper
-    (:data:`_STRATEGY_DIR_HELPERS`). Used by the enforcement test to
-    compare against :data:`EXPECTED_STRATEGIES`.
-    """
-    strategies_dir = repo_root / "weld" / "strategies"
-    if not strategies_dir.is_dir():
-        return frozenset()
-    out: set[str] = set()
-    for path in strategies_dir.glob("*.py"):
-        stem = path.stem
-        if stem.startswith("_") or stem == "__init__":
-            continue
-        if stem in _STRATEGY_DIR_HELPERS:
-            continue
-        out.add(stem)
-    return frozenset(out)
-
-
-def _read_yaml_strategies(repo_root: Path) -> set[str]:
-    """Return strategy names referenced in ``.weld/discover.yaml``.
-
-    Best-effort: tolerates a missing or malformed file by returning an
-    empty set so consumers do not crash on a fresh checkout. Uses the
-    bundled ``weld._yaml`` reader to avoid a hard PyYAML dep.
-    """
-    cfg_path = repo_root / ".weld" / "discover.yaml"
-    if not cfg_path.is_file():
-        return set()
-    try:
-        from weld._yaml import parse_yaml
-    except Exception:
-        return set()
-    try:
-        data = parse_yaml(cfg_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return set()
-    sources = data.get("sources") if isinstance(data, dict) else None
-    if not isinstance(sources, list):
-        return set()
-    out: set[str] = set()
-    for entry in sources:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("strategy")
-        if isinstance(name, str) and name:
-            out.add(name)
-    return out
-
-
-def _known_capabilities(repo_root: Path) -> dict[str, StrategyCapability]:
-    """Bundled registry merged with project-local declared capabilities.
-
-    Bundled entries win: a project-local manifest (ADR 0087) can add a
-    *new* stem's capability -- closing the bundled-vs-local asymmetry --
-    but never overrides an in-tree registry entry, so bundled strategy
-    behavior is unchanged. Reading the manifest imports no project code
-    (it is pure YAML data), so this stays correct under ``--safe``.
-    """
-    merged: dict[str, StrategyCapability] = dict(STRATEGY_CAPABILITIES)
-    try:
-        local = load_local_capabilities(repo_root)
-    except Exception:
-        local = {}
-    for stem, cap in local.items():
-        merged.setdefault(stem, cap)
-    return merged
-
-
-def _active_strategies(
-    repo_root: Path, known: dict[str, StrategyCapability],
-) -> set[str]:
-    """Strategies wired in this repo's ``discover.yaml`` AND *known*.
-
-    *known* is the bundled registry merged with project-local declared
-    capabilities (:func:`_known_capabilities`). The intersection ensures
-    we never report capability for a strategy name that exists in config
-    but has been retired, and never report capability for an unwired
-    strategy. An empty config (no ``.weld/discover.yaml``) falls back to
-    the full known set so consumers in fresh checkouts get the maximum
-    honest answer.
-    """
-    wired = _read_yaml_strategies(repo_root)
-    if not wired:
-        return set(known.keys())
-    return wired & set(known.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -287,12 +191,20 @@ def compute_capabilities(graph_data: dict, repo_root: Path) -> dict:
     appear -- with every flag ``False`` -- so consumers see the gap
     explicitly.
     """
-    known = _known_capabilities(repo_root)
-    active = _active_strategies(repo_root, known)
+    known = known_capabilities(repo_root)
+    wired, wired_languages = read_yaml_wiring(repo_root)
+    active = active_strategies(wired, known)
     graph_files = _node_files_from_graph(graph_data)
 
     languages: dict[str, dict[str, bool]] = {}
     frameworks: dict[str, dict[str, bool]] = {}
+
+    def _credit_language(lang: str, tags: frozenset[str]) -> None:
+        row = languages.setdefault(
+            lang, {k: False for k in sorted(LANGUAGE_EVIDENCE)},
+        )
+        for tag in tags & LANGUAGE_EVIDENCE:
+            row[tag] = True
 
     # ``known`` is the bundled registry plus project-local declared
     # capabilities (ADR 0087). Active project-local stems flow through the
@@ -301,14 +213,17 @@ def compute_capabilities(graph_data: dict, repo_root: Path) -> dict:
     for stem, cap in known.items():
         if stem not in active:
             continue
-        present_in_graph = _strategy_has_evidence_in_graph(cap, graph_files)
+        # Per-language graph attribution (Finding 03b): a multi-language
+        # strategy (``test_peer``) must only flip a language's row when the
+        # graph holds a file *of that language*, not any language it declares.
         for lang in cap.languages_set():
-            row = languages.setdefault(
+            languages.setdefault(
                 lang, {k: False for k in sorted(LANGUAGE_EVIDENCE)},
             )
-            if present_in_graph:
-                for tag in cap.evidence & LANGUAGE_EVIDENCE:
-                    row[tag] = True
+            if language_has_evidence_in_graph(
+                stem, cap, lang, graph_files, _matches_capability,
+            ):
+                _credit_language(lang, cap.evidence)
         for fw in cap.frameworks_set():
             row = frameworks.setdefault(
                 fw,
@@ -325,6 +240,22 @@ def compute_capabilities(graph_data: dict, repo_root: Path) -> dict:
             if fw_present:
                 for tag in cap.evidence & FRAMEWORK_EVIDENCE:
                     row[tag] = True
+
+    # tree_sitter attribution (Finding 03a): ``tree_sitter`` declares no
+    # registry languages -- its language is wired per source entry in
+    # ``discover.yaml`` via ``language:``. Read those wired languages and
+    # credit its evidence (file/symbols/imports/calls) to each, gated on the
+    # graph holding a file of that language. Without this, a C#-only repo
+    # whose every node is source_strategy=tree_sitter reports csharp all-no.
+    ts_cap = known.get("tree_sitter")
+    if ts_cap is not None and "tree_sitter" in active:
+        for lang, tags in tree_sitter_language_rows(
+            frozenset(wired_languages.get("tree_sitter", set())),
+            ts_cap,
+            graph_files,
+            _matches_capability,
+        ).items():
+            _credit_language(lang, tags)
 
     # Registry-completeness: any registered language/framework that no
     # active strategy populated still appears with all-False flags so

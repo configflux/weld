@@ -67,9 +67,23 @@ UNIT_SEPARATOR = "\x1f"
 
 # Cross-repo resolver names accepted by the validator. Unknown names are
 # rejected at load time so typos in ``workspaces.yaml`` fail loudly.
+#
+# This is the mirror of the resolver registry in :mod:`weld.cross_repo`
+# (its :func:`resolver_names`). It is kept as a static list here, not derived
+# from the registry, on purpose: :mod:`weld.cross_repo` imports
+# ``UNIT_SEPARATOR`` back from this module, so the ``//weld/cross_repo``
+# Bazel target already depends on ``//weld:workspace`` -- deriving this set
+# from the registry would force ``//weld:workspace`` to depend on
+# ``//weld/cross_repo`` in turn, a build cycle. The two are instead pinned
+# together by ``weld_workspace_config_test``'s
+# ``test_allowlist_matches_resolver_registry`` (bd 5038-f74dd), which imports
+# both packages and fails the moment a resolver is registered without being
+# added here -- the exact drift that omitted ``channel_binding``.
 KNOWN_CROSS_REPO_STRATEGIES: frozenset[str] = frozenset({
+    "channel_binding",
     "compose_topology",
     "grpc_service_binding",
+    "package_graph",
     "package_import_resolver",
     "service_graph",
 })

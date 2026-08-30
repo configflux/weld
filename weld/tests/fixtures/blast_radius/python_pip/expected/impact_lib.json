@@ -281,35 +281,35 @@
       },
       "csharp": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "go": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "java": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "javascript": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "python": {
         "calls": true,
@@ -321,19 +321,19 @@
       },
       "rust": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       },
       "typescript": {
         "calls": false,
-        "file": true,
+        "file": false,
         "imports": false,
         "module": false,
         "symbols": false,
-        "tests": true
+        "tests": false
       }
     }
   },
@@ -355,7 +355,8 @@
         ],
         "file": "src/main.py",
         "imports_from": [
-          "src.lib"
+          "src.lib",
+          "src.lib.double"
         ],
         "line_count": 10,
         "origin": "project",

@@ -16,7 +16,7 @@ Acceptance:
 - A function-local ``from pkg import mod`` produces an entry in
   ``props.imports_from``.
 - A function-local ``import pkg.sub`` likewise produces an entry
-  (truncated to the existing 3-dot rule).
+  (at its full dotted depth -- see :class:`DeepImportPathTest`).
 - An import inside a ``TYPE_CHECKING`` block is captured (these were
   already missed when the block was nested under an ``if`` statement,
   even at module scope).
@@ -71,6 +71,201 @@ def public_function() -> int:
 '''
 
 
+# Finding 04 (uuxaz.5): reverse-DNS namespaces deeper than three segments
+# must NOT collapse. protoc --python_out emits
+# ``acme.platform.order.schema.v1.event_pb2`` and the contract version
+# (``v1`` vs ``v2``) is exactly the segment impact analysis needs. The
+# old ``parts[:3]`` truncation merged v1 and v2 into a single
+# ``acme.platform.order`` node -- and collapsed it against the sibling
+# ``acme.platform.billing.schema.v1`` dependency too. This fixture
+# reproduces the transcript-04 shape directly.
+_DEEP_FIXTURE = '''\
+"""Imports three distinct schema packages sharing a three-segment prefix."""
+
+from acme.platform.order.schema.v1.event_pb2 import OrderPlacedEvent
+from acme.platform.order.schema.v2.event_pb2 import OrderPlacedEventV2
+from acme.platform.billing.schema.v1.event_pb2 import InvoiceIssuedEvent
+
+import acme.platform.order.schema.v1 as _v1_alias
+
+
+def register(subscriber) -> None:
+    subscriber.subscribe(OrderPlacedEvent)
+    subscriber.subscribe(OrderPlacedEventV2)
+    subscriber.subscribe(InvoiceIssuedEvent)
+    return _v1_alias
+'''
+
+
+class DeepImportPathTest(unittest.TestCase):
+    """``_extract_imports`` must keep the full dotted module path.
+
+    Finding 04: the old ``parts[:3]`` truncation collapsed distinct
+    reverse-DNS namespaces onto one node, so ``schema.v1`` and
+    ``schema.v2`` -- the exact contract version impact analysis needs --
+    became indistinguishable. C# keeps the full namespace, so the same
+    dependency was separated in C# and collapsed in Python.
+    """
+
+    def _imports_for_deep_fixture(self) -> list[str]:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "multi_schema.py").write_text(_DEEP_FIXTURE, encoding="utf-8")
+            result = extract(root, {"glob": "*.py", "package": ""}, {})
+        self.assertEqual(
+            len(result.nodes), 1, f"expected one file node, got {result.nodes!r}",
+        )
+        node = next(iter(result.nodes.values()))
+        return list(node["props"].get("imports_from") or [])
+
+    def test_full_dotted_path_preserved_for_import_from(self) -> None:
+        """``from acme.platform.order.schema.v1.event_pb2 import Y`` must
+        land the full imported module ``...schema.v1.event_pb2`` and must
+        NOT collapse to the truncated ``acme.platform.order``."""
+        imports = self._imports_for_deep_fixture()
+        self.assertIn("acme.platform.order.schema.v1.event_pb2", imports)
+        self.assertNotIn("acme.platform.order", imports)
+
+    def test_schema_versions_do_not_collapse(self) -> None:
+        """v1 and v2 of the same namespace must be two distinct entries --
+        the whole point of the finding. The distinguishing ``v1``/``v2``
+        segment survives at full depth."""
+        imports = self._imports_for_deep_fixture()
+        self.assertIn("acme.platform.order.schema.v1.event_pb2", imports)
+        self.assertIn("acme.platform.order.schema.v2.event_pb2", imports)
+        # No shared truncated prefix swallows both.
+        self.assertNotIn("acme.platform.order", imports)
+
+    def test_sibling_deep_namespace_is_distinct(self) -> None:
+        """A different second-level branch (billing vs order) must remain
+        its own dependency at full depth, not collapse onto a shared
+        three-segment prefix."""
+        imports = self._imports_for_deep_fixture()
+        self.assertIn("acme.platform.billing.schema.v1.event_pb2", imports)
+        self.assertNotIn("acme.platform.billing", imports)
+
+    def test_plain_deep_import_statement_preserved(self) -> None:
+        """``import acme.platform.order.schema.v1`` (plain ``import``
+        form) keeps its full dotted path too -- no ``parts[:3]``."""
+        imports = self._imports_for_deep_fixture()
+        self.assertIn("acme.platform.order.schema.v1", imports)
+
+    def test_deep_imports_sorted_and_deduped(self) -> None:
+        """Determinism contract (ADR 0012 § 3) still holds at full depth."""
+        imports = self._imports_for_deep_fixture()
+        self.assertEqual(imports, sorted(set(imports)))
+
+
+# uuxaz.6 (Finding 04 secondary): an imported name USED AS A REFERENCE
+# (a handler argument, an annotation, a registry value) but never *called*
+# leaves no symbol/dependency evidence. The event-driven shape
+# ``subscriber.subscribe(OrderPlacedEvent)`` -- the dominant pattern in
+# event-driven Python -- imports a contract class and passes it as a value.
+# python_callgraph deliberately does not record cross-module references
+# (ADR 0127), and python_module previously emitted only the *parent package*
+# for a ``from x import SomeClass`` import, so "which services depend on this
+# contract" under-reported the Python consumer while C# reported it. The fix:
+# when the imported name is actually *referenced* in the module body, emit the
+# qualified ``module.Name`` form too, so ``graph_closure._link_imports`` mints
+# a ``package:python:module.Name`` node and a ``depends_on`` edge. Noise
+# control: an imported-but-unreferenced name still emits only the parent.
+_EVENT_HANDLER_FIXTURE = '''\
+"""Event-driven handler registration: contracts imported and passed by value."""
+
+from acme.platform.order.schema.v1.event_pb2 import OrderPlacedEvent
+from acme.platform.billing.schema.v1.event_pb2 import InvoiceIssuedEvent
+from acme.platform.audit.schema.v1.event_pb2 import UnusedEvent
+
+
+def register(subscriber) -> None:
+    # OrderPlacedEvent used as a call ARGUMENT (a reference, not a call).
+    subscriber.subscribe(OrderPlacedEvent)
+    # InvoiceIssuedEvent used as an annotation (also a reference).
+    handler: InvoiceIssuedEvent = None
+    return handler
+    # UnusedEvent is imported but never referenced -- must NOT emit the
+    # qualified form (noise control).
+'''
+
+
+class ReferencedImportSymbolTest(unittest.TestCase):
+    """Imported-but-uncalled names used as references emit qualified evidence."""
+
+    def _imports_for_event_fixture(self) -> list[str]:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "notify.py").write_text(_EVENT_HANDLER_FIXTURE, encoding="utf-8")
+            result = extract(root, {"glob": "*.py", "package": ""}, {})
+        self.assertEqual(
+            len(result.nodes), 1, f"expected one file node, got {result.nodes!r}",
+        )
+        node = next(iter(result.nodes.values()))
+        return list(node["props"].get("imports_from") or [])
+
+    def test_referenced_import_emits_qualified_symbol(self) -> None:
+        """``subscriber.subscribe(OrderPlacedEvent)`` -- the name passed as a
+        value must land the qualified ``...event_pb2.OrderPlacedEvent`` so the
+        closure mints a dependency node for the contract, not just its
+        parent module."""
+        imports = self._imports_for_event_fixture()
+        self.assertIn(
+            "acme.platform.order.schema.v1.event_pb2.OrderPlacedEvent", imports,
+        )
+
+    def test_annotation_reference_emits_qualified_symbol(self) -> None:
+        """A name used only as a type annotation is a reference too."""
+        imports = self._imports_for_event_fixture()
+        self.assertIn(
+            "acme.platform.billing.schema.v1.event_pb2.InvoiceIssuedEvent",
+            imports,
+        )
+
+    def test_unreferenced_import_suppresses_qualified_symbol(self) -> None:
+        """Noise control: an imported name never referenced in the body must
+        NOT emit the qualified form -- only its parent package."""
+        imports = self._imports_for_event_fixture()
+        self.assertNotIn(
+            "acme.platform.audit.schema.v1.event_pb2.UnusedEvent", imports,
+        )
+        # Parent still lands so the module-level dependency is recorded.
+        self.assertIn("acme.platform.audit.schema.v1.event_pb2", imports)
+
+    def test_parent_package_always_emitted_for_referenced_import(self) -> None:
+        """The qualified form is additive -- the parent package still lands
+        (existing module-level dependency behaviour is preserved)."""
+        imports = self._imports_for_event_fixture()
+        self.assertIn("acme.platform.order.schema.v1.event_pb2", imports)
+        self.assertIn("acme.platform.billing.schema.v1.event_pb2", imports)
+
+    def test_event_fixture_imports_sorted_and_deduped(self) -> None:
+        """Determinism contract (ADR 0012 § 3) holds with qualified forms."""
+        imports = self._imports_for_event_fixture()
+        self.assertEqual(imports, sorted(set(imports)))
+
+    def test_aliased_referenced_import_emits_real_symbol_id(self) -> None:
+        """``from x import Foo as F`` used via ``F`` must emit the *real*
+        symbol ``x.Foo`` (the graph identity), not the local alias ``x.F`` --
+        usage is detected on the bound name, the edge lands on the true node."""
+        src = (
+            "from acme.platform.order.schema.v1.event_pb2 import "
+            "OrderPlacedEvent as OPE\n\n\n"
+            "def register(subscriber) -> None:\n"
+            "    subscriber.subscribe(OPE)\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "aliased.py").write_text(src, encoding="utf-8")
+            result = extract(root, {"glob": "*.py", "package": ""}, {})
+        node = next(iter(result.nodes.values()))
+        imports = list(node["props"].get("imports_from") or [])
+        self.assertIn(
+            "acme.platform.order.schema.v1.event_pb2.OrderPlacedEvent", imports,
+        )
+        self.assertNotIn(
+            "acme.platform.order.schema.v1.event_pb2.OPE", imports,
+        )
+
+
 class LazyImportCaptureTest(unittest.TestCase):
     """``python_module._extract_imports`` must walk all import nodes."""
 
@@ -105,10 +300,10 @@ class LazyImportCaptureTest(unittest.TestCase):
         self.assertIn("weld.strategies._ros2_py", imports)
 
     def test_function_local_import_statement_is_captured(self) -> None:
-        """``import os.path`` inside a function must appear (truncated by
-        the existing 3-dot rule)."""
+        """``import os.path`` inside a function must appear at full
+        dotted depth."""
         imports = self._imports_for_fixture()
-        # ``import os.path`` -> ["os", "path"][:3] -> "os.path"
+        # ``import os.path`` -> full dotted path "os.path"
         self.assertIn("os.path", imports)
 
     def test_method_level_lazy_import_is_captured(self) -> None:

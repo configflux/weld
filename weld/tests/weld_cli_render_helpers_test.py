@@ -284,6 +284,85 @@ class RendererPurityTest(unittest.TestCase):
         self.assertNotIn("\x1b", safe)
         self.assertIn("\\x1b[2J", safe)
 
+    def test_render_stale_children_all_missing_are_not_bare_zero_stale(
+        self,
+    ) -> None:
+        # bd 51oxx (field-eval finding 02): at a federation root where zero
+        # children are checked out on disk, every registered child is
+        # ``missing``. The old "children: 4 (0 stale)" reads as "all healthy";
+        # the fix must make registered-but-absent distinguishable from
+        # present-and-fresh (ADR 0134, one level up in the freshness surface).
+        text = render_stale({
+            "stale": True, "source_stale": True, "sha_behind": False,
+            "graph_sha": None, "current_sha": "def", "commits_behind": -1,
+            "reason": "no graph",
+            "children": [
+                {"name": "a", "state": "missing", "reason": "missing",
+                 "commits_behind": 0},
+                {"name": "b", "state": "missing", "reason": "missing",
+                 "commits_behind": 0},
+                {"name": "c", "state": "missing", "reason": "missing",
+                 "commits_behind": 0},
+                {"name": "d", "state": "missing", "reason": "missing",
+                 "commits_behind": 0},
+            ],
+        })
+        # The summary must state how many are actually present, and surface the
+        # missing count -- not present a clean "0 stale" that masks absence.
+        self.assertIn("4 registered", text)
+        self.assertIn("0 present", text)
+        self.assertIn("missing=4", text)
+        # It must NOT collapse to the old bare "(0 stale)" form.
+        self.assertNotIn("children: 4 (0 stale)", text)
+
+    def test_render_stale_children_mixed_lifecycle_breakdown(self) -> None:
+        text = render_stale({
+            "stale": True, "source_stale": False, "sha_behind": False,
+            "graph_sha": "abc", "current_sha": "abc", "commits_behind": 0,
+            "children": [
+                {"name": "a", "state": "present", "reason": "fresh",
+                 "commits_behind": 0},
+                {"name": "b", "state": "stale", "reason": "source_changed",
+                 "commits_behind": 3},
+                {"name": "c", "state": "missing", "reason": "missing",
+                 "commits_behind": 0},
+                {"name": "d", "state": "uninitialized",
+                 "reason": "uninitialized", "commits_behind": 0},
+            ],
+        })
+        self.assertIn("4 registered", text)
+        # A stale child counts as present-on-disk but drifted.
+        self.assertIn("2 present", text)
+        self.assertIn("1 stale", text)
+        self.assertIn("missing=1", text)
+        self.assertIn("uninitialized=1", text)
+        # Stale children are still enumerated line-by-line (regression).
+        self.assertIn("b: stale (source_changed, 3 behind)", text)
+
+    def test_render_stale_children_all_present_fresh(self) -> None:
+        text = render_stale({
+            "stale": False, "source_stale": False, "sha_behind": False,
+            "graph_sha": "abc", "current_sha": "abc", "commits_behind": 0,
+            "children": [
+                {"name": "a", "state": "present", "reason": "fresh",
+                 "commits_behind": 0},
+                {"name": "b", "state": "present", "reason": "fresh",
+                 "commits_behind": 0},
+            ],
+        })
+        self.assertIn("2 registered", text)
+        self.assertIn("2 present", text)
+        self.assertIn("0 stale", text)
+        # No absent-state breakdown when every child is present.
+        self.assertNotIn("missing=", text)
+
+    def test_render_stale_non_federated_has_no_children_line(self) -> None:
+        text = render_stale({
+            "stale": False, "source_stale": False, "sha_behind": False,
+            "graph_sha": "abc", "current_sha": "abc", "commits_behind": 0,
+        })
+        self.assertNotIn("children", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -104,7 +104,7 @@ def _retry_hint(cmd: str, args) -> str:
     return _build_retry_hint(cmd, term)
 
 
-def missing_graph_message(retry_cmd: str) -> str:
+def missing_graph_message(retry_cmd: str, cause: str | None = None) -> str:
     """Return the friendly missing-graph guidance block (tracked issue / -uqo).
 
     Used by graph-backed read commands (``wd brief`` / ``query`` /
@@ -113,11 +113,20 @@ def missing_graph_message(retry_cmd: str) -> str:
     yet been produced. ``wd find`` is intentionally exempt -- it reads the
     file-index, not the graph. Keep the wording stable -- onboarding docs
     and tests match against its substrings.
+
+    *cause* is an optional explanation of why this particular checkout has
+    no graph, from :func:`weld._worktree_seed.seed_blocked_reason`. It sits
+    between the headline and the remediation because the two say different
+    things: the standing ``wd init`` / ``wd discover`` lines fix *this*
+    checkout right now, while a cause names a repository-wide prerequisite
+    that has to change for the next checkout to fare any better. Additive by
+    construction -- every substring the block already had survives.
     """
     return (
         "No Weld graph found.\n"
-        "Run: wd init (if no config), then wd discover.\n"
-        f'Then retry: {retry_cmd}.'
+        + (f"{cause}\n" if cause else "")
+        + "Run: wd init (if no config), then wd discover.\n"
+        + f'Then retry: {retry_cmd}.'
     )
 
 
@@ -141,15 +150,23 @@ def ensure_graph_exists(root: Path, retry_cmd: str, *, no_refresh: bool = False)
     hand-off makes the flag mean less there than on its neighbours.
     Commands with no such flag (``diff``, ``enrich``) take the default.
     """
-    from weld._worktree_seed import ensure_seeded
+    from weld._worktree_seed import ensure_seeded, seed_blocked_reason
 
     ensure_seeded(root, no_refresh=no_refresh)
     graph_path = Path(root) / ".weld" / "graph.json"
     if graph_path.exists():
         return
+    # A decline that the user could not have predicted gets named here rather
+    # than left to the generic block (field eval 0.23.1 finding 09). The probe
+    # sits on the exit path, so its git shell-out costs a read nothing: this
+    # line is only reached when the command is already about to fail.
     # retry_cmd embeds the user's own search term (_build_retry_hint), so this
     # block is not the fixed string it looks like.
-    sys.stderr.write(sanitize_terminal_text(missing_graph_message(retry_cmd)) + "\n")
+    sys.stderr.write(
+        sanitize_terminal_text(
+            missing_graph_message(retry_cmd, seed_blocked_reason(root)),
+        ) + "\n",
+    )
     sys.exit(1)
 
 
@@ -198,6 +215,25 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
                 no_refresh=getattr(args, "no_refresh", False),
                 json_output=getattr(args, "as_json", False),
             )
+
+            # ADR 0134 (Finding 02): a graph-backed federated read at a root
+            # with no ``.weld/graph.json`` must surface the same cannot-answer
+            # "No Weld graph found" guidance + non-zero exit the single-repo
+            # path does, not a well-formed empty result at exit 0 -- the two
+            # are indistinguishable to the agent that is weld's primary
+            # consumer. This is a routing fix, not new vocabulary: it reaches
+            # the *same* precondition ``_READ_COMMANDS`` already hit below, at
+            # or before ADR 0089's read-time flatten (``FederatedGraph`` loads
+            # the root graph in its constructor). ``find`` stays exempt on the
+            # same rule the single-repo route uses -- it answers off the
+            # file-index, so a graph-less root is not a cannot-answer state for
+            # it. Runs after the auto-refresh above so a refresh that
+            # legitimately builds the root graph is honoured first.
+            if cmd != "find":
+                ensure_graph_exists(
+                    args.root, _retry_hint(cmd, args),
+                    no_refresh=getattr(args, "no_refresh", False),
+                )
 
             # query/context/path navigate the FederatedGraph; callers/
             # references fan out per child; communities runs over the flattened

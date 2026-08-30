@@ -39,13 +39,18 @@ from weld._errors import (
     NODE_NOT_FOUND,
     ROOT_OUT_OF_BOUNDS,
     classify_graph_load_error,
+    default_summary,
     structured_payload,
 )
 from weld._safe_text import dumps_safe_json
 from weld.workspace_state import find_workspaces_yaml as _find_workspaces_yaml
 
 
-def missing_graph_payload(retry_cmd: str = "weld_query / weld_context / ...") -> dict:
+def missing_graph_payload(
+    retry_cmd: str = "weld_query / weld_context / ...",
+    *,
+    root: Path | str | None = None,
+) -> dict:
     """Structured actionable-error payload for missing graphs.
 
     Single-sourced from :func:`weld._errors.structured_payload` so the
@@ -55,8 +60,37 @@ def missing_graph_payload(retry_cmd: str = "weld_query / weld_context / ...") ->
     :func:`weld._graph_cli.missing_graph_message`; the stable ``error_code``
     lets MCP clients render the hint without parsing the human-readable
     message.
+
+    *root* is the checkout the call was answered from. Given one, the payload
+    also names why *this* checkout has no graph, from
+    :func:`weld._worktree_seed.seed_blocked_reason` -- the CLI's own function,
+    reused rather than restated, because a second copy of the rule is exactly
+    how two surfaces come to disagree about it. The cause extends the standing
+    summary rather than replacing it, so ``No Weld graph found.`` still leads
+    the ``error`` for every consumer already matching on it, and the three text
+    fields reassemble the CLI's block byte for byte (``error`` carries its
+    headline and cause, ``hint`` its remediation, ``retry`` its last line).
+
+    Why the payload needs this at all, when the CLI's message already had it:
+    the reader here is an agent, which has no terminal to consult for a second
+    opinion, so a cause absent from the payload is a cause it cannot reach
+    (ADR 0134). A graphless linked worktree of a repository that gitignores
+    ``.weld/discover.yaml`` can never seed, and no amount of retrying the
+    tool would have told it so.
+
+    The probe is read-only -- two ``stat`` calls and one ``git rev-parse``,
+    never :func:`weld._worktree_seed.ensure_seeded` -- so a long-lived server
+    gains no write on its error path, and it costs a *served* read nothing,
+    running only once a call has already failed. Omitting *root* yields
+    today's payload byte for byte.
     """
-    return structured_payload(GRAPH_MISSING, retry_cmd=retry_cmd)
+    from weld._worktree_seed import seed_blocked_reason
+
+    detail = None
+    cause = seed_blocked_reason(root) if root is not None else None
+    if cause is not None:
+        detail = f"{default_summary(GRAPH_MISSING)}\n{cause}"
+    return structured_payload(GRAPH_MISSING, detail=detail, retry_cmd=retry_cmd)
 
 
 def resolve_dispatch_root(

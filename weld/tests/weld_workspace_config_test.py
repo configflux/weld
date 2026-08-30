@@ -286,6 +286,48 @@ class ValidatorTest(unittest.TestCase):
         with self.assertRaises(WorkspaceConfigError):
             validate_config(cfg)
 
+    def test_accepts_channel_binding_strategy(self) -> None:
+        # Regression (bd 5038-f74dd): channel_binding is a registered,
+        # documented resolver but was omitted from the hand-maintained
+        # allowlist, so declaring it failed load-time validation.
+        cfg = self._valid_config()
+        cfg.cross_repo_strategies = ["channel_binding"]
+        validate_config(cfg)  # must not raise
+
+    def test_allowlist_matches_resolver_registry(self) -> None:
+        # Drift guard (bd 5038-f74dd). KNOWN_CROSS_REPO_STRATEGIES is a static
+        # mirror of the resolver registry -- it cannot be derived from the
+        # registry at runtime without a Bazel dep cycle (weld.cross_repo
+        # already depends on weld.workspace). This test is the pin that keeps
+        # them equal: it fails the instant a resolver is registered but not
+        # added to the allowlist (the exact channel_binding omission) or a
+        # name is left in the allowlist with no backing resolver.
+        import weld.cross_repo  # noqa: F401  registration side effect
+        from weld.cross_repo import resolver_names
+        from weld.workspace import KNOWN_CROSS_REPO_STRATEGIES
+
+        self.assertEqual(
+            set(KNOWN_CROSS_REPO_STRATEGIES),
+            set(resolver_names()),
+            "workspace validator allowlist has drifted from the cross-repo "
+            "resolver registry; update KNOWN_CROSS_REPO_STRATEGIES in "
+            "weld/workspace.py",
+        )
+        self.assertIn("channel_binding", KNOWN_CROSS_REPO_STRATEGIES)
+
+    def test_every_registered_resolver_validates(self) -> None:
+        # Behavioural companion to the equality guard: each registered
+        # resolver name must actually pass validate_config in a
+        # workspaces.yaml, not merely be present in the allowlist set.
+        import weld.cross_repo  # noqa: F401  registration side effect
+        from weld.cross_repo import resolver_names
+
+        for name in resolver_names():
+            cfg = self._valid_config()
+            cfg.cross_repo_strategies = [name]
+            with self.subTest(strategy=name):
+                validate_config(cfg)  # must not raise
+
 
 class IdempotentInitTest(unittest.TestCase):
     def test_second_write_is_noop_without_force(self) -> None:

@@ -74,10 +74,13 @@ def status_line(results: Sequence) -> str:
 def format_line(result) -> str:
     """Render a single :class:`CheckResult` row.
 
-    ``note``-level rows with a ``note_id`` get an inline ``(id: <id>)``
-    prefix so the user can copy the id directly into ``--ack <id>``.
+    Any row carrying a ``note_id`` gets an inline ``(id: <id>)`` prefix so the
+    user can copy the id directly into ``--ack <id>``. This is keyed on the
+    presence of an id, not the ``note`` level: a suppressible ``warn`` (e.g.
+    the ADR 0135 unclaimed-source check) is dismissible the same way, and every
+    row that carries an id is dismissible by construction.
     """
-    if result.level == "note" and getattr(result, "note_id", None):
+    if getattr(result, "note_id", None):
         return f"  [{result.level:4s}] (id: {result.note_id}) {result.message}"
     return f"  [{result.level:4s}] {result.message}"
 
@@ -101,14 +104,17 @@ def format_results(results: Sequence) -> str:
 
 
 def apply_suppressions(results: Iterable, suppressed: set[str]) -> list:
-    """Drop notes whose ``note_id`` appears in ``suppressed``."""
+    """Drop any row whose ``note_id`` appears in ``suppressed``.
+
+    Keyed on the id, not the ``note`` level: a suppressible ``warn`` (the ADR
+    0135 unclaimed-source check) is dismissed the same way a note is. A row
+    without an id is never dropped, so this is a no-op for every un-idded
+    result regardless of level.
+    """
     if not suppressed:
         return list(results)
     return [
         r
         for r in results
-        if not (
-            r.level == "note"
-            and getattr(r, "note_id", None) in suppressed
-        )
+        if getattr(r, "note_id", None) not in suppressed
     ]

@@ -304,9 +304,19 @@ class SyntheticNodePropsQualityTest(
         )
 
     def test_file_bearing_nodes_have_file_prop(self) -> None:
-        # In the synthetic fixture, every node is file-bearing (python
-        # modules + markdown docs). Each must carry a ``file`` prop.
+        # In the synthetic fixture, every SYNTH_NODE_TYPES node (python
+        # modules + markdown docs) is file-bearing and must carry a
+        # ``file`` prop. Scoped to SYNTH_NODE_TYPES -- not every node --
+        # because uuxaz.6 (referenced-import dependency evidence) can mint
+        # a ``package`` node for a qualified symbol import
+        # (``src.mod_a.alpha``) that resolves externally; external
+        # ``package`` nodes never carry ``file`` (same as any stdlib
+        # import), matching the host-repo counterpart's own fixed
+        # file-bearing-type allow-list above (which likewise omits
+        # ``package``).
         for nid, n in self.graph["nodes"].items():
+            if n["type"] not in SYNTH_NODE_TYPES:
+                continue
             with self.subTest(node_id=nid, node_type=n["type"]):
                 self.assertIn(
                     "file", n.get("props", {}),

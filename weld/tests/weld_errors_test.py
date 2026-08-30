@@ -34,9 +34,16 @@ class ErrorVocabularyTest(unittest.TestCase):
             _errors.GRAPH_CORRUPT,
             _errors.SCHEMA_MISMATCH,
             _errors.NODE_NOT_FOUND,
+            _errors.RESULT_UNKNOWN,
         ):
             self.assertIn(code, _errors.ERROR_HINTS)
             self.assertTrue(_errors.ERROR_HINTS[code].strip())
+
+    def test_result_unknown_hint_points_at_cross_repo_strategies(self) -> None:
+        # ADR 0134 Finding 06: the cannot-answer hint for impact must name the
+        # remediation surface an operator edits.
+        hint = _errors.ERROR_HINTS[_errors.RESULT_UNKNOWN]
+        self.assertIn("cross_repo_strategies", hint)
 
     def test_missing_graph_hint_mentions_init_and_discover(self) -> None:
         hint = _errors.ERROR_HINTS[_errors.GRAPH_MISSING]

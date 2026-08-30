@@ -137,10 +137,18 @@ class SuppressionRoundTripTest(unittest.TestCase):
 
 
 class ValidNoteIdsTest(unittest.TestCase):
-    """The allow-list must cover exactly the ids the codebase emits."""
+    """A readable inventory of the allow-list -- not the guard on it.
+
+    The assertion below is a *subset* check against a hand-written list,
+    so it stayed green the whole time ``agent-graph-missing`` was missing
+    from ``VALID_NOTE_IDS`` (bd 5038-ilefv). What actually catches that is
+    ``weld_doctor_note_id_drift_test.py``, which derives the emitted set
+    from the package AST instead of from a second hand-written list.
+    """
 
     def test_contains_expected_ids(self):
         expected = {
+            "agent-graph-missing",
             "mcp-config-missing",
             "optional-mcp-missing",
             "optional-anthropic-missing",
@@ -217,6 +225,32 @@ class CliAckFlowTest(unittest.TestCase):
             self.assertEqual(
                 load_suppressions(root / ".weld"),
                 {"mcp-config-missing"},
+            )
+
+    def test_ack_accepts_the_agent_graph_id_doctor_prints(self):
+        """bd 5038-ilefv: doctor printed an id its own --ack refused.
+
+        Driven the way a user hits it -- read the id off doctor's output,
+        then ack that exact string -- so the two halves cannot drift apart
+        without this failing.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _setup_dir(root)  # no .weld/agent-graph.json
+            report = io.StringIO()
+            with patch("weld.doctor.is_git_repo", return_value=False), patch(
+                "sys.stdout", report
+            ):
+                doctor_main(["--root", str(root)])
+            self.assertIn("(id: agent-graph-missing)", report.getvalue())
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                code = doctor_main(
+                    ["--root", str(root), "--ack", "agent-graph-missing"]
+                )
+            self.assertEqual(code, 0, stderr.getvalue())
+            self.assertEqual(
+                load_suppressions(root / ".weld"), {"agent-graph-missing"}
             )
 
     def test_ack_already_acknowledged(self):

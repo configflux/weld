@@ -8,192 +8,52 @@ and interaction-relevant context ahead of generic matches.
 
 from __future__ import annotations
 
-import argparse
-import sys
-from pathlib import Path
 from typing import Any
 
-from weld._root_resolver import ROOT_HELP, resolve_weld_root
-from weld._safe_text import dumps_safe_json
-from weld.contract import (
-    BOUNDARY_KIND_VALUES,
-    PROTOCOL_VALUES,
-    SURFACE_KIND_VALUES,
+from weld._brief_rank import (
+    add_relevance as _add_relevance,
 )
-from weld.ranking import rank_key as _rank_key
+from weld._brief_rank import (
+    classify_node as _classify_node,
+)
+from weld._brief_rank import (
+    primary_relevance as _primary_relevance,
+)
+from weld._brief_rank import (
+    query_is_interaction_relevant as _query_is_interaction_relevant,
+)
+from weld._brief_rank import (
+    sort_key as _sort_key,
+)
+from weld.synonyms import expand_token_groups
 from weld.warnings import check_confidence_gaps, check_freshness, check_partial_coverage
 
 # -- Stable JSON output contract -------------------------------------------
 #
 # The brief output is a versioned JSON envelope. v2 adds the ``interfaces``
-# bucket and interaction-aware ranking per ADR 0086 and tracked project:
-#
-#   {
-#     "brief_version": 2,
-#     "query": "<original term>",
-#     "primary": [ ... ranked nodes (implementation/domain) ... ],
-#     "interfaces": [ ... rpc/channel/ros_* surfaces carrying protocol ... ],
-#     "docs": [ ... authoritative docs and policies ... ],
-#     "build": [ ... build/test/gate surfaces ... ],
-#     "boundaries": [ ... boundary/entrypoint nodes ... ],
-#     "edges": [ ... connecting edges ... ],
-#     "provenance": { "graph_sha": "...", "updated_at": "..." },
-#     "warnings": [ ... diagnostic strings ... ]
-#   }
+# bucket and interaction-aware ranking per ADR 0086 and tracked project. Keys:
+# ``brief_version``, ``query``, ``primary`` (implementation/domain),
+# ``interfaces`` (rpc/channel/ros_* protocol surfaces), ``docs``, ``build``,
+# ``boundaries``, ``edges``, ``provenance`` (``graph_sha`` / ``updated_at``),
+# ``warnings``.
 #
 # Contract rules:
 #   - brief_version is 2 (bumped from 1; bump again on breaking changes).
 #   - All list fields default to [] (never null/absent).
 #   - provenance is always present (fields may be null if unavailable).
 #   - warnings is always present (empty list means no issues).
-#   - Node entries include a ``relevance`` field explaining why they ranked.
+#   - Node entries include a discriminating ``relevance`` field: ``exact
+#     match`` (identifier equals the query), ``token match`` (other direct
+#     hit), the interaction/doc/build reasons below, or ``related ...`` for
+#     neighbours -- so callers can re-rank without re-querying (Finding 08).
+#   - Exact-identifier matches sort to the top of their bucket (the same
+#     ``exact_symbol_match_rank`` preference ``Graph.query`` applies).
 #   - When the query is interaction-relevant, interfaces and boundaries are
 #     emitted before generic primary in the envelope field order, and each
 #     interaction node carries ``interaction_boost`` in its ``relevance``
 #     text so agents can see why it ranked first.
 
 BRIEF_VERSION: int = 2
-
-# Node types that count as authoritative docs/policies.
-_DOC_TYPES: frozenset[str] = frozenset(["doc", "policy", "runbook"])
-
-# Node types that count as build/verification surfaces.
-_BUILD_TYPES: frozenset[str] = frozenset([
-    "build-target", "test-target", "test-suite", "gate",
-])
-
-# Node types that count as boundaries/entrypoints.
-_BOUNDARY_TYPES: frozenset[str] = frozenset(["boundary", "entrypoint"])
-
-# Node types that count as interaction surfaces -- ``rpc``/``channel`` are
-# the generalized Phase 7 vocabulary (ADR 0086); ROS2 interaction nodes are
-# their domain-specific counterparts and belong alongside them in the
-# interfaces bucket.
-_INTERFACE_TYPES: frozenset[str] = frozenset([
-    "rpc", "channel",
-    "ros_service", "ros_action", "ros_topic", "ros_interface",
-])
-
-# Roles that signal doc-like content (ROLE_VALUES members only).
-_DOC_ROLES: frozenset[str] = frozenset(["doc"])
-
-# Roles that signal build/verification content (ROLE_VALUES members only).
-_BUILD_ROLES: frozenset[str] = frozenset(["build", "test"])
-
-# Query tokens that indicate the caller is asking about interaction surfaces.
-# Hitting any of these flips interaction-aware ranking on so that interfaces
-# and boundaries surface ahead of generic primary matches.
-_INTERACTION_QUERY_TOKENS: frozenset[str] = frozenset([
-    "interface", "interfaces", "boundary", "boundaries", "protocol",
-    "protocols", "rpc", "grpc", "http", "api", "endpoint", "endpoints",
-    "route", "routes", "channel", "channels", "topic", "topics", "event",
-    "events", "stream", "streams", "pubsub", "pub_sub", "publish",
-    "subscribe", "consumer", "producer", "handler", "handlers",
-    "request", "response", "call", "calls", "invoke", "invokes",
-    "ros2",
-])
-
-def _has_interaction_metadata(node: dict) -> bool:
-    """Return True if *node* carries any interaction-surface metadata.
-
-    Per ADR 0086, ``protocol``, ``surface_kind``, ``transport``, and
-    ``boundary_kind`` are optional props that can ride on any node type.
-    A node is interaction-relevant when any of them is set to a recognized
-    vocabulary value.
-    """
-    props = node.get("props") or {}
-    protocol = props.get("protocol")
-    if isinstance(protocol, str) and protocol in PROTOCOL_VALUES:
-        return True
-    surface_kind = props.get("surface_kind")
-    if isinstance(surface_kind, str) and surface_kind in SURFACE_KIND_VALUES:
-        return True
-    boundary_kind = props.get("boundary_kind")
-    if isinstance(boundary_kind, str) and boundary_kind in BOUNDARY_KIND_VALUES:
-        return True
-    # ``transport`` alone is not a reliable signal -- it is usually paired
-    # with ``protocol``. Requiring at least one of the primary three props
-    # avoids boosting nodes that just happen to mention a port.
-    return False
-
-def _query_is_interaction_relevant(term: str) -> bool:
-    """Return True if the query term mentions interaction concepts.
-
-    Uses the same lower-cased whitespace tokenization as ``Graph.query``
-    so the signal is consistent with how matches are found in the first
-    place. The check is permissive: a single hit flips the flag.
-    """
-    tokens = term.lower().split()
-    return any(tok in _INTERACTION_QUERY_TOKENS for tok in tokens)
-
-def _classify_node(node: dict) -> str:
-    """Classify a node into one of:
-    'doc', 'build', 'interface', 'boundary', 'primary'.
-
-    Uses both node type and roles metadata for classification. Interfaces
-    take precedence over ``primary`` but not over more specific buckets
-    (docs/build/boundary) so a boundary that also declares a protocol
-    stays in ``boundaries``.
-    """
-    ntype = node.get("type", "")
-    props = node.get("props") or {}
-    roles = set(props.get("roles", []))
-    doc_kind = props.get("doc_kind", "")
-
-    if (
-        ntype in _DOC_TYPES
-        or roles & _DOC_ROLES
-        or doc_kind in ("adr", "policy", "runbook", "guide")
-    ):
-        return "doc"
-    if (
-        ntype in _BUILD_TYPES
-        or roles & _BUILD_ROLES
-        or doc_kind in ("gate", "verification")
-    ):
-        return "build"
-    if ntype in _BOUNDARY_TYPES:
-        return "boundary"
-    if ntype in _INTERFACE_TYPES:
-        return "interface"
-    # Any other node that statically declares interaction-surface metadata
-    # is promoted to the interfaces bucket even if its primary type is
-    # something else (e.g. a ``route`` stamped with ``protocol=http``).
-    if _has_interaction_metadata(node):
-        return "interface"
-    return "primary"
-
-def _sort_key(
-    node: dict,
-    *,
-    interaction_relevant: bool = False,
-) -> tuple[int, int, int, int, str]:
-    """Sort key for brief buckets.
-
-    Adds an interaction boost on top of the shared ranking composite so
-    that interfaces/boundaries/interaction-annotated nodes rank ahead of
-    generic peers when the query is interaction-relevant. The composite
-    layout is ``(interaction_boost, role_boost, authority, confidence,
-    id)``. A value of 0 sorts first; 1 sorts after.
-
-    When *interaction_relevant* is False the boost is a constant 0 so
-    this function stays drop-in-compatible with v1 sort ordering within
-    a single bucket.
-    """
-    role, authority, confidence, node_id = _rank_key(node)
-    if interaction_relevant and _has_interaction_metadata(node):
-        boost = 0
-    elif interaction_relevant:
-        boost = 1
-    else:
-        boost = 0
-    return (boost, role, authority, confidence, node_id)
-
-def _add_relevance(node: dict, reason: str) -> dict:
-    """Return a copy of the node dict with a ``relevance`` field."""
-    result = dict(node)
-    result["relevance"] = reason
-    return result
 
 def brief(graph: Any, term: str, limit: int = 20) -> dict:
     """Build a brief context packet for *term* from *graph*.
@@ -215,6 +75,12 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
     warnings: list[str] = []
     interaction_relevant = _query_is_interaction_relevant(term)
     degraded_match: str | None = None
+
+    # Token groups, derived the same way ``Graph.query`` derives them, so the
+    # exact-identifier preference (``exact_symbol_match_rank``) agrees with
+    # query on which node the caller named (Finding 08). Empty query -> empty
+    # groups, which leaves the exact boost inert.
+    token_groups = expand_token_groups(term.lower().split())
 
     # Run the same tokenized query as ``wd query``.
     # ``Graph.query`` itself performs an OR-fallback when strict-AND
@@ -265,7 +131,9 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
             )
             interfaces.append(_add_relevance(node, reason))
         else:
-            primary.append(_add_relevance(node, "direct match"))
+            primary.append(
+                _add_relevance(node, _primary_relevance(node, token_groups))
+            )
 
     # Also scan neighbors for doc/build/boundary/interface nodes not in
     # matches so the brief surfaces related authoritative context.
@@ -291,8 +159,12 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
 
     # Sort all buckets. Interfaces and boundaries get the interaction boost
     # so they land in the order expected by agents reading the brief.
-    def _key(node: dict) -> tuple[int, int, int, int, str]:
-        return _sort_key(node, interaction_relevant=interaction_relevant)
+    def _key(node: dict) -> tuple[int, int, int, int, int, str]:
+        return _sort_key(
+            node,
+            interaction_relevant=interaction_relevant,
+            token_groups=token_groups,
+        )
 
     primary.sort(key=_key)
     interfaces.sort(key=_key)
@@ -356,43 +228,7 @@ def brief(graph: Any, term: str, limit: int = 20) -> dict:
         envelope["degraded_match"] = degraded_match
     return envelope
 
-def main(argv: list[str] | None = None) -> None:
-    """CLI entry point for ``wd brief``."""
-    parser = argparse.ArgumentParser(
-        prog="wd brief",
-        description="Agent-facing context briefing with stable JSON contract",
-    )
-    parser.add_argument("term", help="Search term (same tokenization as query)")
-    parser.add_argument("--root", type=Path, default=None, help=ROOT_HELP)
-    parser.add_argument("--limit", type=int, default=20, help="Max nodes per section")
-    parser.add_argument(
-        "--no-refresh", dest="no_refresh", action="store_true", default=False,
-        help="Skip auto-refresh on stale graph.",
-    )
-    parser.add_argument(
-        "--full-size", dest="full_size", action="store_true", default=False,
-        help="Skip the read byte budget and emit the full (edge-de-"
-        "dangled) brief.",
-    )
-    args = parser.parse_args(argv)
-    args.root = resolve_weld_root(args.root)  # ADR 0096
-
-    from weld._auto_refresh import auto_refresh_if_stale
-    from weld._graph_cli import _build_retry_hint, ensure_graph_exists
-    from weld._graph_cli_errors import load_graph_or_exit
-    from weld.graph import Graph
-
-    # Friendly first-run message when the graph has not been built.
-    ensure_graph_exists(
-        args.root, _build_retry_hint("brief", args.term), no_refresh=args.no_refresh,
-    )
-    # ADR 0051: auto-refresh stale graphs. ``brief`` always emits JSON,
-    # so the human banner is unconditionally suppressed.
-    auto_refresh_if_stale(args.root, no_refresh=args.no_refresh, json_output=True)
-    # A corrupt/unsupported graph yields a one-line structured error, not a
-    # traceback (shared contract via weld._errors).
-    g = load_graph_or_exit(Graph(args.root))
-    from weld.read import shape_brief
-
-    result = shape_brief(brief(g, args.term, limit=args.limit), full_size=args.full_size)
-    sys.stdout.write(dumps_safe_json(result, indent=2) + "\n")
+# ``wd brief`` CLI wiring (argparse + federation-aware graph loader) lives in
+# :mod:`weld._brief_cli`; re-exported here so ``from weld.brief import main``
+# and the ``weld.cli`` dispatch stay unchanged after the split (400-line cap).
+from weld._brief_cli import _load_brief_graph, main  # noqa: E402,F401

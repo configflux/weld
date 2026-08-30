@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
+from weld._graph_closure_deferred import deferred_edge_props, deferred_names_for
 from weld._graph_closure_package_origin import origin_for_synthesised_package
 from weld._node_ids import package_id as _canonical_package_id
 
@@ -142,10 +143,9 @@ def _link_imports(
 ) -> None:
     for node_id, node in list(nodes.items()):
         props = node.get("props") or {}
-        imports = props.get("imports_from")
-        if not isinstance(imports, list) or not imports:
+        if not isinstance(imports := props.get("imports_from"), list) or not imports:
             continue
-        rel_path = _node_file(node)
+        deferred_names, rel_path = deferred_names_for(props), _node_file(node)
         source_id = (
             node_id if node.get("type") == "file" else
             _ensure_file_anchor(nodes, path_index, rel_path, node) if rel_path else node_id
@@ -171,7 +171,7 @@ def _link_imports(
                 "normalized_import": normalized,
                 "language": language,
                 "resolution": resolution,
-            })
+            } | deferred_edge_props(raw, deferred_names))
 
 
 def _resolve_import(

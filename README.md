@@ -13,8 +13,8 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.23.1 -->
-> **Evaluators: start with v0.23.1.** v0.23.1 is the current
+<!-- evaluator-note: latest=v0.24.0 -->
+> **Evaluators: start with v0.24.0.** v0.24.0 is the current
 > recommended starting point. Headline features added since v0.14.0:
 > a 14-tool MCP server for graph-backed agent context
 > (`weld_query`, `weld_find`, `weld_context`, `weld_path`,
@@ -735,6 +735,23 @@ Run `wd init` to generate a starter config, or write one by hand. See
 the [Strategy Cookbook](weld/docs/strategy-cookbook.md) for the full list
 of bundled strategies.
 
+When a new weld release adds strategies for a language your repo uses, an
+existing `discover.yaml` keeps discovering with the old config — `wd doctor`
+and `wd prime` flag the drift (a language present on disk that no wired
+strategy claims). Two ways to close the gap:
+
+- `wd init --refresh` — **non-destructive**: merges source entries for the
+  newly-detected languages into your existing `discover.yaml`, appended under a
+  marked `refresh` section. Your hand edits — custom globs, extra strategies,
+  exclusions, and comments — are preserved exactly, and the `# generated-by:
+  weld <version>` stamp is bumped so the config reads as current. A config that
+  already claims every on-disk language is a no-op (it just refreshes the
+  stamp). Refresh edits an existing config; run plain `wd init` first if none
+  exists.
+- `wd init --force` — **destructive**: regenerates the whole config from a
+  fresh scan, discarding any hand edits. Use it when you want a clean starter
+  config back, not a merge.
+
 ### `.weld/.gitignore`
 
 `wd init` and `wd workspace bootstrap` write a managed `.weld/.gitignore`
@@ -957,6 +974,14 @@ Worth knowing:
   repository that already has a graph. A plain clone has no sibling to seed
   from and keeps the normal first-run guidance — run `wd discover`, or use
   [`wd warm`](#warm-graphs-from-ci-wd-warm) to start warm from CI.
+- **Track the config, or no worktree can seed.** Git only puts
+  `.weld/discover.yaml` in a new checkout when the repository tracks it, so a
+  project that ignores all of `.weld/` — including `wd init --ignore-all` —
+  has turned seeding off for every worktree it will ever have. The default
+  `.weld/.gitignore` tracks the config precisely to avoid that. If you ignore
+  it anyway, `wd doctor` says so from the main checkout, and the first read in
+  such a worktree names the missing file rather than only reporting that no
+  graph was found. `git add -f .weld/discover.yaml` re-enables seeding.
 - **What lands.** The graph plus its small state files; the optional SQLite
   index is not copied and rebuilds lazily. Deleting the worktree directory
   deletes everything weld put in it.
@@ -965,7 +990,11 @@ Worth knowing:
   `references`, `communities`, and equally `wd stale`, `wd find`, `wd stats`,
   `wd list`, `wd dump`. Checking freshness first is the natural way to start
   in a new worktree, so `wd stale` seeds and then reports the graph it just
-  seeded rather than answering `no graph`. Commands that *create* state —
+  seeded rather than answering `no graph`. Where no seed is possible it keeps
+  answering — a freshness probe that refused would be useless — and names the
+  prerequisite (the tracked-config caveat above) in a `seed_blocked_reason`
+  beside its `reason`, rather than leaving `no graph` to imply that
+  `wd discover` is the fix. Commands that *create* state —
   `wd discover`, `wd init`, `wd warm` — stay deliberate and seed nothing.
 - **Frozen when you freeze it.** `WELD_AUTO_REFRESH=0` and `--no-refresh`
   each disable seeding along with auto-refresh, and they behave
@@ -1030,7 +1059,7 @@ in a single pass. This section walks the full lifecycle:
 | Onboard | `wd workspace bootstrap` | Init the root, scan and init every nested child, discover each child, build the root meta-graph |
 | Inspect | `wd workspace status` | Show every child's lifecycle state (present / missing / uninitialized / corrupt), the derived `stale` view when a present child has drifted past its graph, and git ref |
 | Query | `wd query <term>` | Search the federated graph from the root; surfaces `repo:<name>` nodes and child-namespaced symbols |
-| Read | `wd context` / `path` / `callers` / `references` / `find` / `communities` / `trace` / `impact` | Every read tool federates across children (the `wd` CLI and matching MCP tools alike); `trace`/`impact` reach child dependents via a read-time flatten, and `impact --from-diff`/`--working-tree` discover seeds from every present child's git repo |
+| Read | `wd brief` / `context` / `path` / `callers` / `references` / `find` / `communities` / `trace` / `impact` | Every read tool federates across children (the `wd` CLI and matching MCP tools alike); `wd brief` spans child graphs from the root just like `wd query`; `trace`/`impact` reach child dependents via a read-time flatten, and `impact --from-diff`/`--working-tree` discover seeds from every present child's git repo |
 | Refresh | `wd discover --recurse` (or per-child `wd discover`) | Rebuild child graphs and the root meta-graph; you choose the cadence |
 
 ### Onboarding a workspace (one-shot bootstrap)
@@ -1144,8 +1173,10 @@ cross_repo_strategies: [service_graph]
   category metadata; optional `remote` records a clone URL.
 - **cross_repo_strategies**: Ordered list of resolvers that produce
   cross-repo edges in the root graph. Available resolvers include
-  `service_graph`, `grpc_service_binding`, `compose_topology`, and
-  `channel_binding`.
+  `service_graph`, `grpc_service_binding`, `compose_topology`,
+  `channel_binding`, `package_graph` (manifest package-dependency to
+  producing repo), and `package_import_resolver` (import evidence to a
+  sibling package node).
 
 ### Running discovery at the workspace root
 
@@ -1203,7 +1234,7 @@ When cross-repo resolvers are declared, the same query surface also reaches
 the resolved endpoints in the target child (for example
 `services-auth::route:POST:/tokens`), letting one lookup follow a call from
 the caller's repo into the callee's. Every read tool operates on this same
-federated graph -- `query`, `context`, and `path` plus `callers`,
+federated graph -- `brief`, `query`, `context`, and `path` plus `callers`,
 `references`, `communities`, `find`, `trace`, and `impact` -- on both the `wd`
 CLI and the matching MCP tools, so a federated read reaches child nodes
 identically on either surface. `trace` and `impact` flatten the workspace
@@ -1302,9 +1333,17 @@ drifted children for you. Two surfaces report drift on demand:
 # stale
   stale: yes
   ...
-  children: 3 (1 stale)
+  children: 3 registered, 3 present, 1 stale
     services-api: stale (source_changed, 1 behind)
 ```
+
+  The summary counts registered children against how many are actually
+  **present** on disk, so a registry that lists children none of which are
+  checked out reports `3 registered, 0 present, 0 stale (missing=3)` rather
+  than a bare `0 stale` that would read as "all healthy". Absent and
+  unreadable children are broken out by lifecycle state (`missing`,
+  `uninitialized`, `corrupt`), reusing the same vocabulary as
+  `wd workspace status`.
 
 **Auto-recurse on root reads.** A root read command (`wd query`, `wd context`,
 `wd path`) auto-refreshes drift before serving: it discovers only the
@@ -1384,6 +1423,10 @@ repo boundaries. They are declared in the `cross_repo_strategies` list in
 |---|---|
 | `service_graph` | Matches HTTP client call sites in one repo to API endpoint definitions in another. Emits `cross_repo:calls` edges carrying the matched host, port, path, and method. |
 | `channel_binding` | Matches event-channel producers in one repo to consumers in another that reference the same `channel:<transport>:<topic>` node. Emits `cross_repo:channel_flow` edges (producer -> consumer) carrying the matched channel, transport, and topic. |
+| `package_graph` | Matches a *manifest-declared* package dependency in one repo -- a C# `<PackageReference>`, a Python `pyproject.toml` `[project].dependencies` entry, or a `go.mod` `require` -- to the sibling repo that *produces* that package (by its `pyproject.toml` name, `go.mod` module, or a `.proto` package name). Emits `cross_repo:depends_on` edges from the consuming `repo:<name>` node to the producing `repo:<name>` node, so `wd impact "repo:<producer>"` sees its consumers. This is the schema-library polyrepo shape that URL-host (`service_graph`) and topic (`channel_binding`) matching miss. Name matching is case-insensitive; no version is checked, so edges carry `confidence: inferred`. |
+| `grpc_service_binding` | Matches gRPC service definitions (`rpc:grpc:*` nodes from the `grpc_proto` strategy) in one repo to gRPC client stubs and their call-site `invokes` edges (from the `grpc_bindings` strategy) in other repos. Emits `cross_repo:grpc_calls` edges from the client stub to the service definition. |
+| `compose_topology` | Reads `docker-compose.yml` / `compose.yaml` / `compose.yml` at the workspace root and emits `depends_on` edges between services whose images or service names map to registered child repos. |
+| `package_import_resolver` | Matches *import evidence* -- consumer nodes carrying an `imports_from` list -- against package producer nodes (`type: package`) declared in sibling repos, and emits `depends_on` edges from the importing consumer to the producing package. Complements `package_graph`, which matches manifest declarations rather than imports. |
 
 Resolvers are read-only with respect to child graphs -- they never modify
 a child's `.weld/graph.json`. Output edges are deterministic: identical
@@ -1478,7 +1521,7 @@ rm .weld/workspace-state.json
 | `wd callers <symbol>` | Direct/transitive callers (`--json` is byte-bounded, drops reported in `size_capped`; `--full-size` returns every caller) |
 | `wd references <name-or-node-id>` | What points at a thing, plus file-index hits. Takes a bare symbol name or a full node id. A symbol reports its callers; any other node type (build target, tool, doc) reports every node with an edge into it, since nothing *calls* those. An id weld does not know reports an `error` **and exits non-zero**, matching `wd callers` and `wd context`, so "unknown" and "nothing points at it" stay distinguishable — "no references" is what a reader sees before deleting a symbol as dead, and a typo or a moved symbol must not render as "nothing uses this" (`--json` is byte-bounded, dropping file hits before resolved callers and resolved `matches` last; `--full-size` returns everything) |
 | `wd viz` | Local read-only browser graph explorer (sidebar toggles: **Hide standard library**, **Hide third-party dependencies** — see [Filtering noise in `wd viz`](#filtering-noise-in-wd-viz)) |
-| `wd stale` | Check graph freshness; reports `branch` (live) beside `graph_branch` (what was checked out at discovery), and `coverage_stale` when a file discovery would resolve today is missing from the discovery inventory (or the inventory can no longer vouch for the graph on disk) — the one signal that fires without HEAD having moved, so an empty result can be told apart from a genuine absence. Where there is no freshness answer to give, `reason` says which case it is: `no graph` (nothing discovered here yet — run `wd discover`) or `not a git repo`. Without it a missing graph reports the same `sha_behind: no` / `commits_behind: -1` as a graph that merely has no recorded basis. When `source_stale` is true, `stale_sources` names which path(s) tripped it and why — `changed since last discovery`, `content differs`, `ingested file vanished`, or `in-scope file never ingested` — capped at 50 entries with `stale_sources_omitted` reporting how many more there were; some stale states (no recorded SHA, unreachable history) have no file-level cause to name and leave it empty |
+| `wd stale` | Check graph freshness; reports `branch` (live) beside `graph_branch` (what was checked out at discovery), and `coverage_stale` when a file discovery would resolve today is missing from the discovery inventory (or the inventory can no longer vouch for the graph on disk) — the one signal that fires without HEAD having moved, so an empty result can be told apart from a genuine absence. Where there is no freshness answer to give, `reason` says which case it is: `no graph` (nothing discovered here yet — run `wd discover`) or `not a git repo`. In the one case where `wd discover` is *not* the remedy — a linked worktree of a repository that does not track `.weld/discover.yaml`, which therefore can never seed a graph from a sibling checkout — an optional `seed_blocked_reason` names that prerequisite and the `git add -f` that fixes it repository-wide. Without it a missing graph reports the same `sha_behind: no` / `commits_behind: -1` as a graph that merely has no recorded basis. When `source_stale` is true, `stale_sources` names which path(s) tripped it and why — `changed since last discovery`, `content differs`, `ingested file vanished`, or `in-scope file never ingested` — capped at 50 entries with `stale_sources_omitted` reporting how many more there were; some stale states (no recorded SHA, unreachable history) have no file-level cause to name and leave it empty |
 | `wd stale --check` | Same report, but exit 1 when the graph is stale. The freshness gate for a repo that commits its graph: `wd stale --check --no-refresh` in CI fails a commit whose tracked graph is behind its source |
 | `wd <read-cmd> --root <dir>` | Answer from an explicit root. Omitted, the root is resolved from the current directory and bounded by the git worktree you are in — never another checkout ([Worktrees and multiple checkouts](#worktrees-and-multiple-checkouts)) |
 | `wd <read-cmd> --no-refresh` | Skip the auto-refresh that runs when the graph is stale; a warning is emitted to stderr. Also skips the first-read seeding of a new worktree, so the command neither builds nor bootstraps a graph. `WELD_AUTO_REFRESH=0` is the same opt-out applied globally for CI / batch runs. |
@@ -1511,13 +1554,38 @@ wd doctor --unack optional-copilot-cli-missing # restore
 wd doctor --list-acks                          # list current dismissals
 ```
 
-The valid note ids are `mcp-config-missing`, `optional-mcp-missing`,
-`optional-anthropic-missing`, `optional-openai-missing`,
-`optional-ollama-missing`, and `optional-copilot-cli-missing`. The
-`copilot-cli` probe walks `WELD_COPILOT_BINARY` and `PATH` for the
-standalone GitHub Copilot CLI binary, so its install hint points at
+The valid note ids are `agent-graph-missing`, `mcp-config-missing`,
+`optional-mcp-missing`, `optional-anthropic-missing`,
+`optional-openai-missing`, `optional-ollama-missing`,
+`optional-copilot-cli-missing`,
+`worktree-seeding-config-ignored` (the repository's ignore rules keep
+`.weld/discover.yaml` out of git, so no linked worktree can
+[seed a graph](#a-new-worktree-answers-on-the-first-read)), and one
+`unclaimed-source-<language>` per language flagged by the stale-config
+check below. The `copilot-cli` probe walks `WELD_COPILOT_BINARY` and
+`PATH` for the standalone GitHub Copilot CLI binary, so its install hint
+points at
 [github.com/en/copilot](https://docs.github.com/en/copilot/how-tos/use-copilot-cli)
 rather than a `pip install` line.
+
+**Stale-config detection.** `.weld/discover.yaml` is generated once by
+`wd init` and never revisited, so a checkout initialised before a
+strategy shipped keeps discovering with the old config — a repo can have
+100% of a language's source invisible to the graph while everything else
+reports healthy. `wd doctor` and `wd prime` guard against this: each runs
+the `wd init` detection pass read-only and, for any language present on
+disk that no wired strategy claims, emits a warning such as
+
+```
+[warn] 8 C# files present but no wired strategy claims 'csharp' -> run: wd init --force
+```
+
+The check is language-granular (a repo that merely lacks an optional
+framework extractor but does wire the language stays quiet), never raises
+the exit code, and is suppressible per language via `wd doctor --ack
+unclaimed-source-<language>`. `wd init` also stamps the generating weld
+version into each `discover.yaml` (`# generated-by: weld <version>`) so
+config drift is visible against `wd --version`.
 
 The `mcp SDK` probe checks the version, not just the import: the MCP
 stdio server requires `mcp>=2`, so an older SDK is reported as a `[warn]`
@@ -1720,7 +1788,7 @@ the CLI.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.23.1`.
+terminal snippets captured against `wd 0.24.0`.
 
 ## Install
 

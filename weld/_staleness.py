@@ -42,6 +42,16 @@ from weld._staleness_worktree import (
 #: (:mod:`weld._envelope_diet`) rather than inventing a fresh number.
 MAX_STALE_SOURCES: int = 50
 
+#: The top-level ``reason`` a root that holds no graph at all answers with
+#: (bd 0nqy). Named because a second consumer arrived: the ADR 0100 amendment
+#: (bd kgx83) hangs ``seed_blocked_reason`` off exactly this state in
+#: :mod:`weld._stale_payload`, and a literal copied there would let the two
+#: drift on spelling with nothing to catch it. Distinct from the
+#: ``stale_sources`` vocabulary in :mod:`weld._stale_reasons`, which answers
+#: "which file diverged, and why" -- this one answers "why is there no
+#: freshness verdict to give at all".
+NO_GRAPH_REASON = "no graph"
+
 
 def _cap_stale_sources(entries: list[dict]) -> tuple[list[dict], int]:
     """Sort *entries* by path and cap at :data:`MAX_STALE_SOURCES`.
@@ -173,7 +183,7 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
         return {
             "stale": True, "source_stale": True, "sha_behind": False,
             "graph_sha": None, "current_sha": cur, "commits_behind": -1,
-            "coverage_stale": False, "reason": "no graph",
+            "coverage_stale": False, "reason": NO_GRAPH_REASON,
             "stale_sources": [], "stale_sources_omitted": 0,
         }
     if gsha is None:

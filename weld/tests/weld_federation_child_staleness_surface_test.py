@@ -170,6 +170,42 @@ class RootStaleAggregationTest(unittest.TestCase):
             self.assertIn("children:", text)
             self.assertIn("svc-stale: stale", text)
 
+    def test_stale_text_distinguishes_absent_children_from_fresh(self) -> None:
+        # bd 51oxx (field-eval finding 02, ADR 0134 one level up): in a fresh
+        # worktree of a federation root where ZERO children are checked out on
+        # disk, ``wd stale`` used to print ``children: 4 (0 stale)`` -- read by
+        # an agent as "all healthy" when in fact none exist to be stale. The
+        # summary must now report how many are actually present and break the
+        # absent ones out by lifecycle state.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            _seed_root(
+                root,
+                [
+                    ChildEntry(name="svc-a", path="svc-a"),
+                    ChildEntry(name="svc-b", path="svc-b"),
+                    ChildEntry(name="svc-c", path="svc-c"),
+                    ChildEntry(name="svc-d", path="svc-d"),
+                ],
+            )
+
+            text = _run_cli("--root", str(root), "stale")
+            self.assertIn("4 registered", text)
+            self.assertIn("0 present", text)
+            self.assertIn("missing=4", text)
+            # The old bare "(0 stale)" form must be gone.
+            self.assertNotIn("children: 4 (0 stale)", text)
+
+            # JSON payload is unchanged in shape: one entry per registered
+            # child, each carrying its lifecycle state (MCP parity relies on
+            # this staying identical to the CLI's --json).
+            payload = json.loads(_run_cli("--root", str(root), "stale", "--json"))
+            states = {c["name"]: c["state"] for c in payload["children"]}
+            self.assertEqual(
+                states,
+                {n: "missing" for n in ("svc-a", "svc-b", "svc-c", "svc-d")},
+            )
+
     def test_stale_quiet_when_all_children_fresh(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "root"

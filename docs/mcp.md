@@ -381,7 +381,13 @@ Shapes are tool-specific and follow the same envelopes the CLI emits:
   root and `graph_branch` the one checked out when the graph was discovered;
   when they differ, the answer came from a graph built on another checkout.
   Both are `null` on a detached HEAD, a non-git root, or a graph with no
-  recorded branch. In a polyrepo workspace the payload adds `children` -- a
+  recorded branch. One optional key, `seed_blocked_reason`, appears only
+  alongside `reason: no graph` in a linked worktree of a repository that does
+  not track `.weld/discover.yaml`: seeding can never fire there, so `wd
+  discover` is not the remedy and the string names the repository-wide
+  `git add -f` that is. It is absent everywhere else -- including a plain
+  clone, the main checkout, and a polyrepo root -- so no other payload
+  changes. In a polyrepo workspace the payload adds `children` -- a
   name-sorted list of `{name, state, reason, commits_behind}` covering every
   registered child -- plus `root_source_stale` and `root_sha_behind`, which
   carry the root's own two signals unmixed. Top-level `stale` is
@@ -509,6 +515,19 @@ the same shape of promise: its message is a constant that never repeats the
 path that was asked for, and it reads identically whether the path was in
 another repository, was a file, or did not exist -- so a refused call
 answers nothing about the server's filesystem.
+
+`graph_missing` always leads its `error` with `No Weld graph found.`, and
+when the answering checkout is one that can *never* build a graph on its
+own, a second line names why. The case that has one is a linked git
+worktree of a repository that gitignores `.weld/discover.yaml`: seeding
+reads the worktree's own config, and git only puts that file in a new
+checkout when the repository tracks it, so every worktree of such a
+repository arrives unable to seed and no retry changes that. The remedy
+(`git add -f .weld/discover.yaml`) is a repository-wide decision, which is
+why the payload names it rather than leaving an agent to infer it -- the
+same line `wd` prints, so both surfaces say the same thing. `error_code`,
+`hint`, and `retry` are unchanged in every case; only `error` gains the
+line, and its text is a fixed constant that never echoes the path.
 
 ## Trust model
 

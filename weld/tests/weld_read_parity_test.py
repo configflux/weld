@@ -249,6 +249,13 @@ class CliMcpReadParityTest(unittest.TestCase):
             "branch", "graph_branch", "stale_sources", "stale_sources_omitted",
         ):
             self.assertIn(key, mcp_env)
+        # The ADR 0100 amendment's restraint half (bd kgx83): the same shaper
+        # can now add ``seed_blocked_reason``, and it must not here. This root
+        # has a graph, so no seeding question arises -- the whole ADR 0100
+        # shape it pins is unchanged for every payload but the one graphless
+        # unseedable worktree (weld_stale_no_graph_cause_test).
+        self.assertNotIn("seed_blocked_reason", cli_env)
+        self.assertNotIn("seed_blocked_reason", mcp_env)
 
 
 class PerRequestRootParityTest(unittest.TestCase):

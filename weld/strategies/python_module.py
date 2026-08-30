@@ -50,12 +50,67 @@ def _looks_like_sibling_module(name: str) -> bool:
     return all(ch.islower() or ch.isdigit() or ch == "_" for ch in candidate)
 
 
-def _extract_imports(tree: ast.Module) -> list[str]:
-    """Extract coarse-grained package references from imports.
+def _top_level_import_node_ids(tree: ast.Module) -> set[int]:
+    """``id()`` of every Import/ImportFrom node reachable without entering a
+    function, async function, or class body.
 
-    Returns deduplicated top-level-ish package strings like
-    ``myapp.worker.acquisition`` from
-    ``from myapp.worker.acquisition.models import Foo``.
+    uuxaz.6-repair: a function-scoped import is this repo's own sanctioned
+    cycle-breaking idiom (ADR 0130; see ``doctor.py``/``_doctor_staleness.py``,
+    ``ros2_topology.py``/``_ros2_py.py``). ``ast.walk`` does not distinguish
+    that from a top-level import, so both produced identical ``depends_on``
+    edge evidence -- the idiom that breaks a *runtime* cycle was exactly
+    what made the *graph* see one. Recurses through control-flow nodes
+    (``if TYPE_CHECKING:`` must still count as top-level) but stops at any
+    node introducing a new callable/class scope.
+    """
+    top_level: set[int] = set()
+
+    def _walk_top_level(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                top_level.add(id(child))
+                continue
+            if isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+            ):
+                continue  # new scope -- imports inside are lazy, not counted
+            _walk_top_level(child)
+
+    _walk_top_level(tree)
+    return top_level
+
+
+def _referenced_names(tree: ast.Module) -> set[str]:
+    """Local names that are *loaded* (referenced) somewhere in the module.
+
+    uuxaz.6 (Finding 04 secondary): the event-handler pattern imports a
+    contract and passes it *by value* -- ``subscriber.subscribe(OrderPlacedEvent)``,
+    ``handler: SomeEvent = ...`` -- never calling it. ``python_callgraph``
+    deliberately does not record cross-module references (ADR 0127), so such
+    a name produced no dependency evidence at all. We treat "the imported
+    name is loaded in the body" as the noise gate: an import that is actually
+    referenced is signal worth a qualified ``module.Name`` edge; an import
+    that is never used stays a parent-package-only entry.
+
+    A ``Name`` is counted only in ``Load`` context (a use, not a binding
+    target), and the root of an attribute chain (``Event.field`` counts
+    ``Event``). Import aliases themselves are excluded by the caller, which
+    keys on the *bound* local name.
+    """
+    referenced: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            referenced.add(node.id)
+    return referenced
+
+
+def _extract_imports(tree: ast.Module) -> tuple[list[str], list[str]]:
+    """Extract full-path package references from imports.
+
+    Returns deduplicated dotted module strings like
+    ``myapp.worker.acquisition.models`` from
+    ``from myapp.worker.acquisition.models import Foo`` -- the *full*
+    dotted path, not a coarse prefix.
 
     Walks the *entire* AST (not just ``tree.body``) so function-local
     and method-local lazy imports surface alongside top-level ones.
@@ -63,47 +118,104 @@ def _extract_imports(tree: ast.Module) -> list[str]:
     ``from weld.strategies import _ros2_py as _py`` to break a cycle
     -- previously left the imported module with zero inbound
     ``depends_on`` edges (the j5rj symptom that motivated ADR 0041's
-    file-anchor-symmetry rule). Walking ``ast.walk`` captures these
-    while preserving the existing 3-dot truncation contract -- the
-    coarse package form is what ``graph_closure._link_imports``
-    expects on ``props.imports_from``.
+    file-anchor-symmetry rule). Walking ``ast.walk`` captures these;
+    the emitted dotted path is what ``graph_closure._link_imports``
+    consumes off ``props.imports_from`` to mint ``package:python:*``
+    nodes and ``depends_on`` edges.
+
+    Finding 04 (uuxaz.5): the module path is kept at *full* depth. The
+    prior ``parts[:3]`` truncation collapsed reverse-DNS namespaces --
+    ``acme.platform.order.schema.v1`` and ``.v2`` (distinct protobuf
+    contract versions) both became ``acme.platform.order``, merging two
+    dependencies into one node. The C# path already keeps the full
+    namespace, so the same dependency was separated in C# and collapsed
+    in Python. Keeping the full path restores parity; any coarse display
+    grouping can be derived from the full id at read time.
 
     For ``from pkg.mod import name`` statements, the parent package
-    (``pkg.mod``) is always emitted, and the qualified
-    ``pkg.mod.name`` form is *also* emitted when ``name`` matches the
-    private-sibling-module convention (leading ``_``, all-lowercase
-    body) -- the ``_ros2_py`` / ``_ros2_cpp`` shape. The qualified
-    form lets ``_link_imports`` land an edge directly on the sibling
-    module's file node, which is exactly what j5rj needs to satisfy
-    the file-anchor-symmetry rule. Public symbol imports
-    (``from x import some_helper``, ``from x import SomeClass``) keep
-    the pre-change behaviour and only emit the parent package, so the
-    graph does not gain spurious ``package:python:x.some_helper``
-    nodes for every function/class import.
+    (``pkg.mod``, full depth) is always emitted, and the qualified
+    ``pkg.mod.name`` form is *also* emitted when either:
+
+    - ``name`` matches the private-sibling-module convention (leading
+      ``_``, all-lowercase body) -- the ``_ros2_py`` / ``_ros2_cpp``
+      shape. The qualified form lets ``_link_imports`` land an edge
+      directly on the sibling module's file node, which is what j5rj
+      needs to satisfy the file-anchor-symmetry rule; or
+
+    - uuxaz.6 (Finding 04 secondary): the imported name is actually
+      *referenced* in the module body. The event-handler pattern imports
+      a contract and passes it by value -- ``subscriber.subscribe(
+      OrderPlacedEvent)``, ``handler: SomeEvent = ...`` -- never calling
+      it. ``python_callgraph`` deliberately excludes cross-module
+      references (ADR 0127), so such a name otherwise produced no
+      symbol/dependency evidence: "which services depend on this
+      contract" under-reported the Python consumer while C# reported it.
+      Emitting the qualified ``pkg.mod.OrderPlacedEvent`` form lets
+      ``_link_imports`` mint a ``package:python:...OrderPlacedEvent``
+      node and a ``depends_on`` edge.
+
+    Noise control keys on the *bound* local name: a name that is imported
+    but never referenced (a dead import, or ``from x import SomeClass``
+    where ``SomeClass`` is unused) keeps the pre-change behaviour and only
+    emits the parent package, so the graph does not gain a spurious
+    ``package:python:x.SomeClass`` node for every function/class import.
+    ``import *`` binds nothing and is skipped.
+
+    Returns ``(packages, deferred_only)``: *packages* is the full sorted,
+    deduplicated list described above; *deferred_only* (uuxaz.6-repair) is
+    the subset of *packages* whose every contributing site is inside a
+    function/method/class body (see :func:`_top_level_import_node_ids`) --
+    ``graph_closure``/``arch_lint_cycles`` use it to exclude the sanctioned
+    lazy-import cycle-breaking idiom from structural-dependency evidence.
     """
     packages: set[str] = set()
+    lazy_sites: dict[str, int] = {}
+    total_sites: dict[str, int] = {}
+    referenced = _referenced_names(tree)
+    top_level_ids = _top_level_import_node_ids(tree)
+
+    def _record(name: str, node_id: int) -> None:
+        total_sites[name] = total_sites.get(name, 0) + 1
+        if node_id not in top_level_ids:
+            lazy_sites[name] = lazy_sites.get(name, 0) + 1
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                # Keep first 3 dotted parts as coarse ref
-                parts = alias.name.split(".")
-                packages.add(".".join(parts[:3]))
+                # Full dotted path -- no truncation (Finding 04).
+                packages.add(alias.name)
+                _record(alias.name, id(node))
         elif isinstance(node, ast.ImportFrom) and node.module:
-            parts = node.module.split(".")
-            packages.add(".".join(parts[:3]))
-            # Emit qualified ``module.name`` forms only when ``name``
-            # looks like a module (heuristic: lower-snake-case with
-            # optional leading underscore). This lets the sibling-
-            # module shape (``from weld.strategies import _ros2_py``)
-            # land an edge on the file node directly while keeping
-            # the common ``from x import SomeClass`` case from
-            # creating a spurious ``package:python:x.SomeClass`` node.
+            packages.add(node.module)
+            _record(node.module, id(node))
+            # Emit the qualified ``module.name`` form when either:
+            #   (a) ``name`` looks like a private sibling module
+            #       (``from weld.strategies import _ros2_py``) -- this lands
+            #       an edge on the sibling file node directly, satisfying
+            #       ADR 0041's file-anchor-symmetry rule (j5rj), OR
+            #   (b) uuxaz.6: the imported name is actually *referenced* in
+            #       the module body -- the event-handler pattern
+            #       (``subscriber.subscribe(OrderPlacedEvent)``) imports a
+            #       contract and passes it by value, never calling it, so it
+            #       otherwise left no symbol/dependency evidence. Keying on
+            #       the *bound* local name (``alias.asname or alias.name``)
+            #       is the noise gate: an imported-but-unreferenced name
+            #       stays a parent-package-only entry, so the graph does not
+            #       gain a ``package:python:x.Foo`` node for every unused
+            #       ``from x import Foo``. ``import *`` (``name == "*"``)
+            #       binds nothing and is skipped.
             for alias in node.names:
-                if not _looks_like_sibling_module(alias.name):
+                if alias.name == "*":
                     continue
-                qualified = f"{node.module}.{alias.name}".split(".")
-                packages.add(".".join(qualified[:3]))
-    return sorted(packages)
+                bound = alias.asname or alias.name
+                if _looks_like_sibling_module(alias.name) or bound in referenced:
+                    qualified = f"{node.module}.{alias.name}"
+                    packages.add(qualified)
+                    _record(qualified, id(node))
+    deferred_only = {
+        name for name, count in lazy_sites.items() if count == total_sites.get(name, 0)
+    }
+    return sorted(packages), sorted(deferred_only)
 
 def _make_node_id(rel_path: str, id_prefix: str) -> str:
     """Build the canonical file-anchor ID for a Python module.
@@ -216,7 +328,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         nid = _make_node_id(rel_path, id_prefix)
         newlines = source_text.count("\n")
         line_count = newlines + (1 if source_text and not source_text.endswith("\n") else 0)
-        imports_from = _extract_imports(tree)
+        imports_from, deferred_imports = _extract_imports(tree)
         # Module-level constants (UPPER_CASE / _UPPER_CASE). These are
         # the residual "what does this module own" surface that
         # ``exports`` (classes + public functions) does not cover. They
@@ -243,27 +355,31 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         # string (a single-segment module at the repo root).
         legacy_nid = _legacy_stem_file_id(rel_path)
         aliases = [legacy_nid] if legacy_nid != nid else []
-        nodes[nid] = {
-            "type": "file",
-            "label": py.stem,
-            "props": {
-                "file": rel_path,
-                "exports": exports,
-                "constants": constants,
-                "summary": summary,
-                "imports_from": imports_from,
-                "line_count": line_count,
-                "source_strategy": "python_module",
-                "authority": "derived",
-                "confidence": "definite",
-                "roles": ["implementation"],
-                "aliases": aliases,
-                # ADR 0042: project files are always project-origin --
-                # the strategy only walks files inside the discovered
-                # glob, which by construction is the project tree.
-                "origin": "project",
-            },
+        props = {
+            "file": rel_path,
+            "exports": exports,
+            "constants": constants,
+            "summary": summary,
+            "imports_from": imports_from,
+            "line_count": line_count,
+            "source_strategy": "python_module",
+            "authority": "derived",
+            "confidence": "definite",
+            "roles": ["implementation"],
+            "aliases": aliases,
+            # ADR 0042: project files are always project-origin -- the
+            # strategy only walks files inside the discovered glob, which
+            # by construction is the project tree.
+            "origin": "project",
         }
+        if deferred_imports:
+            # uuxaz.6-repair: sparse marker (only set when non-empty) so
+            # every pre-existing golden fixture stays byte-identical.
+            # Subset of imports_from that is lazy-only (ADR 0130 idiom);
+            # graph_closure marks the resulting depends_on edge
+            # ``deferred`` so arch_lint_cycles excludes it as evidence.
+            props["deferred_imports"] = deferred_imports
+        nodes[nid] = {"type": "file", "label": py.stem, "props": props}
         if package_id:
             edges.append(
                 {

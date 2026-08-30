@@ -260,8 +260,8 @@ def weld_review_guarded(**kwargs) -> dict:
         graph_present as _graph_present,
         missing_graph_payload as _missing_graph_payload,
     )
-    if not _graph_present(Path(kwargs.get("root", "."))):
-        return _missing_graph_payload("weld_review")
+    if not _graph_present(Path(root := kwargs.get("root", "."))):
+        return _missing_graph_payload("weld_review", root=root)
     return weld_review(**kwargs)
 
 

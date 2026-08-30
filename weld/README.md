@@ -247,6 +247,12 @@ reconciles it to your branch, and prints a one-line notice. `wd stale` reports
 the live `branch` beside the `graph_branch` the graph was built on.
 `WELD_AUTO_REFRESH=0` disables the seeding along with auto-refresh.
 
+Seeding reads the worktree's own `.weld/discover.yaml`, which git only puts
+there when the repository tracks it -- the default `.weld/.gitignore` does.
+A project that ignores all of `.weld/` disables seeding for every worktree;
+`wd doctor` reports that, and the first read in such a worktree names the
+missing file instead of only reporting that no graph was found.
+
 Details:
 
 https://github.com/configflux/weld/blob/main/README.md#worktrees-and-multiple-checkouts

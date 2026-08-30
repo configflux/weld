@@ -94,7 +94,7 @@ def weld_query(
     restores the raw neighborhood; ``full_size=True`` keeps the diet but skips
     the byte budget. Missing-graph guard applies (single-repo root only)."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_query")
+        return _missing_graph_payload("weld_query", root=root)
     g = _load_graph(Path(root))
     envelope = _read_query(
         g.query(term, limit=limit), include_speculative=include_speculative,
@@ -130,7 +130,7 @@ def weld_context(
     node-not-found miss is returned unchanged. Missing-graph guard applies
     (single-repo root only)."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_context")
+        return _missing_graph_payload("weld_context", root=root)
     g = _load_graph(Path(root))
     envelope = _shape_read_envelope(
         g.context(node_id), full=full_neighborhood, full_size=full_size)
@@ -141,7 +141,7 @@ def weld_path(from_id: str, to_id: str, *, root: Path | str = ".") -> dict:
     :func:`_attach_children_status` for the federated-only extra field.
     Missing-graph guard applies (single-repo root only)."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_path")
+        return _missing_graph_payload("weld_path", root=root)
     g = _load_graph(Path(root))
     return _attach_children_status(g, g.path(from_id, to_id))
 
@@ -157,7 +157,7 @@ def weld_brief(
     :class:`~weld.federation.FederatedGraph`, so the brief spans child repos.
     Missing-graph guard applies (single-repo root only)."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_brief")
+        return _missing_graph_payload("weld_brief", root=root)
     g = _load_graph(Path(root))
     return _shape_brief(_brief(g, area, limit=limit), full_size=full_size)
 
@@ -200,7 +200,7 @@ def weld_callers(
     applies (ADR 0083). Drops are reported in ``size_capped``;
     ``full_size=True`` skips the byte budget."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_callers")
+        return _missing_graph_payload("weld_callers", root=root)
     g = _load_graph(Path(root))
     if isinstance(g, _FederatedGraph):
         callers = _federated_callers(g, symbol_id, depth=depth)
@@ -215,7 +215,7 @@ def weld_export(
     """Export graph to a visualization format. Delegates to ``weld.export``.
     Missing-graph guard applies (single-repo root only)."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_export")
+        return _missing_graph_payload("weld_export", root=root)
     from weld.export import export
     try:
         output = export(format, node_id=node_id, depth=depth, root=root)
@@ -263,7 +263,7 @@ def weld_references(
     the largest and lowest-priority part of the union. Same shaper as
     ``wd references --json`` (ADR 0083); ``full_size=True`` skips the budget."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_references")
+        return _missing_graph_payload("weld_references", root=root)
     g = _load_graph(Path(root))
     if isinstance(g, _FederatedGraph):
         refs = _federated_references(g, symbol_name)
@@ -277,7 +277,7 @@ def weld_diff(*, root: Path | str = ".") -> dict:
     """Return the graph diff between previous and current discovery run.
     Missing-graph guard applies (single-repo root only)."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_diff")
+        return _missing_graph_payload("weld_diff", root=root)
     return _load_and_diff(Path(root))
 
 
@@ -294,7 +294,7 @@ def weld_trace(
     :func:`weld.mcp_helpers.weld_trace`, which applies the ADR 0082 byte
     budget; ``full_size=True`` skips it. Missing-graph guard applies."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_trace")
+        return _missing_graph_payload("weld_trace", root=root)
     return _weld_trace(
         term=term, node_id=node_id, depth=depth, seed_limit=seed_limit,
         full_size=full_size, root=root,
@@ -311,7 +311,7 @@ def weld_impact(
     while ``affected_surfaces`` / ``risk_level`` stay computed over the full
     blast radius; ``full_size=True`` skips it. Missing-graph guard applies."""
     if not _graph_present(Path(root)):
-        return _missing_graph_payload("weld_impact")
+        return _missing_graph_payload("weld_impact", root=root)
     return _weld_impact(target, depth=depth, full_size=full_size, root=root)
 
 
@@ -323,8 +323,8 @@ def weld_enrich(**kwargs) -> dict:
     :func:`weld.mcp_helpers.weld_review_guarded` already uses -- so the
     argument list is declared once, next to the schema that advertises it,
     instead of being restated by every guard it passes through."""
-    if not _graph_present(Path(kwargs.get("root", "."))):
-        return _missing_graph_payload("weld_enrich")
+    if not _graph_present(Path(root := kwargs.get("root", "."))):
+        return _missing_graph_payload("weld_enrich", root=root)
     return _weld_enrich(**kwargs)
 
 

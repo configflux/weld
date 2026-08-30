@@ -73,7 +73,7 @@ from weld._worktree_seed_inventory import synthesize_coverage_inventory
 from weld._worktree_seed_mode_a import copy_seed_worktree
 from weld.workspace_state import atomic_write_text
 
-__all__ = ["SEED_STATE_FILES", "ensure_seeded"]
+__all__ = ["SEED_STATE_FILES", "ensure_seeded", "seed_blocked_reason"]
 
 _WORKSPACES_NAME = "workspaces.yaml"
 _DISCOVER_CONFIG_NAME = "discover.yaml"
@@ -153,6 +153,57 @@ def _copy_seed_worktree(root: Path, graph_path: Path) -> dict | None:
     if not is_linked_worktree(root):
         return None
     return copy_seed_worktree(root, graph_path)
+
+
+#: Why a graphless linked worktree could not be seeded, in the user's own
+#: terms. Hard-wrapped rather than left to the terminal: it is printed
+#: above a guidance block whose other lines are short, and a single long
+#: paragraph reflowed by an 80-column terminal reads as noise between them.
+_NO_CONFIG_REASON = (
+    "This is a linked git worktree with no .weld/discover.yaml, so no graph\n"
+    "could be seeded from a sibling checkout: seeding always reads the\n"
+    "worktree's own config, and git puts that file here only when the\n"
+    "repository tracks it. Track it (git add -f .weld/discover.yaml) to\n"
+    "enable seeding in every worktree of this repository."
+)
+
+
+def seed_blocked_reason(root: Path | str) -> str | None:
+    """Name the gate-5 precondition a graphless checkout is missing.
+
+    The inverse of :func:`_copy_seed_worktree`, and here rather than in the
+    CLI for that reason: the preconditions and the sentence explaining them
+    have to move together, or the message outlives the rule it describes.
+
+    Only one decline is worth explaining. Field eval 0.23.1 finding 09
+    reported a repository that gitignores all of ``.weld/`` -- the shape
+    ``wd init --ignore-all`` writes, and a common hand-rolled choice -- so
+    every linked worktree of it arrives with no config, seeding can never
+    fire, and the user sees the ordinary first-run guidance with nothing in
+    it about the one thing they would have to change. The remedy is a
+    repository-wide policy decision, not something a reader guesses from
+    "No Weld graph found."
+
+    ``None`` -- meaning "say nothing beyond the usual guidance" -- for every
+    other decline, each of which the standing message already serves:
+
+    * config present. Whatever stopped the seed, it was not this; a plain
+      ``wd discover`` is still the answer.
+    * federated root, which gate 3 declined before gate 5 was ever reached
+      (ADR 0096 puts polyrepo worktree reads out of scope), so claiming a
+      config prerequisite here would name a cause that never applied.
+    * not a linked worktree. A clone or the main checkout has no sibling to
+      seed from in the first place, so nothing was withheld from it.
+    """
+    root = Path(root)
+    weld_dir = root / ".weld"
+    if (weld_dir / _DISCOVER_CONFIG_NAME).is_file():
+        return None
+    if (weld_dir / _WORKSPACES_NAME).is_file():
+        return None
+    if not is_linked_worktree(root):
+        return None
+    return _NO_CONFIG_REASON
 
 
 def _bootstrap_mode_b(root: Path, graph_path: Path) -> dict | None:

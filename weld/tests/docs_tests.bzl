@@ -49,7 +49,7 @@ def docs_tests():
         name = _name,
         srcs = [_name + ".py"],
         deps = ["//weld:contract", "//weld:runtime"],
-    ) for _name in ("weld_brief_test", "weld_brief_v2_test", "weld_trace_test", "weld_warnings_test", "weld_brief_or_fallback_test")]
+    ) for _name in ("weld_brief_test", "weld_brief_v2_test", "weld_brief_exact_rank_test", "weld_trace_test", "weld_warnings_test", "weld_brief_or_fallback_test")]
 
     py_test(
         name = "weld_brief_cli_test",

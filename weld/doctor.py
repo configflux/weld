@@ -96,9 +96,19 @@ def _check_discover_yaml(weld_dir: Path) -> list[CheckResult]:
     ]
 
 
-def _check_gitignore_resync(weld_dir: Path) -> list[CheckResult]:
-    from weld._doctor_gitignore import check_gitignore_resync
-    return check_gitignore_resync(weld_dir, CheckResult)
+def _check_gitignore(weld_dir: Path) -> list[CheckResult]:
+    from weld._doctor_gitignore import check_gitignore
+    return check_gitignore(weld_dir, CheckResult)
+
+
+def _check_unclaimed_sources(root: Path) -> list[CheckResult]:
+    """Warn when a language present on disk has no wired strategy (ADR 0135).
+
+    Delegates to :func:`weld._unclaimed_sources.check_unclaimed_sources`; the
+    detection logic lives there so this module stays under the line-count cap.
+    """
+    from weld._unclaimed_sources import check_unclaimed_sources
+    return check_unclaimed_sources(root, CheckResult)
 
 
 def _check_graph_json(weld_dir: Path) -> list[CheckResult]:
@@ -223,7 +233,8 @@ def doctor(root: Path) -> list[CheckResult]:
     results: list[CheckResult] = []
     results.extend(_check_python_version())
     results.extend(_check_discover_yaml(weld_dir))
-    results.extend(_check_gitignore_resync(weld_dir))
+    results.extend(_check_unclaimed_sources(root))
+    results.extend(_check_gitignore(weld_dir))
     results.extend(_check_graph_json(weld_dir))
     results.extend(_check_sqlite_sidecar(weld_dir))
     results.extend(_check_staleness(weld_dir, root))

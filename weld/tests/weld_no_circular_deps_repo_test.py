@@ -65,8 +65,20 @@ module for the one tokenizer both the full walk and the patch path need)
 and re-exported the raw per-extension extractors, leaving
 ``_file_index_incremental.py`` a clean one-directional consumer of
 ``file_index.py``'s build/save/load surface. With all 8 worth-breaking
-follow-ups done, 5 remain below -- the 5 ACCEPT entries; the WORTH-BREAKING
+follow-ups done, 5 remained -- the 5 ACCEPT entries; the WORTH-BREAKING
 inventory from bd 5038-1308j is complete.
+
+bd 5038-uuxaz.6-repair then fixed a real semantics
+bug: the no-circular-deps walk counted a function-scoped/lazy import (this
+repo's own sanctioned cycle-breaking idiom, ADR 0130) with the same weight
+as a top-level import, so ``python_module``/``graph_closure`` now mark such
+a ``depends_on`` edge ``deferred`` and the rule excludes it. Two anchors
+that were entirely lazy-import artifacts (``file:weld/_auto_refresh``,
+``file:weld/bench/_public_runner``) genuinely dissolved, and a third
+(``file:weld/strategies/_python_callgraph_visitor``) separated cleanly from
+a real, unrelated 5-member cycle it had been co-anchoring via one lazy
+bridge edge -- that cycle re-anchors below as
+``file:weld/strategies/_python_decorates``. 3 ACCEPT entries remain.
 
 So this gate ratchets rather than asserting a bare ``[] == violations``:
 any violation whose anchor is NOT in ``_KNOWN_PRE_EXISTING_CYCLE_ANCHORS``
@@ -167,19 +179,33 @@ _KNOWN_PRE_EXISTING_CYCLE_ANCHORS: frozenset[str] = frozenset({
     # ACCEPT (ADR 0130): registry-hub test cluster, decomposing ~66 files is
     # disproportionate to this ratchet's purpose.
     "file:tools/_tier_check_framework_markers_test",
-    # ACCEPT (ADR 0130): weld's own discover/auto-refresh/federation/graph/
-    # mcp/impact engine -- 73 files, a multi-week redesign to decompose.
-    "file:weld/_auto_refresh",
-    # ACCEPT (ADR 0130): adapter-registry plugin pattern with an existing,
-    # deliberate "local import to avoid cycles" author mitigation.
-    "file:weld/bench/_public_runner",
-    # ACCEPT (ADR 0130): mixin-composed AST visitor family, genuinely
-    # shared class state, not a file-layout accident.
-    "file:weld/strategies/_python_callgraph_visitor",
     # ACCEPT (ADR 0130): package/registry-hub shape -- confirmed
     # weld/viz/__init__.py has zero submodule imports of its own; every
     # member here only shares an edge with the 7-line package init.
     "file:weld/viz/_adapter_helpers",
+    # ACCEPT (ADR 0130, re-anchored by bd 5038-uuxaz.6-repair): a genuine,
+    # pre-existing 5-member depends_on cycle among python_callgraph and its
+    # four AST-emission helpers (_python_decorates/_python_inherits/
+    # _python_references/_python_scope_calls) -- each helper imports
+    # python_callgraph at module top level for its shared symbol-id
+    # helpers, and python_callgraph imports each helper back to dispatch
+    # into it. Not new: this exact cycle was always present but had been
+    # co-anchored (hidden under a single larger 7-member SCC) by a
+    # *different*, now-correctly-excluded lazy edge --
+    # python_strategies/_python_expr_resolve imports python_callgraph from
+    # inside a function body "to avoid a circular import at module load
+    # time" (its own docstring), the same sanctioned idiom this repo's
+    # no-circular-deps rule now discounts as structural evidence
+    # (uuxaz.6-repair: graph_closure marks that edge ``deferred``). Once
+    # the lazy bridge stopped counting, the mixin cluster it used to be
+    # fused to (_python_callgraph_visitor, _python_expr_resolve -- both
+    # ACCEPT-worthy on their own merits, same "genuinely shared class
+    # state" reasoning as the prior entry here) separated cleanly from
+    # this real, unrelated cycle underneath. Decomposing the AST-emission
+    # helper family out of python_callgraph is a real module-boundary
+    # redesign (same disproportionate-cost shape as the other ACCEPT
+    # entries), not a side effect this bug fix should attempt.
+    "file:weld/strategies/_python_decorates",
 })
 
 

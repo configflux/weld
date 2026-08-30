@@ -353,4 +353,32 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         sys.stdout.write(sanitize_terminal_text(format_human(result)))
-    return 0
+    return _cannot_answer_exit(result)
+
+
+_CANNOT_ANSWER_EXIT_CODE = 3
+
+
+def _cannot_answer_exit(result: dict) -> int:
+    """Emit the structured cannot-answer line and return the exit code.
+
+    ADR 0134: a cannot-answer outcome exits non-zero and states the reason and
+    remediation, so an agent parsing ``error[<code>]: ...`` (already the
+    contract for ``graph_missing`` and siblings) sees this cause in the shape it
+    already handles. The normal envelope/summary is still written to stdout above
+    -- this only adds the stderr diagnostic and the non-zero code. A normal
+    (answered) result returns 0 unchanged. ``_STALE_EXIT_CODE`` (2) is taken, so
+    this uses 3.
+    """
+    marker = result.get("cannot_answer")
+    if not isinstance(marker, dict):
+        return 0
+    from weld._errors import format_error_line
+
+    code = marker["error_code"]
+    reason = marker.get("reason")
+    # ``format_error_line`` is itself the terminal-safety boundary: it returns
+    # ``sanitize_terminal_line(...)``, so a control byte smuggled into the repo-
+    # derived reason cannot forge a second diagnostic line here.
+    sys.stderr.write(format_error_line(code, reason) + "\n")
+    return _CANNOT_ANSWER_EXIT_CODE

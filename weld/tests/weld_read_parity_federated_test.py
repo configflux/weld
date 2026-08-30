@@ -164,6 +164,21 @@ class FederatedStaleParityTest(unittest.TestCase):
         self.assertEqual(self._cli_stale(),
                          mcp_server.weld_stale(root=str(self.root)))
 
+    def test_the_seed_cause_stays_out_of_a_federated_payload(self) -> None:
+        """ADR 0100 amendment (bd kgx83), federated half.
+
+        ``seed_blocked_reason`` is added by the same shaper this suite pins,
+        so its absence here is a claim worth checking rather than an
+        assumption: ADR 0096 puts polyrepo worktree reads out of scope (gate
+        3 declines before the config prerequisite is ever consulted), so a
+        federated root must never be told about a seed that was never
+        attempted -- on either surface.
+        """
+        self.assertNotIn("seed_blocked_reason", self._cli_stale())
+        self.assertNotIn(
+            "seed_blocked_reason", mcp_server.weld_stale(root=str(self.root)),
+        )
+
     def test_child_drift_raises_top_level_stale(self) -> None:
         """The ADR 0066 §2 fold: ``root_stale OR any(child.stale)``."""
         served = mcp_server.weld_stale(root=str(self.root))

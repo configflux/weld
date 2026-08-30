@@ -3,6 +3,180 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.24.0 - 2026-08-30
+
+### Added
+
+- `wd doctor` and `wd prime` now warn when a language present on disk has no
+  discovery strategy wired for it. `.weld/discover.yaml` is generated once by
+  `wd init` and never revisited, so a checkout initialised before a strategy
+  shipped kept discovering with the old config -- a repository could have all
+  of a language's source invisible to the graph while both commands reported
+  healthy. The new read-only check re-runs `wd init`'s language detection and
+  compares it against the strategies the config wires; a language nothing
+  claims is surfaced as a suppressible warning naming the file count, the
+  language, and the remedy (`wd init --refresh` or `wd init --force`), and it
+  can be dismissed with `wd doctor --ack unclaimed-source-<language>`.
+  Detection is language-granular, so a repository that merely lacks an
+  optional framework extractor stays quiet. `wd init` also stamps the
+  generating weld version into each `discover.yaml` it writes
+  (`# generated-by: weld <version>`) so config drift is visible against
+  `wd --version`.
+  <!-- verify: file=weld/_unclaimed_sources.py grep="def detect_unclaimed_source_classes" -->
+- `wd init --refresh` merges newly supported languages into an existing
+  `.weld/discover.yaml` without discarding hand edits. `--force` was the only
+  remediation for a stale config, and it regenerates from scratch, losing
+  custom globs, extra strategies, exclusions, and comments. `--refresh` is the
+  non-destructive middle path: it appends source entries for languages present
+  on disk that no wired strategy claims, under a marked refresh section, while
+  preserving the existing file byte-for-byte, and bumps the
+  `# generated-by: weld <version>` stamp. A second refresh is a no-op; a
+  missing config is reported explicitly and points at `wd init`. `--refresh`
+  and `--force` are mutually exclusive.
+  <!-- verify: file=weld/_init_refresh.py grep="def refresh" -->
+- New `package_graph` cross-repo resolver for polyrepo workspaces. Neither
+  shipped resolver covered dependency-by-package: `service_graph` matches URL
+  hosts and `channel_binding` matches event-channel topics, so a schema
+  library consumed via a C# `PackageReference`, a Python `pyproject`
+  dependency, or a `go.mod` `require` -- the common polyrepo shape -- produced
+  no inbound cross-repo edges at a federation root. `package_graph` reads each
+  child's build manifests, collects produced names (`pyproject` project name,
+  `go.mod` module path, `.proto` package) and consumed names, and joins them
+  case-insensitively into `cross_repo:depends_on` edges between `repo:<name>`
+  nodes, so `wd impact "repo:<producer>"` now sees the consumers. Enable it by
+  listing `package_graph` under `cross_repo_strategies` in
+  `.weld/workspaces.yaml`.
+  <!-- verify: file=weld/cross_repo/package_graph.py grep="class PackageGraphResolver" -->
+- Python discovery now records a dependency on the specific imported symbol
+  when that symbol is actually referenced in the module body. The
+  event-handler pattern imports a contract and passes it by value
+  (`subscriber.subscribe(OrderPlacedEvent)`) without ever calling it, so
+  "which services depend on this contract" under-reported Python consumers
+  while C# reported them correctly. A `from x import Name` whose `Name` is
+  used now yields a `package:python:x.Name` node and a distinct `depends_on`
+  edge; unreferenced imports stay parent-package-only, `import *` is skipped,
+  and aliased imports resolve to the real symbol.
+  <!-- verify: file=weld/strategies/python_module.py grep="def _referenced_names" -->
+- The MCP `weld_*` tools' missing-graph error now carries the reason a linked
+  worktree could not seed itself, matching the CLI. An agent driving MCP from
+  a fresh worktree of a repository that gitignores `.weld/discover.yaml`
+  previously got only the bare "No Weld graph found." with no way to learn
+  that no worktree of that repository can ever seed; the payload's `error`
+  now appends the cause after the standing summary, so existing consumers
+  matching on the summary are unaffected. The probe is read-only and runs
+  only once a call has already failed.
+  <!-- verify: file=weld/_mcp_guard.py grep="def missing_graph_payload" -->
+- `wd stale --json` and MCP `weld_stale` gain an optional `seed_blocked_reason`
+  field, emitted only when `reason` is `no graph` and a seeding prerequisite
+  is missing (a linked worktree whose repository does not track
+  `.weld/discover.yaml`). Previously the freshness probe answered `no graph`
+  truthfully but implied `wd discover` as the remedy, when the actual fix is
+  tracking the config repository-wide. Every existing payload is
+  byte-identical; the field appears only where a seeding question is open.
+  <!-- verify: file=weld/_stale_payload.py grep="def seed_block_detail" -->
+
+### Fixed
+
+- Python discovery keeps the full dotted import path when minting
+  `package:python:*` references. Dotted imports were truncated to three
+  segments, so `acme.platform.order.schema.v1` and `.v2` (distinct contract
+  versions) both collapsed onto `acme.platform.order` -- exactly the split
+  impact analysis needs -- while the C# path kept the full namespace. Graphs
+  rebuilt with `wd discover` regenerate the ids automatically.
+  <!-- verify: file=weld/tests/weld_lazy_import_capture_test.py grep="class DeepImportPathTest" -->
+- `wd capabilities` attributes languages truthfully in both directions.
+  Tree-sitter-backed languages (C#, Go, Rust, TypeScript, Java, C++) reported
+  all-no even when every node came from the tree-sitter strategy, because the
+  strategy's per-source `language:` key was never read; and the test-peer
+  strategy declared seven languages under one extension set, so a Python-only
+  repository reported C#, Go, Java, Rust, and TypeScript tests as present.
+  Each language now flips only when the graph holds a file of that language.
+  The matrix feeds `wd impact` risk scoring, so risk verdicts on those
+  repositories change accordingly.
+  <!-- verify: file=weld/_capabilities_language.py grep="def tree_sitter_language_rows" -->
+- `wd init` no longer produces a silent zero-node config for docs
+  repositories. Docs detection only recognised the conventional directory
+  names (`docs/`, `doc/`, `documentation/`), so a repository keeping its
+  markdown at the root or under `adrs/` or `architecture/` got an empty
+  `sources:` block and a zero-node graph. When no conventional docs directory
+  exists but markdown is present, `wd init` now wires a `**/*.md` docs
+  source; and whenever the generated config wires nothing at all, it says so
+  on stderr and points at the remedy instead of leaving a config that
+  discovers nothing.
+  <!-- verify: file=weld/_init_framework_sources.py grep="def markdown_fallback_doc_source" -->
+- Graph-backed reads at a polyrepo federation root with no root graph now
+  report "No Weld graph found" and exit non-zero instead of printing a
+  well-formed empty result. `wd query`, `wd context`, `wd path`,
+  `wd callers`, `wd references`, and `wd communities` returned exit 0 with
+  empty output at a graph-less root -- indistinguishable from a genuine
+  negative answer -- while `wd brief` and `wd stale` on the same tree
+  correctly reported the missing graph. `wd find` stays exempt: it answers
+  from the file index, not the graph.
+  <!-- verify: file=weld/tests/weld_federation_missing_graph_test.py grep="class FederationMissingGraphGuidanceTest" -->
+- `wd brief` ranks an exact identifier match first. When many nodes shared a
+  query token the exact class symbol landed in id order (position 13 of 20
+  in the reported case) while `wd query` ranked it first. Brief now applies
+  the same exact-identifier preference ahead of its ranking composite, and
+  the `relevance` field distinguishes `exact match` from `token match`
+  (neighbours keep `related ...`) so callers can re-rank without re-querying.
+  Envelope keys and field order are unchanged.
+  <!-- verify: file=weld/_brief_rank.py grep="def primary_relevance" -->
+- `wd brief` federates at a polyrepo root. At a root with
+  `.weld/workspaces.yaml`, the CLI read only the root meta-graph and
+  returned `primary: []` / "No matches found" for terms `wd query` resolved
+  to child nodes, while the MCP `weld_brief` tool already federated. The CLI
+  now loads the same federated graph, `wd brief --json` and `weld_brief`
+  agree byte-for-byte at a federation root, and the bootstrap guidance naming
+  brief the default starting point is truthful again.
+  <!-- verify: file=weld/_brief_cli.py grep="def _load_brief_graph" -->
+- `wd impact` on a `repo:<name>` node with no cross-repo resolver configured
+  now reports `Risk: UNKNOWN` with the reason and a pointer to
+  `cross_repo_strategies`, exiting non-zero, instead of a confident
+  `Risk: LOW, 0 dependents` that was fabricated rather than measured. A
+  genuine measured empty result (a non-repo node with no dependents) stays
+  `LOW` / exit 0; a repo node with inbound cross-repo edges is answered
+  normally. CLI and MCP report the outcome identically.
+  <!-- verify: file=weld/_impact_cannot_answer.py grep="def uncomputable_repo_reason" -->
+- `wd lint`'s circular-dependency check no longer counts function-scoped
+  lazy imports as evidence. The referenced-import dependency evidence added
+  in this release gave a lazy import the same weight as a top-level one, so
+  the sanctioned cycle-breaking idiom surfaced as a new violation. Python
+  discovery now tracks which imports are lazy-only, the resulting
+  `depends_on` edge is marked `deferred`, and the cycle walk excludes
+  deferred edges.
+  <!-- verify: file=weld/_graph_closure_deferred.py grep="def deferred_edge_props" -->
+- `cross_repo_strategies: [channel_binding]` in `.weld/workspaces.yaml` now
+  passes validation. The resolver was registered and documented but missing
+  from the loader's allow-list, so declaring it failed at load time. A
+  drift-guard test now pins the allow-list to the resolver registry so a
+  future resolver cannot be registered without being accepted here.
+  <!-- verify: file=weld/workspace.py grep="channel_binding" -->
+- `wd stale` at a federation root distinguishes absent children from
+  present-and-fresh ones. Where zero child repositories were checked out on
+  disk, the summary read `children: N (0 stale)` -- "all healthy" -- when in
+  fact none existed to be stale. The child summary now reports how many
+  registered children are present, how many are stale, and breaks the absent
+  ones out by lifecycle state, e.g.
+  `children: 4 registered, 0 present, 0 stale (missing=4)`. The `--json`
+  payload is unchanged.
+  <!-- verify: file=weld/_cli_render_freshness.py grep="def child_roster_lines" -->
+- Worktree seeding names the missing prerequisite instead of a bare
+  "no graph". Seeding reads the worktree's own `.weld/discover.yaml`, which
+  git only checks out when the repository tracks it, so a project that
+  ignores all of `.weld/` had seeding permanently off for every worktree and
+  nothing said so. The first read in such a worktree now states the cause
+  between the headline and the standing remediation, and `wd doctor` on the
+  main checkout notes the same cause before any worktree exists (treating a
+  force-added, tracked config as not ignored). A checkout with no git at all
+  keeps the old message.
+  <!-- verify: file=weld/_worktree_seed.py grep="def seed_blocked_reason" -->
+- `wd doctor --ack agent-graph-missing` is accepted. Doctor printed
+  `(id: agent-graph-missing)` and invited the reader to dismiss it, but the
+  note-id allow-list never included it, so the acknowledgement exited 2. A
+  new guard derives the emitted note-id set from the package source itself,
+  so a computed note id cannot be emitted without also being acknowledgeable.
+  <!-- verify: file=weld/_doctor_suppressions.py grep="agent-graph-missing" -->
+
 ## v0.23.1 - 2026-08-22
 
 ### Fixed

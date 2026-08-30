@@ -17,9 +17,10 @@ one-way -- shaping imports the oracle, never the reverse -- so the oracle
 stays a pure "what do I know about this child" answer with no knowledge of
 the payload it ends up in.
 
-Both functions are read-only and failure-isolated: an unreadable child
-registry or a branchless checkout degrades the payload rather than raising,
-because a freshness probe that crashes is worse than one that under-reports.
+All three functions are read-only and failure-isolated: an unreadable child
+registry, a branchless checkout, or a root the seeding probe cannot reach
+degrades the payload rather than raising, because a freshness probe that
+crashes is worse than one that under-reports.
 """
 
 from __future__ import annotations
@@ -29,9 +30,11 @@ from pathlib import Path
 from weld._federation_staleness import aggregate_root_stale
 from weld._git_worktree import get_git_branch
 from weld._graph_meta_sidecar import read_sidecar_meta
+from weld._staleness import NO_GRAPH_REASON
 
 __all__ = [
     "branch_identity",
+    "seed_block_detail",
     "stale_payload",
 ]
 
@@ -58,6 +61,49 @@ def branch_identity(root: Path | str) -> dict:
     }
 
 
+def seed_block_detail(root: Path | str, root_info: dict) -> dict:
+    """Return the optional ``{seed_blocked_reason}`` pair, or ``{}``.
+
+    ADR 0100 amendment (bd kgx83). ``reason: no graph`` is a true answer and
+    keeps its exit 0 (ADR 0134 leaves it alone), but on its own it points the
+    reader at ``wd discover`` -- which is the wrong remedy in the one case
+    where no ``wd`` command can help: a linked worktree of a repository that
+    never carries ``.weld/discover.yaml``, where seeding can never fire and
+    the fix is a repository-wide ``git add -f``. That is the surface CLAUDE.md
+    tells an agent to check *first* in a new worktree, and an agent has no
+    terminal to consult for a second opinion.
+
+    Two conditions, and the first is the gate:
+
+    * ``reason`` is :data:`weld._staleness.NO_GRAPH_REASON`. A checkout that
+      *has* a graph has no seeding question left to answer, whatever its
+      config situation, so the key stays absent there even when a cause is
+      perfectly computable.
+    * :func:`weld._worktree_seed.seed_blocked_reason` names one. It declines
+      for every graphless state the standing answer already serves -- a plain
+      clone, the main checkout, a worktree that has its config, a federated
+      root -- so those keep today's payload byte for byte.
+
+    The cause is the CLI's own function rather than a restatement, exactly as
+    :func:`weld._mcp_guard.missing_graph_payload` reuses it: a second copy of
+    the rule is how two surfaces come to disagree about it. Imported per call
+    to keep this module's import graph flat, and because the probe only ever
+    runs on the no-graph branch -- a served freshness answer never reaches it.
+
+    Read-only by construction: two ``stat`` calls and the pair of
+    ``git rev-parse`` probes :func:`weld._git_worktree.is_linked_worktree`
+    runs, never :func:`weld._worktree_seed.ensure_seeded`. ``wd stale`` under
+    ``--no-refresh`` must stay a pure read, and this runs after that flag has
+    already declined the seed.
+    """
+    if root_info.get("reason") != NO_GRAPH_REASON:
+        return {}
+    from weld._worktree_seed import seed_blocked_reason
+
+    cause = seed_blocked_reason(root)
+    return {"seed_blocked_reason": cause} if cause else {}
+
+
 def stale_payload(root: Path | str, root_info: dict) -> dict:
     """Return the ``wd stale`` payload, federated-aware (ADR 0066 §2).
 
@@ -71,6 +117,12 @@ def stale_payload(root: Path | str, root_info: dict) -> dict:
     a root whose child registry is unreadable is precisely a root whose
     identity is worth reporting.
 
+    :func:`seed_block_detail` rides the same four paths for the same reason,
+    and is why the ADR 0100 amendment needed no MCP code at all: this is the
+    single shaper both ``wd stale`` and ``weld_stale`` pass through, so a key
+    added here reaches both surfaces or neither. It contributes ``{}`` in
+    every state but one, so no existing payload changes.
+
     The ledger is rebuilt live from the workspace config rather than read
     from a possibly-stale ``workspace-state.json``, so a child that just
     appeared or whose graph just changed is seen immediately. Building it is
@@ -80,15 +132,15 @@ def stale_payload(root: Path | str, root_info: dict) -> dict:
     """
     from weld.workspace_state import build_workspace_state, load_workspace_config
 
-    branch = branch_identity(root)
+    added = {**branch_identity(root), **seed_block_detail(root, root_info)}
     try:
         config = load_workspace_config(root)
     except Exception:  # noqa: BLE001 -- a broken registry must not crash stale
-        return {**root_info, **branch}
+        return {**root_info, **added}
     if config is None:
-        return {**root_info, **branch}
+        return {**root_info, **added}
     try:
         state = build_workspace_state(root, config).to_dict()
     except Exception:  # noqa: BLE001 -- failure isolation (ADR 0066 part 1)
-        return {**root_info, **branch}
-    return {**aggregate_root_stale(root, root_info, state), **branch}
+        return {**root_info, **added}
+    return {**aggregate_root_stale(root, root_info, state), **added}

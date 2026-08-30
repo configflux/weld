@@ -34,6 +34,12 @@ def format_human(result: dict) -> str:
         f"Direct dependents: {len(result['direct_dependents'])}",
         f"Transitive dependents: {len(result['transitive_dependents'])}",
     ]
+    # ADR 0134: a cannot-answer outcome (``impact`` on a repo node with no
+    # cross-repo resolver wired) carries its reason so ``Risk: UNKNOWN`` is not a
+    # bare word. Rendered right under the verdict it qualifies.
+    cannot_answer = result.get("cannot_answer")
+    if isinstance(cannot_answer, dict) and cannot_answer.get("reason"):
+        lines.append(f"Reason: {cannot_answer['reason']}")
     surfaces = result["affected_surfaces"]
     if any(surfaces.values()):
         lines.append("Affected surfaces:")

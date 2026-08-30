@@ -18,6 +18,8 @@ from weld._init_framework_sources import (
     _add_rust_framework_sources,
     _files_entry,
     _source_entry,
+    markdown_fallback_doc_source,
+    yaml_has_wired_source,
 )
 from weld._init_go import go_package_source_entry
 from weld._init_interfaces import detect_interfaces, interface_source_entries
@@ -92,6 +94,7 @@ def generate_yaml(
     csharp_flags: dict[str, bool] | None = None,
     cpp_bs: list[str] | None = None,
     interface_sources: list[str] | None = None,
+    doc_fallback: str | None = None,
 ) -> str:
     """Generate the discover.yaml content using template strings.
 
@@ -183,6 +186,12 @@ def generate_yaml(
             comment=f"Documentation ({doc_dir})",
             extra={"id_prefix": f"doc:{doc_dir}"},
         ))
+    # No conventional docs dir but markdown is present: wire **/*.md so a
+    # docs repo keeping ADRs at the root / under adrs/ is not left with a
+    # zero-node graph (Finding 07). Callers pass None when the fallback does
+    # not apply (a docs dir was wired, or there is no markdown).
+    if doc_fallback:
+        buckets["docs"].append(doc_fallback)
 
     # --- policy ---
     if claude_agents:
@@ -238,7 +247,23 @@ def generate_yaml(
             sections.extend(_make_stub(stub_glob, stub_type, stub_strat))
 
     block = "\n".join(sections) if sections else "  # No sources detected"
-    return f"{_YAML_HEADER}\nsources:\n{block}\n"
+    return f"{_YAML_HEADER}{_version_stamp()}\nsources:\n{block}\n"
+
+
+def _version_stamp() -> str:
+    """A comment line recording the weld version that generated this config.
+
+    Stamped so a stale ``discover.yaml`` is visible to a human comparing it
+    against ``wd --version`` (ADR 0135). Informational only -- the unclaimed
+    -source check does not read it back, so pre-stamp configs still get warned.
+    When the version cannot be resolved the stamp is omitted, never faked.
+    """
+    from weld._version import weld_version
+
+    version = weld_version()
+    if not version:
+        return ""
+    return f"#\n# generated-by: weld {version}\n"
 
 def init(root: Path, output: Path, *, force: bool = False) -> bool:
     """Run project detection and generate discover.yaml.
@@ -303,6 +328,8 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
     if claude_commands:
         print(f"  Found {len(claude_commands)} command definitions", file=sys.stderr)
 
+    doc_fallback = markdown_fallback_doc_source(files, root, doc_dirs)
+
     print("Generating discover.yaml...", file=sys.stderr)
     yaml_text = generate_yaml(
         languages=languages, frameworks=frameworks,
@@ -311,12 +338,23 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
         claude_commands=claude_commands, doc_dirs=doc_dirs,
         python_globs=python_globs, root_configs=root_configs,
         ros2_pkg_roots=ros2_pkg_roots, csharp_flags=csharp_flags, cpp_bs=cpp_bs,
-        interface_sources=interface_sources,
+        interface_sources=interface_sources, doc_fallback=doc_fallback,
     )
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(yaml_text, encoding="utf-8")
     print(f"Wrote {output}", file=sys.stderr)
+    if not yaml_has_wired_source(yaml_text):
+        # ADR 0134: a config that wires nothing is a cannot-answer outcome, not
+        # a real answer. Say so and point at the remedy instead of leaving a
+        # silent all-stub config that discovers a zero-node graph (Finding 07).
+        print(
+            f"Recognised nothing to wire from {len(files)} files: the config "
+            "is all stubs, so `wd discover` will build a zero-node graph. "
+            "Uncomment a stub in the section that fits your sources, or add a "
+            "source entry, then re-run `wd init --force`.",
+            file=sys.stderr,
+        )
     return True
 
 def main(argv: list[str] | None = None) -> None:
@@ -328,13 +366,16 @@ def main(argv: list[str] | None = None) -> None:
         help="Project root directory (default: current directory)")
     parser.add_argument("--output", "-o", default=None,
         help="Output path (default: <root>/.weld/discover.yaml)")
-    parser.add_argument("--force", "-f", action="store_true",
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--force", "-f", action="store_true",
         help="Overwrite existing discover.yaml / workspaces.yaml")
+    mode.add_argument("--refresh", action="store_true",
+        help="Merge newly-detected strategies into an existing discover.yaml "
+             "without discarding hand edits (non-destructive)")
     parser.add_argument("--max-depth", type=int, default=4,
         help="Max depth when scanning for nested git repos (default: 4)")
     parser.add_argument("--respect-gitignore", action="store_true",
-        help="Skip gitignored scan-only child repos when writing workspaces.yaml",
-    )
+        help="Skip gitignored scan-only child repos when writing workspaces.yaml")
     gi = parser.add_mutually_exclusive_group()
     gi.add_argument("--ignore-all", action="store_true",
         help="Write a fully-ignoring .weld/.gitignore (every weld file ignored)")
@@ -343,6 +384,10 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     output = Path(args.output) if args.output else root / ".weld" / "discover.yaml"
+    if args.refresh:
+        from weld._init_refresh import run_refresh
+        run_refresh(root, output)
+        return
     success = init(root, output, force=args.force)
     workspaces_out = output.parent / "workspaces.yaml"
     if _init_workspace(root, workspaces_out, force=args.force,

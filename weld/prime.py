@@ -57,6 +57,16 @@ def _count_active_sources(path: Path) -> int:
         pass
     return 0
 
+def _check_unclaimed_sources(root: Path) -> tuple[list[str], list[str]]:
+    """Surface languages on disk that no wired strategy claims (ADR 0135).
+
+    Field-eval Finding 05: a stale ``discover.yaml`` leaves a language's source
+    invisible while prime reports healthy. Detection lives in
+    :func:`weld._unclaimed_sources.prime_unclaimed_lines` (line-count cap).
+    """
+    from weld._unclaimed_sources import prime_unclaimed_lines
+    return prime_unclaimed_lines(root, _status)
+
 def _check_graph_json(weld_dir: Path, root: Path) -> tuple[list[str], list[str]]:
     lines: list[str] = []
     steps: list[str] = []
@@ -347,6 +357,7 @@ def prime(root: Path, active_agent: str | None = None) -> str:
 
     for check in (
         lambda: _check_discover_yaml(weld_dir),
+        lambda: _check_unclaimed_sources(root),
         lambda: _check_graph_json(weld_dir, root),
         lambda: _check_file_index(weld_dir),
         lambda: _check_agent_integration(root, active_agent=active_agent),

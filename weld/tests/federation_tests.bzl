@@ -19,8 +19,10 @@ _HASHSEED = {"PYTHONHASHSEED": "0"}
 
 # cmpd: weld_workspace_config_test split by responsibility; scanner
 # (scan_nested_repos) tests live in weld_workspace_scan_test.
+# weld_workspace_config_test is declared on its own below (it needs the
+# //weld/cross_repo dep for the allowlist-vs-registry drift guard,
+# bd 5038-f74dd), so only the scanner test remains in this loop.
 _WORKSPACE_ONLY = (
-    "weld_workspace_config_test",
     "weld_workspace_scan_test",
 )
 
@@ -31,6 +33,15 @@ _FEDERATION = (
     "weld_federation_graph_shape_test",
     "weld_context_fallback_test",
     "weld_federation_cli_render_test",
+    # ADR 0134 (Finding 02, ...uuxaz.2): a graph-backed federated read at a
+    # root with no root graph.json must surface the same cannot-answer
+    # "No Weld graph found" guidance + non-zero exit the single-repo path does,
+    # not a well-formed empty result at exit 0; wd find stays exempt.
+    "weld_federation_missing_graph_test",
+    # ADR 0134 (Finding 01, ...uuxaz.3): wd brief federates at a polyrepo root
+    # -- it spans child graphs like wd query / weld_brief -- instead of reading
+    # only the root meta-graph and returning a silent empty result.
+    "weld_federation_brief_test",
 )
 
 _DETERMINISTIC = (
@@ -67,6 +78,15 @@ def federation_tests():
         srcs = [_name + ".py"],
         deps = ["//weld:workspace"],
     ) for _name in _WORKSPACE_ONLY]
+
+    # bd 5038-f74dd: the loader/validator surface plus its drift guard that
+    # pins KNOWN_CROSS_REPO_STRATEGIES to the resolver registry -- hence the
+    # extra //weld/cross_repo dep this one test needs on top of //weld:workspace.
+    py_test(
+        name = "weld_workspace_config_test",
+        srcs = ["weld_workspace_config_test.py"],
+        deps = ["//weld:workspace", "//weld/cross_repo"],
+    )
 
     py_test(
         name = "weld_workspace_state_test",

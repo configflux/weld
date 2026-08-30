@@ -351,6 +351,20 @@ def impact(
     if not seed_ids:
         return result
 
+    # ADR 0134 Finding 06: a repo node whose dependents are structurally
+    # uncomputable is cannot-answer, not a measured zero. Surface UNKNOWN with
+    # the reason before any BFS fabricates a LOW/0 verdict.
+    from weld._impact_cannot_answer import (
+        cannot_answer_marker,
+        uncomputable_repo_reason,
+    )
+
+    unknown_reason = uncomputable_repo_reason(graph, seed_ids)
+    if unknown_reason is not None:
+        result["risk_level"] = "UNKNOWN"
+        result["cannot_answer"] = cannot_answer_marker(unknown_reason)
+        return result
+
     dependents, edges = _reverse_bfs(graph, seed_ids, depth)
     nodes = [
         _node_with_hop(graph, node_id, hop)

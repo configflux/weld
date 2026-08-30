@@ -285,6 +285,50 @@ MULTI_FRAMEWORK_FILES: dict[
 }
 
 
+# Per-language extension / basename split for multi-language strategies.
+# Mirrors :data:`MULTI_FRAMEWORK_FILES` one level down (languages, not
+# frameworks). Without it, ``compute_capabilities`` cannot tell which of a
+# multi-language strategy's extensions belongs to which language, and a
+# Python-only repo with ``test_peer`` wired would falsely report
+# ``csharp: tests=true`` (and the same for go/java/rust/typescript) because
+# any single matching extension flips *every* declared language. Single-
+# language strategies use ``cap.file_extensions`` directly and do not appear
+# here.
+MULTI_LANGUAGE_FILES: dict[
+    str, dict[str, tuple[tuple[str, ...], tuple[str, ...]]]
+] = {
+    # stem -> language -> (extensions, basenames)
+    "test_peer": {
+        "python": ((".py",), ()),
+        "go": ((".go",), ()),
+        "typescript": ((".ts", ".tsx"), ()),
+        "javascript": ((".js", ".jsx"), ()),
+        "java": ((".java",), ()),
+        "csharp": ((".cs",), ()),
+        "rust": ((".rs",), ()),
+    },
+}
+
+
+# Canonical language -> file-extension map used to gate ``tree_sitter``
+# per-language attribution. ``tree_sitter`` is wired for a language via the
+# ``language:`` key on its ``discover.yaml`` source entry; its evidence is
+# credited to that language only when the graph actually contains a file of
+# that language. Kept in sync with the tree-sitter language rows in
+# :data:`STRATEGY_CAPABILITIES` (java/csharp/cpp/typescript) plus the
+# languages ``tree_sitter`` is commonly wired for (go/rust/javascript/python).
+LANGUAGE_FILE_EXTENSIONS: dict[str, tuple[str, ...]] = {
+    "python": (".py",),
+    "go": (".go",),
+    "typescript": (".ts", ".tsx"),
+    "javascript": (".js", ".jsx", ".mjs", ".cjs"),
+    "java": (".java",),
+    "csharp": (".cs",),
+    "rust": (".rs",),
+    "cpp": (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"),
+}
+
+
 # Frameworks present-on-disk but not yet wired to a strategy. Extracted
 # to :mod:`weld._capabilities_registry_missing` to keep this file under
 # the 400-line cap. Re-exported here so all existing import sites are

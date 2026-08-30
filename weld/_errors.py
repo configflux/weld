@@ -34,6 +34,16 @@ the detail names the missing *field names* and never echoes their values.
 ``root_out_of_bounds`` goes one step further: its summary is a constant, so a
 refused request cannot reflect the path it asked for and the refusal cannot be
 used to probe which directories exist on the server's disk.
+
+``graph_missing`` is the one code whose detail is derived from a *path* the
+caller named -- :func:`weld._mcp_guard.missing_graph_payload` appends the
+worktree-seeding cause for the root a read was answered from. It is safe for
+the ``root_out_of_bounds`` reason, one step earlier: what
+:func:`weld._worktree_seed.seed_blocked_reason` returns is a fixed constant
+selected by a predicate, never interpolated from the path. So the payload
+distinguishes only whether the answering checkout is a linked worktree
+missing its config -- a property of the repository the server already
+serves, not of the requested path's existence.
 """
 
 from __future__ import annotations
@@ -62,6 +72,14 @@ INVALID_ENRICHMENT = "invalid_enrichment"
 #: only -- an operator running the CLI already has the process's own
 #: filesystem authority, so there is nothing there to bound.
 ROOT_OUT_OF_BOUNDS = "root_out_of_bounds"
+#: The tool *has* a graph but a required computation input is absent, so the
+#: empty/zero result carries no information about the question asked (ADR 0134).
+#: The one genuinely-new distinction the cannot-answer contract adds: ``impact``
+#: on a ``repo:`` node in a root graph with no cross-repo edges cannot compute
+#: dependents at all, so "0 dependents, Risk: LOW" is a fabricated verdict, not a
+#: measured zero. Surfaced by ``impact`` as ``Risk: UNKNOWN``. Distinct from a
+#: measured empty result, which stays a correct exit-0 answer.
+RESULT_UNKNOWN = "result_unknown"
 
 #: Stable, copy-pasteable remediation hint per code. Wording is matched
 #: against by tests and onboarding docs -- keep it stable.
@@ -84,6 +102,11 @@ ERROR_HINTS: dict[str, str] = {
         "checkout. Omit root to use the server's own root; child repos of a "
         "polyrepo workspace are not addressable this way."
     ),
+    RESULT_UNKNOWN: (
+        "No cross-repo resolver is wired, so cross-repo dependents cannot be "
+        "computed. Declare one under cross_repo_strategies in "
+        ".weld/workspaces.yaml, then re-run wd discover."
+    ),
 }
 
 #: Default human-readable summary per code, used when no parser detail is
@@ -96,7 +119,24 @@ _DEFAULT_ERROR: dict[str, str] = {
     NODE_NOT_FOUND: "Node not found.",
     INVALID_ENRICHMENT: "Enrichment record is structurally incomplete.",
     ROOT_OUT_OF_BOUNDS: "Requested root is outside the served repository.",
+    RESULT_UNKNOWN: (
+        "Risk: UNKNOWN -- cross-repo dependents cannot be computed for this "
+        "repo node because no cross-repo resolver is wired."
+    ),
 }
+
+
+def default_summary(code: str) -> str:
+    """Return the standing human-readable summary for *code*.
+
+    The read accessor for :data:`_DEFAULT_ERROR`, so a caller building a
+    *detail* that **extends** the standing summary rather than replacing it
+    outright does not have to restate the summary's wording. That is what
+    ``graph_missing`` does when it can name why this particular checkout has
+    no graph: the headline every consumer already matches on has to survive
+    the added line, and a second copy of it is how that stops being true.
+    """
+    return _DEFAULT_ERROR.get(code, "Weld error.")
 
 
 def structured_payload(
@@ -113,7 +153,7 @@ def structured_payload(
     pass only *safe* detail (e.g. a byte offset), never raw file content. The
     ``hint`` always comes from the stable :data:`ERROR_HINTS` vocabulary.
     """
-    error = detail or _DEFAULT_ERROR.get(code, "Weld error.")
+    error = detail or default_summary(code)
     payload: dict = {
         "error": error,
         "error_code": code,
@@ -143,7 +183,7 @@ def format_error_line(code: str, detail: str | None = None) -> str:
     *text* surface is escaped; :func:`structured_payload` stays raw so the
     MCP/JSON contract is unchanged.
     """
-    summary = detail or _DEFAULT_ERROR.get(code, "Weld error.")
+    summary = detail or default_summary(code)
     hint = ERROR_HINTS.get(code, "")
     return sanitize_terminal_line(f"error[{code}]: {summary} | hint: {hint}")
 

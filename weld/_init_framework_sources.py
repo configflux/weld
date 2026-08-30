@@ -13,6 +13,58 @@ These helpers are pure string/path logic with no dependency on the rest of
 
 from __future__ import annotations
 
+from pathlib import Path
+
+
+def markdown_fallback_doc_source(
+    files: list[Path], root: Path, doc_dirs: list[str],
+) -> str | None:
+    """A ``**/*.md`` docs entry for a repo whose markdown lives outside docs/.
+
+    ``wd init``'s docs detection only recognises the conventional directory
+    names (``docs`` / ``doc`` / ``documentation``). A docs repository that
+    keeps its markdown at the root or under ``adrs/`` / ``architecture/``
+    therefore got an empty ``sources:`` block and a zero-node graph, silently
+    (field eval v0.23.1 Finding 07). ADRs are among the highest-value nodes,
+    so leaving them unwired is a real loss, not a stylistic one.
+
+    Returns a single ``- glob: "**/*.md"`` markdown source-entry string when
+    ``doc_dirs`` is empty *and* at least one ``.md`` file is present under
+    ``root``; otherwise ``None`` (a conventional docs dir is already wired, or
+    there is no markdown to wire). ``root`` is accepted for signature symmetry
+    with the other detectors; the decision needs only the extensions of
+    ``files``.
+    """
+    if doc_dirs:
+        return None
+    if not any(f.suffix.lower() == ".md" for f in files):
+        return None
+    return _source_entry(
+        "**/*.md", "doc", "markdown",
+        comment="Documentation (markdown, no conventional docs/ dir found)",
+        extra={"id_prefix": "doc:md"},
+    )
+
+
+def yaml_has_wired_source(yaml_text: str) -> bool:
+    """True when the generated config wires at least one real source entry.
+
+    ``wd init`` always emits every artifact-class section, filling empty ones
+    with *commented-out* stub lines (``  # - glob:``) so a maintainer can see
+    the class exists. A repo weld recognised nothing in therefore still
+    produces a well-formed ``sources:`` block -- one made entirely of stubs.
+    This predicate separates that all-stub "recognised nothing" outcome from a
+    config that wired something, so :func:`weld.init.init` can say which one it
+    is (ADR 0134: a cannot-answer outcome must state the reason, not masquerade
+    as a real answer). An uncommented ``- glob:`` / ``- files:`` line is the
+    marker of a real entry; a stub line starts with ``#`` after stripping.
+    """
+    for raw in yaml_text.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith(("- glob:", "- files:")):
+            return True
+    return False
+
 
 def _source_entry(
     glob: str, node_type: str, strategy: str,

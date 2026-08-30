@@ -61,7 +61,10 @@ NON_STRUCTURAL_EDGE_TYPES: frozenset[str] = frozenset({
 
 
 def find_cycles(
-    data: dict, *, exclude_edge_types: frozenset[str] = frozenset()
+    data: dict,
+    *,
+    exclude_edge_types: frozenset[str] = frozenset(),
+    exclude_deferred: bool = False,
 ) -> list[list[str]]:
     """Return non-trivial SCCs using Tarjan's algorithm.
 
@@ -74,6 +77,14 @@ def find_cycles(
     every edge) -- a pure, type-agnostic SCC primitive with no rule-level
     opinion baked in; ``rule_no_circular_deps`` is the caller that supplies
     :data:`NON_STRUCTURAL_EDGE_TYPES`.
+
+    *exclude_deferred* (uuxaz.6-repair), when true, additionally drops any
+    edge with ``props.deferred is True`` -- the marker
+    ``graph_closure._link_imports`` sets on a ``depends_on`` edge whose only
+    AST site is a function/method-scoped import, this repo's own sanctioned
+    cycle-breaking idiom (ADR 0130). Defaults to false so this primitive's
+    walk-every-edge default, and its own direct unit-test callers, stay
+    byte-identical; ``rule_no_circular_deps`` is the caller that opts in.
     """
     nodes: dict = data.get("nodes", {}) or {}
     edges: list = data.get("edges", []) or []
@@ -85,6 +96,8 @@ def find_cycles(
 
     for edge in edges:
         if edge.get("type") in exclude_edge_types:
+            continue
+        if exclude_deferred and (edge.get("props") or {}).get("deferred") is True:
             continue
         src = edge.get("from")
         dst = edge.get("to")
@@ -168,9 +181,17 @@ def rule_no_circular_deps(data: dict) -> Iterable[Violation]:
     """Yield one violation per non-trivial structural-edge SCC in the graph.
 
     Walks every edge type except :data:`NON_STRUCTURAL_EDGE_TYPES` -- see
-    the module docstring for why each of those is excluded.
+    the module docstring for why each of those is excluded. Also excludes
+    any single edge marked ``deferred`` (uuxaz.6-repair) -- a lazy,
+    function-scoped import used to break a real runtime cycle is this
+    repo's sanctioned idiom (ADR 0130), not a layering violation; see
+    :func:`find_cycles`.
     """
-    for scc in find_cycles(data, exclude_edge_types=NON_STRUCTURAL_EDGE_TYPES):
+    for scc in find_cycles(
+        data,
+        exclude_edge_types=NON_STRUCTURAL_EDGE_TYPES,
+        exclude_deferred=True,
+    ):
         anchor = scc[0]  # lowest-sorted node id
         members = ", ".join(scc)
         yield Violation(
