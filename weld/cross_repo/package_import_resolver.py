@@ -3,9 +3,13 @@
 This resolver scans each child graph for *package consumer* nodes -- nodes
 that carry an ``imports_from`` list -- and matches those import names
 against *package producer* nodes (``type="package"``) declared in sibling
-children. When a match is found, the resolver emits a ``depends_on`` edge
-from the importing consumer to the target package, namespaced with the
-child name and the ASCII Unit Separator per the federation ID convention.
+children. When a match is found, the resolver emits a
+``cross_repo:depends_on`` edge from the importing consumer to the target
+package, namespaced with the child name and the ASCII Unit Separator per
+the federation ID convention. The type is the shared
+``CROSS_REPO_DEPENDS_ON`` from :mod:`weld._federation_endpoints`; this
+resolver spelled its own un-namespaced ``depends_on`` until bd
+``5038-4v6fm``.
 
 The resolver is language-neutral. A consumer is any node whose ``type``
 is in :data:`_CONSUMER_TYPES` and whose props carry a non-empty
@@ -25,6 +29,7 @@ that repeated runs against identical input produce byte-identical output.
 
 from __future__ import annotations
 
+from weld._federation_endpoints import CROSS_REPO_DEPENDS_ON
 from weld.cross_repo.base import (
     CrossRepoEdge,
     CrossRepoResolver,
@@ -152,7 +157,7 @@ class PackageImportResolver(CrossRepoResolver):
                             CrossRepoEdge(
                                 from_id=f"{child_name}{UNIT_SEPARATOR}{node_id}",
                                 to_id=f"{target_child}{UNIT_SEPARATOR}{target_node_id}",
-                                type="depends_on",
+                                type=CROSS_REPO_DEPENDS_ON,
                                 props={
                                     # ADR 0050: matching is by name
                                     # alone -- the importing module

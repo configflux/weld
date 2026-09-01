@@ -71,7 +71,10 @@ class ModeBFileIndexNoRestampTest(ModeBFixture):
         )
 
     def test_committed_meta_carries_no_git_sha(self) -> None:
-        """The root cause, pinned directly: the tracked bytes name no commit."""
+        """The root cause, pinned directly: the tracked bytes name no commit.
+
+        The writer is ``weld.file_index.save_file_index``.
+        """
         idx_path, state_path = self._file_index_paths(self.origin)
         index_meta = json.loads(idx_path.read_text(encoding="utf-8"))["meta"]
         state_meta = json.loads(state_path.read_text(encoding="utf-8"))["meta"]

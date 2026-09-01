@@ -11,6 +11,8 @@ Public API:
 * :func:`suggest_close_matches` -- typo recovery for closed vocabularies.
 * :func:`vocab_hint` -- hint text for an invalid closed-vocabulary value.
 * :func:`dangling_ref_hint` -- hint text for a dangling edge endpoint.
+* :func:`unverifiable_ref_hint` -- hint text for an endpoint whose child
+  graph could not be read (ADR 0137).
 * :func:`format_validation_report` -- multi-line stderr block for the
   ``wd validate`` / ``wd validate-fragment`` CLI paths.
 
@@ -82,6 +84,21 @@ def dangling_ref_hint(node_id: object, node_ids: Iterable[str]) -> str:
     return (
         f"no node with id {node_id!r} exists; add a node with that id "
         f"or remove this edge"
+    )
+
+
+def unverifiable_ref_hint(child: str, state: str) -> str:
+    """Actionable hint for an endpoint in a child whose graph cannot be read.
+
+    The remedy is never "edit the edge" -- the edge may be perfectly correct
+    and the child merely absent -- so this hint points at the child's state
+    and the command that reports it, not at the graph (ADR 0137 ss3).
+    """
+    return (
+        f"child repo {child!r} is {state}, so this endpoint can be neither "
+        f"confirmed nor removed on the evidence available; run "
+        f"`wd workspace status` for the child roster, then restore the child "
+        f"and run `wd discover` inside it before validating again"
     )
 
 

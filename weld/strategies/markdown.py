@@ -52,7 +52,7 @@ from weld._rel_path import rel_to_root
 from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies._helpers import StrategyResult
 from weld.strategies._markdown_code_refs import code_reference_edges
-from weld.strategies._markdown_fence import content_text, iter_headings
+from weld.strategies._markdown_fence import content_text, first_h1, iter_headings
 from weld.strategies._markdown_section_kind import classify_section
 
 #: doc_kind values that represent authoritative/primary guidance.
@@ -163,6 +163,31 @@ def _collect_heading_texts(text: str) -> list[str]:
             found.add(heading)
     return sorted(found)
 
+
+def _doc_label(md: Path, text: str | None, id_prefix: str) -> str:
+    """The node label for doc file *md*: its filename, or its title.
+
+    A doc's filename normally *is* its title (``platform-overview.md`` ->
+    "Platform Overview"), so the stem is the label and the H1 is skipped as a
+    restatement. ``README.md`` is the one filename that says nothing about the
+    document: it is a placement convention, and the file it names is usually
+    the index of the repository around it. Labelling such a node "Readme" left
+    it unreachable by the only term anyone would search for -- a docs
+    repository whose README declares ``# Platform Documentation`` answered that
+    query with a *different* document (field eval v0.24.0 N8). So a README
+    takes its H1 as its label when it has one, and falls back to the stem when
+    it does not. Node ids stay stem-derived either way, so nothing that
+    references a doc node has to change.
+    """
+    if md.name == "README.md" and text is not None:
+        title = first_h1(text)
+        if title:
+            return title
+    if "runbook" in id_prefix:
+        return md.stem.replace("_", " ").title()
+    return md.stem.replace("-", " ").title()
+
+
 def _extract_md_link_targets(text: str) -> list[tuple[str, str]]:
     """Return ``(href_without_anchor, anchor_or_empty)`` per markdown link.
 
@@ -235,15 +260,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         rel_path = rel_to_root(md, root)
         discovered_from.append(rel_path)
         nid = path_to_nid.get(md.resolve(), f"{id_prefix}/{md.stem}")
-        if "runbook" in id_prefix:
-            label = md.stem.replace("_", " ").title()
-        else:
-            label = md.stem.replace("-", " ").title()
 
         try:
             text = md.read_text(encoding="utf-8")
         except OSError:
             text = None
+
+        label = _doc_label(md, text, id_prefix)
 
         doc_props: dict = {
             "file": rel_path,

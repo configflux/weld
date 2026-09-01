@@ -114,19 +114,48 @@ class TestFollowsImportRebinding(_TreeCase):
             self.resolve("pkg.consumer.aliased"), "symbol:py:pkg.core:thing"
         )
 
-    def test_relative_import_is_declined(self) -> None:
-        """``from .core import thing`` names a module ``ast`` cannot resolve.
+    def test_relative_import_resolves_past_a_same_named_top_level_module(
+        self,
+    ) -> None:
+        """``from .core import thing`` means ``pkg.core``, never top-level ``core``.
 
-        The table would record the defining module as ``core``; a project
-        with a top-level ``core.py`` would then resolve it to the wrong real
-        symbol. Declining is the only honest answer.
+        This case used to assert a *refusal*, on the reading that ``ast``
+        leaves ``from .core import thing`` spelled ``core`` and resolving it
+        needed a package position this module did not model. It had one -- the
+        dotted module and the file backing it -- and ``_build_import_table``
+        now does the arithmetic (bd ``zr486``), so the honest answer is no
+        longer "decline" but ``pkg.core``.
+
+        The decoy is what makes that worth asserting rather than assuming, and
+        it is kept exactly as the refusal left it: a top-level ``core.py``
+        defining its own ``thing``, so the wrong answer resolves on disk and
+        would be emitted as a confident edge to a real-but-wrong symbol. That
+        is the failure this whole file is written against, and the level
+        arithmetic is now the thing standing between the graph and it.
         """
         _touch(self.root / "core.py", "def thing():\n    return 9\n")
         _touch(
             self.root / "pkg" / "relative.py",
             "from .core import thing\n\n\ndef use():\n    return thing()\n",
         )
-        self.assertIsNone(self.resolve("pkg.relative.thing"))
+        self.assertEqual(
+            self.resolve("pkg.relative.thing"), "symbol:py:pkg.core:thing"
+        )
+
+    def test_a_relative_import_beyond_the_root_is_still_declined(self) -> None:
+        """The refusal that remains: ``from ..core import thing`` at level 2.
+
+        ``pkg.beyond``'s package is ``pkg``, so level 2 walks past the
+        top-level package -- CPython's own ImportError. There is no module to
+        name, and the top-level ``core.py`` sitting right there is precisely
+        the tempting wrong answer, so None is the whole answer.
+        """
+        _touch(self.root / "core.py", "def thing():\n    return 9\n")
+        _touch(
+            self.root / "pkg" / "beyond.py",
+            "from ..core import thing\n\n\ndef use():\n    return thing()\n",
+        )
+        self.assertIsNone(self.resolve("pkg.beyond.thing"))
 
     def test_reexport_cycle_terminates(self) -> None:
         """Mutually-importing modules must not spin the resolver."""

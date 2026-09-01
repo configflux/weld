@@ -131,6 +131,60 @@ class IncludeReadmeFlagTest(unittest.TestCase):
             )
 
 
+class ReadmeLabelTest(unittest.TestCase):
+    """A README doc node is labelled by its title, not by "Readme".
+
+    Every other doc's filename restates its title, so the stem is the label
+    and the H1 is redundant. ``README.md`` is the exception: the name is a
+    placement convention that describes nothing, so a node labelled "Readme"
+    could not be reached by the one term a reader would search for -- a docs
+    repository whose README declares ``# Platform Documentation`` answered
+    that query with a different document (field eval v0.24.0 N8).
+    """
+
+    def _label(self, rel: str, text: str, **source: object) -> str:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _write_doc(root, rel, text)
+            result = extract(
+                root,
+                {"glob": "*.md", "id_prefix": "doc:root", **source},
+                {},
+            )
+            (node,) = result.nodes.values()
+            return node["label"]
+
+    def test_readme_takes_its_h1_as_the_label(self) -> None:
+        label = self._label(
+            "README.md",
+            "# Platform Documentation\n\nIndex of everything.\n",
+            include_readme=True,
+        )
+        self.assertEqual(label, "Platform Documentation")
+
+    def test_readme_without_a_title_falls_back_to_the_stem(self) -> None:
+        label = self._label(
+            "README.md", "No heading at all.\n", include_readme=True,
+        )
+        self.assertEqual(label, "Readme")
+
+    def test_readme_title_inside_a_fence_is_not_the_label(self) -> None:
+        """The fence-blind scan this replaced would title it "# Not a title"."""
+        label = self._label(
+            "README.md",
+            "```sh\n# Not a title\n```\n\n# Platform Documentation\n",
+            include_readme=True,
+        )
+        self.assertEqual(label, "Platform Documentation")
+
+    def test_other_docs_keep_their_filename_label(self) -> None:
+        """The rule is README-only; widening it would relabel every doc node."""
+        label = self._label(
+            "platform-overview.md", "# A Completely Different Title\n",
+        )
+        self.assertEqual(label, "Platform Overview")
+
+
 class HeadingsIndexedForQueryTest(unittest.TestCase):
     """``props.headings`` must reach the inverted index and match surface."""
 

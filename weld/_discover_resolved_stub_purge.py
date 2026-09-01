@@ -1,5 +1,6 @@
-"""Purge a resolved cross-glob call-target stub once every inbound edge that
-referenced it is gone (bd n4nvt).
+"""Purge a resolved cross-glob call-target stub once every edge that
+referenced it is gone (bd n4nvt; bd 5038-q4t3d corrected "inbound edge" to
+"edge in either direction" -- see below).
 
 :func:`weld.strategies._python_origin.make_resolved_target_node` mints a
 speculative stub for a call/inherits/references/scope-call/decorates target
@@ -52,13 +53,22 @@ A real, definite ``python_callgraph``-sourced symbol node always sets
 never describe an actually-walked symbol; "no ``props.file``" alone is
 already a safe, exhaustive proxy for "this run never walked it."
 
-Counts inbound edges of EVERY type, the same widened scope oao53's rule
-needs and for the identical reason: the stub id is shared across whichever
-of the five python_* modules references the same target symbol (a call, an
-inherits base, a bare-name reference, a module-scope call, a decorator
-target can all point at the same id), so a node with a surviving inbound
-edge of any kind is exactly what a fresh full discover over the same
-partially-emptied tree would still emit.
+Counts edges of EVERY type, the same widened scope oao53's rule needs and
+for the identical reason: the stub id is shared across whichever of the five
+python_* modules references the same target symbol (a call, an inherits
+base, a bare-name reference, a module-scope call, a decorator target can all
+point at the same id), so a node with a surviving edge of any kind is
+exactly what a fresh full discover over the same partially-emptied tree
+would still emit.
+
+And counts them in EITHER direction (bd 5038-q4t3d). The list above already
+named the decorator case, but the rule was written as "zero INBOUND edges",
+and ADR 0122 emits ``decorates`` decorator -> decorated -- so the one entry
+in that list whose semantics run the other way was the one the accumulator
+could not see. Both this rule and oao53's now test membership in
+:func:`weld._discover_placeholder_anchor.edge_anchored_node_ids`; see that
+module for why a direction-agnostic anchor is the derived answer here rather
+than an allowlist of reversed edge types.
 
 Safe by construction for the same reason pkz2s's and oao53's rules are:
 ``python_callgraph`` (and its four sibling modules) mint this node lazily
@@ -74,9 +84,9 @@ runs inside :func:`weld.discovery_state.purge_stale_nodes`, which itself
 no-ops whenever nothing is stale, so a pure file-addition round (the shape
 that drives an upgrade) never reaches this rule at all; and in a mixed round
 where some unrelated file is also stale, the rule can only remove a stub
-that has *already* lost every inbound edge in the very same pass's
-provenance purge -- if the file that still references the target survives
-clean, its edge (and thus the stub's inbound count) survives with it.
+that has *already* lost every edge in the very same pass's provenance purge
+-- if the file that still references the target survives clean, its edge
+(and so the stub's anchor) survives with it.
 
 Folded into
 :func:`weld._discover_external_package_purge.emptied_placeholder_node_ids`
@@ -91,72 +101,57 @@ that entry point unions.
 
 from __future__ import annotations
 
-_SYMBOL_TYPE = "symbol"
-_UNRESOLVED_SYMBOL_PREFIX = "symbol:unresolved:"
-_SPECULATIVE_CONFIDENCE = "speculative"
-_DERIVED_AUTHORITY = "derived"
-_PYTHON_CALLGRAPH_STRATEGY = "python_callgraph"
+from weld._discover_placeholder_anchor import edge_anchored_node_ids
+from weld.strategies._python_origin import is_resolved_target_stub
 
-
-def _is_resolved_stub(nid: str, node: dict) -> bool:
-    """Return True iff *nid*/*node* is a ``make_resolved_target_node`` stub.
-
-    Keyed on the node's own props -- the exact fingerprint that function
-    stamps -- never on id shape: unlike oao53's ``symbol:unresolved:``
-    sentinel, this id shape is indistinguishable in FORM from a real, walked
-    symbol id (both are ``symbol:py:<module>:<qual>``). ``props`` is read as
-    defensively as the sibling modules read theirs: it reaches here from
-    strategy plugins, including project-local overrides under
-    ``.weld/strategies/``, which are untrusted shape.
-    """
-    if not isinstance(nid, str) or nid.startswith(_UNRESOLVED_SYMBOL_PREFIX):
-        return False
-    if node.get("type") != _SYMBOL_TYPE:
-        return False
-    props = node.get("props")
-    if not isinstance(props, dict):
-        return False
-    if props.get("file"):
-        return False
-    return (
-        props.get("confidence") == _SPECULATIVE_CONFIDENCE
-        and props.get("authority") == _DERIVED_AUTHORITY
-        and props.get("source_strategy") == _PYTHON_CALLGRAPH_STRATEGY
-    )
+# The fingerprint itself lives beside the function that stamps it
+# (``weld.strategies._python_origin.is_resolved_target_stub``), because a
+# second reader now needs it: ``weld._graph_closure_reexport`` retargets the
+# edges pointing at one of these stubs when the module it names merely
+# re-exports the symbol. Keyed on props, never on id shape -- see that
+# function for why, and this module's own docstring for what the rule below
+# does with the answer.
 
 
 def emptied_resolved_stub_node_ids(
     nodes: dict[str, dict], edges: list[dict],
 ) -> set[str]:
-    """Return ids of resolved cross-glob call-target stubs with zero inbound edges.
+    """Return ids of resolved cross-glob call-target stubs no surviving edge names.
 
     Call after the ordinary ``props.file`` purge and its edge purge, over
-    their *result*: a node found here already lost every inbound edge that
-    referenced it (each dropped by the endpoint-membership floor when the
-    referencing file's own symbol node was purged, or by the provenance rule
-    when the referencing edge carried one -- the referencing file is always
-    the edge's ``from`` endpoint here, so this holds regardless of which
-    purge branch dropped it), so nothing here re-derives *why*, it only names
-    the node whose sole reason to exist just went with it. A full discover
-    never mints such a node unless something currently references it, so
-    purging it here keeps incremental discovery's output equal to a fresh
-    full run's.
+    their *result*: a node found here already lost every edge that referenced
+    it (each dropped by the endpoint-membership floor when the referencing
+    file's own symbol node was purged, or by the provenance rule when the
+    referencing edge carried one), so nothing here re-derives *why*, it only
+    names the node whose sole reason to exist just went with it. A full
+    discover never mints such a node unless something currently references
+    it, so purging it here keeps incremental discovery's output equal to a
+    fresh full run's.
 
-    Counts inbound edges of EVERY type (``calls``, ``inherits``,
-    ``references``, ``decorates``, or a module/class-scope call) -- see the
-    module docstring for why a single edge type would under-purge here, the
-    same way it would for oao53's sentinel.
+    Counts edges of EVERY type (``calls``, ``inherits``, ``references``,
+    ``decorates``, or a module/class-scope call) -- see the module docstring
+    for why a single edge type would under-purge here, the same way it would
+    for oao53's sentinel.
+
+    Counts them in EITHER direction, via
+    :func:`weld._discover_placeholder_anchor.edge_anchored_node_ids` (bd
+    5038-q4t3d). ``decorates`` was already in the list above when this rule
+    was written, but as an INBOUND type -- and ADR 0122 emits it decorator ->
+    decorated, so for a stub referenced only as a decorator the sentinel is
+    the edge's ``from`` endpoint and the inbound accumulator never saw it.
+    On this repo's own graph that was ``symbol:py:{abc:abstractmethod,
+    dataclasses:dataclass, typing:runtime_checkable, unittest:skipIf}``,
+    122 live ``decorates`` edges between them, every one read as dead --
+    ``dataclasses:dataclass`` alone at ``in=0, out=118``. See that module for
+    why the correction is derived from the stub's no-``props.file`` shape
+    rather than from a list of edge types.
     """
-    have_inbound: set[str] = set()
-    for edge in edges:
-        to_id = edge.get("to")
-        if isinstance(to_id, str):
-            have_inbound.add(to_id)
+    anchored = edge_anchored_node_ids(edges)
 
     return {
         nid
         for nid, node in nodes.items()
-        if _is_resolved_stub(nid, node) and nid not in have_inbound
+        if is_resolved_target_stub(nid, node) and nid not in anchored
     }
 
 

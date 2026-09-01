@@ -10,20 +10,28 @@ from pathlib import Path
 from weld._gitattributes_writer import write_repo_git_policy
 from weld._init_classify import classify_files
 from weld._init_cpp import cpp_buildsystem_source_entries, detect_cpp_buildsystem
-from weld._init_csharp import csharp_source_entries, detect_csharp_artifacts
+from weld._init_csharp import detect_csharp_artifacts
 from weld._init_exit import finish_init
 from weld._init_framework_sources import (
-    _add_framework_sources,
-    _add_go_framework_sources,
-    _add_rust_framework_sources,
     _files_entry,
     _source_entry,
     markdown_fallback_doc_source,
     yaml_has_wired_source,
 )
-from weld._init_go import go_package_source_entry
 from weld._init_interfaces import detect_interfaces, interface_source_entries
-from weld._init_ros2 import ros2_source_entries
+from weld._init_language_entries import LanguageWiring, language_source_entries
+
+# Re-exports, not uses. The per-language wiring moved to
+# weld/_init_language_entries.py, but these names are referred to as
+# ``weld.init.<name>`` by tests and by the ADRs that introduced them
+# (0046 test peers, 0060 C# anchors, 0071 framework strategies, 0132
+# go_package), so the old spelling keeps resolving.
+from weld._init_framework_sources import _add_framework_sources  # noqa: F401
+from weld._init_language_entries import (  # noqa: F401
+    _TREE_SITTER_EMIT_CALLS,
+    _TREE_SITTER_LANGUAGES,
+    _TREE_SITTER_TEST_PEER_GLOBS,
+)
 from weld._init_yaml_header import YAML_HEADER as _YAML_HEADER
 from weld._safe_text import sanitize_terminal_line
 from weld.init_workspace import init_workspace as _init_workspace
@@ -35,36 +43,6 @@ from weld.init_detect import (
     detect_ros2,
     scan_files,
 )
-
-# Tree-sitter-backed languages: name -> tuple of file extensions (C++ covers
-# .cpp/.cc/.h/...). Languages in ``_TREE_SITTER_EMIT_CALLS`` also emit
-# function-level call graph nodes via the per-source ``emit_calls`` flag.
-_TREE_SITTER_LANGUAGES: dict[str, tuple[str, ...]] = {
-    "csharp": (".cs",), "go": (".go",), "rust": (".rs",), "typescript": (".ts",),
-    "cpp": (".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".ipp", ".tpp"),
-    "java": (".java",),
-}
-_TREE_SITTER_EMIT_CALLS: frozenset[str] = frozenset({"cpp", "csharp"})
-# Tree-sitter languages whose test convention a glob can target, paired
-# with the glob(s) the matching ``weld.strategies._test_peer_*`` resolver
-# recognizes, so `wd init` scaffolds a `test_peer` source entry (the
-# `tests` edge) alongside the `tree_sitter` entry -- parity with the
-# Python python_module + test_peer pairing (ADR 0046). A language may need
-# more than one glob (TS spreads tests across ``*.test`` / ``*.spec`` /
-# ``__tests__/`` shapes), so the value is a tuple. Only globs the resolver
-# actually pairs are listed, so a stock init never writes an entry the
-# resolver would ignore:
-#   - rust: Cargo integration tests under ``tests/`` resolved to
-#     ``src/<name>.rs`` by ``_test_peer_rust``.
-#   - go: ``foo_test.go`` beside ``foo.go`` (same dir) -- ``_test_peer_go``.
-#   - typescript: ``*.test.ts`` / ``*.spec.ts`` (mid-suffix) and
-#     ``__tests__/*.ts`` (Jest dir) -- all recognized by
-#     ``_test_peer_ts.is_test_file``.
-_TREE_SITTER_TEST_PEER_GLOBS: dict[str, tuple[str, ...]] = {
-    "rust": ("**/tests/*.rs",),
-    "go": ("**/*_test.go",),
-    "typescript": ("**/*.test.ts", "**/*.spec.ts", "**/__tests__/*.ts"),
-}
 
 def _section_header(label: str) -> str:
     """Return a YAML comment that marks an artifact-class section."""
@@ -104,80 +82,19 @@ def generate_yaml(
     """
     buckets: dict[str, list[str]] = {cls: [] for cls, _, _, _ in _ARTIFACT_CLASSES}
 
-    # --- code ---
-    _add_framework_sources(buckets["code"], frameworks, python_globs)
-    # Go framework strategies (gin) precede the tree-sitter Go entry so
-    # the canonical tree-sitter file node wins the orchestrator merge.
-    _add_go_framework_sources(buckets["code"], frameworks)
-    # Rust framework strategies (axum) precede the tree-sitter Rust entry
-    # for the same merge-order reason (ADR 0071).
-    _add_rust_framework_sources(buckets["code"], frameworks)
-
-    if "python" in languages:
-        # python_module / python_callgraph / test_peer emit file/symbol
-        # nodes; framework strategies emit route/entity/contract. They
-        # coexist on the same glob without de-duplication (bd et6o).
-        added: set[str] = set()
-        for g in python_globs:
-            if g in added:
-                continue
-            if "test" in g.lower():
-                for strat in ("python_module", "test_peer"):  # ADR 0046
-                    buckets["tests"].append(_source_entry(
-                        g, "file", strat,
-                        comment=f"Python tests in {g.split('/')[0]} ({strat})"))
-            else:
-                # ADR 0004: pair non-test python source with a callgraph
-                # entry (symbol nodes + calls edges).
-                buckets["code"].append(_source_entry(
-                    g, "file", "python_module",
-                    comment=f"Python modules in {g.split('/')[0]}"))
-                buckets["code"].append(_source_entry(
-                    g, "symbol", "python_callgraph",
-                    comment=f"Python call graph in {g.split('/')[0]}"))
-            added.add(g)
-
-    # --- tree-sitter languages (Go, Rust, TypeScript, C/C++, C#, Java) ---
-    for lang, exts in _TREE_SITTER_LANGUAGES.items():
-        if lang not in languages:
-            continue
-        extras: dict[str, str] = {"language": lang}
-        if lang in _TREE_SITTER_EMIT_CALLS:
-            extras["emit_calls"] = "true"
-        label = "C#" if lang == "csharp" else lang.capitalize()
-        for ext in exts:
-            buckets["code"].append(_source_entry(
-                f"**/*{ext}", "file", "tree_sitter",
-                comment=f"{label} sources ({ext})",
-                extra=extras,
-            ))
-        if lang == "go":  # ordered after tree_sitter, like csharp_package below
-            buckets["code"].append(go_package_source_entry())
-    # Pair tree-sitter test conventions with a test_peer entry so the
-    # ``tests`` edge is emitted by a stock ``wd init`` + ``wd discover``,
-    # mirroring the Python python_module + test_peer pairing (ADR 0046).
-    # The tree_sitter entry above only emits symbol/definition nodes; the
-    # ``tests`` edge needs the per-language test_peer resolver.
-    for lang, test_globs in _TREE_SITTER_TEST_PEER_GLOBS.items():
-        if lang not in languages:
-            continue
-        label = "C#" if lang == "csharp" else lang.capitalize()
-        for test_glob in test_globs:
-            buckets["tests"].append(_source_entry(
-                test_glob, "file", "test_peer",
-                comment=f"{label} tests (test_peer; ADR 0046)",
-            ))
-    # --- C# strategy stack (helpers in weld/_init_csharp.py) ---
-    if csharp_flags:
-        buckets["code"].extend(csharp_source_entries(csharp_flags))
-
-    # --- ROS2 (; helpers in weld/_init_ros2.py) ---
-    if ros2_pkg_roots:
-        buckets["code"].extend(ros2_source_entries(ros2_pkg_roots))
-
-    # --- Interface strategies (gRPC, events, runtime-contract; ADR 0080) ---
-    if interface_sources:
-        buckets["code"].extend(interface_sources)
+    # --- code + tests: the per-language wiring (weld/_init_language_entries) ---
+    # One table, shared with ``wd init --refresh`` so a refreshed config wires
+    # the same strategies a full init does rather than a reduced subset of them.
+    code_entries, test_entries = language_source_entries(LanguageWiring(
+        languages=frozenset(languages),
+        frameworks=tuple(frameworks),
+        python_globs=tuple(python_globs),
+        csharp_flags=csharp_flags,
+        ros2_pkg_roots=tuple(ros2_pkg_roots or ()),
+        interface_sources=tuple(interface_sources or ()),
+    ))
+    buckets["code"].extend(code_entries)
+    buckets["tests"].extend(test_entries)
 
     # --- docs ---
     for doc_dir in doc_dirs:
@@ -352,7 +269,8 @@ def init(root: Path, output: Path, *, force: bool = False) -> bool:
             f"Recognised nothing to wire from {len(files)} files: the config "
             "is all stubs, so `wd discover` will build a zero-node graph. "
             "Uncomment a stub in the section that fits your sources, or add a "
-            "source entry, then re-run `wd init --force`.",
+            "source entry, then re-run `wd init --refresh` (keeps what you "
+            "wrote) -- or `wd init --force` to regenerate from scratch.",
             file=sys.stderr,
         )
     return True

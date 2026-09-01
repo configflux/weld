@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from weld._federation_endpoints import endpoint_child_name
 from weld._yaml import parse_yaml
 from weld.cross_repo.base import CrossRepoEdge
 from weld._notice import emit
@@ -83,9 +84,10 @@ class OverrideParseError(ValueError):
 class Override:
     """A single manual override entry.
 
-    ``from_id`` and ``to_id`` use the same federated-ID format as
-    :class:`~weld.cross_repo.base.CrossRepoEdge`:
-    ``<child-name>\\x1f<node-id>``.
+    ``from_id`` and ``to_id`` use the same endpoint id spaces as
+    :class:`~weld.cross_repo.base.CrossRepoEdge` (ADR 0137 ss1):
+    ``<child-name>\\x1f<node-id>`` for a node inside a child, or the
+    root-minted ``repo:<name>`` for a whole repository.
 
     ``action`` is ``"add"`` to inject a new edge or ``"remove"`` to
     suppress a resolver-emitted edge.
@@ -220,11 +222,13 @@ def load_overrides(workspace_root: str | Path) -> list[Override]:
 
 
 def _extract_child_name(federated_id: str) -> str | None:
-    """Return the child name prefix from a federated ID, or None."""
-    sep = "\x1f"
-    if sep not in federated_id:
-        return None
-    return federated_id.split(sep, 1)[0]
+    """Return the child an override endpoint names, or None (ADR 0137 ss2).
+
+    Both endpoint spellings count. The local separator split this replaced saw
+    only namespaced ids, so an override naming ``repo:<typo>`` was applied
+    silently instead of warned about and skipped.
+    """
+    return endpoint_child_name(federated_id)
 
 
 def _edge_matches(

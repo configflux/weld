@@ -59,7 +59,6 @@ from weld.file_index import load_file_index as _load_file_index
 from weld.mcp_helpers import weld_impact as _weld_impact
 from weld.mcp_helpers import weld_review_guarded as _weld_review_guarded
 from weld.mcp_helpers import weld_trace as _weld_trace
-from weld.workspace_state import find_workspaces_yaml as _find_workspaces_yaml
 
 # ---------------------------------------------------------------------------
 # Tool descriptors
@@ -102,20 +101,14 @@ def weld_query(
     return _attach_children_status(g, envelope)
 
 def weld_find(term: str, limit: int | None = None, *, root: Path | str = ".") -> dict:
-    """File-index substring search. Delegates to ``weld.file_index.find_files``;
-    at a federated root fans out across every child index (ADR 0089), matching
-    ``wd find``. Negative ``limit`` is ignored (pre-change MCP tolerance)."""
-    effective_limit = limit if limit is None or limit >= 0 else None
-    root_path = Path(root)
-    if _find_workspaces_yaml(root_path) is not None:
-        from weld._federation_find import federated_find
-        return federated_find(root_path, term, limit=effective_limit)
-    # Same self-heal the CLI runs before answering (bd yw4b). MCP is a thin
-    # wrapper of the product: a repair that only the CLI performed would make
-    # the two surfaces answer differently about the same tree.
-    from weld._file_index_coverage import ensure_index_covers_surface
-    ensure_index_covers_surface(root_path)
-    return _find_files(_load_file_index(root_path), term, limit=effective_limit)
+    """File-index substring search. Delegates to
+    :func:`weld._find_precondition.find_or_cannot_answer` -- the whole read
+    path, federated fan-out (ADR 0089) and index self-heal included, so this
+    surface cannot answer differently from ``wd find``. A root with no file
+    index anywhere is a structured cannot-answer, not "no matches"
+    (``file_index_missing``, ADR 0134); negative ``limit`` is ignored."""
+    from weld._find_precondition import find_or_cannot_answer
+    return find_or_cannot_answer(root, term, limit)
 
 def weld_context(
     node_id: str, *, full_neighborhood: bool = False, full_size: bool = False,

@@ -42,15 +42,24 @@ stays focused on the test cases.
 
 from __future__ import annotations
 
+import json
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _repo_root = Path(__file__).resolve().parent.parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
+from weld.tests._golden_invariants import (  # noqa: E402
+    GoldenScope,
+    check_golden_graph,
+    parse_canonical_golden,
+)
+from weld.tests._golden_violation_fixtures import with_dangling_edge  # noqa: E402
 from weld.tests._blast_radius_harness import (  # noqa: E402
     canonical_graph_text,
     copy_fixture,
@@ -73,6 +82,12 @@ _REGEN_HINT = (
     "(or `bazel run //weld/tests:regenerate_blast_radius_goldens`).\n"
     "Then review the updated golden JSON before committing."
 )
+
+#: ADR 0139 mechanism 5 / bd 5038-ipa1e. Every blast-radius fixture is a single
+#: repo -- there is no ``.weld/workspaces.yaml`` under any of them -- so their
+#: edges close over the fixture's own graph and ``child_graphs={}`` is the
+#: accurate declaration rather than a shrug.
+_SCOPE = GoldenScope(family="blast_radius")
 
 
 def _read(path: Path) -> str:
@@ -118,11 +133,31 @@ def run_one_fixture(
             "investigate before regenerating goldens.",
         )
 
+        # ADR 0139 mechanism 5: hooked *before* the regen/compare branch, so the
+        # graph about to be frozen is checked on the regen path too. A hook that
+        # only ran on compare is what let finding N4's fabricated externals be
+        # re-baked by a regeneration and asserted afresh the next run.
+        check_golden_graph(
+            graph1, scope=_SCOPE, label=f"{fixture_name} (discovered)",
+            child_graphs={},
+        )
+
         graph_golden = expected_dir / "graph.json"
         if regen:
             _write(graph_golden, canonical1)
         else:
             expected = _read(graph_golden)
+            # Before the byte compare, not after: a golden that violates an
+            # invariant should say which invariant, not print a diff against a
+            # correct graph and leave the reader to spot why.
+            check_golden_graph(
+                parse_canonical_golden(
+                    expected, label=f"{fixture_name} expected/graph.json",
+                ),
+                scope=_SCOPE,
+                label=f"{fixture_name} expected/graph.json",
+                child_graphs={},
+            )
             if canonical1 != expected:
                 snippet = diff_snippet(
                     canonical1, expected, fixture_name, "graph.json",
@@ -214,6 +249,72 @@ class BlastRadiusFixturesTest(unittest.TestCase):
         self.assertIn("actual/graph.json", snippet)
         self.assertIn('-  "node": "b"', snippet)
         self.assertIn('+  "node": "a"', snippet)
+
+
+#: This module, for patching its own globals. ``run_one_fixture`` resolves
+#: ``discover`` and ``fixtures_dir`` from here at call time, and under Bazel the
+#: module is imported as ``__main__``, so a dotted patch target would miss.
+_MODULE = sys.modules[__name__]
+
+
+class GoldenInvariantHookTest(unittest.TestCase):
+    """Neither path through ``run_one_fixture`` accepts a violating graph.
+
+    bd 5038-ipa1e / ADR 0139 mechanism 5. The compare half is the obvious one.
+    The regen half is the one that matters: finding N4's fabricated externals
+    were caught by nobody precisely because a regeneration rewrites the golden
+    from a graph no invariant had read, and the next compare then asserts the
+    new bytes faithfully. So the regen case below also checks the golden file is
+    byte-unchanged -- refusing to bake the violation is the actual requirement,
+    and merely raising afterwards would not meet it.
+
+    ``discover`` is patched out rather than driven: the payload under test is a
+    graph with a known defect, and running real discovery could not produce one.
+    """
+
+    FIXTURE = "python_pip"
+
+    def _clean_golden(self) -> dict:
+        return json.loads(
+            _read(fixtures_dir() / self.FIXTURE / "expected" / "graph.json"),
+        )
+
+    def _fixture_copy(self, tmp: str) -> Path:
+        """A private fixtures root, so an injection never touches the real one."""
+        root = Path(tmp) / "fixtures"
+        shutil.copytree(fixtures_dir() / self.FIXTURE, root / self.FIXTURE)
+        return root
+
+    def test_compare_path_rejects_a_violating_golden(self) -> None:
+        clean = self._clean_golden()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._fixture_copy(tmp)
+            golden = root / self.FIXTURE / "expected" / "graph.json"
+            golden.write_text(
+                json.dumps(with_dangling_edge(clean)), encoding="utf-8",
+            )
+            with mock.patch.object(_MODULE, "fixtures_dir", lambda: root), \
+                 mock.patch.object(_MODULE, "discover", lambda *a, **k: clean), \
+                 self.assertRaises(AssertionError) as caught:
+                run_one_fixture(self.FIXTURE, self, regen=False)
+        self.assertIn("dangling edge endpoint", str(caught.exception))
+
+    def test_regen_path_refuses_to_bake_a_violation(self) -> None:
+        clean = self._clean_golden()
+        violating = with_dangling_edge(clean)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._fixture_copy(tmp)
+            golden = root / self.FIXTURE / "expected" / "graph.json"
+            before = golden.read_text(encoding="utf-8")
+            with mock.patch.object(_MODULE, "fixtures_dir", lambda: root), \
+                 mock.patch.object(_MODULE, "discover", lambda *a, **k: violating), \
+                 self.assertRaises(AssertionError) as caught:
+                run_one_fixture(self.FIXTURE, self, regen=True)
+            self.assertIn("dangling edge endpoint", str(caught.exception))
+            self.assertEqual(
+                before, golden.read_text(encoding="utf-8"),
+                "regen wrote a graph carrying a dangling edge into the golden",
+            )
 
 
 if __name__ == "__main__":

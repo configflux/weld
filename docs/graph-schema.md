@@ -10,9 +10,12 @@ Source of truth for the constants lives in:
 
 - `weld/contract.py` -- `SCHEMA_VERSION`, `VALID_NODE_TYPES`,
   `VALID_EDGE_TYPES`, and all closed-vocabulary prop sets.
-- `weld/_contract_validators.py` -- the `validate_graph`,
-  `validate_node`, `validate_edge`, and `validate_fragment` validators
-  surfaced by `wd graph validate` / `wd graph validate-fragment`.
+- `weld/_contract_validators.py` (nodes and `meta`),
+  `weld/_contract_edge_validators.py` (edges) and
+  `weld/_graph_doc_validators.py` (`validate_graph` / `validate_fragment`)
+  -- the validators surfaced by `wd graph validate` /
+  `wd graph validate-fragment`. All four public names are re-exported from
+  `weld/contract.py`.
 - `weld/serializer.py` -- the canonical emitter that every writer of
   `graph.json` must go through.
 - `weld/_graph_schema.py` -- federation schema-version gating.
@@ -43,8 +46,8 @@ forward compatibility but are not validated by the contract.
 ## `meta` block
 
 The `meta` block carries the contract version, the federation schema
-version, the list of scanned source roots, and -- via a sidecar, see
-below -- freshness metadata.
+version, the list of scanned source roots, the cross-repo resolver record
+at a federated root, and -- via a sidecar, see below -- freshness metadata.
 
 | Field | Required | Type | Description |
 |---|---|---|---|
@@ -53,6 +56,7 @@ below -- freshness metadata.
 | `discovered_from` | yes | list | Source roots and files scanned during discovery. Content-stable at a fixed commit; consumed by `wd stale` to scope source-drift detection, and every *file* entry is recorded in the discovery inventory so it participates in freshness even when no source glob resolves it. |
 | `updated_at` | sidecar | string | ISO-8601 timestamp written on every save. Stored in the `graph-meta.json` sidecar, not in `graph.json`. Surfaced back on the logical `meta` when a graph is loaded. |
 | `git_sha` | sidecar (optional) | string | HEAD commit SHA recorded when the root is a git working tree. Stored in the `graph-meta.json` sidecar. Used by `wd stale` to detect when the graph is older than the working tree. |
+| `cross_repo` | federated roots, when resolvers ran | object | Record of the cross-repo resolver pass: `{strategies, resolved_children, edges, dropped}`. Both lists are resolver *inputs*: `strategies` is the sorted set the pass invoked and `resolved_children` the sorted set of children whose graphs were read and handed to them -- not the strategies that succeeded or the children that yielded an edge. `edges` counts what was merged in and `dropped` what was discarded for naming a node nothing holds. Written whenever a resolver pass happened, **including when it produced no edges**: that is what lets a reader tell a measured zero from a question nobody asked. Absent on single-repo graphs and on roots where no resolver could run. |
 
 `meta.version` is the **contract** version (what node/edge types exist).
 `meta.schema_version` is the **layout** version (whether the file carries
@@ -358,9 +362,15 @@ aggregates across registered child repositories:
 - The root emits a `repo:<name>` node per registered child, carrying
   `path`, `path_segments`, `depth`, and `tags`. Presence of any
   `repo:*` node stamps `schema_version = 2`.
-- Cross-repo edges use node ids of the form
-  `<child-name>\x1f<child-local-id>` (ASCII Unit Separator, `\x1f`) so
-  endpoints remain unambiguous across repositories.
+- A cross-repo edge endpoint is written in one of two id spaces, and which
+  one depends on what it names. An endpoint naming a node **inside** a child
+  is `<child-name>\x1f<child-local-id>` (ASCII Unit Separator, `\x1f`) and is
+  resolved in that child's graph at read time. An endpoint naming a **whole
+  repository** is the root's own `repo:<name>` node, written plainly: it lives
+  in no child, so namespacing it would ask a reader to resolve it somewhere it
+  has never existed. `<child-name>\x1frepo:<child-name>` is in neither space
+  and is invalid. `wd graph validate` at a workspace root resolves every
+  endpoint against both.
 - Cross-repo resolvers declared in `.weld/workspaces.yaml`
   (`cross_repo_strategies`, e.g. `grpc_service_binding`,
   `compose_topology`, `service_graph`, `channel_binding`) run at root
@@ -454,5 +464,6 @@ A minimal valid `graph.json`:
 ```
 
 A federated root graph additionally contains `repo:*` nodes and stamps
-`meta.schema_version = 2`; cross-repo edges use `<repo>\x1f<local-id>`
-on both endpoints.
+`meta.schema_version = 2`; a cross-repo edge endpoint is
+`<child-name>\x1f<local-id>` when it names a node inside that child and
+`repo:<name>` when it names the repository itself (see above).

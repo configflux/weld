@@ -142,9 +142,21 @@ py_library(
 # weld/strategies:cpp_resolver.py can call it directly (bd 5038-t6mzx)
 # without a cycle through //weld:runtime, which already depends on
 # //weld/strategies.
+#
+# _discover_placeholder_anchor.py rides in this srcs list rather than
+# becoming a library of its own (bd 5038-q4t3d), the same call
+# :capabilities_registry above makes: it exists only to answer "what still
+# anchors a never-walked placeholder" for the purge rule beside it and for
+# //weld:runtime's _discover_resolved_stub_purge, so a second label would be
+# one more thing to keep pointed at this one. It must be HERE and not only in
+# RUNTIME_SRCS, because the import above is what cpp_resolver reaches through
+# on the no-cycle path this micro-library exists to provide.
 py_library(
     name = "discover_unresolved_symbol_purge",
-    srcs = ["_discover_unresolved_symbol_purge.py"],
+    srcs = [
+        "_discover_placeholder_anchor.py",
+        "_discover_unresolved_symbol_purge.py",
+    ],
     deps = [":package_init"],
 )
 
@@ -192,6 +204,7 @@ py_library(
     srcs = [
         "_confidence_defaults.py",
         "_confidence_warn.py",
+        "_contract_edge_validators.py",
         "_contract_types.py",
         "_contract_validators.py",
         "_federation_validate.py",
@@ -208,6 +221,7 @@ py_library(
 py_library(
     name = "workspace",
     srcs = [
+        "_federation_endpoints.py",
         "_gitignore_scan.py",
         "_workspace_schema.py",
         "workspace.py",

@@ -124,6 +124,32 @@ class WeldEnrichEdgeTest(unittest.TestCase):
             self.assertEqual(result["enriched_edges"], 0)
             self.assertNotIn("description", graph.dump()["edges"][0].get("props", {}))
 
+    def test_repo_level_edges_are_not_enriched(self) -> None:
+        """ADR 0137, known follow-up: a held position, not an accident.
+
+        ``_is_cross_repo_edge`` selects on a namespace prefix in *both*
+        endpoints, so an edge between two root-minted ``repo:<name>`` nodes --
+        what ``package_graph`` and ``compose_topology`` emit -- is never
+        offered to a provider. That matches ADR 0011 ss10's MVP position that
+        cross-repo edges are not enriched, and the endpoint contract of ADR
+        0137 makes it a rule about repo-level edges rather than a side effect
+        of where a separator happened to be. Pinned here so a later change to
+        either shape is a decision someone makes.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            graph = _write_graph(Path(tmp), {
+                "repo:libs-order-schema": _node("repo", "libs-order-schema"),
+                "repo:services-order-gateway": _node("repo", "services-order-gateway"),
+            }, [{
+                "from": "repo:services-order-gateway",
+                "to": "repo:libs-order-schema",
+                "type": "cross_repo:depends_on",
+                "props": {"source_strategy": "package_graph"},
+            }])
+            result = _run(graph)
+            self.assertEqual(result["enriched_edges"], 0)
+            self.assertNotIn("description", graph.dump()["edges"][0].get("props", {}))
+
     def test_edge_enrichment_respects_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph = _write_graph(Path(tmp), {

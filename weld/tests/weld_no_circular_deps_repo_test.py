@@ -65,7 +65,7 @@ module for the one tokenizer both the full walk and the patch path need)
 and re-exported the raw per-extension extractors, leaving
 ``_file_index_incremental.py`` a clean one-directional consumer of
 ``file_index.py``'s build/save/load surface. With all 8 worth-breaking
-follow-ups done, 5 remained -- the 5 ACCEPT entries; the WORTH-BREAKING
+follow-ups done, only the ACCEPT entries remained; the WORTH-BREAKING
 inventory from bd 5038-1308j is complete.
 
 bd 5038-uuxaz.6-repair then fixed a real semantics
@@ -85,10 +85,12 @@ any violation whose anchor is NOT in ``_KNOWN_PRE_EXISTING_CYCLE_ANCHORS``
 fails it immediately (a regression: a new doc cross-reference cycle, a new
 recursive-helper false positive were the exclusion ever narrowed, or a
 genuinely new file-level cycle). ``test_baseline_has_no_stale_entries``
-closes the other direction: the moment one of the 5 anchors stops
-appearing (its cycle actually gets broken), that test starts failing until
-the entry is trimmed from the baseline below -- so the baseline cannot
-quietly rot into a list of already-fixed issues nobody notices.
+closes the other direction: the moment a baselined anchor stops appearing
+(its cycle actually gets broken), that test starts failing until the entry
+is trimmed from the baseline below -- so the baseline cannot quietly rot
+into a list of already-fixed issues nobody notices. It has done that work
+twice since: the count below is deliberately not restated in prose, because
+a hardcoded number here rots exactly the way the ratchet exists to prevent.
 
 Scope note: the ratchet is keyed on the SCC's anchor id (its lowest-sorted
 member), matching what `wd lint`'s own violation reporting has always
@@ -174,15 +176,20 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # re-exported the raw per-extension extractors, so
 # ``_file_index_incremental.py`` is now a clean one-directional consumer of
 # ``file_index.py``'s build/save/load surface). All 8 of ADR 0130's
-# worth-breaking follow-ups are now done; only the 5 ACCEPT entries remain.
+# worth-breaking follow-ups are now done; what remains is the ACCEPT set,
+# and ``test_baseline_has_no_stale_entries`` shrinks it whenever a cycle
+# breaks -- so read the entries, not a count.
 _KNOWN_PRE_EXISTING_CYCLE_ANCHORS: frozenset[str] = frozenset({
     # ACCEPT (ADR 0130): registry-hub test cluster, decomposing ~66 files is
     # disproportionate to this ratchet's purpose.
     "file:tools/_tier_check_framework_markers_test",
-    # ACCEPT (ADR 0130): package/registry-hub shape -- confirmed
-    # weld/viz/__init__.py has zero submodule imports of its own; every
-    # member here only shares an edge with the 7-line package init.
-    "file:weld/viz/_adapter_helpers",
+    # (The weld/viz/_adapter_helpers registry-hub entry was trimmed here when
+    # the closure learned to resolve a first-party Python import against the
+    # importer's own source root. That cluster was never a real cycle: its
+    # members shared only an edge with the 7-line weld/viz/__init__, because
+    # `from weld.viz.<mod> import <name>` had nowhere better to land. Those
+    # imports now reach file:weld/viz/<mod> directly, so the hub edge that
+    # closed the loop is gone and the SCC with it.)
     # ACCEPT (ADR 0130, re-anchored by bd 5038-uuxaz.6-repair): a genuine,
     # pre-existing 5-member depends_on cycle among python_callgraph and its
     # four AST-emission helpers (_python_decorates/_python_inherits/

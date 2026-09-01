@@ -18,10 +18,12 @@ The builder is deterministic by construction:
   workspace ledger records them, but they must not leak repo nodes so
   the root graph never references an absent fixture.
 
-The module is intentionally self-contained: it depends only on
-:mod:`weld._git` (for HEAD-SHA stamping), :mod:`weld.contract`,
-:mod:`weld.workspace`, :mod:`weld.workspace_state`, and
-:mod:`weld.serializer` so the discover branch can stay thin.
+The module is intentionally thin: besides :mod:`weld._git` (for HEAD-SHA
+stamping), :mod:`weld.contract`, :mod:`weld.workspace`,
+:mod:`weld.workspace_state` and :mod:`weld.serializer`, it reaches only for
+:func:`weld.federation_support.repo_node_id` -- the one place that spells a
+root-minted ``repo:<name>`` id, so the resolvers that point *at* these nodes
+build the same string this builder mints (ADR 0137 ss2).
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from pathlib import Path
 from weld._git import get_git_sha
 from weld._git_worktree import get_git_branch
 from weld.contract import SCHEMA_VERSION
+from weld.federation_support import repo_node_id
 from weld.serializer import canonical_graph as _canonical_graph
 from weld.workspace import ChildEntry, WorkspaceConfig
 from weld.workspace_state import WorkspaceState
@@ -109,7 +112,7 @@ def _build_repo_node(child: ChildEntry) -> tuple[str, dict]:
         "label": child.name,
         "props": props,
     }
-    return f"repo:{child.name}", node_body
+    return repo_node_id(child.name), node_body
 
 
 def _present_children(

@@ -44,7 +44,7 @@ class TestIsTestFilePytestConvention(unittest.TestCase):
     framework_strategies criterion check reports ``fail`` for every
     pytest-configured corpus even though every other binding criterion
     passes.
-    """
+    """  # test-hygiene: allow uncited-pin -- "pinned corpora" is an adjective
 
     def test_pytest_prefix_recognised(self) -> None:
         # The new branch: leading ``test_`` plus at least one extra char.
@@ -270,7 +270,7 @@ class TestResolvePeerSrcLayout(unittest.TestCase):
     ``tests/test_x.py`` and the production peer at ``src/<pkg>/x.py``.
     Without this branch the strategy emits zero ``tests`` edges, so
     framework_strategies criterion 3 fails.
-    """
+    """  # test-hygiene: allow uncited-pin -- "pinned corpora" is an adjective
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -313,7 +313,7 @@ class TestResolvePeerPackageFlatLayout(unittest.TestCase):
     httpx is the canonical pinned corpus using this shape: production
     package sits at ``httpx/`` directly under root, tests at
     ``tests/test_x.py`` (or ``tests/<sub>/test_x.py``).
-    """
+    """  # test-hygiene: allow uncited-pin -- "pinned corpus" is an adjective
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -369,7 +369,7 @@ class TestResolvePeerLayoutSkips(unittest.TestCase):
     Pinned corpora have ``docs/`` / ``.cache/`` / hidden roots that
     the resolver must skip; otherwise the scan would pair
     ``tests/test_foo.py`` with ``docs/foo.py`` (the wrong peer).
-    """
+    """  # test-hygiene: allow uncited-pin -- "pinned corpora" is an adjective
 
     def test_docs_and_hidden_dirs_are_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as td:

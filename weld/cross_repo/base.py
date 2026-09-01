@@ -30,14 +30,19 @@ byte-identical across discover runs.
 
 from __future__ import annotations
 
-import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
-from weld.workspace import UNIT_SEPARATOR
+from weld._federation_endpoints import edge_child_names
 from weld._notice import emit
+# Re-exported, not redefined: ``ResolverContext`` and the ``_iter_nodes``
+# accessor moved to a sibling module to keep this one under the line cap, and
+# every resolver, test and caller still imports them from here.
+from weld.cross_repo._resolver_context import (  # noqa: F401
+    ResolverContext,
+    _iter_nodes,
+)
 
 __all__ = [
     "CrossRepoEdge",
@@ -50,24 +55,6 @@ __all__ = [
     "resolver_names",
     "run_resolvers",
 ]
-
-
-def _iter_nodes(graph: object) -> Iterable[tuple[str, dict]]:
-    """Yield ``(node_id, node)`` pairs from a child :class:`weld.graph.Graph`.
-
-    Centralises the defensive ``getattr(graph, '_data', {}).get('nodes', {})``
-    access shared by concrete resolvers. Production stores nodes at
-    ``_data['nodes']`` keyed by id, each value shaped ``{type, label,
-    props}`` (weld/graph.py:49). Objects without ``_data`` and graphs
-    whose ``_data['nodes']`` is not a dict both degrade to ``[]`` so
-    callers iterate zero pairs rather than raising. Returned in
-    dict-insertion order; callers needing determinism must sort.
-    Underscore-prefixed: internal coordination point, not in ``__all__``.
-    """
-    nodes = getattr(graph, "_data", {}).get("nodes", {})
-    if not isinstance(nodes, dict):
-        return []
-    return list(nodes.items())
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +91,19 @@ class UnknownResolverError(KeyError):
 class CrossRepoEdge:
     """A single typed edge emitted by a cross-repo resolver.
 
-    ``from_id`` and ``to_id`` are canonical federated IDs -- that is,
-    ``<child-name>\\x1f<node-id>`` where the separator is the ASCII Unit
-    Separator documented in ADR 0011 § 7. ``type`` is a short tag such as
+    ``from_id`` and ``to_id`` are endpoints in one of the **two** id spaces a
+    federated root holds (ADR 0137 § 1). An endpoint that names a node inside a
+    child graph is namespaced -- ``<child-name>\\x1f<node-id>``, the ASCII Unit
+    Separator of ADR 0011 § 7 -- and is resolved in that child at read time. An
+    endpoint that names a whole repository is the root-minted ``repo:<name>``
+    and is resolved in the root meta-graph directly; it carries no namespace,
+    because there is nothing to resolve inside a child. Build both through
+    :mod:`weld._federation_endpoints` (``prefix_node_id`` / ``repo_node_id``;
+    re-exported from :mod:`weld.federation_support` for runtime callers)
+    rather than spelling them here: ``<child>\\x1frepo:<child>`` looks like
+    either one and is neither, so every edge that used it dangled.
+
+    ``type`` is a short tag such as
     ``invokes`` or ``depends_on`` that names the relationship. ``props``
     carries resolver-specific metadata (host, port, path, matched symbol)
     and is always a plain mapping of strings to JSON-serializable values.
@@ -161,71 +158,6 @@ class CrossRepoEdge:
             type=str(payload["type"]),
             props=dict(props),
         )
-
-
-# ---------------------------------------------------------------------------
-# Resolver context
-# ---------------------------------------------------------------------------
-
-
-class ResolverContext:
-    """Read-only handle into the data a resolver needs to run.
-
-    A resolver receives one context per root-discover pass. The context
-    provides:
-
-    * ``workspace_root`` -- filesystem path of the workspace root, useful
-      for resolvers that need to read root-level files such as
-      ``docker-compose.yaml``. Not used for reading child graphs; those
-      come in pre-loaded via ``children``.
-    * ``cross_repo_strategies`` -- the ordered list of strategy names
-      declared in ``workspaces.yaml``. Resolvers rarely inspect this
-      directly, but it is exposed so introspection tooling can observe
-      the active set without re-parsing the YAML.
-    * ``children`` -- a read-only mapping from child name to the loaded
-      :class:`weld.graph.Graph` (or compatible stub). Only children
-      whose status is ``present`` appear here; missing, uninitialized,
-      and corrupt children are filtered out by the caller so resolvers
-      can iterate without repeatedly checking sentinel types.
-    * ``child_hashes`` -- a parallel mapping from child name to the
-      SHA-256 of the bytes the caller loaded for that child. Resolvers
-      use this to record the exact child byte identity they consumed;
-      the orchestrator re-checks it before committing edges.
-
-    The mapping is wrapped in :class:`types.MappingProxyType` so resolvers
-    cannot mutate the shared view. Graphs themselves are not copied --
-    the caller is responsible for passing in objects that are safe to
-    share across resolvers.
-    """
-
-    __slots__ = (
-        "workspace_root",
-        "cross_repo_strategies",
-        "children",
-        "child_hashes",
-    )
-
-    def __init__(
-        self,
-        *,
-        workspace_root: str,
-        cross_repo_strategies: list[str],
-        children: Mapping[str, Any],
-        child_hashes: Mapping[str, str],
-    ) -> None:
-        self.workspace_root = workspace_root
-        self.cross_repo_strategies = tuple(cross_repo_strategies)
-        self.children = MappingProxyType(dict(children))
-        self.child_hashes = MappingProxyType(dict(child_hashes))
-
-    @staticmethod
-    def hash_bytes(raw: bytes) -> str:
-        """Return the SHA-256 hex digest of a byte snapshot.
-
-        Exposed on the class so callers and resolvers use the same digest
-        algorithm when recording and comparing child-graph identity.
-        """
-        return hashlib.sha256(raw).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +251,14 @@ def resolver_names() -> list[str]:
 
 
 def _edge_touches_child(edge: CrossRepoEdge, child_name: str) -> bool:
-    """Return True when ``edge`` references ``child_name`` on either side."""
-    prefix = f"{child_name}{UNIT_SEPARATOR}"
-    return edge.from_id.startswith(prefix) or edge.to_id.startswith(prefix)
+    """Return True when ``edge`` references ``child_name`` on either side.
+
+    Both endpoint spellings count (ADR 0137 § 2): a namespaced child-local id
+    and the root-minted ``repo:<child_name>``. The prefix test this replaced
+    saw only the first, so the TOCTOU guard below waved through every
+    repo-level edge computed against a child that had changed underneath it.
+    """
+    return child_name in edge_child_names(edge.from_id, edge.to_id)
 
 
 def run_resolvers(

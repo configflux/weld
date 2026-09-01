@@ -33,6 +33,17 @@ from weld._yaml import parse_yaml
 #: rather than a literal so the noise threshold has one documented home.
 _MIN_FILES = 1
 
+#: The two remedies, in the order a maintainer should reach for them. Named
+#: once so ``wd doctor``'s warning and ``wd prime``'s next step cannot drift
+#: apart on which one they lead with: ``--force`` regenerates the config from
+#: a fresh scan and discards hand edits, ``--refresh`` merges and keeps them,
+#: so a diagnostic that names only ``--force`` advises throwing work away.
+_REFRESH = "wd init --refresh"
+_FORCE = "wd init --force"
+_REMEDY = (
+    f"{_REFRESH} (keeps your entries) or {_FORCE} (regenerate from scratch)"
+)
+
 #: Language -> set of strategy names that, when wired in ``discover.yaml``,
 #: mean that language's source is claimed. A language is claimed when the
 #: config wires *any* strategy in its set (ADR 0135: membership, not id
@@ -146,13 +157,16 @@ def unclaimed_message(item: UnclaimedClass) -> str:
     """One-line advisory for a single unclaimed language.
 
     Shared by ``wd doctor`` and ``wd prime`` so the two surfaces cannot drift
-    on wording. Names the count, the language, and the fix (``wd init
-    --force``), matching the field-report's expected output.
+    on wording. Names the count, the language, and both remedies -- the
+    non-destructive one first. ``wd init --force`` regenerates the config from
+    a fresh scan and discards hand edits, so naming it alone told a maintainer
+    following the advice to throw their own customisation away;
+    ``wd init --refresh`` merges the missing entries in and keeps it.
     """
     plural = "file" if item.file_count == 1 else "files"
     return (
         f"{item.file_count} {_label(item.language)} {plural} present but no "
-        f"wired strategy claims '{item.language}' -> run: wd init --force"
+        f"wired strategy claims '{item.language}' -> run: {_REMEDY}"
     )
 
 
@@ -185,8 +199,11 @@ def prime_unclaimed_lines(root: Path, status) -> tuple[list[str], list[str]]:
     """Return ``(lines, steps)`` for the ``wd prime`` unclaimed-source check.
 
     ``status`` is ``weld.prime._status`` (``(tag, msg) -> str``). Emits one
-    WARN-tagged line per unclaimed language plus a single ``wd init --force``
-    next step. Read-only; never raises -- a diagnostic must not break prime.
+    WARN-tagged line per unclaimed language plus a single ``wd init --refresh``
+    next step -- a next step is a command to run, so it is the one that keeps
+    hand edits; the WARN line itself still names ``--force`` as the
+    regenerate-from-scratch alternative. Read-only; never raises -- a
+    diagnostic must not break prime.
     """
     try:
         unclaimed = detect_unclaimed_source_classes(root)
@@ -195,4 +212,4 @@ def prime_unclaimed_lines(root: Path, status) -> tuple[list[str], list[str]]:
     if not unclaimed:
         return [], []
     lines = [status("WARN", unclaimed_message(item)) for item in unclaimed]
-    return lines, ["wd init --force"]
+    return lines, [_REFRESH]

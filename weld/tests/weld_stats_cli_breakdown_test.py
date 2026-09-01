@@ -17,18 +17,29 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 
 from weld._graph_cli import main as cli_main  # noqa: E402
 from weld.contract import SCHEMA_VERSION  # noqa: E402
+from weld.tests._federation_staleness_fixtures import (  # noqa: E402
+    _init_repo,
+    _write_child_graph,
+)
 from weld.workspace import (  # noqa: E402
     ChildEntry,
     WorkspaceConfig,
     dump_workspaces_yaml,
+)
+from weld.workspace_state import (  # noqa: E402
+    build_workspace_state,
+    load_workspace_config,
+    save_workspace_state,
 )
 
 
@@ -51,6 +62,41 @@ def _run_stats(root: Path) -> dict:
     with redirect_stdout(buf):
         cli_main(["--root", str(root), "stats", "--json"])
     return json.loads(buf.getvalue())
+
+
+def _run_stats_text(root: Path) -> tuple[str, str]:
+    """Run human-format ``wd stats``; return ``(stdout, stderr)``."""
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        cli_main(["--root", str(root), "stats"])
+    return out.getvalue(), err.getvalue()
+
+
+def _seed_workspace(root: Path, names: tuple[str, ...]) -> None:
+    """Register *names* as children, clone each, and record a ledger.
+
+    Children are real git repositories with real child graphs (a child
+    without a ``.git`` is classified ``missing``, so a stub directory could
+    never produce the stored ``present`` claim these tests start from), and
+    the ledger is written by the product's own writer. The stored claim
+    under test is therefore one ``wd discover`` would genuinely have
+    recorded, not a hand-rolled fixture that can drift from the schema it
+    stands in for.
+    """
+    _write_graph(root, {
+        "meta": {"version": SCHEMA_VERSION, "schema_version": 1},
+        "nodes": {},
+        "edges": [],
+    })
+    for name in names:
+        _write_child_graph(_init_repo(root / name), at_head=True)
+    dump_workspaces_yaml(
+        WorkspaceConfig(children=[ChildEntry(name=n, path=n) for n in names]),
+        root / ".weld" / "workspaces.yaml",
+    )
+    config = load_workspace_config(root)
+    assert config is not None
+    save_workspace_state(root, build_workspace_state(root, config))
 
 
 class TestStatsCliBaseline(unittest.TestCase):
@@ -143,8 +189,9 @@ class TestStatsCliWorkspaceSummary(unittest.TestCase):
                 "nodes": {},
                 "edges": [],
             })
-            # Register two children in workspaces.yaml (no child graphs yet,
-            # so the summary should just count them and mark status).
+            # Register two children in workspaces.yaml that were never
+            # cloned, with no ledger ever written (``wd init`` without a
+            # subsequent ``wd discover``).
             cfg = WorkspaceConfig(
                 children=[
                     ChildEntry(name="alpha", path="services/alpha"),
@@ -163,8 +210,125 @@ class TestStatsCliWorkspaceSummary(unittest.TestCase):
             self.assertIsInstance(ws["children"], list)
             names = sorted(entry["name"] for entry in ws["children"])
             self.assertEqual(names, ["alpha", "beta"])
+            # No ledger to read, so the status is the probe's: neither path
+            # exists, so both are ``missing``. The old fallback said
+            # ``unknown`` here, which is the one answer that is never true --
+            # weld can see perfectly well that the directory is not there.
             for entry in ws["children"]:
-                self.assertIn("status", entry)
+                self.assertEqual(entry["status"], "missing")
+            self.assertEqual(ws["present"], 0)
+            # A registry with no ledger behind it *is* ledger drift, and the
+            # remedy the pointer leads to (``wd discover``) is exactly what
+            # this workspace needs.
+            self.assertEqual(ws["drift_count"], 2)
+
+
+class TestStatsCliObservedChildLifecycle(unittest.TestCase):
+    """ADR 0138, extended to ``wd stats``: disk is the fact at read time.
+
+    ``wd stats`` reported each child's *stored* ``status`` verbatim, so a
+    child deleted after the last ``wd discover`` still read ``present`` here
+    while ``wd stale`` and ``wd workspace status`` both reported it missing
+    -- three surfaces, two answers. These tests hold this one to the disk.
+    """
+
+    def test_child_deleted_after_the_ledger_reads_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_workspace(root, ("alpha", "beta"))
+            state_path = root / ".weld" / "workspace-state.json"
+            before = state_path.read_bytes()
+            shutil.rmtree(root / "beta")
+            # Precondition: the ledger still claims the child that is gone.
+            stored = json.loads(before)["children"]["beta"]["status"]
+            self.assertEqual(stored, "present")
+
+            ws = _run_stats(root)["workspaces"]
+            statuses = {c["name"]: c["status"] for c in ws["children"]}
+            self.assertEqual(statuses, {"alpha": "present", "beta": "missing"})
+            # The roster is still the registered set; only presence moved.
+            self.assertEqual(ws["count"], 2)
+            self.assertEqual(ws["present"], 1)
+            self.assertEqual(ws["drift_count"], 1)
+            # Reported, not repaired: ``wd stats`` is a read (ADR 0138 §4).
+            self.assertEqual(state_path.read_bytes(), before)
+
+    def test_child_path_comes_from_the_registry_not_the_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_workspace(root, ("alpha",))
+
+            ws = _run_stats(root)["workspaces"]
+            # A ledger row records ``graph_path``; it has no ``path`` key, so
+            # reading one reported "path": null for every child as soon as a
+            # ledger existed -- while the never-discovered branch of the same
+            # function filled the same key in from workspaces.yaml.
+            self.assertEqual(ws["children"][0]["path"], "alpha")
+
+    def test_agreeing_ledger_reports_zero_drift_and_keeps_its_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_workspace(root, ("alpha",))
+
+            ws = _run_stats(root)["workspaces"]
+            self.assertEqual(ws["present"], 1)
+            # Always present, not omitted-when-empty: one key a machine
+            # consumer reads unconditionally instead of branching on its
+            # absence (ADR 0138 §3).
+            self.assertEqual(ws["drift_count"], 0)
+            self.assertEqual(ws["children"][0]["status"], "present")
+
+    def test_unprobeable_registry_falls_back_to_the_ledger_and_says_so(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_workspace(root, ("alpha", "beta"))
+            shutil.rmtree(root / "beta")
+
+            # ADR 0138 §5: the probe declining is the "report the stored
+            # ledger unchanged" signal -- correct, but never silent.
+            with patch(
+                "weld._workspace_drift.observed_children", return_value=None,
+            ):
+                text, err = _run_stats_text(root)
+            self.assertIn("could not re-read the workspace registry", err)
+            self.assertNotIn("could not re-read", text)
+            # Falls back to the ledger's claim, so beta still reads present
+            # -- which is exactly what the notice on stderr warns about.
+            self.assertIn("workspaces: 2 registered, 2 present", text)
+
+    def test_human_summary_splits_registered_from_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_workspace(root, ("alpha", "beta"))
+            shutil.rmtree(root / "beta")
+
+            text, err = _run_stats_text(root)
+            # The old form was a bare "workspaces: 2 children" -- the same
+            # shape bd 51oxx found being read as "2 are here" on wd stale.
+            self.assertNotIn("2 children", text)
+            self.assertIn("workspaces: 2 registered, 1 present", text)
+            # One pointer, not a per-child block: stats is the summary and
+            # wd workspace status is the detail surface (which names the
+            # wd discover remedy itself, so we do not carry two here).
+            self.assertIn(
+                "workspace ledger drift: 1 child differs from the stored "
+                "ledger -- run wd workspace status for detail",
+                text,
+            )
+            self.assertEqual(err, "")
+
+    def test_human_summary_stays_quiet_when_the_ledger_agrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_workspace(root, ("alpha",))
+
+            text, _ = _run_stats_text(root)
+            self.assertIn("workspaces: 1 registered, 1 present", text)
+            # Silence on agreement: a pointer printed every run is a pointer
+            # the reader learns to skip.
+            self.assertNotIn("ledger drift", text)
 
 
 if __name__ == "__main__":

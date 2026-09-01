@@ -202,7 +202,7 @@ class VouchingTest(_GraphFixture):
         keep the weak encoding alive indefinitely. Nothing here writes a
         partial token, so a partial one is a state that was truncated or
         edited, and doubt costs only a refresh.
-        """
+        """  # test-hygiene: allow uncited-pin -- "a pinning token" is a noun
         good = published_graph_token(self.graph)
         for token in (
             "not-a-dict",

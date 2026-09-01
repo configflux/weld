@@ -8,10 +8,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
+# ADR 0137 ss2 names this module as the sanctioned surface for building and
+# parsing a cross-repo edge endpoint, and it is: these five are re-exported
+# here, so ``from weld.federation_support import repo_node_id`` is the import
+# every runtime caller uses. They are *defined* one layer down, beside the
+# separator they spell, because ``//weld/cross_repo`` may not depend on
+# ``//weld:runtime`` and the resolvers have to build the same ids.
+from weld._federation_endpoints import (  # noqa: F401
+    REPO_NODE_PREFIX,
+    edge_child_names,
+    endpoint_child_name,
+    prefix_node_id,
+    repo_node_id,
+    split_prefixed_id,
+)
 from weld._graph_schema import validate_dict_payload, validate_graph_shape
 from weld._sqlite_reader import SqliteBackedGraph
 from weld.graph import CHILD_SCHEMA_VERSION, Graph, SchemaVersionError
-from weld.workspace import UNIT_SEPARATOR
 
 DISPLAY_SEPARATOR = "::"
 
@@ -85,18 +98,6 @@ LoadedChild: TypeAlias = (
 ChildStatusResult: TypeAlias = (
     PresentChild | MissingChild | UninitializedChild | CorruptChild
 )
-
-
-def prefix_node_id(child_name: str, node_id: str) -> str:
-    """Return the canonical federated ID for a child-local node ID."""
-    return f"{child_name}{UNIT_SEPARATOR}{node_id}"
-
-
-def split_prefixed_id(node_id: str) -> tuple[str, str] | None:
-    """Split a canonical federated ID into ``(child_name, original_id)``."""
-    if UNIT_SEPARATOR not in node_id:
-        return None
-    return node_id.split(UNIT_SEPARATOR, 1)
 
 
 def render_display_id(node_id: str) -> str:

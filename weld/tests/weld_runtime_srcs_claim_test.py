@@ -102,8 +102,9 @@ class RuntimeSrcsClaimTest(unittest.TestCase):
     def test_the_manifest_actually_resolved(self) -> None:
         """Guard the guard: an unresolved RUNTIME_SRCS would pass vacuously.
 
-        If ``load()`` resolution regressed, every ``srcs = RUNTIME_SRCS`` would
-        evaluate to an empty list, every module would look unclaimed, and the
+        If ``weld/strategies/_bazel_loads.py``'s ``load()`` resolution
+        regressed, every ``srcs = RUNTIME_SRCS`` would evaluate to an empty
+        list, every module would look unclaimed, and the
         real assertion below would fail loudly -- but a *future* refactor that
         also relaxed that assertion could turn this file into a no-op. Pinning
         a healthy target count keeps that honest.
@@ -150,9 +151,17 @@ class RuntimeSrcsClaimTest(unittest.TestCase):
         """
         expected = {
             "_discover_node_merge.py": ["discover_node_merge", "runtime"],
+            # bd 5038-q4t3d: the shared placeholder-anchor predicate rides in
+            # the micro-library beside the rule that imports it, so
+            # weld/strategies/cpp_resolver.py still reaches that rule without a
+            # cycle through //weld:runtime.
+            "_discover_placeholder_anchor.py": [
+                "discover_unresolved_symbol_purge", "runtime",
+            ],
             "_discover_unresolved_symbol_purge.py": [
                 "discover_unresolved_symbol_purge", "runtime",
             ],
+            "_federation_endpoints.py": ["runtime", "workspace"],
             "_gitignore_scan.py": ["runtime", "workspace"],
             "_node_ids.py": ["node_ids", "runtime"],
             "_rel_path.py": ["rel_path", "runtime"],

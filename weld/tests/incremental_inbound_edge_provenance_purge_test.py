@@ -271,7 +271,8 @@ class DirtyProducerMatchesFullTest(unittest.TestCase):
     instead of endpoint membership, so a dirty PRODUCER must still purge and
     re-mint correctly under the new rule. Each producer's own glob/path
     holds the dirty file, so it re-runs and puts back exactly one edge --
-    unaffected by the fix, pinned so it cannot regress.
+    unaffected by the fix, pinned against ADR 0074's
+    ``weld._incremental_purge`` so it cannot regress.
     """
 
     def test_every_producer_edit_matches_full(self) -> None:

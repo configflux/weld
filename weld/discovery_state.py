@@ -346,8 +346,8 @@ def purge_stale_nodes(
     The canonical set is passed on to the edge purge rather than the raw one,
     so both tiers judge staleness by the same yardstick.
 
-    bd g7rs / bd pkz2s / bd oao53 / bd ukt95 / bd n4nvt / bd 5ouuf: the *emptied* id set
-    is computed by
+    bd g7rs / bd pkz2s / bd oao53 / bd ukt95 / bd n4nvt / bd 5ouuf / bd
+    5038-q4t3d: the *emptied* id set is computed by
     :func:`weld._discover_external_package_purge.emptied_placeholder_node_ids`,
     which unions five independently-scoped placeholder-node rules (see that
     function's docstring for all five), each purged only once every
@@ -356,7 +356,9 @@ def purge_stale_nodes(
     now pointing at a freshly-removed node is judged by the identical rule
     the first pass already applied -- a provenance-carrying survivor is left
     dangling for :mod:`weld._discover_orphan_edges` to widen-and-retry
-    downstream, never silently kept here.
+    downstream, never silently kept here. That retry is a repair, not a
+    licence: q4t3d's two rules removed live nodes here on every round that
+    purged anything, and only its doubled merge pass showed it.
     """
     if not stale_files:
         return nodes, edges

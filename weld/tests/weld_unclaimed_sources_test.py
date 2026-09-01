@@ -41,6 +41,22 @@ def _write_config(root: Path, body: str) -> None:
     (root / ".weld" / "discover.yaml").write_text(body, encoding="utf-8")
 
 
+def _assert_refresh_offered_first(case: unittest.TestCase, text: str) -> None:
+    """Both remedies are named, and the non-destructive one comes first.
+
+    ``--force`` regenerates the config from scratch and discards hand edits;
+    ``--refresh`` merges and keeps them. A warning that names only ``--force``
+    (or names it first) tells a maintainer following it to throw their own
+    edits away, so the order is asserted, not just the presence.
+    """
+    case.assertIn("wd init --refresh", text, text)
+    case.assertIn("wd init --force", text, text)
+    case.assertLess(
+        text.index("wd init --refresh"), text.index("wd init --force"),
+        f"the destructive remedy is offered first: {text}",
+    )
+
+
 class UnclaimedComparisonTest(unittest.TestCase):
     """Pure comparison of detected languages against wired strategies."""
 
@@ -137,7 +153,7 @@ class DoctorSurfaceTest(unittest.TestCase):
             self.assertEqual(r.level, "warn")
             self.assertEqual(r.section, "Config")
             self.assertEqual(r.note_id, "unclaimed-source-csharp")
-            self.assertIn("wd init --force", r.message)
+            _assert_refresh_offered_first(self, r.message)
 
     def test_doctor_exit_stays_zero_on_unclaimed(self):
         # A stale config is a warn, never a fail: it must not break automation
@@ -211,8 +227,11 @@ class PrimeSurfaceTest(unittest.TestCase):
                 return f"[{tag}] {msg}"
 
             lines, steps = prime_unclaimed_lines(root, _status)
-            self.assertEqual(steps, ["wd init --force"])
+            # A next step is a command to run, so it is the non-destructive
+            # one; the WARN line above it still names both.
+            self.assertEqual(steps, ["wd init --refresh"])
             self.assertTrue(any("no wired strategy" in ln for ln in lines))
+            _assert_refresh_offered_first(self, "\n".join(lines))
 
     def test_prime_end_to_end_lists_unclaimed(self):
         from weld.prime import prime
@@ -227,7 +246,9 @@ class PrimeSurfaceTest(unittest.TestCase):
             (root / "A.cs").write_text("class A {}\n", encoding="utf-8")
             out = prime(root)
             self.assertIn("no wired strategy", out)
-            self.assertIn("wd init --force", out)
+            _assert_refresh_offered_first(self, out)
+            _, _, next_steps = out.partition("Next steps:")
+            self.assertIn("wd init --refresh", next_steps, out)
 
 
 class VersionStampTest(unittest.TestCase):
@@ -246,8 +267,9 @@ class Finding05RegressionTest(unittest.TestCase):
     """The evaluator's exact case: 8 .cs files, markdown-only config.
 
     Before this change every such repo passed ``wd doctor`` with zero warnings
-    while 100% of its source was invisible. This pins that both surfaces now
-    name the invisible language and point at ``wd init --force``.
+    while 100% of its source was invisible. This pins ADR 0135's contract --
+    both surfaces now name the invisible language and point at
+    ``wd init --refresh`` before the destructive ``wd init --force``.
     """
 
     def test_eight_cs_files_markdown_only_config(self):
@@ -288,7 +310,7 @@ class Finding05RegressionTest(unittest.TestCase):
 
             out = prime(root)
             self.assertIn("8 C# files present but no wired strategy", out)
-            self.assertIn("wd init --force", out)
+            _assert_refresh_offered_first(self, out)
 
 
 if __name__ == "__main__":

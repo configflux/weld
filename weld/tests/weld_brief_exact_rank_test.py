@@ -6,13 +6,15 @@ then lexical) and label every one 'direct match'. The exact class symbol --
 the node the query names -- landed at position 13 of 20 (transcript 08),
 while ``wd query`` ranked it #1 via the shared exact-identifier preference.
 
-This module pins the fix:
+This module pins the fix, whose contract lives in :mod:`weld._brief_rank`:
 
-  - brief applies the same ``exact_symbol_match_rank`` preference wd query
-    uses, so an exact symbol label/qualname hit sorts to the top of its
-    bucket regardless of node id.
-  - the per-node ``relevance`` field discriminates 'exact match' vs
-    'token match' vs 'related ...' (neighbour) so callers can re-rank.
+  - :func:`weld._brief_rank.sort_key` applies the same
+    :func:`weld.ranking.exact_symbol_match_rank` preference wd query uses,
+    so an exact symbol label/qualname hit sorts to the top of its bucket
+    regardless of node id.
+  - :func:`weld._brief_rank.primary_relevance` discriminates the per-node
+    ``relevance`` field 'exact match' vs 'token match'; neighbours get
+    'related ...' from :mod:`weld.brief`, so callers can re-rank.
 
 Coverage is a synthetic graph modelling the OrderReplayer collision.
 """

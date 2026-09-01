@@ -11,7 +11,8 @@ graph -- the canonical dogfood gap that motivated this regression.
 
 The fix wires ``build_file_index`` / ``save_file_index`` into all three
 exit paths of ``_discover_single_repo`` (full discovery, incremental with
-changes, incremental no-changes). This test pins the contract.
+changes, incremental no-changes). This test pins that contract between
+``weld/discover.py`` and ``weld/file_index.py``.
 
 Fixtures
 --------

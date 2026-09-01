@@ -14,7 +14,7 @@ from pathlib import Path
 from weld._rel_path import rel_to_root
 from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies._helpers import StrategyResult
-from weld.strategies._markdown_fence import iter_headings
+from weld.strategies._markdown_fence import first_h1
 
 # -- Service / stage association mapping ------------------------------------
 
@@ -34,12 +34,11 @@ def _extract_title(text: str) -> str | None:
 
     Fenced blocks are skipped (bd ve41): "first ``#`` line" is the same scan
     the doc strategy runs, and a runbook that opens with a sample command
-    block would otherwise be titled after a shell comment.
+    block would otherwise be titled after a shell comment. That scan is now
+    :func:`weld.strategies._markdown_fence.first_h1`, shared with the markdown
+    strategy so the two cannot drift apart again.
     """
-    for _index, level, heading in iter_headings(text):
-        if level == 1:
-            return heading
-    return None
+    return first_h1(text)
 
 def _infer_associations(stem: str) -> list[str]:
     """Infer associated graph node IDs from the runbook filename stem."""

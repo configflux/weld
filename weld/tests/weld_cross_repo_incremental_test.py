@@ -23,6 +23,7 @@ from weld.cross_repo.base import (
     run_resolvers,
 )
 from weld.cross_repo.incremental import DriftResult, run_resolvers_incremental
+from weld._federation_endpoints import repo_node_id
 from weld.workspace import UNIT_SEPARATOR
 
 
@@ -104,6 +105,62 @@ class IncrementalResolverTests(unittest.TestCase):
                     type="cross_link", props={"resolver": name},
                 ))
         return edges
+
+    def _register_repo_level(self, name: str, log: list[str]):
+        """A resolver that joins whole repositories, as ADR 0137 ss1 spells it."""
+        captured = name
+
+        def resolve(_self, ctx: ResolverContext) -> list[CrossRepoEdge]:
+            log.append(captured)
+            kids = sorted(ctx.children)
+            return [
+                CrossRepoEdge(
+                    from_id=repo_node_id(a), to_id=repo_node_id(b),
+                    type="cross_repo:depends_on", props={"resolver": captured},
+                )
+                for i, a in enumerate(kids) for b in kids[i + 1:]
+            ]
+
+        cls = type(f"_Repo_{name}", (CrossRepoResolver,), {"name": name, "resolve": resolve})
+        register_resolver(name)(cls)
+        return cls
+
+    def test_repo_level_edges_survive_an_incremental_pass(self) -> None:
+        """A fresh repo-level edge must reach the output when a child drifts.
+
+        ``_edge_children`` decides which fresh edges are kept and which prior
+        ones are replaced. While it read only the namespaced spelling it
+        answered "no children" for every edge between two repositories, so a
+        drifted child re-ran the resolvers and then threw away everything they
+        produced -- silently, and for the whole class of resolver that joins
+        repos rather than nodes.
+        """
+        log: list[str] = []
+        self._register_repo_level("inc_repo_level", log)
+        ctx = _ctx(["inc_repo_level"], {"a": (_graph(), b"a"), "b": (_graph(), b"b")})
+        drift = DriftResult(drifted={"b"}, stable={"a"}, added=set(), removed=set())
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            edges, _status = run_resolvers_incremental(ctx, drift=drift, prior_edges=[])
+
+        self.assertEqual(
+            [(e.from_id, e.to_id) for e in edges], [("repo:a", "repo:b")],
+        )
+
+    def test_repo_level_prior_edges_of_a_removed_child_are_dropped(self) -> None:
+        """The same set decides what a removed child takes with it."""
+        log: list[str] = []
+        self._register_repo_level("inc_repo_removed", log)
+        ctx = _ctx(["inc_repo_removed"], {"a": (_graph(), b"a")})
+        prior = [CrossRepoEdge(repo_node_id("a"), repo_node_id("gone"), "cross_repo:depends_on")]
+        drift = DriftResult(
+            drifted=set(), stable={"a"}, added=set(), removed={"gone"},
+        )
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            edges, _status = run_resolvers_incremental(ctx, drift=drift, prior_edges=prior)
+
+        self.assertEqual(edges, [])
 
     def test_no_prior_edges_forces_full_resolve(self) -> None:
         log: list[str] = []

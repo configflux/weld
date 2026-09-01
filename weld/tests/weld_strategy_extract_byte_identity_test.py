@@ -31,16 +31,48 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from weld.strategies.events_bindings import extract as events_bindings_extract
 from weld.strategies.events_callsite import extract_py_callsite
 from weld.strategies.http_client import extract as http_client_extract
+from weld.tests._golden_invariants import (
+    GoldenScope,
+    check_golden_graph,
+    parse_canonical_golden,
+)
+from weld.tests._golden_violation_fixtures import with_emptied_placeholder
 
 _GOLDEN_DIR = Path(__file__).resolve().parent / "fixtures" / "strategy_byte_identity"
+
+#: ADR 0139 mechanism 5 / bd 5038-ipa1e. These goldens are one ``extract()``'s
+#: output, not a closed graph: a strategy deliberately emits edges to nodes a
+#: later strategy mints, so ``assert_edges_resolve`` would report every edge as
+#: dangling here. Measured, not assumed -- run against the three shipped goldens
+#: it reports 18, 8 and 6 "dangling" endpoints on files that are entirely
+#: correct. The reason rides on the scope so the skip appears in the report
+#: rather than as an absence.
+#:
+#: ``assert_no_orphan_stubs`` runs here even though its own docstring names a
+#: *finished* graph as its precondition, and that is a deliberate call rather
+#: than an oversight: none of these three strategies mints a node any of the
+#: five purge rules key on, so all three goldens are green today, and a future
+#: strategy that did start emitting a placeholder-shaped node here would be
+#: worth seeing rather than hiding. If that day comes, declare it on this scope
+#: the way ``edges_close`` is declared -- do not weaken the shared invariant.
+_SCOPE = GoldenScope(
+    family="strategy_byte_identity",
+    edges_close=False,
+    open_edges_reason=(
+        "one strategy's extract() output is a graph fragment; its edges name "
+        "nodes later strategies mint, so endpoint resolution is not defined here"
+    ),
+)
 
 def _write(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,6 +255,14 @@ class StrategyExtractByteIdentityTest(unittest.TestCase):
             f"missing golden {golden_path}; regenerate with WELD_REGEN_GOLDEN=1",
         )
         expected = golden_path.read_text(encoding="utf-8")
+        # Parse first, then assert. Handing the canonical TEXT straight to the
+        # invariants would read zero nodes and zero edges and pass on nothing --
+        # the silent vacuity ADR 0139 mechanism 5 exists to prevent, and the one
+        # this family is uniquely exposed to because its goldens are strings.
+        check_golden_graph(
+            parse_canonical_golden(expected, label=f"{name}.json"),
+            scope=_SCOPE, label=f"{name}.json", child_graphs={},
+        )
         self.assertEqual(
             _produce(name),
             expected,
@@ -238,11 +278,89 @@ class StrategyExtractByteIdentityTest(unittest.TestCase):
     def test_events_bindings_byte_identical(self) -> None:
         self._check("events_bindings")
 
+
+#: This module, for redirecting ``_GOLDEN_DIR`` and ``_produce`` at scratch
+#: values. Under Bazel it is imported as ``__main__``, so a dotted patch target
+#: would miss.
+_MODULE = sys.modules[__name__]
+
+
+class GoldenInvariantHookTest(unittest.TestCase):
+    """Neither ``_check`` nor ``_regen`` accepts a violating fragment.
+
+    bd 5038-ipa1e / ADR 0139 mechanism 5. ``events_callsite`` is the base because
+    it is the one golden here with nodes to injure; the violation class is the
+    emptied placeholder, since these fragments hold no ``file:`` node to shadow
+    and their edges are declared open by ``_SCOPE``.
+    """
+
+    CASE = "events_callsite"
+
+    def _clean_golden(self) -> dict:
+        return json.loads(
+            (_GOLDEN_DIR / f"{self.CASE}.json").read_text(encoding="utf-8"),
+        )
+
+    def test_compare_path_rejects_a_violating_golden(self) -> None:
+        violating = with_emptied_placeholder(self._clean_golden())
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = Path(tmp)
+            (scratch / f"{self.CASE}.json").write_text(
+                json.dumps(violating), encoding="utf-8",
+            )
+            with mock.patch.object(_MODULE, "_GOLDEN_DIR", scratch), \
+                 self.assertRaises(AssertionError) as caught:
+                StrategyExtractByteIdentityTest(
+                    "test_events_callsite_byte_identical",
+                )._check(self.CASE)
+        self.assertIn("placeholder shape", str(caught.exception))
+
+    def test_regen_path_refuses_to_bake_a_violation(self) -> None:
+        violating = json.dumps(with_emptied_placeholder(self._clean_golden()))
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = Path(tmp)
+            with mock.patch.object(_MODULE, "_GOLDEN_DIR", scratch), \
+                 mock.patch.object(_MODULE, "_produce", lambda name: violating), \
+                 self.assertRaises(AssertionError) as caught:
+                _regen()
+            self.assertIn("placeholder shape", str(caught.exception))
+            self.assertEqual(
+                [], sorted(scratch.glob("*.json")),
+                "regen wrote a fragment carrying an emptied placeholder",
+            )
+
+    def test_canonical_text_must_be_parsed_before_asserting(self) -> None:
+        """The vacuity trap this family is uniquely exposed to.
+
+        Passing the golden's own text -- not its parsed form -- is the mistake
+        that makes all three invariants pass on zero nodes and zero edges. The
+        guard is in the hook, so a future choke point that forgets
+        :func:`parse_canonical_golden` fails instead of going quietly green.
+        """
+        text = (_GOLDEN_DIR / f"{self.CASE}.json").read_text(encoding="utf-8")
+        with self.assertRaises(AssertionError) as caught:
+            check_golden_graph(
+                text, scope=_SCOPE, label=self.CASE, child_graphs={},
+            )
+        self.assertIn("no nodes and no edges", str(caught.exception))
+
 def _regen() -> None:
+    """Rewrite every golden -- after checking what is about to be frozen.
+
+    A separate ``__main__``-only path, and therefore its own choke point: the
+    compare hook in ``_check`` above is never executed on this route, so without
+    this call a regeneration could bake in a violation that the next compare
+    would then assert faithfully (bd 5038-ipa1e).
+    """
     _GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     for name in _CASES:
         out = _GOLDEN_DIR / f"{name}.json"
-        out.write_text(_produce(name), encoding="utf-8")
+        produced = _produce(name)
+        check_golden_graph(
+            parse_canonical_golden(produced, label=f"{name} (extracted)"),
+            scope=_SCOPE, label=f"{name} (extracted)", child_graphs={},
+        )
+        out.write_text(produced, encoding="utf-8")
         print(f"wrote {out}")
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ from weld._init_framework_sources import (  # noqa: E402
     markdown_fallback_doc_source,
     yaml_has_wired_source,
 )
+from weld.strategies.markdown import extract as markdown_extract  # noqa: E402
 
 
 def _make_docs_site(root: Path) -> None:
@@ -72,6 +73,15 @@ class MarkdownFallbackDocSourceTest(unittest.TestCase):
             self.assertIsNotNone(entry)
             self.assertIn("**/*.md", entry)
             self.assertIn("markdown", entry)
+
+    def test_fallback_entry_opts_readme_in(self) -> None:
+        """N8: this entry fires because markdown *is* the content."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _make_docs_site(root)
+            entry = markdown_fallback_doc_source(
+                self._md_files(root), root, doc_dirs=[])
+            self.assertIn("include_readme: true", entry)
 
     def test_no_fallback_when_docs_dir_present(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -162,6 +172,41 @@ class InitDocsRepoEndToEndTest(unittest.TestCase):
             text, _data, stderr = self._run_init(root)
             self.assertFalse(yaml_has_wired_source(text), text)
             self.assertIn("recognised nothing", stderr.lower())
+            # The advisory tells you to hand-edit the config and re-run, so
+            # the mode it names first must be the one that keeps that edit:
+            # `--force` regenerates from scratch and would discard it.
+            self.assertIn("wd init --refresh", stderr, stderr)
+            self.assertLess(
+                stderr.index("wd init --refresh"),
+                stderr.index("wd init --force"),
+                f"the destructive remedy is offered first: {stderr}",
+            )
+
+    def test_generated_fallback_reaches_the_readme(self) -> None:
+        """N8: the config `wd init` writes must actually index README.md.
+
+        The generator emitting the flag and the strategy honouring it are two
+        halves that only matter joined, so the assertion runs the entry `wd
+        init` wrote through the strategy that will read it -- the README is a
+        node, it is listed in ``discovered_from``, and it is labelled by the
+        title it declares rather than by the word "Readme", which is the term
+        nobody searches for and the reason the finding's query answered with a
+        different document.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _make_docs_site(root)
+            _text, data, _stderr = self._run_init(root)
+            entry = next(
+                s for s in data["sources"]
+                if s.get("strategy") == "markdown" and s.get("glob") == "**/*.md"
+            )
+            result = markdown_extract(root, entry, {})
+            self.assertIn("doc:md/README", result.nodes, sorted(result.nodes))
+            self.assertIn("README.md", result.discovered_from)
+            self.assertEqual(
+                result.nodes["doc:md/README"]["label"], "Platform Documentation",
+            )
 
     def test_wired_repo_is_silent_about_recognising_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -17,6 +17,9 @@ semantics turn on:
    languages get wired.
 4. **missing-config**: refresh returns ``None`` (edits, never creates).
 5. **stamp**: an existing stamp is rewritten; a pre-stamp config gains one.
+The other question about the same command -- whether what it wires is the
+*whole* stack for a language or a reduced subset of it -- is a different
+subject and lives in ``weld_init_refresh_parity_test``.
 """
 
 from __future__ import annotations

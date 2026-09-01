@@ -105,7 +105,7 @@ class RustFileSummaryTest(unittest.TestCase):
 
     def test_outer_doc_marker_is_not_file_level(self) -> None:
         """``///`` documents the FOLLOWING item, not the file -- must not
-        leak into the file-level reader."""
+        leak into the file-level reader."""  # test-hygiene: allow uncited-pin
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "x.rs"
             _write(f, "/// Doc for the next struct, not the file.\npub struct X {}\n")
@@ -114,11 +114,11 @@ class RustFileSummaryTest(unittest.TestCase):
 
 class TypeScriptFileSummaryTest(unittest.TestCase):
     def test_header_survives_blank_line_before_import(self) -> None:
-        """Regression pin: an earlier version of this reader used Go's
-        zero-gap backward walk for TypeScript too and returned "" here -- a
-        blank line between a header comment and the first import is
-        idiomatic TS/JS style, confirmed against the pinned tier1
-        TypeScript fixture."""
+        """Regression pin on ``weld.strategies._ts_file_doc_comments``: an
+        earlier version of this reader used Go's zero-gap backward walk for
+        TypeScript too and returned "" here -- a blank line between a header
+        comment and the first import is idiomatic TS/JS style, confirmed
+        against the pinned tier1 TypeScript fixture."""
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "geometry.test.ts"
             _write(

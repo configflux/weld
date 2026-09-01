@@ -1,18 +1,22 @@
 """Top-level graph document validators (``validate_graph`` / ``validate_fragment``).
 
-Split out of :mod:`weld._contract_validators` to keep both modules under the
-400-line default. Node/edge/meta validators remain in the sibling module;
-this file only aggregates them across a graph document or a strategy
-fragment. Public names are re-exported via :mod:`weld.contract`.
+Split out of :mod:`weld._contract_validators` to keep every module under the
+400-line default. The node/meta validators remain there and the edge
+validators live in :mod:`weld._contract_edge_validators`; this file only
+aggregates them across a graph document or a strategy fragment. Public names
+are re-exported via :mod:`weld.contract`.
 """
 from __future__ import annotations
 
+from weld._contract_edge_validators import validate_edge
 from weld._contract_validators import (
-    validate_edge,
     validate_meta,
     validate_node,
 )
-from weld._federation_validate import ROOT_FEDERATED_SCHEMA_VERSION
+from weld._federation_validate import (
+    FederationIdIndex,
+    ROOT_FEDERATED_SCHEMA_VERSION,
+)
 from weld._validate_diagnostics import (
     REGEN_HINT as _REGEN_HINT,
     missing_top_level_hint as _missing_top_hint,
@@ -37,8 +41,18 @@ def _is_federation_root(graph: dict) -> bool:
     return isinstance(sv, int) and sv == ROOT_FEDERATED_SCHEMA_VERSION
 
 
-def validate_graph(graph: dict) -> list[ValidationError]:
-    """Validate an entire graph document."""
+def validate_graph(
+    graph: dict, *, id_index: FederationIdIndex | None = None,
+) -> list[ValidationError]:
+    """Validate an entire graph document.
+
+    *id_index* (ADR 0137 ss3) is the federated workspace's node-id membership.
+    Passed, every edge endpoint the root graph does not itself hold is
+    classified against it -- resolvable, dangling, or unverifiable -- instead
+    of being waved through on the shape of the id. Callers that cannot
+    enumerate the workspace (``validate-fragment``, any single-repo
+    ``wd graph validate``) pass nothing and keep the shape check.
+    """
     errors: list[ValidationError] = []
 
     if "meta" not in graph:
@@ -70,7 +84,9 @@ def validate_graph(graph: dict) -> list[ValidationError]:
             if isinstance(graph.get("nodes"), dict) else set()
         )
         for edge in graph["edges"]:
-            errors.extend(validate_edge(edge, nids, federation=federation))
+            errors.extend(validate_edge(
+                edge, nids, federation=federation, id_index=id_index,
+            ))
 
     return errors
 

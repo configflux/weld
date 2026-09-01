@@ -146,7 +146,7 @@ class DirtyPatchedModuleKeepsMockEdgeTest(unittest.TestCase):
         )
 
     def test_provenance_names_the_test_file(self) -> None:
-        """Pinning the direction is what stops a later change stamping the target.
+        """Pinning ADR 0074's direction stops a later change stamping the target.
 
         Stamping the patched module would be exactly backwards: that file is
         stale in precisely the case this test covers, so the edge would be

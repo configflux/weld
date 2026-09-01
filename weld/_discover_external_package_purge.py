@@ -115,9 +115,9 @@ under bd ukt95 and initially NOT folded in here:
 (bd oao53 amendment) a third rule from
 :mod:`weld._discover_unresolved_symbol_purge` for call/inherits/implements
 ``symbol:unresolved:<name>`` sentinels, a placeholder shape that mirrors
-this file's own consumer-side reasoning (no ``props.file``, purge on
-emptied inbound edges) but cannot reuse this file's ``depends_on``-only
-signal -- see that module's docstring for why -- (bd n4nvt amendment) a
+this file's own consumer-side reasoning (no ``props.file``, purge once no
+edge names it) but cannot reuse this file's ``depends_on``-only signal --
+see that module's docstring for why -- (bd n4nvt amendment) a
 fourth rule from :mod:`weld._discover_resolved_stub_purge` for
 ``weld.strategies._python_origin.make_resolved_target_node``'s resolved
 cross-glob call-target stubs: the same no-``props.file`` shape again, but at
@@ -170,14 +170,27 @@ def _is_edge_anchored_external_package(node: dict) -> bool:
     reads ``props``: strategy-authored props (including project-local
     overrides) are untrusted shape, so a missing/non-dict ``props`` reads as
     "not an edge-anchored external placeholder" rather than raising.
+
+    The ``isinstance`` on the *value* is the other half of that posture, and
+    is load-bearing rather than ceremony (bd 5038-53jjg): these props are read
+    back off ``.weld/graph.json``, which ADR 0115 treats as unvetted repo text,
+    and an unhashable value there (``"source_strategy": []``) made the
+    membership test raise rather than answer -- taking this purge, and the
+    whole incremental discover around it, down with it. Non-string reads as
+    "not an edge-anchored external placeholder", the same safe side a missing
+    ``props`` lands on: retain a node rather than purge one. Same guard, same
+    reason, as :func:`weld._discover_placeholder_anchor._is_derived_edge`
+    (bd 5038-rwi34).
     """
     if node.get("type") != _PACKAGE_TYPE:
         return False
     props = node.get("props") or {}
     if not isinstance(props, dict):
         return False
+    strategy = props.get("source_strategy")
     return (
-        props.get("source_strategy") in _EDGE_ANCHORED_STRATEGIES
+        isinstance(strategy, str)
+        and strategy in _EDGE_ANCHORED_STRATEGIES
         and props.get("authority") == _EXTERNAL_AUTHORITY
     )
 
@@ -234,13 +247,16 @@ def emptied_placeholder_node_ids(
     :data:`_EDGE_ANCHORED_STRATEGIES` plus ``authority == "external"``,
     purges on zero incoming ``depends_on``), oao53's
     unresolved-symbol-sentinel rule (id prefix ``symbol:unresolved:``,
-    purges on zero incoming edges of ANY type -- see
-    :mod:`weld._discover_unresolved_symbol_purge` for why that one cannot be
-    scoped to a single edge type the way the first two are), n4nvt's
+    purges once no surviving edge names it, in EITHER direction and of ANY
+    type -- see :mod:`weld._discover_unresolved_symbol_purge` for why that
+    one cannot be scoped to a single edge type the way the first two are,
+    and :mod:`weld._discover_placeholder_anchor` for why not to a single
+    direction either, bd 5038-q4t3d), n4nvt's
     resolved-cross-glob-stub rule (props-keyed, NOT id-prefix-keyed, since
     this id shape collides with real symbol ids -- see
-    :mod:`weld._discover_resolved_stub_purge` -- also zero incoming edges of
-    ANY type, for the same shared-namespace reason oao53's rule needs it),
+    :mod:`weld._discover_resolved_stub_purge` -- also purged once no edge of
+    any type names it either way, for the same shared-namespace reason
+    oao53's rule needs it),
     and bd 5ouuf's tree-sitter using/import-shell rule (``source_strategy ==
     "tree_sitter"`` plus ``authority == "derived"`` plus ``props.origin`` in
     ``{"external", "unresolved"}`` -- see

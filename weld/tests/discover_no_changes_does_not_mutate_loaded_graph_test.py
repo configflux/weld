@@ -11,8 +11,8 @@ alias a value the caller may consider "the previous graph".
 
 This test pins the invariant: the freshly-loaded dict produced by
 ``json.loads`` must remain byte-identical to the on-disk graph after
-``_discover_single_repo`` returns. The returned graph is a separate object
-with the refreshed fields applied.
+``weld/discover.py``'s ``_discover_single_repo`` returns. The returned graph
+is a separate object with the refreshed fields applied.
 """
 
 from __future__ import annotations

@@ -209,7 +209,8 @@ class DeletedPackageNodeEquivalenceTest(unittest.TestCase):
         """No over-purge: a package that loses only SOME of its members
         keeps its node, with exactly the edge to the file that is still
         there -- the observable behaviour
-        ``discovery_state_membership_purge_test`` pins at the unit level,
+        ``weld/tests/discovery_state_membership_purge_test.py`` pins at the
+        unit level against ``weld.discovery_state.purge_stale_nodes``,
         proven here through the real incremental discover() pipeline."""
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

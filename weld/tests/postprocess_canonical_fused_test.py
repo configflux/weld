@@ -10,7 +10,8 @@ The deep-copy was redundant because ``_sort`` re-materialized the whole tree
 anyway, so the two passes were fused into one recursive sorted-rebuild that
 also sorts the edge list in the same walk.
 
-This test pins the fusion to the legacy behavior on an adversarial fixture:
+This test pins ``weld/_discover_postprocess.py``'s fusion to the legacy
+``weld/serializer.py`` behavior on an adversarial fixture:
 unsorted nested prop keys, edges in non-canonical insertion order, unsorted
 meta keys, two edges that tie on (from, to, type) and must break on props, and
 a props-less edge. The fused output must be:

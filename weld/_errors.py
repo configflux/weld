@@ -21,6 +21,8 @@ missing-graph case (``graph_missing`` -> "Run: wd init"). The code list:
   is missing required fields, which discovery would silently drop (ADR 0097).
 * ``root_out_of_bounds`` -- a request asked a server to answer from a
   directory outside the repository it serves (ADR 0096 §4).
+* ``file_index_missing`` -- ``.weld/file-index.json`` is absent, so ``find``
+  has no artifact to search and its empty result says nothing about the term.
 
 Safety contract (ADR 0025 trust posture / ADR 0035 local-only no-leak): the
 *detail* attached to a corrupt-graph error is derived only from the parser's
@@ -80,6 +82,14 @@ ROOT_OUT_OF_BOUNDS = "root_out_of_bounds"
 #: measured zero. Surfaced by ``impact`` as ``Risk: UNKNOWN``. Distinct from a
 #: measured empty result, which stays a correct exit-0 answer.
 RESULT_UNKNOWN = "result_unknown"
+#: ``.weld/file-index.json`` is absent, so ``find`` has nothing to search
+#: (ADR 0134). The sibling of ``graph_missing`` for the *other* artifact a
+#: read can answer from: ``find`` never needed a graph, but it does need an
+#: index, and an index that was never built makes "no matches" a statement
+#: about weld's own state rather than about the term. At a federation root
+#: the condition is that no index exists anywhere the fan-out reaches --
+#: root or child.
+FILE_INDEX_MISSING = "file_index_missing"
 
 #: Stable, copy-pasteable remediation hint per code. Wording is matched
 #: against by tests and onboarding docs -- keep it stable.
@@ -107,6 +117,7 @@ ERROR_HINTS: dict[str, str] = {
         "computed. Declare one under cross_repo_strategies in "
         ".weld/workspaces.yaml, then re-run wd discover."
     ),
+    FILE_INDEX_MISSING: "Run: wd discover.",
 }
 
 #: Default human-readable summary per code, used when no parser detail is
@@ -123,6 +134,7 @@ _DEFAULT_ERROR: dict[str, str] = {
         "Risk: UNKNOWN -- cross-repo dependents cannot be computed for this "
         "repo node because no cross-repo resolver is wired."
     ),
+    FILE_INDEX_MISSING: "No Weld file index found.",
 }
 
 

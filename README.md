@@ -13,8 +13,8 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.24.0 -->
-> **Evaluators: start with v0.24.0.** v0.24.0 is the current
+<!-- evaluator-note: latest=v0.25.0 -->
+> **Evaluators: start with v0.25.0.** v0.25.0 is the current
 > recommended starting point. Headline features added since v0.14.0:
 > a 14-tool MCP server for graph-backed agent context
 > (`weld_query`, `weld_find`, `weld_context`, `weld_path`,
@@ -735,6 +735,17 @@ Run `wd init` to generate a starter config, or write one by hand. See
 the [Strategy Cookbook](weld/docs/strategy-cookbook.md) for the full list
 of bundled strategies.
 
+The `markdown` strategy skips `README.md` by default — next to
+`docs/architecture.md` a README is the project's front door, not one of its
+documents. Set `include_readme: true` on a source entry to index it anyway.
+`wd init` sets that flag itself on one entry: when a repository has no
+conventional docs directory (`docs/`, `doc/`, `documentation/`) but does have
+markdown, `wd init` wires a `**/*.md` fallback source, and in a repository
+where markdown *is* the content the README is its index — the page that names
+and links everything else. An indexed README is labelled by the `#` title it
+declares rather than by its filename, so `wd query` reaches it under the name
+it gives itself instead of under "Readme".
+
 When a new weld release adds strategies for a language your repo uses, an
 existing `discover.yaml` keeps discovering with the old config — `wd doctor`
 and `wd prime` flag the drift (a language present on disk that no wired
@@ -744,10 +755,16 @@ strategy claims). Two ways to close the gap:
   newly-detected languages into your existing `discover.yaml`, appended under a
   marked `refresh` section. Your hand edits — custom globs, extra strategies,
   exclusions, and comments — are preserved exactly, and the `# generated-by:
-  weld <version>` stamp is bumped so the config reads as current. A config that
-  already claims every on-disk language is a no-op (it just refreshes the
-  stamp). Refresh edits an existing config; run plain `wd init` first if none
-  exists.
+  weld <version>` stamp is bumped so the config reads as current. For each
+  language it wires, `--refresh` wires **the same strategies `--force` would**:
+  the whole detected stack, not just the tree-sitter backbone — so a C# repo
+  gets the project, solution, MSBuild, test-framework, ASP.NET, EF Core and
+  namespace-anchor entries, a Go repo gets `go_package` and its framework
+  entries, and detected gRPC / event / ROS2 sources are offered too (anything
+  your config already wires is left as you wrote it, never duplicated). A
+  config that already claims every on-disk language is a no-op (it just
+  refreshes the stamp). Refresh edits an existing config; run plain `wd init`
+  first if none exists.
 - `wd init --force` — **destructive**: regenerates the whole config from a
   fresh scan, discarding any hand edits. Use it when you want a clean starter
   config back, not a merge.
@@ -990,12 +1007,16 @@ Worth knowing:
   `references`, `communities`, and equally `wd stale`, `wd find`, `wd stats`,
   `wd list`, `wd dump`. Checking freshness first is the natural way to start
   in a new worktree, so `wd stale` seeds and then reports the graph it just
-  seeded rather than answering `no graph`. Where no seed is possible it keeps
-  answering — a freshness probe that refused would be useless — and names the
-  prerequisite (the tracked-config caveat above) in a `seed_blocked_reason`
+  seeded rather than answering `no graph`. Where no seed is possible `wd stale`
+  keeps answering — a freshness probe that refused would be useless — and names
+  the prerequisite (the tracked-config caveat above) in a `seed_blocked_reason`
   beside its `reason`, rather than leaving `no graph` to imply that
-  `wd discover` is the fix. Commands that *create* state —
-  `wd discover`, `wd init`, `wd warm` — stay deliberate and seed nothing.
+  `wd discover` is the fix. `wd find` takes the same seed and then refuses if it
+  arrived without one: a search that answered `no matches` from a file index
+  that was never written would be a false negative about the whole tree, so it
+  reports `error[file_index_missing]` and names the same prerequisite.
+  Commands that *create* state — `wd discover`, `wd init`, `wd warm` — stay
+  deliberate and seed nothing.
 - **Frozen when you freeze it.** `WELD_AUTO_REFRESH=0` and `--no-refresh`
   each disable seeding along with auto-refresh, and they behave
   identically: seeding builds a graph and ends in a discovery pass, which
@@ -1166,7 +1187,10 @@ cross_repo_strategies: [service_graph]
   the scanner walks; `respect_gitignore` opts scan-only children into Git
   ignore rules; `exclude_paths` lists directory names, relative paths, or
   glob patterns to skip. Explicit `children` entries remain authoritative
-  even when gitignored.
+  even when gitignored. These settings decide which children are
+  *registered*. Cross-repo resolvers that read manifests out of a child
+  working tree always honour Git visibility -- an ignored file contributes no
+  package name regardless of `respect_gitignore`.
 - **children**: Each entry has a `path` (relative to the workspace root)
   and an optional `name` (auto-derived from the path if omitted, e.g.
   `services/api` becomes `services-api`). Optional `tags` provide
@@ -1254,14 +1278,14 @@ Inspect the state of every registered child:
 
 ```bash
 wd workspace status          # human-readable summary
-wd workspace status --json   # raw JSON ledger
+wd workspace status --json   # JSON ledger, reported from disk
 ```
 
 Example output:
 
 ```text
 Workspace status (3 children)
-Counts: present=1, missing=1, uninitialized=0, corrupt=0, stale=1
+Counts: present=2, missing=1, uninitialized=0, corrupt=0, stale=1
 services-api: stale (refs/heads/main a1b2c3d4e5f6)
 services-auth: present dirty (refs/heads/feature-x 7890abcdef01)
 services-worker: missing
@@ -1285,7 +1309,15 @@ over each `present` child; it never overwrites a child's stored lifecycle
 status. `missing`, `uninitialized`, and `corrupt` children are never reported
 `stale` (they are not "behind" -- they are absent, bare, or broken). The
 `Counts:` line only includes a `stale=N` column when at least one child is
-stale.
+stale, and that column is a *sub-count* of `present`, not a fifth bucket: a
+child whose graph is behind is still checked out, so it stays counted under
+`present`. `present` therefore means "on disk" on both surfaces -- the number
+here is the same one `wd stale` reports as present in its child roster.
+
+A cross-repo edge the root holds into a child that is not `present` is
+*unverifiable* rather than wrong: `wd graph validate` reports it and exits
+non-zero instead of passing a reference it cannot check. Restore the child and
+run `wd discover` inside it, and the same edge validates cleanly.
 
 `missing`, `uninitialized`, and `corrupt` children are skipped during
 federated discovery -- they never block the root build. They are recorded in
@@ -1311,6 +1343,64 @@ The child's stored `status` field stays `present`; only `freshness.state` /
 (the child's `graph.json` bytes changed since the ledger recorded them),
 `unknown_sha` (the child's graph carries no discovered-from SHA, treated
 conservatively as behind), or `not a git repo` (a non-git child, never stale).
+
+#### Ledger drift
+
+Every lifecycle status above is re-probed on disk at read time; none of it is
+taken from the stored ledger. The ledger records what the last `wd discover`
+found, so anything that happened to a child since then -- deleted, cloned at
+last, added to `workspaces.yaml` -- would otherwise be invisible here while
+`wd stale` reported it correctly.
+
+Where the stored ledger and the disk disagree, the difference is named below
+the child lines, in a block of three parts: a header giving the count and the
+source the numbers above came from, one line per child the two disagree about,
+and a closing remedy line, `run: wd discover`, which re-records the ledger.
+The first two parts, for a workspace whose `docs-site` child was deleted after
+the last discover:
+
+```text
+Workspace status (3 children)
+Counts: present=2, missing=1, uninitialized=0, corrupt=0
+docs-site: missing
+services-api: present (refs/heads/main a1b2c3d4e5f6)
+services-auth: present dirty (refs/heads/feature-x 7890abcdef01)
+Ledger drift (1) -- counts above are from disk, not from the stored ledger:
+  docs-site: ledger says present, disk says missing
+```
+
+The block appears only when something drifted. In `--json` it is a top-level
+`drift` array, always present and empty when the ledger agrees:
+
+```json
+"drift": [
+  {"name": "docs-site", "stored": "present", "observed": "missing"}
+]
+```
+
+A `null` marks the side with nothing to say: a child registered since the last
+discover has `"stored": null`, and one removed from `workspaces.yaml` has
+`"observed": null` -- the latter also leaves the `children` map, because it is
+not a registered child any more.
+
+`wd workspace status` reports drift; it never repairs it. Run `wd discover` at
+the root to bring the ledger back into step.
+
+`wd stats` reads the same children through the same probe, so its workspace
+block never disagrees with the two commands above. Being a summary, it reports
+the counts and a pointer rather than the per-child block:
+
+```text
+  workspaces: 3 registered, 2 present
+  workspace ledger drift: 1 child differs from the stored ledger -- run wd workspace status for detail
+```
+
+The pointer line appears only when something drifted. In `wd stats --json` the
+`workspaces` object carries `present` and `drift_count` alongside the existing
+`count` and `children`; both are always present, with `drift_count` at `0` when
+the ledger agrees. Each entry in `children` reports the lifecycle observed on
+disk, so a child registered but never cloned reads `missing` here even before
+the first `wd discover` has written a ledger.
 
 ### Refreshing children
 
@@ -1425,12 +1515,21 @@ repo boundaries. They are declared in the `cross_repo_strategies` list in
 | `channel_binding` | Matches event-channel producers in one repo to consumers in another that reference the same `channel:<transport>:<topic>` node. Emits `cross_repo:channel_flow` edges (producer -> consumer) carrying the matched channel, transport, and topic. |
 | `package_graph` | Matches a *manifest-declared* package dependency in one repo -- a C# `<PackageReference>`, a Python `pyproject.toml` `[project].dependencies` entry, or a `go.mod` `require` -- to the sibling repo that *produces* that package (by its `pyproject.toml` name, `go.mod` module, or a `.proto` package name). Emits `cross_repo:depends_on` edges from the consuming `repo:<name>` node to the producing `repo:<name>` node, so `wd impact "repo:<producer>"` sees its consumers. This is the schema-library polyrepo shape that URL-host (`service_graph`) and topic (`channel_binding`) matching miss. Name matching is case-insensitive; no version is checked, so edges carry `confidence: inferred`. |
 | `grpc_service_binding` | Matches gRPC service definitions (`rpc:grpc:*` nodes from the `grpc_proto` strategy) in one repo to gRPC client stubs and their call-site `invokes` edges (from the `grpc_bindings` strategy) in other repos. Emits `cross_repo:grpc_calls` edges from the client stub to the service definition. |
-| `compose_topology` | Reads `docker-compose.yml` / `compose.yaml` / `compose.yml` at the workspace root and emits `depends_on` edges between services whose images or service names map to registered child repos. |
-| `package_import_resolver` | Matches *import evidence* -- consumer nodes carrying an `imports_from` list -- against package producer nodes (`type: package`) declared in sibling repos, and emits `depends_on` edges from the importing consumer to the producing package. Complements `package_graph`, which matches manifest declarations rather than imports. |
+| `compose_topology` | Reads `docker-compose.yml` / `compose.yaml` / `compose.yml` at the workspace root and emits `cross_repo:depends_on` edges between the `repo:<name>` nodes of services whose images or service names map to registered child repos. |
+| `package_import_resolver` | Matches *import evidence* -- consumer nodes carrying an `imports_from` list -- against package producer nodes (`type: package`) declared in sibling repos, and emits `cross_repo:depends_on` edges from the importing consumer to the producing package. Complements `package_graph`, which matches manifest declarations rather than imports. |
 
 Resolvers are read-only with respect to child graphs -- they never modify
 a child's `.weld/graph.json`. Output edges are deterministic: identical
 input produces byte-identical edges across runs.
+
+A cross-repo edge endpoint is spelled one of two ways, and which one depends
+on what the endpoint names. A node that lives inside a child repo is written
+`<child-name>\x1f<node-id>` and is resolved in that child's graph at read
+time; a whole repository is the root's own `repo:<name>` node, written plainly
+because there is nothing to resolve inside a child. `wd graph validate` at a
+workspace root checks every endpoint against both, so an edge naming something
+no repo holds is reported rather than carried, and `wd discover` drops such an
+edge with a warning naming the resolver that produced it.
 
 Resolvers are opt-in. A fresh `wd init` or `wd workspace bootstrap` leaves
 `cross_repo_strategies: []`, so no cross-repo edges are emitted until you
@@ -1504,19 +1603,19 @@ rm .weld/workspace-state.json
 | `wd agents audit` | Audit AI customization assets for static consistency issues |
 | `wd agents plan-change "<request>"` | Plan a static AI customization behavior change |
 | `wd agents viz` | Local read-only browser explorer for `.weld/agent-graph.json` |
-| `wd workspace status` | Show workspace child ledger: lifecycle status, git ref, dirty state |
-| `wd workspace status --json` | Emit the raw `workspace-state.json` payload |
+| `wd workspace status` | Show workspace child ledger: lifecycle status (re-probed on disk at read time), git ref, dirty state, and any drift from the stored ledger |
+| `wd workspace status --json` | Emit the `workspace-state.json` payload with lifecycle status reported from disk, plus a `drift` array |
 | `wd workspace bootstrap` | One-shot polyrepo bootstrap: init root + every nested child, recurse-discover, rebuild root meta-graph (config-only `.weld/.gitignore` default) |
 | `wd workspace bootstrap --respect-gitignore` | Skip scan-only child repos ignored by Git and persist `scan.respect_gitignore: true` into `workspaces.yaml` |
 | `wd workspace bootstrap --track-graphs` | Bootstrap and seed the Mode B policy (`.gitignore` + `.gitattributes` + merge driver) in root and every child, so each tracks its warm-checkout artifacts alongside config |
 | `wd workspace bootstrap --ignore-all` | Bootstrap and write a fully-ignoring `.weld/.gitignore` in root and every child; mutually exclusive with `--track-graphs` |
 | `wd build-index` | Regenerate file index |
 | `wd query <term>` | Hybrid-ranked tokenized graph search (strict-AND first; OR fallback when AND yields nothing on multi-word phrases — envelope is tagged with `degraded_match=or_fallback`). Multi-word phrases have common function-word stopwords (`the`, `is`, `how`, `of`, `for`, WH-words, …) dropped before matching so content tokens drive the result (a natural-language phrase like `"how does auth work"` searches on `auth`/`work`); single-word and symbol-id queries are never altered. A token written with `-` also matches the `_` spelling and vice versa, so a query typed the way a project names itself (`tree-sitter`) reaches code that spells it `tree_sitter`. Concept nodes derived from issue-tracker titles rank below code and never suppress it: because such a title quotes the query it describes, it would otherwise be the only strict-AND match and hide the very code being searched for. Shows `confidence` per match and hides `origin=unresolved` sentinels by default (`--include-speculative` restores them). Bounds the neighborhood by default (drops stdlib/unresolved/speculative-external neighbors, caps fan-out, then a byte budget prunes to fit the tool cap — all reported in `omitted_neighbors`, including `size_capped`); `--full-neighborhood` restores the raw neighborhood and `--full-size` skips only the byte budget |
-| `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`). A single word is a case-insensitive substring match; a multi-word phrase is tokenized on whitespace and ranks files by how many of the words their tokens hit (so `wd find "mcp server"` surfaces `mcp_server.py`). Its index covers more of the tree than the graph's own scope does, so it keeps its own coverage check rather than borrowing the graph's: a file inside the search surface that the index has not accounted for schedules the rebuild that ingests it, instead of being reported as no match. Symlinks are never followed, so a link committed to the repository cannot pull content from outside the checkout into a searchable index |
+| `wd find <term> [--limit N]` | Broad file-token search, separate from graph discovery; each hit carries an integer `score` (default `--limit 20`). A single word is a case-insensitive substring match; a multi-word phrase is tokenized on whitespace and ranks files by how many of the words their tokens hit (so `wd find "mcp server"` surfaces `mcp_server.py`). Its index covers more of the tree than the graph's own scope does, so it keeps its own coverage check rather than borrowing the graph's: a file inside the search surface that the index has not accounted for schedules the rebuild that ingests it, instead of being reported as no match. Where there is no index at all to read, it says so and exits non-zero (`error[file_index_missing]`, remedy `wd discover`) rather than reporting `no matches` about a tree it never searched; an index that exists and matches nothing is a real answer and still exits 0. Symlinks are never followed, so a link committed to the repository cannot pull content from outside the checkout into a searchable index |
 | `wd context <id>` | Node + neighborhood (bounded by default, same as `wd query`; `--full-neighborhood` restores the full neighborhood, `--full-size` skips the byte budget) |
 | `wd path <from> <to>` | Shortest path |
 | `wd trace <term>` | Startup/runtime and interaction slice around a term or node (byte-bounded; `--full-size` for the whole slice) |
-| `wd impact <path-or-node>` | Reverse-dependency blast radius. `affected_surfaces` buckets what the radius reaches: `cli_commands`, `mcp_tools`, `repo_tools`, `api_endpoints`, `entrypoints`, `boundaries`, `tests`. Published surfaces set `risk_level` (endpoints/entrypoints/boundaries are `HIGH`, CLI commands and MCP tools `MEDIUM`); `repo_tools` — the repo's own scripts — is reported but never raises risk, since internal tooling is not a contract anyone outside the repo depends on. `--json` is byte-bounded — dependents and surface members are pruned farthest-hop-first in one pass and reported in `warnings.size_capped`, while `risk_level` and `affected_surface_counts` always reflect the full radius; `warnings.budget_exceeded` flags a payload that is still over budget after pruning everything droppable; `--full-size` returns every dependent, and the human output is never bounded |
+| `wd impact <path-or-node>` | Reverse-dependency blast radius. `affected_surfaces` buckets what the radius reaches: `cli_commands`, `mcp_tools`, `repo_tools`, `api_endpoints`, `entrypoints`, `boundaries`, `tests`. Published surfaces set `risk_level` (endpoints/entrypoints/boundaries are `HIGH`, CLI commands and MCP tools `MEDIUM`); `repo_tools` — the repo's own scripts — is reported but never raises risk, since internal tooling is not a contract anyone outside the repo depends on. `--json` is byte-bounded — dependents and surface members are pruned farthest-hop-first in one pass and reported in `warnings.size_capped`, while `risk_level` and `affected_surface_counts` always reflect the full radius; `warnings.budget_exceeded` flags a payload that is still over budget after pruning everything droppable; `--full-size` returns every dependent, and the human output is never bounded. On a `repo:<name>` target the answer depends on whether cross-repo resolvers ran: when they did, the result carries `measured_by` naming them (so `0 dependents` is a measurement, not a shrug); when they did not, it is `Risk: UNKNOWN` with a reason that says whether `cross_repo_strategies` is empty or set but never ran |
 | `wd capabilities` | Runtime per-language / per-framework support matrix (`--json`, `--missing`) |
 | `wd callers <symbol>` | Direct/transitive callers (`--json` is byte-bounded, drops reported in `size_capped`; `--full-size` returns every caller) |
 | `wd references <name-or-node-id>` | What points at a thing, plus file-index hits. Takes a bare symbol name or a full node id. A symbol reports its callers; any other node type (build target, tool, doc) reports every node with an edge into it, since nothing *calls* those. An id weld does not know reports an `error` **and exits non-zero**, matching `wd callers` and `wd context`, so "unknown" and "nothing points at it" stay distinguishable — "no references" is what a reader sees before deleting a symbol as dead, and a typo or a moved symbol must not render as "nothing uses this" (`--json` is byte-bounded, dropping file hits before resolved callers and resolved `matches` last; `--full-size` returns everything) |
@@ -1528,11 +1627,11 @@ rm .weld/workspace-state.json
 | `wd graph stats` | Graph statistics |
 | `wd graph communities [--format json\|markdown] [--top N] [--write]` | Detect deterministic graph communities, report top-level hubs, and optionally write derived JSON/report/index artifacts (unresolved-symbol nodes are excluded from the projected subgraph) |
 | `wd stats` | Backward-compatible alias for `wd graph stats` |
-| `wd graph validate` | Validate graph against the contract |
+| `wd graph validate` | Validate graph against the contract. At a polyrepo root it also resolves every cross-repo edge endpoint against the child graphs: an endpoint naming a node no repo holds fails, and so does one pointing into a registered child that is missing, uninitialized, or corrupt -- a reference that cannot be verified is not a verified reference. Run `wd workspace status` to see which child is in the way |
 | `wd graph validate-fragment <file>` | Validate imported graph fragments and warn on trace-inert semantics |
 | `wd validate` | Backward-compatible alias for `wd graph validate` |
 | `wd migrate --add-confidence` | Backfill missing edge `confidence` props (`definite` / `inferred` / `speculative`) by classifying each edge from its `source_strategy`; strategies without a declared default land at `speculative`. Writes the graph back and emits a JSON report `{filled, unchanged, invalid}`. |
-| `wd doctor` | Check setup health; exits 0 in directories that are not Weld projects yet |
+| `wd doctor` | Check setup health; exits 0 in directories that are not Weld projects yet. At a polyrepo root the `[Edges]` section reports cross-repo edge endpoints that resolve to nothing |
 | `wd prime` | Setup status + per-framework agent surface matrix (skill / instruction / mcp) with fix commands; `--agent {auto,claude,codex,copilot,all}` forces an agent row even when its framework files are absent |
 | `wd scaffold` | Write starter templates |
 | `wd bootstrap` | Agent onboarding files |
@@ -1577,8 +1676,14 @@ the `wd init` detection pass read-only and, for any language present on
 disk that no wired strategy claims, emits a warning such as
 
 ```
-[warn] 8 C# files present but no wired strategy claims 'csharp' -> run: wd init --force
+[warn] 8 C# files present but no wired strategy claims 'csharp' -> run: wd init --refresh (keeps your entries) or wd init --force (regenerate from scratch)
 ```
+
+Both remedies are named, non-destructive one first: `--refresh` merges the
+missing entries into your config, `--force` regenerates it from a fresh
+scan and discards hand edits. `wd prime` lists `wd init --refresh` under
+**Next steps** for the same reason — a step you are told to run should not
+be the one that throws your customisation away.
 
 The check is language-granular (a repo that merely lacks an optional
 framework extractor but does wire the language stays quiet), never raises
@@ -1788,7 +1893,7 @@ the CLI.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.24.0`.
+terminal snippets captured against `wd 0.25.0`.
 
 ## Install
 

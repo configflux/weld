@@ -16,13 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from weld.strategies._python_origin import (
-    make_resolved_target_node,
-    make_sentinel_node,
-    module_from_symbol_id,
-    origin_for_resolved,
-    origin_for_sentinel,
-)
+from weld.strategies._python_calls import ensure_call_target_node
+from weld.strategies._python_import_attr import IMPORT_ATTR_PROP, import_attr_props
 
 if TYPE_CHECKING:
     from weld.strategies.python_callgraph import _CallGraphVisitor
@@ -47,45 +42,43 @@ def emit_decorates_edges(
     ever fires for a qualname ``_record_symbol`` just registered.
     Deduplicated per (decorated symbol, target) pair so repeating the same
     decorator in error does not multiply edges.
+
+    A decorator expression resolves through the same resolver a call target
+    does, so it inherits the same deferral: an unresolved target the resolver
+    could not decide from one glob carries ``props.import_attr`` for
+    :mod:`weld._graph_closure_import_attr`. Without it the two edge kinds
+    would answer the same ``@inner.deco`` differently.
     """
     if not visitor.decorates:
         return
-    from weld.strategies.python_callgraph import UNRESOLVED_PREFIX, _symbol_id
+    from weld.strategies.python_callgraph import _symbol_id
 
     seen: set[tuple[str, str, bool]] = set()
-    for target_id, resolved, raw, line, resolution, decorated_qual in visitor.decorates:
+    for entry in visitor.decorates:
+        target_id, resolved, raw, line, resolution, decorated_qual, hint = entry
         key = (decorated_qual, target_id, resolved)
         if key in seen:
             continue
         seen.add(key)
-        if target_id.startswith(UNRESOLVED_PREFIX):
-            nodes.setdefault(
-                target_id,
-                make_sentinel_node(
-                    target_id, resolution, origin_for_sentinel(resolution)
-                ),
-            )
-        else:
-            target_module = module_from_symbol_id(target_id)
-            nodes.setdefault(
-                target_id,
-                make_resolved_target_node(
-                    target_id, origin_for_resolved(target_module, project_modules)
-                ),
-            )
+        ensure_call_target_node(nodes, target_id, resolution, project_modules)
+        props: dict = {
+            "source_strategy": "python_callgraph",
+            "confidence": "definite" if resolved else "speculative",
+            "resolved": resolved,
+            "raw": raw,
+            "resolution": resolution,
+            "provenance": {"file": rel_path, "line": line},
+        }
+        if hint is not None:
+            # A decorates edge runs decorator -> decorated, so the deferred
+            # target is this edge's ``from`` endpoint, not its ``to``.
+            props[IMPORT_ATTR_PROP] = import_attr_props(hint, "from")
         edges.append(
             {
                 "from": target_id,
                 "to": _symbol_id(module_path, decorated_qual),
                 "type": "decorates",
-                "props": {
-                    "source_strategy": "python_callgraph",
-                    "confidence": "definite" if resolved else "speculative",
-                    "resolved": resolved,
-                    "raw": raw,
-                    "resolution": resolution,
-                    "provenance": {"file": rel_path, "line": line},
-                },
+                "props": props,
             }
         )
 

@@ -17,6 +17,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from weld._cli_render_freshness import (
     child_roster_lines, seed_blocked_lines, stale_sources_lines,
+    stats_workspace_lines,
 )
 from weld._cli_render_prose import prose_line
 from weld._cli_render_seeds import callers_seeds_lines
@@ -285,9 +286,7 @@ def render_stats(payload: Mapping[str, Any]) -> str:
     if stale:
         is_stale = stale.get("stale") if isinstance(stale, Mapping) else None
         lines.append(f"  stale: {_format_scalar(is_stale)}")
-    workspaces = payload.get("workspaces") or {}
-    if workspaces:
-        lines.append(f"  workspaces: {workspaces.get('count', 0)} children")
+    lines.extend(stats_workspace_lines(payload.get("workspaces") or {}))
     return _join(lines)
 
 

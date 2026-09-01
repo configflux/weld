@@ -25,7 +25,9 @@ that guarantees the stdio session never dies on a single bad call
 Federated workspaces (``.weld/workspaces.yaml`` present at root) are
 exempt: the federation loader reports per-child status via
 ``children_status``. ``weld_find`` is also exempt because it reads the
-file index, not the graph (matches CLI behavior).
+file index, not the graph (matches CLI behavior) -- exempt from *this*
+guard only: it carries the equivalent precondition over the index it does
+read, in :mod:`weld._find_precondition` (ADR 0134).
 """
 
 from __future__ import annotations

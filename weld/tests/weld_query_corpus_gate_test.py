@@ -27,7 +27,11 @@ import unittest
 from pathlib import Path
 
 from weld.graph import Graph
-from weld.tests.query_corpus import CORPUS, fixture_nodes
+from weld.tests.query_corpus import (
+    CORPUS,
+    TRAVERSAL_CORPUS,
+    fixture_nodes,
+)
 
 
 def _write_graph(tmp: Path) -> Path:
@@ -157,6 +161,78 @@ class QueryCorpusGateTest(unittest.TestCase):
             any(node_id.startswith("concept:") for node_id in ranked),
             f"naming the backlog must still surface the concept node: {ranked}",
         )
+
+
+class TraversalCorpusGateTest(unittest.TestCase):
+    """One reported *traversal* per entry, answered by real discovery.
+
+    The ranking gate above cannot see this class of gap. "Who calls this" is a
+    walk over edges, so it can answer "no callers" for a symbol with many while
+    every ``must_contain`` and ``must_not_rank_first`` in the corpus still
+    holds. Nor can it be pinned against the shared fixture graph: a hand-written
+    node set would encode the answer rather than test for it, so each entry
+    ships the source it was reported on and is discovered for real.
+
+    That is also what makes these entries immune to the bd 9ucf self-heal by
+    construction. A node minted from an issue title is a ``concept``, and a
+    ``concept`` is never the source of a ``calls`` edge, so filing the report
+    cannot answer the report.
+    """
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _discovered(entry: dict):
+        """Write *entry*'s sources to a temp root, discover it, yield the Graph."""
+        from weld.discover import _discover_single_repo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel, body in entry["sources"].items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(body, encoding="utf-8")
+            weld_dir = root / ".weld"
+            weld_dir.mkdir(exist_ok=True)
+            (weld_dir / "discover.yaml").write_text(
+                "sources:\n"
+                "  - strategy: python_module\n"
+                f"    glob: '{entry['glob']}'\n"
+                "    type: file\n"
+                "  - strategy: python_callgraph\n"
+                f"    glob: '{entry['glob']}'\n"
+                "    type: symbol\n",
+                encoding="utf-8",
+            )
+            _discover_single_repo(root, incremental=False, write_graph=True)
+            graph = Graph(root)
+            graph.load()
+            yield graph
+
+    def test_every_entry_answers_with_the_ids_it_names(self) -> None:
+        for entry in TRAVERSAL_CORPUS:
+            with self.subTest(bd=entry["bd"], question=entry["question"]):
+                with self._discovered(entry) as graph:
+                    answer = getattr(graph, entry["verb"])(entry["argument"])
+                    named = {row["id"] for row in answer.get("callers", [])}
+                    for node_id in entry["must_answer_with"]:
+                        self.assertIn(
+                            node_id, named,
+                            f"bd {entry['bd']}: {entry['verb']} "
+                            f"{entry['argument']} lost {node_id}.\n"
+                            f"{entry['why']}\nGot: {sorted(named)}",
+                        )
+
+    def test_no_entry_leaves_the_node_it_forbids(self) -> None:
+        """An edge retargeted but its stub left behind has half-fixed the gap."""
+        for entry in TRAVERSAL_CORPUS:
+            with self.subTest(bd=entry["bd"], question=entry["question"]):
+                with self._discovered(entry) as graph:
+                    for node_id in entry["must_not_exist"]:
+                        self.assertIsNone(
+                            graph.get_node(node_id),
+                            f"bd {entry['bd']}: {node_id} is still a node.\n"
+                            f"{entry['why']}",
+                        )
 
 
 class ReferencesErrorShapeTest(unittest.TestCase):

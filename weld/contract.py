@@ -43,13 +43,13 @@ EDGE_OPTIONAL_PROPS: tuple[str, ...] = (
 )
 
 # -- Validators (re-exported from sibling private modules) -----------------
-# Implementation is split across ``_contract_validators`` (node/edge/meta)
-# and ``_graph_doc_validators`` (graph/fragment aggregators) to keep every
-# file under the 400-line default. Public names are re-exported here so
-# existing callers (``from weld.contract import validate_graph``) work
-# unchanged.
+# Implementation is split across ``_contract_validators`` (node/meta),
+# ``_contract_edge_validators`` (edges) and ``_graph_doc_validators``
+# (graph/fragment aggregators) to keep every file under the 400-line
+# default. Public names are re-exported here so existing callers
+# (``from weld.contract import validate_graph``) work unchanged.
+from weld._contract_edge_validators import validate_edge  # noqa: E402
 from weld._contract_validators import (  # noqa: E402
-    validate_edge,
     validate_meta,
     validate_node,
 )

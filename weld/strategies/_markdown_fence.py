@@ -143,3 +143,18 @@ def iter_headings(text: str) -> Iterator[tuple[int, int, str]]:
         if not rest.startswith(" "):
             continue
         yield index, level, rest.strip()
+
+
+def first_h1(text: str) -> str | None:
+    """Return the document's first H1 heading, or ``None`` when it has none.
+
+    The title a markdown file gives itself. Two strategies want it and both
+    have to skip fences to get it right -- a document that opens with a shell
+    block would otherwise be titled after a ``# comment`` line -- so the walk
+    is shared here rather than reimplemented per caller.
+    """
+
+    for _index, level, heading in iter_headings(text):
+        if level == 1:
+            return heading
+    return None

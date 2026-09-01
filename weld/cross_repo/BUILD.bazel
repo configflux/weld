@@ -30,6 +30,7 @@ py_library(
         "compose_topology.py",
         "grpc_service_binding.py",
         "_package_manifest_scan.py",
+        "_resolver_context.py",
         "incremental.py",
         "overrides.py",
         "package_graph.py",
@@ -39,6 +40,10 @@ py_library(
     deps = [
         "//weld:node_ids",
         "//weld:notice",
+        # ADR 0137 s6: resolver disk walks ask the repo boundary which files
+        # a child claims. //weld:repo_boundary is a leaf (deps: package_init),
+        # so this stays cycle-free with //weld:runtime depending on us.
+        "//weld:repo_boundary",
         "//weld:workspace",
         "//weld:yaml",
     ],

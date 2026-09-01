@@ -23,6 +23,7 @@ import ast
 from pathlib import Path
 
 from weld.strategies._python_callgraph_visitor import _CallGraphVisitor
+from weld.strategies._python_relative_import import package_of
 
 #: Cache of ``module dotted path -> (qualnames it defines, its import
 #: table)``. Built once per ``extract()`` call and passed in by the caller so
@@ -93,28 +94,6 @@ def _module_file(root: Path, module: str) -> Path | None:
     return None
 
 
-def _absolute_imports_only(
-    tree: ast.Module, table: dict[str, tuple[str, str]]
-) -> dict[str, tuple[str, str]]:
-    """Drop every table entry a *relative* import bound.
-
-    ``ast`` does not resolve relative imports: ``from .core import thing``
-    parses with ``module="core"`` and ``level=1``, so the shared import table
-    records the defining module as ``core`` -- wrong in general, and in a
-    project with a top-level ``core.py`` wrong *while still resolving on
-    disk*. That is the failure mode worth engineering against: an absent
-    target is dropped and costs nothing, but one that resolves to the wrong
-    real symbol is a lie the graph repeats. Resolving these needs the
-    importing file's package position, which this module does not model, so
-    it declines rather than guesses.
-    """
-    relative: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and (node.level or 0) > 0:
-            relative.update(alias.asname or alias.name for alias in node.names)
-    return {k: v for k, v in table.items() if k not in relative}
-
-
 def _module_facts(
     root: Path, module: str, cache: ModuleCache
 ) -> tuple[frozenset[str], dict[str, tuple[str, str]]]:
@@ -126,6 +105,17 @@ def _module_facts(
     shapes) and the import table it resolves calls through. Re-implementing
     either rule would let them drift, and a drifted rule emits edges to
     symbol ids no strategy ever mints.
+
+    That delegation is why the module's package position is handed over too.
+    A relative import used to be dropped from the table here, on the grounds
+    that resolving it needed a position this module does not model -- but
+    ``module`` and the file backing it are both in hand, so the position was
+    never missing, only unused. ``_build_import_table`` now does the
+    arithmetic (bd ``zr486``) and refuses on its own when it cannot, so
+    following ``patch("pkg.caller.work")`` to a name ``pkg/caller.py`` bound
+    with ``from .helper import work`` reaches the real definition instead of
+    stopping at the re-binding site -- the bd ``kj4z`` shape, one spelling
+    further on.
 
     A module that cannot be read or parsed (vanished mid-run, bad encoding,
     syntax error) resolves to empty: nothing matches, so no edge is emitted.
@@ -147,7 +137,7 @@ def _module_facts(
             visitor.visit(tree)
             facts = (
                 frozenset(visitor.symbols),
-                _absolute_imports_only(tree, build_import_table(tree)),
+                build_import_table(tree, package=package_of(module, path)),
             )
     cache[module] = facts
     return facts

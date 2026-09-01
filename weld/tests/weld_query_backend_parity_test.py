@@ -298,9 +298,10 @@ class SharedStrictAndKeyDemotionTest(unittest.TestCase):
     def test_the_key_has_the_documented_dimension_shape(self) -> None:
         """Arity and slot positions, so a dimension cannot go missing quietly.
 
-        This pins the shape the module docstring describes; that the shape
-        *agrees with impl #1* is what the corpus-level lead-agreement test
-        above proves, since only a real query exercises both keys at once.
+        This pins the shape :func:`weld._rank_strict_and.strict_and_sort_key`
+        enumerates in its own docstring; that the shape *agrees with impl #1*
+        is what the corpus-level lead-agreement test above proves, since only
+        a real query exercises both keys at once.
         """
         key = strict_and_sort_key(
             "symbol:py:weld.serializer:dumps_graph",

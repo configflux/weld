@@ -34,12 +34,20 @@ from weld.cross_repo import (
     run_resolvers,
 )
 from weld.cross_repo.package_graph import PackageGraphResolver
-from weld.workspace import UNIT_SEPARATOR
 
 
 def _repo_node(child: str) -> str:
-    """Return the federated repo-node id the resolver emits edges between."""
-    return f"{child}{UNIT_SEPARATOR}repo:{child}"
+    """Return the repo-node id the resolver emits edges between.
+
+    Hand-spelled rather than built with ``repo_node_id``: this is the wire
+    format ``federation_root`` mints and every reader resolves against (ADR
+    0137 ss1), so the expectation has to be independent of the helper under
+    test. The namespaced ``<child>\\x1frepo:<child>`` this replaced was in
+    neither id space, and because the test built it the same wrong way the
+    resolver did, nine green assertions described a graph whose every edge
+    dangled.
+    """
+    return f"repo:{child}"
 
 
 def _write(path: str, content: str) -> None:

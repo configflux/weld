@@ -13,8 +13,16 @@ The fix (ADR 0042 Python rules) resolves ``from PARENT import CHILD`` +
 ``CHILD.attr()`` to the real submodule ``PARENT.CHILD`` *when that dotted
 path is a module this run proved first-party*, so the symbol classifies
 ``origin="project"`` under the real submodule and no bare-parent duplicate
-is minted. The membership gate keeps value/class imports (e.g.
-``Path.cwd()``) resolving exactly as before.
+is minted.
+
+The membership gate is also what tells a submodule import apart from a
+value import. A non-empty attr slot whose ``PARENT.CHILD`` is *not* a
+project module means ``CHILD`` holds an ordinary object, and its attribute
+is a method on that object rather than a sibling of ``PARENT`` -- so it
+resolves to nothing at all now (bd 1m1g9), where it used to fabricate
+``symbol:py:PARENT:attr``. The four-shape decision table lives in
+``weld_python_callgraph_import_value_attr_test``; what this file pins is
+that the gate is membership-based, in both directions.
 """
 
 from __future__ import annotations
@@ -122,15 +130,16 @@ class PythonCallgraphNamespacePackageImportTest(unittest.TestCase):
             f"bare-namespace-package symbols wrongly tagged external: {leaked}",
         )
 
-    def test_value_import_attr_call_unchanged(self) -> None:
-        """A non-submodule (value) ``from PARENT import NAME`` is untouched.
+    def test_value_import_attr_call_resolves_to_neither_module(self) -> None:
+        """A non-submodule (value) ``from PARENT import NAME`` resolves to nothing.
 
         ``ns.corpus`` is a real submodule, so it resolves to ``ns.corpus``.
-        But ``ns2.widget`` is NOT a project module, so a
-        ``from ns2 import widget; widget.render()`` must still resolve
-        against the bare parent rather than inventing ``ns2.widget`` -- the
-        fix is gated on project-module membership so value/class imports and
-        third-party submodule guesses are left exactly as before.
+        ``ns2.widget`` is NOT a project module, so ``widget`` names a value
+        and ``widget.render()`` is a method on whatever it holds. Neither
+        candidate module may claim it: not ``ns2.widget`` (the ptw3
+        membership gate, which is what this half pins), and not the bare
+        parent ``ns2`` either -- ``symbol:py:ns2:render`` was the fabricated
+        id of bd 1m1g9.
         """
         td = Path(tempfile.mkdtemp(prefix="weld_ns_value_"))
         (td / "ns2").mkdir()  # namespace package, no __init__.py
@@ -146,11 +155,9 @@ class PythonCallgraphNamespacePackageImportTest(unittest.TestCase):
             encoding="utf-8",
         )
         result = pc.extract(td, {"glob": "ns2/*.py"}, {})
-        # ``ns2.widget`` is not a file in the project, so the fix must not
-        # fire: resolution falls back to the bare parent module ``ns2``
-        # (the pre-existing behaviour), proving the gate is membership-based.
-        self.assertIn("symbol:py:ns2:render", result.nodes)
         self.assertNotIn("symbol:py:ns2.widget:render", result.nodes)
+        self.assertNotIn("symbol:py:ns2:render", result.nodes)
+        self.assertIn("symbol:unresolved:render", result.nodes)
 
 
 if __name__ == "__main__":

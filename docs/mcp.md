@@ -100,7 +100,7 @@ summarise the required fields.
 | `weld_references` | `symbol_name` | What points at a thing, plus file-index references. Takes a bare symbol name or a full node id. A symbol reports its callers; any other node type (build target, tool, doc) reports every node with an edge into it, since nothing *calls* those. A bare name can resolve to several `matches`; each entry in `callers` carries a `targets` list naming which match id(s) it was actually found under, so two same-named matches with different callers stay distinguishable instead of merging into one undifferentiated list. An unknown id returns an `error` rather than an empty result. Bounded by the byte budget, dropping file hits before resolved callers and resolved `matches` last; counts in `size_capped`, `full_size: true` for the unbounded union. A top-level `budget_exceeded` flags a payload still over budget after pruning everything droppable. |
 | `weld_export` | `format` | Export the graph (or a subgraph centered on `node_id`) to `mermaid`, `dot`, or `d2`. The `mermaid` output clusters nodes into per-file/module `subgraph` blocks, styles each node type via `classDef`, keeps human-readable labels, and annotates truncation with a visible note node. |
 | `weld_trace` | `term` or `node_id` | Protocol-aware cross-boundary slice: service / interface / contract / boundary / verification. Bounded by the byte budget (a `warnings` entry records any node dropped for size); `full_size: true` returns the whole slice. |
-| `weld_impact` | `target` | Reverse-dependency blast radius for a node id or file path. `affected_surfaces` buckets the radius into `cli_commands`, `mcp_tools`, `repo_tools`, `api_endpoints`, `entrypoints`, `boundaries` and `tests`; only the published surfaces set `risk_level`, so `repo_tools` (the repo's own scripts) is reported without raising it. Bounded by the byte budget: dependents and `affected_surfaces` members are pruned farthest-hop-first in one pass and counted in `warnings.size_capped`, while `risk_level` and `affected_surface_counts` always describe the **full** radius -- so a bounded payload never reports a smaller radius or a lower risk than the change carries. `warnings.budget_exceeded` (always present) is `true` when everything droppable was dropped and the payload is still over budget. `full_size: true` returns every dependent. |
+| `weld_impact` | `target` | Reverse-dependency blast radius for a node id or file path. `affected_surfaces` buckets the radius into `cli_commands`, `mcp_tools`, `repo_tools`, `api_endpoints`, `entrypoints`, `boundaries` and `tests`; only the published surfaces set `risk_level`, so `repo_tools` (the repo's own scripts) is reported without raising it. Bounded by the byte budget: dependents and `affected_surfaces` members are pruned farthest-hop-first in one pass and counted in `warnings.size_capped`, while `risk_level` and `affected_surface_counts` always describe the **full** radius -- so a bounded payload never reports a smaller radius or a lower risk than the change carries. `warnings.budget_exceeded` (always present) is `true` when everything droppable was dropped and the payload is still over budget. `full_size: true` returns every dependent. On a `repo:<name>` target the payload carries `measured_by` -- the cross-repo resolvers whose recorded pass measured the result -- when discovery ran any; without it the answer is `risk_level: UNKNOWN` plus a `cannot_answer` reason rather than a fabricated zero. |
 | `weld_enrich` | -- | LLM-assisted semantic enrichment for a node or the full graph. See the [trust model](#trust-model) before enabling. Pass `agent_direct: true` to get the work plan for enriching it yourself instead of a provider call -- no credentials, no network, no write; see [Enriching without a provider](#enriching-without-a-provider). |
 | `weld_diff` | -- | Diff between previous and current discovery runs: added, removed, modified nodes and edges. |
 | `weld_review` | `op` | Triage speculative edges. `op=list` returns pending edges; `op=show` returns one edge; `op=accept` promotes `speculative` -> `definite`; `op=reject` records a drop for the next discover. Mirrors `wd review`. |
@@ -497,9 +497,10 @@ nonzero exit), so an agent can branch on the code regardless of surface:
 | `schema_mismatch` | `meta.schema_version` is newer than this build    | Upgrade weld, or rebuild with this version: `wd discover`.      |
 | `node_not_found` | A requested node id resolves to nothing            | `Check the node id (wd query <term> to find it).`               |
 | `root_out_of_bounds` | A request named a `root` outside the served repository | Name a checkout of the same repository, or omit `root`.     |
+| `file_index_missing` | `.weld/file-index.json` is absent, so `find` has nothing to search (at a polyrepo root: neither it nor any child has one) | `Run: wd discover.` |
 
 The MCP payload shape is `{"error", "error_code", "hint"}` (the
-missing-graph case also carries a `retry` field). `node_not_found` is
+missing-graph and missing-file-index cases also carry a `retry` field). `node_not_found` is
 stamped on `weld_context` and `weld_callers` results when the requested id
 resolves to nothing; the only value echoed in `error` is the
 caller-supplied id. `weld_path` reports a miss as `{"path": null,
@@ -516,6 +517,18 @@ path that was asked for, and it reads identically whether the path was in
 another repository, was a file, or did not exist -- so a refused call
 answers nothing about the server's filesystem.
 
+`weld_find` reads the file index rather than the graph, so a missing graph is
+not a cannot-answer condition for it and it is exempt from the `graph_missing`
+guard. It is not exempt from having a precondition: a root where the search
+has no index to read at all — its own `.weld/file-index.json`, and at a
+polyrepo root every registered child's — returns `file_index_missing` rather
+than an empty `files` list. An index that exists and matches nothing is a real
+negative answer and still comes back as `{"query", "files": []}` with no
+`error_code`, and `weld_find` never builds an index: the remedy is `wd
+discover`, run deliberately. At a polyrepo root the index that answers is
+each child's, so the remedy there is discovery where the children are — a
+root whose children are not checked out has nothing to search and says so.
+
 `graph_missing` always leads its `error` with `No Weld graph found.`, and
 when the answering checkout is one that can *never* build a graph on its
 own, a second line names why. The case that has one is a linked git
@@ -528,6 +541,9 @@ why the payload names it rather than leaving an agent to infer it -- the
 same line `wd` prints, so both surfaces say the same thing. `error_code`,
 `hint`, and `retry` are unchanged in every case; only `error` gains the
 line, and its text is a fixed constant that never echoes the path.
+`file_index_missing` behaves identically, and for the same reason: the seed
+that would have supplied the index is the one that would have supplied the
+graph, so the prerequisite is the same and the sentence is the same one.
 
 ## Trust model
 

@@ -32,16 +32,27 @@ not just the unit-level purge call
 ``discovery_state_external_package_purge_test`` already pins -- that this
 one purge extension is enough for full node+edge equivalence, with no
 over-purge when a second importer survives.
+
+bd 5038-53jjg adds a third class to this file rather than a new target: it
+drives the same fixture and the same deletion, but through a graph whose
+``props.source_strategy`` is not a string, which used to abort the entire
+incremental round inside this rule's predicate rather than answer. It belongs
+beside the two above because it is the same repro with one value changed -- and
+because it needs their ``package:go:strings`` baseline to have something to
+doctor. See that class's own docstring for why the discovery-state stamp is
+what makes the round reach the predicate at all.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
+from weld._discover_state_check import mark_state_published  # noqa: E402
 from weld.discover import _discover_single_repo  # noqa: E402
 
 
@@ -257,6 +268,108 @@ class NonSoleImporterDeletedTest(unittest.TestCase):
             inc_edges, _edge_set(g_full),
             "partial delete: incremental edge set diverged from a full "
             "discover over the identical post-delete tree",
+        )
+
+
+class DoctoredNonStringSourceStrategyTest(unittest.TestCase):
+    """A ``.weld/graph.json`` carrying ``"source_strategy": []`` survives an
+    incremental discover (bd 5038-53jjg).
+
+    ADR 0115 treats ``.weld/graph.json`` as unvetted repo text, and this rule's
+    predicate tests ``props.source_strategy`` for membership in a frozenset --
+    so an unhashable value there raised ``TypeError("unhashable type: 'list'")``
+    on the way in, aborting not just this purge but the entire incremental
+    discover around it. The unit half lives in
+    ``discovery_state_external_package_purge_test``; this is the end-to-end half
+    over the real ``_discover_single_repo`` path, because the abort's blast
+    radius -- a whole discover, not one predicate -- is the part a unit test
+    cannot show.
+
+    The doctored graph is the REAL producer's own written output with one value
+    overwritten, not a hand-built payload: what is under test is a malformed
+    value inside an otherwise genuine graph, so anything hand-authored around it
+    would be asserting against a shape this test itself invented.
+
+    Re-stamping the state after the edit is what makes this round reach the
+    predicate AT ALL, and is the whole reason this test is worth its weight.
+    ``weld._discover_state_check.state_vouches_for_graph`` compares the body on
+    disk against the size+digest token the publishing run recorded, so an edit
+    made behind the state's back does not produce a doctored INCREMENTAL round
+    -- it produces a full discover (``_discover_basis``'s "cannot vouch for
+    graph.json" fallback), which rebuilds from source, never calls
+    ``purge_stale_nodes``, and so never reads the value under test. Stamping via
+    ``mark_state_published`` -- the same call the ``wd discover`` CLI tail makes
+    -- lands the doctored body as a graph the state legitimately vouches for,
+    which is the only shape that reaches this rule.
+
+    That fallback is also what makes the assertion below self-verifying rather
+    than vacuous: a full discover of this post-delete tree DROPS
+    ``package:go:strings`` (nothing imports ``strings`` any more), while the
+    incremental round under test RETAINS it (the doctored value reads as "not an
+    edge-anchored external placeholder", the safe side). Asserting the node
+    survives therefore proves both that the round stayed incremental and that
+    the predicate answered instead of raising -- if the stamp were ever dropped,
+    this test fails rather than passing on the wrong path.
+    """
+
+    def _doctor_source_strategy(self, root: Path, nid: str, value: object) -> None:
+        """Overwrite one node's ``props.source_strategy`` in the graph the
+        producer just wrote, leaving every other byte of it alone, and re-vouch
+        the state for the result (see the class docstring for why)."""
+        graph_path = root / ".weld" / "graph.json"
+        graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        self.assertIn(
+            nid, graph["nodes"],
+            "fixture setup assumption broken: the node to doctor must be in "
+            "the graph the baseline full run wrote to disk",
+        )
+        graph["nodes"][nid]["props"]["source_strategy"] = value
+        graph_path.write_text(json.dumps(graph), encoding="utf-8")
+        mark_state_published(root, graph_path)
+
+    def test_an_unhashable_source_strategy_does_not_abort_the_incremental_round(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="go-extpkg-doctored-") as td:
+            root = Path(td)
+            _git(root)
+            _write_fixture(root, with_second_importer=False)
+            _commit(root)
+            g_baseline = _discover_single_repo(root, incremental=False, write_graph=True)
+            self.assertIn(
+                "package:go:strings", _node_ids(g_baseline),
+                "fixture setup assumption broken: the baseline full run must "
+                "mint package:go:strings for the doctored round to reach the "
+                "predicate at all",
+            )
+            self._doctor_source_strategy(root, "package:go:strings", [])
+
+            # The sole importer's deletion is what drives the placeholder to
+            # zero inbound depends_on edges, i.e. what makes purge_stale_nodes
+            # actually evaluate the doctored node against this rule. Without
+            # it the value would never be read.
+            shutil.rmtree(root / "a")
+            _commit(root)
+            g_inc = _discover_single_repo(root, incremental=True, write_graph=True)
+
+        inc_nodes, inc_edges = _node_ids(g_inc), _edge_set(g_inc)
+        self.assertIn(
+            "package:go:strings", inc_nodes,
+            "an unhashable source_strategy must read as 'not an edge-anchored "
+            "external placeholder' -- the safe side, retaining the node -- "
+            "rather than purging it or raising",
+        )
+        self.assertNotIn(
+            "file:a/a", inc_nodes,
+            "the ordinary props.file purge must still have run over the "
+            "deleted importer: the round completed, it was not merely "
+            "swallowed",
+        )
+        self.assertIn("package:go:math", inc_nodes)
+        self.assertIn(
+            ("file:other/other", "depends_on", "package:go:math"), inc_edges,
+            "the untouched sibling's own external dependency must be wholly "
+            "undisturbed by the doctored node next to it",
         )
 
 

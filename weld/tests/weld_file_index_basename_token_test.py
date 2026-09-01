@@ -15,8 +15,11 @@ so ``install.sh`` now stores ``['install', 'install.sh']``. Existing
 single-token searches (``install``, ``sh``) continue to match because
 substring containment is preserved on the new basename token.
 
-This test pins the tokenizer-level contract and the end-to-end
-``find_files`` behaviour so the gap cannot silently regress.
+This test pins the tokenizer-level contract of
+:func:`weld._file_index_extractors._tokenize_path` and the end-to-end
+behaviour of :func:`weld.file_index_search.find_files` -- both reached here
+through the :mod:`weld.file_index` facade that re-exports them -- so the gap
+cannot silently regress.
 """
 
 from __future__ import annotations
@@ -164,10 +167,11 @@ class FindFilesBasenameBoostTest(unittest.TestCase):
     to alphabetical path -- ``docs/`` shows up before ``tools/``, so the
     actual file dropped below docs that merely referred to it.
 
-    These tests pin the new contract: when a matching token equals the
-    file's own basename AND is a case-insensitive exact match for the
-    query, that file gets a score boost so it wins ties against body
-    mentions.
+    These tests pin the new contract, which lives in
+    :mod:`weld.file_index_search`: when a matching token equals the file's
+    own basename AND is a case-insensitive exact match for the query, that
+    file gets the ``_BASENAME_MATCH_BOOST`` score boost so it wins ties
+    against body mentions.
     """
 
     def test_publish_sh_ranks_above_docs_that_mention_it(self) -> None:
@@ -227,7 +231,7 @@ class FindFilesBasenameBoostTest(unittest.TestCase):
     def test_basename_match_is_case_insensitive(self) -> None:
         """Query case must not affect the basename boost.
         ``BUILD.bazel`` is the canonical mixed-case basename in this
-        repo; ensure ``wd find 'build.bazel'`` still pins the file.
+        repo; ensure ``wd find 'build.bazel'`` still ranks the file first.
         """
         index = {
             "weld/BUILD.bazel": _tokenize_path("weld/BUILD.bazel") + [

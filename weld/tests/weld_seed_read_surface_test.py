@@ -17,8 +17,18 @@ while ``wd query`` one keystroke away seeded and answered correctly.
 
 The tests drive the real CLI at a real ``git worktree add`` checkout and
 assert on what came back. Two properties, deliberately paired: every
-state-answering surface seeds, and none of them gained the *refusal* that
-would let a probe exit instead of reporting.
+state-answering surface seeds, and none of them gained the *graph* refusal
+that would let a probe exit instead of reporting.
+
+One later correction (field eval v0.24.0, N9): ``find`` does refuse when the
+seed leaves it with **no file index at all**. That is not the refusal this
+suite guards against -- a probe exiting instead of reporting -- but its
+mirror: answering ``no matches`` from an artifact that was never written is
+the same false negative the second bullet above is about, one step further
+along. ``find`` still takes the seed, still needs no graph, and still answers
+whenever an index is reachable; the precondition it gained is over the index
+(:mod:`weld._find_precondition`, ADR 0134). The probes -- ``stale`` /
+``stats`` / ``list`` / ``dump`` -- gained nothing and must still answer.
 """
 
 from __future__ import annotations
@@ -29,10 +39,11 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
+from weld._errors import FILE_INDEX_MISSING
 from weld.tests._mode_a_fixture import ModeAFixture, weld_listing
 
-#: The seed-only surfaces: they answer from ``.weld/`` state but must keep
-#: answering when the checkout stays graphless. Each is paired with a term
+#: The seed-only surfaces: they answer from ``.weld/`` state rather than from
+#: the graph, so the seed has to reach all of them. Each is paired with a term
 #: the fixture's ``alpha.py`` satisfies, so a served answer is observable.
 _SEED_ONLY = (
     ("stale", ()),
@@ -40,6 +51,15 @@ _SEED_ONLY = (
     ("stats", ()),
     ("list", ()),
     ("dump", ()),
+)
+
+#: The subset that must keep answering even where no seed is available: each
+#: reports on ``.weld/`` state, so "there is none" is itself the answer.
+#: ``find`` is deliberately absent -- it reports on the *tree*, and has no
+#: honest answer to give about it with no index in hand (ADR 0134); its own
+#: case is asserted separately below.
+_ANSWER_WITHOUT_A_SEED = tuple(
+    entry for entry in _SEED_ONLY if entry[0] != "find"
 )
 
 
@@ -107,16 +127,16 @@ class SeedOnlySurfacesSeedTest(ModeAFixture):
 class SeedOnlySurfacesStillAnswerTest(ModeAFixture):
     """Seeding must not bring the first-run refusal along with it.
 
-    A freshness probe that exits instead of reporting "no graph" is useless,
-    and ``find`` answers off the file index, which a user may legitimately
-    build with no graph at all. So where no seed is possible, these surfaces
-    still have to answer.
+    A freshness or inventory probe that exits instead of reporting "no graph"
+    is useless: the absence *is* the answer it was asked for. So where no seed
+    is possible, these surfaces still have to answer, and none of them may
+    acquire ``ensure_graph_exists``'s refusal by joining the seeded set.
     """
 
     discover_primary = False  # a primary with no graph: nothing to seed from
 
     def test_surfaces_answer_when_no_seed_is_available(self) -> None:
-        for cmd, args in _SEED_ONLY:
+        for cmd, args in _ANSWER_WITHOUT_A_SEED:
             with self.subTest(cmd=cmd):
                 worktree = self.worktree(f"dry-{cmd}")
 
@@ -135,6 +155,23 @@ class SeedOnlySurfacesStillAnswerTest(ModeAFixture):
 
         self.assertNotEqual(code, 0, "query must keep its first-run guidance")
 
+    def test_find_refuses_rather_than_reporting_no_matches(self) -> None:
+        """The false negative this suite was filed about, at its end: with no
+        seed there is no index either, and ``no matches`` from an index that
+        does not exist is a claim about a tree nothing ever searched.
+
+        It is not ``query``'s refusal borrowed: the message names the index,
+        never the graph, and a checkout that has an index answers normally
+        whether or not it has ever seen a graph.
+        """
+        worktree = self.worktree("dry-find")
+
+        code, out, err = _run(worktree, "find", "alpha")
+
+        self.assertNotEqual(code, 0, f"find answered without an index: {out}")
+        self.assertIn(f"error[{FILE_INDEX_MISSING}]:", err)
+        self.assertNotIn("No Weld graph found.", err)
+
 
 class SeedOnlySurfacesHonourTheFreezeTest(ModeAFixture):
     """Gate 1 covers the widened surface too (ADR 0051 / ADR 0096 §2).
@@ -145,6 +182,16 @@ class SeedOnlySurfacesHonourTheFreezeTest(ModeAFixture):
     """
 
     def test_env_freeze_declines_every_seed_only_surface(self) -> None:
+        """The subject is the write, not the exit code: under the freeze every
+        one of these surfaces must leave ``.weld/`` exactly as it found it.
+
+        ``find`` exits non-zero here while the probes exit 0, and that is the
+        freeze working rather than an inconsistency: the seed it would have
+        answered from is the write the freeze withheld, so it has no index --
+        and a frozen read must still not answer a question it cannot answer
+        (ADR 0134). The probes report on ``.weld/`` state, so "there is none"
+        remains a true answer for them.
+        """
         for cmd, args in _SEED_ONLY:
             with self.subTest(cmd=cmd):
                 worktree = self.worktree(f"frozen-{cmd}")
@@ -153,7 +200,7 @@ class SeedOnlySurfacesHonourTheFreezeTest(ModeAFixture):
                 with mock.patch.dict(os.environ, {"WELD_AUTO_REFRESH": "0"}):
                     code, _, _ = _run(worktree, cmd, *args)
 
-                self.assertEqual(code, 0)
+                self.assertEqual(code, 0 if cmd != "find" else 1)
                 self.assertEqual(
                     before,
                     weld_listing(worktree),

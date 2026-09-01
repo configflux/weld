@@ -119,7 +119,12 @@ class BasicMatchTests(unittest.TestCase):
         edges = run_resolvers(_ctx({"repo-a": _REPO_A, "libs-su": _LIBS_SU}))
         self.assertEqual(len(edges), 1)
         e = edges[0]
-        self.assertEqual(e.type, "depends_on")
+        # bd ``5038-4v6fm``: the namespaced form is the wire contract for
+        # every cross-repo edge. Pinned as a literal on purpose -- this is
+        # the fixture the registry-wide oracle in
+        # weld_cross_repo_edge_type_parity_test.py is checked against, and
+        # reading the producer's own constant here would pass on any value.
+        self.assertEqual(e.type, "cross_repo:depends_on")
         self.assertEqual(e.from_id, f"repo-a{SEP}app.main")
         self.assertEqual(e.to_id, f"libs-su{SEP}shared_utils")
 

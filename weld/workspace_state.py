@@ -258,7 +258,14 @@ def format_workspace_status(
     """Render a human-readable workspace status summary.
 
     *freshness* (ADR 0066 §2): name -> oracle dict; a ``present`` child
-    reported ``stale`` renders as ``stale`` (token + ``stale=N`` column).
+    reported ``stale`` renders as ``stale`` on its own line (the per-child
+    token), and adds one to a ``stale=N`` column.
+
+    That column is a *sub-count*, not a fifth bucket: ``present`` counts the
+    children that are on disk, so a child whose graph drifted stays counted
+    there. Reporting it only under ``stale`` used to make this command
+    disagree with the ``wd stale`` roster about how many children exist --
+    the same number, two answers.
     """
     raw_children = state.get("children", {})
     if not isinstance(raw_children, dict):
@@ -270,8 +277,16 @@ def format_workspace_status(
         name: child_status_token(str(e.get("status", "unknown")), fresh.get(name))
         for name, e in raw_children.items() if isinstance(e, dict)
     }
-    counts = Counter(display.values())
-    order = _STATUS_ORDER + (("stale",) if counts.get("stale") else ())
+    counts = Counter(
+        str(e.get("status", "unknown"))
+        for e in raw_children.values() if isinstance(e, dict)
+    )
+    counts["stale"] = sum(1 for token in display.values() if token == "stale")
+    # A stored status outside the four is still reported under its own name,
+    # so the lifecycle buckets always sum to the number of children rather
+    # than quietly losing one.
+    extra = tuple(sorted(set(counts) - {"stale"} - set(_STATUS_ORDER)))
+    order = _STATUS_ORDER + extra + (("stale",) if counts["stale"] else ())
     lines = [
         f"Workspace status ({len(raw_children)} children)",
         "Counts: " + ", ".join(f"{s}={counts.get(s, 0)}" for s in order),
@@ -305,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
 
     status_parser = subparsers.add_parser(
         "status",
-        help="Show workspace child status from workspace-state.json",
+        help="Show workspace child status, re-probed on disk at read time",
     )
     status_parser.add_argument(
         "--root", default=".",
@@ -314,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
     status_parser.add_argument(
         "--json", action="store_true",
         help="Emit the workspace-state.json payload (present children gain a "
-        "derived 'freshness' object)",
+        "derived 'freshness' object; ledger-vs-disk differences are listed "
+        "under 'drift')",
     )
 
     add_bootstrap_subparser(subparsers, _WS_DEFAULT_MAX_DEPTH)
@@ -336,9 +352,25 @@ def main(argv: list[str] | None = None) -> int:
     # oracle is failure-isolated, so a probe error degrades one child to
     # 'unknown' rather than failing the whole status command.
     from weld._federation_staleness import augment_status_json, freshness_by_name
+    from weld._workspace_drift import (
+        UNPROBED_NOTICE,
+        drift_lines,
+        observed_children,
+        reconcile,
+    )
+
+    # ADR 0138: report the lifecycle on disk, not the one the ledger recorded,
+    # and name every difference. Reconciling here rather than inside the three
+    # renderers is what keeps them unchanged -- the oracle and both formatters
+    # see the observed status because they are handed it.
+    observed = observed_children(args.root)
+    if observed is None:
+        emit(UNPROBED_NOTICE)
+    state, drift = reconcile(state, observed)
 
     if args.json:
         payload = augment_status_json(args.root, state)
+        payload["drift"] = drift
         sys.stdout.write(
             dumps_safe_json(
                 payload, indent=2, sort_keys=True, ensure_ascii=True,
@@ -347,7 +379,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         fresh = freshness_by_name(args.root, state)
         # Child names are directory names from the scanned workspace.
-        sys.stdout.write(
-            sanitize_terminal_text(format_workspace_status(state, fresh)) + "\n"
+        text = "\n".join(
+            [format_workspace_status(state, fresh), *drift_lines(drift)],
         )
+        sys.stdout.write(sanitize_terminal_text(text) + "\n")
     return 0

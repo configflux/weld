@@ -1,43 +1,43 @@
-"""End-to-end regression CORPUS for the field-eval v0.23.1 findings (bd uuxaz).
+"""In-process regression CORPUS for the field-eval findings (bd uuxaz, d76r1).
 
-The external polyrepo evaluation surfaced nine findings, each now fixed with its
-own targeted unit regression. Per the dogfood policy, a fix is only *proven* by a
-pinned corpus entry -- one place that materialises the reported synthetic
-workspace and asserts the end-to-end federated behaviour, so a future refactor
-that quietly re-breaks the federation is caught here even if the narrow unit
-fixtures drift.
+Two external evaluations shipped the same synthetic 4-repo Acme workspace (an
+order-schema library, a C# gateway and a Python notifier that both consume the
+schema as a package dependency, and a docs repo), materialised on disk by
+:func:`weld.tests._field_eval_corpus_fixture.materialize_workspace`. This file
+is the in-process half of our corpus for it; the subprocess half -- the CLI the
+evaluator actually drove -- is ``weld_field_eval_e2e_test`` and its sibling
+regression suite.
 
-This suite is that corpus. It drives the *same* synthetic 4-repo Acme workspace
-the evaluator shipped (an order-schema library, a C# gateway and a Python
-notifier that both consume the schema as a package dependency, and a docs repo),
-materialised on disk by
-:func:`weld.tests._field_eval_corpus_fixture.materialize_workspace`, and asserts
-the load-bearing federated behaviours that ``run-all-repros.sh`` exercises, in
-one file:
+**What the v0.24.0 evaluation taught this file.** Its first version asserted
+that the ``package_graph`` resolver *emits* edges between the two consumers and
+the schema repo, using node ids the test itself spelled -- and separately that
+``impact`` finds dependents in a root graph the test hand-wired, in a
+*different* spelling. Both halves passed. The product shipped a root graph
+whose every cross-repo edge dangled, because nothing ever put the resolver's
+real output into a real root meta-graph and asked whether the endpoints
+existed. That is now what the two join tests do, through
+:func:`weld.federation_root.build_root_meta_graph` and
+:func:`weld._discover_federate.merge_cross_repo_edges`, checked with
+:func:`weld.tests._graph_invariants.assert_edges_resolve`.
 
-* **Finding 06 (cross-repo join).** The ``package_graph`` resolver reads the
-  real manifests on disk and emits ``cross_repo:depends_on`` from *both*
-  consumers to the producing schema repo -- the C# ``<PackageReference>`` and the
-  Python ``pyproject`` dependency -- and its output is byte-stable.
-* **Finding 06 (impact cannot-answer).** ``impact`` on the schema ``repo:`` node,
-  over the *default* ``cross_repo_strategies: []`` root graph, reports
-  ``Risk: UNKNOWN`` / ``result_unknown`` pointing at ``cross_repo_strategies``
-  -- not a fabricated ``Risk: LOW / 0 dependents``.
-* **Finding 06 (loop closed).** Wiring the resolver's own edges into the meta
-  graph turns that UNKNOWN into a measured answer: both consumers resolve as
-  dependents and the cannot-answer marker is gone.
-* **Finding 05 (unclaimed source).** The C# gateway child, whose
-  ``discover.yaml`` predates the C# strategy (markdown-only), surfaces ``csharp``
-  as an unclaimed source class -- the "100% of a language invisible while doctor
-  reports healthy" shape.
-* **Finding 02 (no-graph precondition).** A graph-less federation root refuses a
-  graph-backed read with the ``No Weld graph found.`` cannot-answer guidance and
-  a non-zero exit, distinct from an answered-empty result.
+The assertions that reproduce an *unfixed* v0.24.0 finding carry its id and bd
+issue and are expected failures until that fix lands -- the same contract as
+the E2E probes, so the corpus is never quietly weakened to stay green.
 
-The corpus is deliberately grammar-independent (see the fixture module): every
-assertion is computable from manifests, configs, and hand-shaped graphs, so it
-runs hermetically in the fast loop with no ambient tree-sitter grammar and no
-``git`` shell-out.
+What each remaining class pins:
+
+* **Finding 06 (cross-repo join).** Both consumers join to the producing schema
+  repo -- the C# ``<PackageReference>`` and the Python ``pyproject`` dependency
+  -- and the resolver's output is byte-stable.
+* **Finding 06 (impact cannot-answer).** ``impact`` on the schema ``repo:``
+  node over the *default* ``cross_repo_strategies: []`` graph reports
+  ``Risk: UNKNOWN`` / ``result_unknown``, not a fabricated ``LOW / 0``.
+* **Finding 06 (loop closed).** Wiring edges into the meta graph turns that
+  UNKNOWN into a measured answer.
+* **Finding 05 (unclaimed source).** The gateway child, whose ``discover.yaml``
+  predates the C# strategy, surfaces ``csharp`` as unclaimed.
+* **Finding 02 (no-graph precondition).** A graph-less federation root refuses
+  a graph-backed read, distinct from an answered-empty result.
 """
 
 from __future__ import annotations
@@ -49,43 +49,38 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from weld._discover_federate import merge_cross_repo_edges
 from weld._errors import RESULT_UNKNOWN
+from weld._federation_endpoints import endpoint_child_name
 from weld._graph_cli import main as graph_cli_main
 from weld._unclaimed_sources import detect_unclaimed_source_classes
 from weld.contract import SCHEMA_VERSION
-from weld.cross_repo import ResolverContext
-from weld.cross_repo.package_graph import PackageGraphResolver
+from weld.federation_root import build_root_meta_graph
 from weld.graph import Graph
 from weld.impact_core import format_human, impact
 from weld.tests._field_eval_corpus_fixture import (
+    CHILDREN,
     GATEWAY,
     NOTIFY,
     SCHEMA,
     materialize_workspace,
 )
-from weld.workspace import UNIT_SEPARATOR
+from weld.tests._graph_invariants import (
+    assert_answered_empty,
+    assert_cannot_answer,
+    assert_edges_resolve,
+    graph_edges,
+)
+from weld.workspace_state import build_workspace_state, load_workspace_config
 
 _TS = "2026-08-29T00:00:00+00:00"
 
-# Federated repo-node ids the resolver emits edges between (child-name-prefixed).
-_SCHEMA_REPO = f"{SCHEMA[0]}{UNIT_SEPARATOR}repo:{SCHEMA[0]}"
-_GATEWAY_REPO = f"{GATEWAY[0]}{UNIT_SEPARATOR}repo:{GATEWAY[0]}"
-_NOTIFY_REPO = f"{NOTIFY[0]}{UNIT_SEPARATOR}repo:{NOTIFY[0]}"
-
-
-def _resolver_context(root: Path) -> ResolverContext:
-    """Context whose children map carries only the *present* child names.
-
-    ``package_graph`` reads manifests from disk, so the graph values are unused;
-    ``None`` makes that explicit (mirrors the resolver's own unit test).
-    """
-    names = [SCHEMA[0], GATEWAY[0], NOTIFY[0], "docs-site"]
-    return ResolverContext(
-        workspace_root=str(root),
-        cross_repo_strategies=["package_graph"],
-        children={n: None for n in names},
-        child_hashes={n: "" for n in names},
-    )
+#: The two joins the manifests on disk genuinely support. Everything else the
+#: resolver emits comes from the vendored ``.venv`` (finding N2).
+_REAL_JOINS = {
+    (GATEWAY[0], SCHEMA[0], "Acme.Platform.Order.Schema"),
+    (NOTIFY[0], SCHEMA[0], "order-schema"),
+}
 
 
 def _graph(nodes: dict, edges: list[dict] | None = None) -> Graph:
@@ -106,35 +101,94 @@ def _repo_node(name: str) -> dict:
     return {"type": "repo", "label": name, "props": {"path": name}}
 
 
-class CrossRepoManifestJoinTest(unittest.TestCase):
+class _FederatedRootMixin:
+    """Builds the root meta-graph the way ``wd discover`` builds it.
+
+    No hand-written ``ResolverContext`` and no hand-spelled edge ids: the
+    workspace config comes off disk, the ledger is the real one, and the edges
+    are whatever the resolver produced for that context. Anything less is how
+    two halves of this file came to use different id conventions without either
+    noticing.
+    """
+
+    def _federate(self, root: Path) -> tuple[dict, dict[str, dict]]:
+        config = load_workspace_config(root)
+        assert config is not None, "fixture wrote no workspaces.yaml"
+        state = build_workspace_state(root, config)
+        meta = build_root_meta_graph(root, config, state, now=_TS)
+        merged = merge_cross_repo_edges(root, config, state, meta)
+        children = {
+            name: json.loads(
+                (root / rel / ".weld" / "graph.json").read_text(encoding="utf-8")
+            )
+            for name, rel in CHILDREN
+        }
+        return merged, children
+
+    @staticmethod
+    def _joins(graph: dict) -> set[tuple[str, str, str]]:
+        """``{(from-child, to-child, package)}``, read spelling-agnostically.
+
+        Through :func:`endpoint_child_name`, which knows both endpoint shapes
+        (ADR 0137 ss1). A raw separator split reads a repo-level endpoint as
+        the whole id, which would make the N2 probe below fail on an id
+        convention rather than on the join it exists to pin.
+        """
+        return {
+            (
+                str(endpoint_child_name(str(edge.get("from")))),
+                str(endpoint_child_name(str(edge.get("to")))),
+                str((edge.get("props") or {}).get("package")),
+            )
+            for edge in graph_edges(graph)
+        }
+
+    def _workspace(self) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)  # type: ignore[attr-defined]
+        return materialize_workspace(
+            Path(tmp.name) / "ws",
+            git=True,
+            preseed=True,
+            cross_repo_strategies=("package_graph",),
+        )
+
+
+class CrossRepoManifestJoinTest(_FederatedRootMixin, unittest.TestCase):
     """Finding 06: both consumers join to the producing schema repo."""
 
-    def test_csharp_and_python_consumers_both_resolve_to_schema(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = materialize_workspace(Path(tmp))
-            edges = PackageGraphResolver().resolve(_resolver_context(root))
-
-        joins = {(e.from_id, e.to_id, e.type) for e in edges}
-        # C# gateway -> schema (via <PackageReference>, case-insensitive match).
-        self.assertIn(
-            (_GATEWAY_REPO, _SCHEMA_REPO, "cross_repo:depends_on"), joins
+    def test_csharp_and_python_consumers_both_join_the_schema_repo(self) -> None:
+        merged, _children = self._federate(self._workspace())
+        self.assertTrue(
+            _REAL_JOINS <= self._joins(merged),
+            f"a real manifest join is missing: {sorted(self._joins(merged))}",
         )
-        # Python notifier -> schema (via pyproject [project].dependencies).
-        self.assertIn(
-            (_NOTIFY_REPO, _SCHEMA_REPO, "cross_repo:depends_on"), joins
-        )
-        # Exactly these two joins -- the docs repo and self-references add none.
-        self.assertEqual(len(edges), 2)
 
     def test_resolver_output_is_byte_stable(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = materialize_workspace(Path(tmp))
-            ctx = _resolver_context(root)
-            first = PackageGraphResolver().resolve(ctx)
-            second = PackageGraphResolver().resolve(ctx)
-        self.assertEqual(
-            [e.to_dict() for e in first], [e.to_dict() for e in second]
+        root = self._workspace()
+        config = load_workspace_config(root)
+        state = build_workspace_state(root, config)
+        first = merge_cross_repo_edges(
+            root, config, state, build_root_meta_graph(root, config, state, now=_TS)
         )
+        second = merge_cross_repo_edges(
+            root, config, state, build_root_meta_graph(root, config, state, now=_TS)
+        )
+        self.assertEqual(graph_edges(first), graph_edges(second))
+
+    def test_every_merged_edge_resolves_in_the_root_graph(self) -> None:
+        # Holds since ADR 0137 ss4: an edge whose endpoints resolve to nothing
+        # is dropped rather than written. Today that is why the test above is
+        # red -- package_graph's own edges are the ones being dropped -- so
+        # this passes over an empty edge set. It stops being vacuous when N1
+        # (d76r1.4) fixes the endpoint spelling, and it is a standing gate
+        # either way: nothing unresolvable may reach the root graph.
+        merged, children = self._federate(self._workspace())
+        assert_edges_resolve(merged, children)
+
+    def test_the_vendored_tree_contributes_no_join(self) -> None:
+        merged, _children = self._federate(self._workspace())
+        self.assertEqual(self._joins(merged), _REAL_JOINS)
 
 
 class ImpactCannotAnswerAtRootTest(unittest.TestCase):
@@ -158,40 +212,46 @@ class ImpactCannotAnswerAtRootTest(unittest.TestCase):
         self.assertNotIn("Risk: LOW", rendered)
 
 
-class ImpactAnsweredAfterWiringTest(unittest.TestCase):
-    """Finding 06 loop closed: the resolver's edges make impact answerable.
+class ImpactAnsweredAfterWiringTest(_FederatedRootMixin, unittest.TestCase):
+    """Finding 06 loop closed: cross-repo edges make impact answerable.
 
-    The edges asserted in :class:`CrossRepoManifestJoinTest` are wired into the
-    root meta-graph; the *same* schema-repo query that was UNKNOWN now resolves
-    both consumers as dependents with no cannot-answer marker. This is the
-    end-to-end proof that the resolver output is what closes Finding 06, not two
-    behaviours that merely happen to pass in isolation.
+    Two tests, deliberately: the control wires edges by hand and proves the
+    traversal half works at all, so a failure in the real-path test below is
+    attributable to what the resolver wrote rather than to ``impact``. Before
+    v0.24.0 only the control existed, and it passed while the product's own
+    root graph could not answer the same question.
     """
 
-    def test_wiring_resolver_edges_yields_measured_dependents(self) -> None:
+    def test_hand_wired_edges_yield_measured_dependents(self) -> None:
         nodes = {
-            f"repo:{SCHEMA[0]}": _repo_node(SCHEMA[0]),
-            f"repo:{GATEWAY[0]}": _repo_node(GATEWAY[0]),
-            f"repo:{NOTIFY[0]}": _repo_node(NOTIFY[0]),
+            f"repo:{name}": _repo_node(name)
+            for name in (SCHEMA[0], GATEWAY[0], NOTIFY[0])
         }
         edges = [
             {
-                "from": f"repo:{GATEWAY[0]}",
+                "from": f"repo:{consumer}",
                 "to": f"repo:{SCHEMA[0]}",
                 "type": "cross_repo:depends_on",
                 "props": {},
-            },
-            {
-                "from": f"repo:{NOTIFY[0]}",
-                "to": f"repo:{SCHEMA[0]}",
-                "type": "cross_repo:depends_on",
-                "props": {},
-            },
+            }
+            for consumer in (GATEWAY[0], NOTIFY[0])
         ]
 
         result = impact(_graph(nodes, edges), target=f"repo:{SCHEMA[0]}")
 
         self.assertNotEqual(result["risk_level"], "UNKNOWN")
+        self.assertNotIn("cannot_answer", result)
+        direct = {d["id"] for d in result["direct_dependents"]}
+        self.assertIn(f"repo:{GATEWAY[0]}", direct)
+        self.assertIn(f"repo:{NOTIFY[0]}", direct)
+
+    def test_the_resolvers_own_edges_yield_measured_dependents(self) -> None:
+        merged, _children = self._federate(self._workspace())
+
+        result = impact(_graph(merged["nodes"], graph_edges(merged)),
+                        target=f"repo:{SCHEMA[0]}")
+
+        self.assertNotEqual(result["risk_level"], "UNKNOWN", result.get("cannot_answer"))
         self.assertNotIn("cannot_answer", result)
         direct = {d["id"] for d in result["direct_dependents"]}
         self.assertIn(f"repo:{GATEWAY[0]}", direct)
@@ -203,7 +263,7 @@ class DoctorUnclaimedSourceTest(unittest.TestCase):
 
     def test_gateway_csharp_is_unclaimed_under_markdown_only_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = materialize_workspace(Path(tmp))
+            root = materialize_workspace(Path(tmp) / "ws", preseed=True)
             unclaimed = detect_unclaimed_source_classes(root / GATEWAY[1])
 
         languages = {c.language for c in unclaimed}
@@ -214,7 +274,7 @@ class DoctorUnclaimedSourceTest(unittest.TestCase):
         # source is claimed and nothing is flagged. Pins that the check reports
         # a gap only where one genuinely exists.
         with tempfile.TemporaryDirectory() as tmp:
-            root = materialize_workspace(Path(tmp))
+            root = materialize_workspace(Path(tmp) / "ws", preseed=True)
             unclaimed = detect_unclaimed_source_classes(root / NOTIFY[1])
         self.assertEqual(
             [c.language for c in unclaimed if c.language == "python"], []
@@ -236,26 +296,26 @@ class NoGraphPreconditionTest(unittest.TestCase):
 
     def test_graphless_root_query_refuses_with_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = materialize_workspace(Path(tmp))
+            root = materialize_workspace(Path(tmp) / "ws")
             # No root .weld/graph.json -> the fresh-worktree graph-less state.
-            code, _out, err = self._run(["--root", str(root), "query", "OrderReplayer"])
+            code, out, err = self._run(["--root", str(root), "query", "OrderReplayer"])
 
-        self.assertNotEqual(code, 0)
+        assert_cannot_answer(code, err, out)
         self.assertIn("No Weld graph found.", err)
 
     def test_present_empty_root_graph_answers_empty_not_cannot_answer(self) -> None:
-        # ADR 0134 boundary: a *present* (if empty) graph is an answered-empty
-        # result, distinct from the graph-less cannot-answer above.
+        # The other side of the same contract, and the reason both helpers
+        # exist: a check that only pins the refusal passes on a tool that has
+        # started refusing questions it can answer.
         with tempfile.TemporaryDirectory() as tmp:
-            root = materialize_workspace(Path(tmp))
+            root = materialize_workspace(Path(tmp) / "ws")
             payload = {"meta": {"version": 1}, "nodes": {}, "edges": []}
             (root / ".weld" / "graph.json").write_text(
                 json.dumps(payload), encoding="utf-8"
             )
-            code, _out, err = self._run(["--root", str(root), "query", "OrderReplayer"])
+            code, out, err = self._run(["--root", str(root), "query", "OrderReplayer"])
 
-        self.assertEqual(code, 0)
-        self.assertNotIn("No Weld graph found.", err)
+        assert_answered_empty(code, out, err)
 
 
 if __name__ == "__main__":

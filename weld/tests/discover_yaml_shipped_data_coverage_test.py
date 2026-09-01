@@ -120,7 +120,7 @@ class ShippedDataCoverageTest(unittest.TestCase):
                 )
 
     def test_each_family_is_claimed_under_the_decided_node_type(self) -> None:
-        """The decision the issue was opened to make, pinned per family."""
+        """The decision bd q85a was opened to make, pinned per family."""
         for directory, pattern, node_type in _FAMILIES:
             with self.subTest(directory=directory):
                 sample = sorted(_family_files(directory, pattern))[0]

@@ -149,16 +149,30 @@ def _is_tree_sitter_package_shell(node: dict) -> bool:
     Defensive the same way the sibling rules read ``props``: strategy-authored
     props (including project-local overrides) are untrusted shape, so a
     missing/non-dict ``props`` reads as "not eligible" rather than raising.
+
+    The ``isinstance`` on the ``origin`` *value* is the other half of that
+    posture, and is load-bearing rather than ceremony (bd 5038-53jjg): these
+    props are read back off ``.weld/graph.json``, which ADR 0115 treats as
+    unvetted repo text, and an unhashable value there (``"origin": []``) made
+    the membership test raise rather than answer -- taking this purge, and the
+    whole incremental discover around it, down with it. Non-string reads as
+    "not eligible", the same safe side a missing ``props`` lands on: retain a
+    node rather than purge one. The other two checks need no such guard: ``==``
+    is total over any value. Same guard, same reason, as
+    :func:`weld._discover_placeholder_anchor._is_derived_edge` (bd 5038-rwi34)
+    and :func:`weld._discover_external_package_purge._is_edge_anchored_external_package`.
     """
     if node.get("type") != _PACKAGE_TYPE:
         return False
     props = node.get("props") or {}
     if not isinstance(props, dict):
         return False
+    origin = props.get("origin")
     return (
         props.get("source_strategy") == _TREE_SITTER_STRATEGY
         and props.get("authority") == _DERIVED_AUTHORITY
-        and props.get("origin") in _PURGEABLE_ORIGINS
+        and isinstance(origin, str)
+        and origin in _PURGEABLE_ORIGINS
     )
 
 

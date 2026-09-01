@@ -32,6 +32,17 @@ from weld.workspace_state import WorkspaceChildState, WorkspaceState
 # ---------------------------------------------------------------------------
 
 
+#: The nodes every child fixture carries. The fixture resolver below emits
+#: ``<first child>\x1fn1 -> <second child>\x1fn2``, and since ADR 0137 ss4 the
+#: merge drops an edge whose endpoints resolve to nothing -- so a child with an
+#: empty node set would make its own resolver's output vanish and the test
+#: would assert on a merge that never happened.
+_CHILD_NODES: dict[str, dict] = {
+    "n1": {"type": "file", "label": "n1", "props": {}},
+    "n2": {"type": "file", "label": "n2", "props": {}},
+}
+
+
 def _write_child_graph(
     root: Path,
     rel_path: str,
@@ -40,13 +51,14 @@ def _write_child_graph(
     """Write a minimal v1 child graph under ``<root>/<rel_path>/.weld/graph.json``.
 
     The graph has ``schema_version=1`` (child schema) and is valid JSON
-    matching the contract so ``Graph.load()`` succeeds on it.
+    matching the contract so ``Graph.load()`` succeeds on it. It carries
+    :data:`_CHILD_NODES` unless the caller names its own.
     """
     weld_dir = root / rel_path / ".weld"
     weld_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "meta": {"version": SCHEMA_VERSION, "schema_version": 1},
-        "nodes": nodes or {},
+        "nodes": _CHILD_NODES if nodes is None else nodes,
         "edges": [],
     }
     (weld_dir / "graph.json").write_text(

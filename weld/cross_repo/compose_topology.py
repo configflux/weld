@@ -1,8 +1,11 @@
 """Cross-repo resolver: compose topology.
 
 Reads ``docker-compose.yml``, ``compose.yaml``, or ``compose.yml`` at
-the workspace root and emits ``depends_on`` edges between services whose
-images (or service names) map to registered children.
+the workspace root and emits ``cross_repo:depends_on`` edges between
+services whose images (or service names) map to registered children.
+The type is the shared ``CROSS_REPO_DEPENDS_ON`` from
+:mod:`weld._federation_endpoints`; this resolver spelled its own
+un-namespaced ``depends_on`` until bd ``5038-4v6fm``.
 
 The resolver is pure: it reads the compose file via the filesystem path
 exposed by :attr:`ResolverContext.workspace_root`, maps each service to a
@@ -26,13 +29,13 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from weld._federation_endpoints import CROSS_REPO_DEPENDS_ON, repo_node_id
 from weld.cross_repo.base import (
     CrossRepoEdge,
     CrossRepoResolver,
     ResolverContext,
     register_resolver,
 )
-from weld.workspace import UNIT_SEPARATOR
 
 # Compose file names searched in order of precedence.  The first match wins;
 # later files are not merged (docker compose merges are a runtime concern,
@@ -133,7 +136,7 @@ def _extract_depends_on(service_config: Any) -> list[str]:
 
 @register_resolver("compose_topology")
 class ComposeTopologyResolver(CrossRepoResolver):
-    """Emit ``depends_on`` edges from docker-compose service wiring."""
+    """Emit ``cross_repo:depends_on`` edges from docker-compose service wiring."""
 
     name = "compose_topology"
 
@@ -172,9 +175,9 @@ class ComposeTopologyResolver(CrossRepoResolver):
                     continue
                 edges.append(
                     CrossRepoEdge(
-                        from_id=f"{from_child}{UNIT_SEPARATOR}repo:{from_child}",
-                        to_id=f"{to_child}{UNIT_SEPARATOR}repo:{to_child}",
-                        type="depends_on",
+                        from_id=repo_node_id(from_child),
+                        to_id=repo_node_id(to_child),
+                        type=CROSS_REPO_DEPENDS_ON,
                         props={
                             # ADR 0050: parsed YAML config is a
                             # parseable, deterministic source. The

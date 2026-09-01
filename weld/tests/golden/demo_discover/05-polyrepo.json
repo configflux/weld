@@ -15,6 +15,18 @@
     }
   ],
   "meta": {
+    "cross_repo": {
+      "dropped": 0,
+      "edges": 1,
+      "resolved_children": [
+        "libs-shared-models",
+        "services-api",
+        "services-auth"
+      ],
+      "strategies": [
+        "service_graph"
+      ]
+    },
     "discovered_from": [
       ".weld/workspaces.yaml"
     ],

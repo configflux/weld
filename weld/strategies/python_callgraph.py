@@ -25,9 +25,32 @@ Resolution is best-effort and explicitly partial -- see ADR
 2. **Import-table lookup**: ``baz()`` resolves to ``symbol:py:foo.bar:baz``
    when the module declares ``from foo.bar import baz``. ``mod.func()``
    resolves to ``symbol:py:foo.bar:func`` when ``import foo.bar as mod``
-   (or ``import foo.bar``) is in scope.
+   (or ``import foo.bar``) is in scope. An attribute call reads the table's
+   attr slot to tell those two apart: only a module alias (empty slot) --
+   or a from-imported name that is itself a module THIS GLOB owns -- lets
+   the attribute become the symbol name. ``baz.method()`` for an imported
+   *value* takes rule 3, never ``symbol:py:foo.bar:method``.
+
+   The table's module slot is read the way the interpreter reads it, not the
+   way the source spells it, and two rules correct it once -- before any of
+   the three branches that read it -- rather than each branch learning them.
+   ``_python_relative_import`` resolves an explicit relative import against the
+   importing file's own package, so ``from .helper import work`` in
+   ``pkg/caller.py`` means ``pkg.helper``; ``_python_sibling_import`` then
+   handles the bare-name case, where a directory with no ``__init__.py`` is
+   itself on ``sys.path`` and ``from helper import work`` in ``tools/lint.py``
+   means ``tools.helper``. Neither invents a module: each refuses and leaves
+   the call to rule 3 when it cannot name a real one.
 3. **Unresolved fallback**: anything else becomes
    ``symbol:unresolved:<name>``. Strategies never silently drop a call.
+
+Rule 2's glob bound is deliberate, and it is why rule 3 is not always the
+last word. A submodule another glob owns cannot be told from a value here,
+so rather than answer either way on a set that a full and an incremental
+discover derive differently, the resolver records what the reading turns on
+(``props.import_attr``) and leaves the sentinel for
+:mod:`weld._graph_closure_import_attr`, which runs once per discover over the
+whole merged graph on both paths.
 
 The strategy uses stdlib ``ast`` only -- no new mandatory dependencies.
 """
@@ -46,29 +69,34 @@ from weld.strategies._python_callgraph_incremental import (
     reconstruct_project_modules,
 )
 from weld.strategies._python_callgraph_visitor import _CallGraphVisitor
+from weld.strategies._python_calls import emit_symbol_call_edges
 from weld.strategies._python_decorates import emit_decorates_edges
 from weld.strategies._python_inherits import emit_inherits_edges
+from weld.strategies._python_lazy_api import import_alias_names
 from weld.strategies._python_output_sink import mark_output_sink_callers
 from weld.strategies._python_references import emit_reference_edges
+from weld.strategies._python_relative_import import absolute_module, package_of
 from weld.strategies._python_scope_calls import emit_module_scope_call_edges
-from weld.strategies._python_origin import (
+from weld.strategies._python_sibling_import import normalize_sibling_imports
+from weld.strategies._python_origin import (  # noqa: F401 -- re-export
+    UNRESOLVED_PREFIX,
     is_builtin_name,
-    make_resolved_target_node,
-    make_sentinel_node,
-    module_from_symbol_id,
-    origin_for_resolved,
-    origin_for_sentinel,
     project_module_set,
+    symbol_id as _symbol_id,
+    unresolved_id as _unresolved_id,
 )
 
 # ---------------------------------------------------------------------------
 # ID helpers
 # ---------------------------------------------------------------------------
 
-#: Sentinel ID prefix for call sites whose target name could not be
-#: resolved against the module's imports or local definitions. Kept stable
-#: so consumers can filter / rank these distinctly from resolved targets.
-UNRESOLVED_PREFIX = "symbol:unresolved:"
+# ``UNRESOLVED_PREFIX`` / ``_symbol_id`` / ``_unresolved_id`` are re-exported
+# from ``_python_origin``, which owns the whole id shape -- the readers
+# (``module_from_symbol_id``, ``qualname_from_symbol_id``), the node minters
+# that stamp them, and now the two minters that build them. Historical names
+# kept, so every module that imports them from here is unchanged; what moved
+# is where they are DEFINED, so an emitter can mint an id without importing
+# the strategy that dispatches into it.
 
 def _module_dotted_path(rel_path: str) -> str:
     """Return a python-style dotted module path for *rel_path*.
@@ -88,26 +116,13 @@ def _module_dotted_path(rel_path: str) -> str:
         parts[-1] = Path(last).stem
     return ".".join(parts)
 
-def _symbol_id(module_path: str, qualname: str) -> str:
-    """Return a stable id for a Python symbol.
-
-    Symbol IDs preserve their original module-path and qualname casing
-    (ADR 0041 § Migration plan does not list ``symbol:py:*`` in the
-    rename table, and lowercasing class qualnames would silently
-    rewrite every symbol edge in the existing graph). The canonical
-    slug rule applies to ID *prefixes* and human-name segments;
-    qualnames are program identifiers and stay verbatim.
-    """
-    return f"symbol:py:{module_path}:{qualname}"
-
-def _unresolved_id(name: str) -> str:
-    return f"{UNRESOLVED_PREFIX}{name}"
-
 # ---------------------------------------------------------------------------
 # Import-table extraction
 # ---------------------------------------------------------------------------
 
-def _build_import_table(tree: ast.Module) -> dict[str, tuple[str, str]]:
+def _build_import_table(
+    tree: ast.Module, *, package: str = ""
+) -> dict[str, tuple[str, str]]:
     """Return ``{local_name: (module, attr)}`` for every import.
 
     For ``from foo.bar import baz`` the entry is
@@ -119,19 +134,36 @@ def _build_import_table(tree: ast.Module) -> dict[str, tuple[str, str]]:
     For ``import foo.bar as mod`` the entry is ``"mod": ("foo.bar", "")``.
     The empty-string ``attr`` slot signals "this is a module alias --
     treat the call's attribute as the symbol name".
+
+    *package* is the importing file's own ``__package__``, and it is what makes
+    an explicit relative import resolvable: ``from .helper import work`` under
+    package ``pkg`` records ``("pkg.helper", "work")`` rather than the source's
+    bare ``helper``, a module that exists under no spelling. A caller with no
+    package position to offer leaves it empty; every relative import is then
+    refused rather than guessed at, as is one whose level walks past the
+    top-level package. See ``_python_relative_import`` (bd ``zr486``).
+
+    Which local name each spelling binds is
+    :func:`weld.strategies._python_lazy_api.import_alias_names`, shared with the
+    accessor check that reads this table back (bd ``80zz3``) so the two cannot
+    disagree about what ``import foo.bar`` puts in scope.
     """
     table: dict[str, tuple[str, str]] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if not node.module:
+            level = node.level or 0
+            if level:
+                module = absolute_module(node.module, level, package=package)
+                if module is None:
+                    continue
+            elif node.module:
+                module = node.module
+            else:
                 continue
-            module = node.module
-            for alias in node.names:
-                local = alias.asname or alias.name
+            for local, alias in import_alias_names(node):
                 table[local] = (module, alias.name)
         elif isinstance(node, ast.Import):
-            for alias in node.names:
-                local = alias.asname or alias.name.split(".")[0]
+            for local, alias in import_alias_names(node):
                 table[local] = (alias.name, "")
     return table
 
@@ -163,23 +195,36 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     # behaviour byte-for-byte.
     hint = get_incremental_hint(context)
     parse_files = matched
+    # This glob's OWN module paths, derived identically on both discover
+    # paths from the whole resolved glob (never the dirty subset). The
+    # submodule-vs-value reading of ``from PARENT import CHILD`` is keyed on
+    # this and not on the wider ``project_modules`` below, which the two
+    # paths derive differently on purpose -- see ``_CallGraphVisitor``.
+    glob_modules = project_module_set(
+        root, matched, module_dotted_path=_module_dotted_path,
+    )
     project_modules: frozenset[str]
     if hint is not None:
+        # Decision item 4 said reconstruction is an optimization and the
+        # full-glob derivation is always correct, and fell back to it only when
+        # reconstruction came back empty. Taking the union unconditionally is
+        # the stronger reading of the same rule, and it costs nothing: the glob
+        # is already resolved, and ``project_module_set`` only maps those paths
+        # to dotted names -- no file is parsed or even opened.
+        #
+        # The conditional fallback left one hole. Reconstruction reads
+        # project membership off surviving *symbol* nodes, so a first-party
+        # module that contributes no symbol at all -- a pure re-export facade,
+        # a package ``__init__`` -- is missing from a set that is not empty
+        # overall, and a call resolving into it is tagged ``external`` where a
+        # full discover says ``project``. Deriving this glob's own membership
+        # exactly the way the full path does closes that; the prior-node scan
+        # stays for what it alone can supply, the union across other globs.
         parse_files = dirty_matched(matched, root, hint.dirty_files)
         project_modules = reconstruct_project_modules(
             hint.prior_nodes, parse_files, root,
             module_dotted_path=_module_dotted_path,
-        )
-        # Decision item 4: reconstruction is an optimization; if the prior
-        # graph yields no project module while there are dirty files to
-        # parse (absent/empty/incompatible prior state), fall back to the
-        # full-glob derivation -- correct, slightly slower -- rather than
-        # mis-tag origins from an empty set.
-        if not project_modules and parse_files:
-            project_modules = project_module_set(
-                root, matched,
-                module_dotted_path=_module_dotted_path,
-            )
+        ) | glob_modules
     else:
         # Project-membership set per ADR 0042 §"Per-language detection rules"
         # (Python). The "project file set" for an extract() call is the set
@@ -187,11 +232,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         # Imports whose target module matches any of these paths classify
         # as ``project``; imports outside both this set and
         # ``sys.stdlib_module_names`` classify as ``external``.
-        project_modules = project_module_set(
-            root,
-            matched,
-            module_dotted_path=_module_dotted_path,
-        )
+        project_modules = glob_modules
 
     # Publish this batch's project module paths to a run-level union in
     # the shared ``context`` (ADR 0042 §Python: "any project file set
@@ -222,8 +263,19 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         if not module_path:
             continue
 
-        import_table = _build_import_table(tree)
-        visitor = _CallGraphVisitor(module_path, import_table, project_modules)
+        # The table's module slot is read the way the interpreter reads it,
+        # before any of the three branches that consume it: an explicit
+        # relative import is arithmetic on this file's own package, done while
+        # node.level is still in hand (bd zr486), and a bare name in a
+        # directory that is not a package binds against that directory rather
+        # than sys.path proper (bd sigz2).
+        import_table = normalize_sibling_imports(
+            _build_import_table(tree, package=package_of(module_path, py)),
+            module_path=module_path,
+            source_dir=py.parent,
+            glob_modules=glob_modules,
+        )
+        visitor = _CallGraphVisitor(module_path, import_table, glob_modules)
         visitor.visit(tree)
 
         # Emit one symbol node per defined qualname.
@@ -279,53 +331,16 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         )
 
         # Emit one calls edge per call site (deduplicated within a caller).
-        for caller_qual, targets in visitor.calls.items():
-            from_id = _symbol_id(module_path, caller_qual)
-            seen: set[tuple[str, bool]] = set()
-            for target_id, resolved, raw, line, resolution in targets:
-                if (target_id, resolved) in seen:
-                    continue
-                seen.add((target_id, resolved))
-                # Materialize unresolved sentinel nodes lazily so the
-                # graph stays referentially closed for the orchestrator's
-                # final cleanup pass. Resolved cross-module targets are
-                # likewise speculatively minted so consumers always get
-                # an ``origin``-tagged node for every edge endpoint
-                # (ADR 0042 Python rules).
-                if target_id.startswith(UNRESOLVED_PREFIX):
-                    nodes.setdefault(
-                        target_id,
-                        make_sentinel_node(
-                            target_id, resolution, origin_for_sentinel(resolution)
-                        ),
-                    )
-                else:
-                    target_module = module_from_symbol_id(target_id)
-                    nodes.setdefault(
-                        target_id,
-                        make_resolved_target_node(
-                            target_id,
-                            origin_for_resolved(target_module, project_modules),
-                        ),
-                    )
-                edges.append(
-                    {
-                        "from": from_id,
-                        "to": target_id,
-                        "type": "calls",
-                        "props": {
-                            "source_strategy": "python_callgraph",
-                            "confidence": "definite" if resolved else "speculative",
-                            "resolved": resolved,
-                            "raw": raw,
-                            "resolution": resolution,
-                            "provenance": {
-                                "file": rel_path,
-                                "line": line,
-                            },
-                        },
-                    }
-                )
+        # Delegated for the same line-count reason its module-scope sibling
+        # is; see ``_python_calls`` for the minting and props rules.
+        emit_symbol_call_edges(
+            calls=visitor.calls,
+            module_path=module_path,
+            rel_path=rel_path,
+            project_modules=project_modules,
+            nodes=nodes,
+            edges=edges,
+        )
 
         # ADR 0122: decorator_list attribution (a distinct ``decorates``
         # relationship, not ``calls`` -- see the ADR for why) and

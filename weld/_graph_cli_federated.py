@@ -9,7 +9,9 @@ present, so a polyrepo root serves every read command across its children:
   (:mod:`weld.federation_tools`) -- the same helpers the MCP surface uses, so
   ``wd callers --json`` == ``weld_callers`` (ADR 0083).
 * ``communities`` runs over the read-time flattened union (ADR 0089).
-* ``find`` fans out across every child's file-index (ADR 0089).
+* ``find`` fans out across every child's file-index (ADR 0089), and refuses
+  when no index exists anywhere the fan-out reaches
+  (:mod:`weld._find_precondition`, ADR 0134).
 
 Kept out of ``weld/_graph_cli.py`` so that module stays within the 400-line cap;
 the ``emit`` writers are passed in rather than imported, so the dependency runs
@@ -37,10 +39,16 @@ def run_federated_cli(cmd, args, *, emit, emit_node_lookup) -> None:
     renderer-aware writers from :mod:`weld._graph_cli_emit`, injected by
     :func:`weld._graph_cli.main`."""
     if cmd == "find":
-        # File-index, not graph -- no FederatedGraph needed.
+        # File-index, not graph -- no FederatedGraph needed, and so no
+        # ``ensure_graph_exists``. It gets the precondition for the artifact
+        # it *does* read instead (ADR 0134): a root whose own index and every
+        # registered child's are absent cannot answer, and saying "no
+        # matches" there is the finding-02 shape in one command.
         from weld._cli_render import render_find
         from weld._federation_find import federated_find
+        from weld._find_precondition import ensure_file_index_exists
 
+        ensure_file_index_exists(args.root, args.term)
         emit(
             args,
             federated_find(args.root, args.term, limit=args.limit),

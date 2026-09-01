@@ -200,7 +200,7 @@ services-auth: present
 libs-shared-models: present
 ```
 
-For the raw JSON ledger:
+For the JSON ledger:
 
 ```bash
 wd workspace status --json
@@ -208,7 +208,10 @@ wd workspace status --json
 
 This emits `workspace-state.json` content, which includes per-child
 fields: `status`, `head_sha`, `head_ref`, `is_dirty`, `graph_path`,
-`graph_sha256`, and `last_seen_utc`.
+`graph_sha256`, and `last_seen_utc`. Each child's `status` is re-probed
+on disk when you run the command, so it reflects the workspace now rather
+than what the last `wd discover` recorded; a top-level `drift` array names
+every child the two disagree about, and is empty when they agree.
 
 ## Step 6: Verify the cross-repo edge
 

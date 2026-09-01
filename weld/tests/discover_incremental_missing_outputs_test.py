@@ -17,8 +17,9 @@ The fix audits the existing graph: for each source entry whose
 ``source_file_map`` is non-empty, if no node in the loaded graph has a
 ``props.file`` falling inside that source's file set, every file in that set
 is treated as dirty so the strategy re-runs and the missing nodes land. This
-test pins that invariant and adds an inverse test that proves the audit does
-not cause a perf regression when state and graph are mutually consistent.
+test pins that invariant on ``weld/discover.py``'s ``_discover_single_repo``
+and adds an inverse test that proves the audit does not cause a perf
+regression when state and graph are mutually consistent.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ def _build_fixture(root: Path, *, with_sibling: bool = False) -> None:
     "src/mod.py"`` so the audit has something concrete to look for.
     When *with_sibling* is True, an additional ``src/sibling.py`` is
     written so the source's file set has two non-empty members. The
-    sibling pins the per-file audit invariant: the source-level "any
+    sibling exercises the per-file audit boundary: the source-level "any
     file has nodes" check is satisfied by ``mod.py`` even when
     ``sibling.py`` is missing from graph, which is the
     "stale graph + current state" regression scenario.

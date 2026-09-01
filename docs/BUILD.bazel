@@ -5,4 +5,10 @@ package(default_visibility = ["//visibility:public"])
 # documentation as a data input.
 exports_files([
     "mcp.md",
+    # Read by //tools:public_test_parity_test: the release procedure and the
+    # ADR 0015 check table must name the runner this module implements, or a
+    # rename leaves the operator with a command that no longer exists
+    # (ADR 0140).
+    "release.md",
+    "adrs/0015-release-manager-agent.md",
 ])

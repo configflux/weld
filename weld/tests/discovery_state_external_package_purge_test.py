@@ -121,6 +121,45 @@ class EmptiedExternalPackageNodeIdsTest(unittest.TestCase):
         nodes = {"package:weld": {"type": "package", "label": "weld", "props": {}}}
         self.assertEqual(emptied_external_package_node_ids(nodes, []), set())
 
+    def test_a_prop_value_of_any_type_answers_rather_than_raising(self) -> None:
+        """The VALUE half of the posture
+        :func:`weld._discover_external_package_purge._is_edge_anchored_external_package`'s
+        own docstring already claims (bd 5038-53jjg).
+
+        The tests above cover a missing or non-dict ``props``; this covers a
+        well-formed ``props`` whose VALUE is not a string. These props are read
+        back off ``.weld/graph.json``, which ADR 0115 treats as unvetted repo
+        text, so ``"source_strategy": []`` was reaching a frozenset membership
+        test that raised ``TypeError("unhashable type: 'list'")`` rather than
+        answering -- aborting this purge and the whole incremental discover
+        around it. Non-string reads as "not an edge-anchored external
+        placeholder", which lands on the safe side of the rule (retain a node
+        rather than purge one).
+
+        Both prop keys the predicate reads are exercised, not just the reported
+        one: ``authority`` is compared with ``==`` and was already total over
+        any value, and pinning it here says that stays true if it is ever
+        rewritten as a membership test the way ``source_strategy`` was. Same
+        guard and same reasoning as
+        :func:`weld._discover_placeholder_anchor._is_derived_edge` (bd
+        5038-rwi34), whose ``source_strategy`` subTests in
+        ``discovery_state_closure_anchor_test`` this mirrors.
+        """
+        unhashable_and_non_string = (
+            [], ["graph_closure"], {"graph_closure": 1}, {"graph_closure"}, 7, None,
+        )
+        for key in ("source_strategy", "authority"):
+            for value in unhashable_and_non_string:
+                with self.subTest(key=key, value=value):
+                    node = _closure_external_package()
+                    node["props"][key] = value
+                    self.assertEqual(
+                        emptied_external_package_node_ids(
+                            {"package:go:strings": node}, [],
+                        ),
+                        set(),
+                    )
+
     def test_non_package_type_is_never_emptied(self) -> None:
         nodes = {
             "symbol:go:x": {
@@ -157,6 +196,26 @@ class EmptiedPlaceholderNodeIdsTest(unittest.TestCase):
             emptied_placeholder_node_ids(nodes, []),
             {"package:python:pkg", "package:go:strings"},
         )
+
+    def test_a_malformed_prop_value_is_total_across_the_whole_union(self) -> None:
+        """Answering per-rule is not enough: this is the entry point
+        ``purge_stale_nodes`` calls, and it runs EVERY rule over EVERY node
+        (bd 5038-53jjg).
+
+        A node this rule declines on is still offered to the other four, so a
+        malformed value that this predicate now reads safely could still raise
+        -- or be scooped up and purged -- inside a sibling. Asserting the union
+        answers ``set()`` says both: nothing raised anywhere in it, and no
+        other rule claimed a node whose own rule just declined to.
+        """
+        for value in ([], {"graph_closure"}, 7, None):
+            with self.subTest(source_strategy=value):
+                node = _closure_external_package()
+                node["props"]["source_strategy"] = value
+                self.assertEqual(
+                    emptied_placeholder_node_ids({"package:go:strings": node}, []),
+                    set(),
+                )
 
 
 class PurgeStaleNodesExternalPackageTest(unittest.TestCase):

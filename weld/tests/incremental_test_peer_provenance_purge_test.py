@@ -191,9 +191,10 @@ class DirtyTestFileMatchesFullTest(unittest.TestCase):
 
     Green before the fix (the dirty test file is inside ``test_peer``'s
     glob, so the strategy re-runs and re-mints the edge the endpoint
-    purge dropped) and pinned so the provenance stamp cannot regress it
-    -- under the fix the prior edge is purged *by* provenance instead,
-    and the re-run must still put exactly one back.
+    purge dropped) and pinned against ADR 0074's ``weld._incremental_purge``
+    so the provenance stamp cannot regress it -- under the fix the prior edge
+    is purged *by* provenance instead, and the re-run must still put exactly
+    one back.
     """
 
     def test_graph_matches_full(self) -> None:

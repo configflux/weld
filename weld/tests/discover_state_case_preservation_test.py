@@ -57,7 +57,7 @@ def _build_guava_shaped_fixture(root: Path) -> None:
     a Python module via ``python_module`` (no tree-sitter dependency)
     so at least one strategy always emits ``file:*`` nodes regardless
     of the optional grammar installation.
-    """
+    """  # test-hygiene: allow uncited-pin -- "pinned corpora" is an adjective
     # Java tree (production path for tier-1 java corpora; degrades to
     # empty if tree-sitter-java is not installed).
     java_src = root / "guava" / "src" / "com" / "google" / "common" / "collect"

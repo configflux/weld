@@ -356,6 +356,7 @@ def impact(
     # the reason before any BFS fabricates a LOW/0 verdict.
     from weld._impact_cannot_answer import (
         cannot_answer_marker,
+        cross_repo_measured_by,
         uncomputable_repo_reason,
     )
 
@@ -364,6 +365,13 @@ def impact(
         result["risk_level"] = "UNKNOWN"
         result["cannot_answer"] = cannot_answer_marker(unknown_reason)
         return result
+
+    # ADR 0137 ss5: past that gate a repo result is a measurement, so it names
+    # what measured it -- which is why a zero here reads as a finding and not a
+    # shrug. Absent unless discovery recorded a pass (see the helper).
+    measured_by = cross_repo_measured_by(graph, seed_ids)
+    if measured_by is not None:
+        result["measured_by"] = measured_by
 
     dependents, edges = _reverse_bfs(graph, seed_ids, depth)
     nodes = [

@@ -34,6 +34,16 @@ def markdown_fallback_doc_source(
     there is no markdown to wire). ``root`` is accepted for signature symmetry
     with the other detectors; the decision needs only the extensions of
     ``files``.
+
+    The entry sets ``include_readme``, which the conventional ``docs/`` entry
+    deliberately does not. The markdown strategy skips ``README.md`` by default
+    because next to ``docs/architecture.md`` a README is a project's front
+    door, not one of its documents. This entry is emitted under the opposite
+    condition: it fires precisely *because* the repository has no docs
+    directory, which is the shape where markdown is the content and the README
+    is its index -- the file that names and links everything else. Skipping it
+    there dropped the highest-value node in the repository, and on a docs repo
+    the omitted files were its index pages (field eval v0.24.0 N8).
     """
     if doc_dirs:
         return None
@@ -42,7 +52,7 @@ def markdown_fallback_doc_source(
     return _source_entry(
         "**/*.md", "doc", "markdown",
         comment="Documentation (markdown, no conventional docs/ dir found)",
-        extra={"id_prefix": "doc:md"},
+        extra={"id_prefix": "doc:md", "include_readme": "true"},
     )
 
 

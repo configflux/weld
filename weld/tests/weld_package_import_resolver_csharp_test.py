@@ -118,7 +118,12 @@ class CSharpPolyrepoTests(unittest.TestCase):
         self.assertEqual(len(edges), 1)
         edge = edges[0]
         self.assertIsInstance(edge, CrossRepoEdge)
-        self.assertEqual(edge.type, "depends_on")
+        # bd ``5038-4v6fm``: the namespaced form is the wire contract for
+        # every cross-repo edge. Pinned as a literal on purpose -- this is
+        # the fixture the registry-wide oracle in
+        # weld_cross_repo_edge_type_parity_test.py is checked against, and
+        # reading the producer's own constant here would pass on any value.
+        self.assertEqual(edge.type, "cross_repo:depends_on")
         self.assertEqual(edge.from_id, f"caller{SEP}file:Caller")
         self.assertEqual(edge.to_id, f"lib{SEP}package:csharp:Foo.Bar")
         self.assertEqual(edge.props["import_name"], "Foo.Bar")

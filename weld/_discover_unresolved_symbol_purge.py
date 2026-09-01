@@ -1,5 +1,6 @@
 """Purge a call/inherits/implements unresolved-symbol sentinel once every
-inbound edge that referenced it is gone (bd oao53).
+edge that referenced it is gone (bd oao53; bd 5038-q4t3d corrected "inbound
+edge" to "edge in either direction" -- see below).
 
 ``python_callgraph``, ``_go_inherits``, ``_rust_inherits``,
 ``_typescript_inherits``, ``_java_inherits``, ``_cpp_inherits``,
@@ -33,12 +34,23 @@ identical id ``symbol:unresolved:Base`` if a repo happens to use that name
 in more than one language or edge kind. So the "is this node still
 referenced" signal here cannot be scoped to one edge type or one producing
 strategy the way pkz2s's ``depends_on``-only check is: it must count EVERY
-inbound edge, of any type, from any strategy, that still targets the id. A
-node with at least one surviving inbound edge -- regardless of which
-language or edge kind produced it -- is exactly what a fresh full discover
-over the same tree would still mint (the surviving referencer re-mints the
-identical id via the same ``nodes.setdefault`` gate), so zero inbound edges
-of ANY kind is the correct -- and only correct -- purge signal here.
+edge, of any type, from any strategy, that still names the id. A node with
+at least one surviving edge -- regardless of which language or edge kind
+produced it -- is exactly what a fresh full discover over the same tree
+would still mint (the surviving referencer re-mints the identical id via the
+same ``nodes.setdefault`` gate), so "no surviving edge of ANY kind" is the
+correct -- and only correct -- purge signal here.
+
+bd 5038-q4t3d had to correct that signal on a second axis. It was written
+as "zero INBOUND edges of any kind", on the reading that the referencing
+file is always the edge's ``from`` endpoint. ADR 0122's ``decorates`` runs
+decorator -> decorated, so for a sentinel referenced only as a decorator it
+is the ``from`` endpoint instead, and the rule read a fully-anchored node as
+dead. The membership test now goes through
+:func:`weld._discover_placeholder_anchor.edge_anchored_node_ids`, shared
+with bd n4nvt's rule below, which had the identical hole -- see that module
+for why the fix is a direction-agnostic anchor derived from the
+no-``props.file`` shape rather than an allowlist of reversed edge types.
 
 Safe by construction for the same reason pkz2s's rule is: ``graph_closure``
 does not re-mint this node (only the strategy that walks the referencing
@@ -70,7 +82,15 @@ cpp_resolver's call is the only cleanup a same-pass fully-resolved
 sentinel ever gets there; removing it would leave stray sentinel nodes
 in full-discover output. Both callers share this module's predicate
 precisely so a future change to what counts as "still referenced"
-(e.g. widening the inbound-edge check) is made once, not twice.
+(e.g. widening the edge check) is made once, not twice -- which is exactly
+what bd 5038-q4t3d then did, in one place, for both.
+
+That sharing also raises this rule's stakes above its sibling's. The
+incremental caller is backstopped: a node it purges too early is re-minted by
+the dirty-source loop, and an edge it strands is repaired by ADR 0074's
+fourth amendment. ``resolve_includes_pass`` runs on the FULL discover path,
+where neither exists -- so a wrong verdict here is a node that simply does
+not come back.
 
 Deliberately NOT extended to :func:`weld.strategies._python_origin.make_resolved_target_node`'s
 output (a resolved cross-glob call target, e.g. ``symbol:py:some.mod:func``,
@@ -82,6 +102,8 @@ tracked non-goal.
 """
 
 from __future__ import annotations
+
+from weld._discover_placeholder_anchor import edge_anchored_node_ids
 
 _UNRESOLVED_SYMBOL_TYPE = "symbol"
 _UNRESOLVED_SYMBOL_PREFIX = "symbol:unresolved:"
@@ -108,36 +130,40 @@ def _is_unresolved_symbol_sentinel(nid: str, node: dict) -> bool:
 def emptied_unresolved_symbol_node_ids(
     nodes: dict[str, dict], edges: list[dict],
 ) -> set[str]:
-    """Return ids of unresolved-symbol sentinels with zero inbound edges.
+    """Return ids of unresolved-symbol sentinels no surviving edge names.
 
     Call after the ordinary ``props.file`` purge and its edge purge, over
-    their *result*: a node found here already lost every inbound edge that
-    referenced it (each dropped by the endpoint-membership floor when the
-    referencing file's own symbol node was purged -- the referencing file is
-    always the edge's ``from`` endpoint here, so this holds regardless of
-    whether that edge carried usable provenance), so nothing here re-derives
-    *why*, it only names the node whose sole reason to exist just went with
-    it. A full discover never mints such a node unless something currently
-    references it, so purging it here keeps incremental discovery's output
-    equal to a fresh full run's.
+    their *result*: a node found here already lost every edge that referenced
+    it (each dropped by the endpoint-membership floor when the referencing
+    file's own symbol node was purged, or by the provenance rule when the
+    edge carried one), so nothing here re-derives *why*, it only names the
+    node whose sole reason to exist just went with it. A full discover never
+    mints such a node unless something currently references it, so purging it
+    here keeps incremental discovery's output equal to a fresh full run's.
 
-    Counts inbound edges of EVERY type (not just ``calls``/``inherits``/
+    Counts edges of EVERY type (not just ``calls``/``inherits``/
     ``implements``): the sentinel id is shared across every strategy that
-    fails to resolve the same bare name, so a node with a surviving inbound
-    edge of any kind, from any language or strategy, is never returned --
-    matching what a full run over the same partially-emptied tree would
-    still emit.
+    fails to resolve the same bare name, so a node with a surviving edge of
+    any kind, from any language or strategy, is never returned -- matching
+    what a full run over the same partially-emptied tree would still emit.
+
+    Counts them in EITHER direction, via
+    :func:`weld._discover_placeholder_anchor.edge_anchored_node_ids` (bd
+    5038-q4t3d). This rule read ``edge["to"]`` alone until ADR 0122's
+    ``decorates`` -- emitted decorator -> decorated -- put a sentinel
+    referenced only as a decorator on the ``from`` side, where the inbound
+    accumulator never saw it: ``symbol:unresolved:{classmethod, property,
+    staticmethod}`` on this repo's own graph, 81 live edges between them,
+    every one of them read as dead. See that module for why the direction
+    correction is derived from the placeholder's no-``props.file`` shape
+    rather than from a list of edge types.
     """
-    have_inbound: set[str] = set()
-    for edge in edges:
-        to_id = edge.get("to")
-        if isinstance(to_id, str):
-            have_inbound.add(to_id)
+    anchored = edge_anchored_node_ids(edges)
 
     return {
         nid
         for nid, node in nodes.items()
-        if _is_unresolved_symbol_sentinel(nid, node) and nid not in have_inbound
+        if _is_unresolved_symbol_sentinel(nid, node) and nid not in anchored
     }
 
 

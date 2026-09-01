@@ -48,7 +48,12 @@ def run_single_repo(cmd: str, args) -> None:  # noqa: C901 -- CLI dispatch chain
     if cmd == "find":
         from weld._cli_render import render_find
         from weld._file_index_coverage import ensure_index_covers_surface
+        from weld._find_precondition import ensure_file_index_exists
         from weld.file_index import find_files, load_file_index
+        # ADR 0134: the precondition belongs to the artifact this command
+        # reads. `find` needs no graph -- but an index that was never built
+        # makes "no matches" a report on weld's own state, not on the term.
+        ensure_file_index_exists(args.root, args.term)
         # bd yw4b: the graph's freshness signals cannot speak for this index
         # (its surface is the broader set), so ask the index itself whether it
         # still accounts for the tree before answering "no matches" from it.
@@ -167,9 +172,18 @@ def run_single_repo(cmd: str, args) -> None:  # noqa: C901 -- CLI dispatch chain
         _out(result)
         mutates = True
     elif cmd == "validate":
+        from weld._federation_ids import federation_id_index_for_root
         from weld._validate_diagnostics import format_validation_report
         from weld.contract import validate_graph
-        errs = validate_graph(g.dump())
+        # ADR 0137 ss3: at a workspace root, an endpoint pointing into a child
+        # is checked against that child's ids rather than waved through on the
+        # shape of the id. ``validate`` deliberately stays out of
+        # FEDERATED_CLI_COMMANDS: that route serves federated *reads* and has
+        # no validate branch, and the document under test is the root
+        # meta-graph exactly as written -- which is what ``g`` already holds.
+        errs = validate_graph(
+            g.dump(), id_index=federation_id_index_for_root(args.root),
+        )
         _out({"valid": not errs, "errors": [str(e) for e in errs]})
         if errs:
             graph_path = Path(args.root) / ".weld" / "graph.json"

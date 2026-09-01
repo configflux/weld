@@ -59,7 +59,7 @@ _CLAIMING_RULES = ("py_library", "py_binary", "py_test")
 
 
 class PackageSpec(NamedTuple):
-    """One subpackage's BUILD file plus the invariants pinned for it."""
+    """One subpackage's BUILD file plus the bd tnz3 invariants pinned for it."""
 
     #: Repo-relative package directory, e.g. ``"weld/strategies"``.
     pkg_dir: str
@@ -161,8 +161,9 @@ class SubpackageSrcsClaimTest(unittest.TestCase):
     def test_the_manifest_actually_resolved(self) -> None:
         """Guard the guard: an unresolved srcs list would pass vacuously.
 
-        If ``load()`` resolution (or the AST evaluator itself) regressed for
-        one of these packages, its targets would look empty or their ``srcs``
+        If ``weld/strategies/_bazel_loads.py``'s ``load()`` resolution (or the
+        AST evaluator itself) regressed for one of these packages, its targets
+        would look empty or their ``srcs``
         would resolve to nothing, every module in that package would look
         unclaimed, and the real assertion below would fail loudly -- but a
         *future* refactor that also relaxed that assertion could turn this

@@ -46,6 +46,16 @@ def cross_repo_tests():
         deps = ["//weld/cross_repo", "//weld:runtime", "//weld:workspace"],
     ) for _name in _FEDERATE]
 
+    # ADR 0137 ss4: merge_cross_repo_edges drops resolver edges whose
+    # endpoints resolve to nothing, and stamps meta.cross_repo whenever a
+    # resolver pass ran -- including the zero-edge run. Shares the federated
+    # workspace fixture with the validation half.
+    py_test(
+        name = "discover_federate_contract_test",
+        srcs = ["_federation_id_fixtures.py", "discover_federate_contract_test.py"],
+        deps = ["//weld/cross_repo", "//weld:runtime", "//weld:workspace"],
+    )
+
     py_test(
         name = "weld_cross_repo_grpc_test",
         srcs = ["cross_repo_grpc_fixtures.py", "weld_cross_repo_grpc_test.py"],
@@ -94,4 +104,26 @@ def cross_repo_tests():
         name = "weld_cross_repo_package_graph_test",
         srcs = ["weld_cross_repo_package_graph_test.py"],
         deps = ["//weld/cross_repo", "//weld:workspace"],
+    )
+
+    # bd 5038-4v6fm / ADR 0139 mechanism 3: the three producers of the
+    # cross-repo depends_on fact, fed ONE real workspace and compared against
+    # each other, plus the registry-driven convention oracle that covers a
+    # sixth resolver. Reads real Graph objects off disk, so it needs the
+    # runtime; the oracle's arbiter lives in //weld:contract.
+    py_test(
+        name = "weld_cross_repo_edge_type_parity_test",
+        srcs = ["weld_cross_repo_edge_type_parity_test.py"],
+        deps = ["//weld/cross_repo", "//weld:runtime", "//weld:contract", "//weld:workspace"],
+    )
+
+    # Finding N2 (field-eval v0.24.0) / ADR 0137 s6: which files that scan is
+    # allowed to read. The manifests come off the repo boundary -- git-visible
+    # files, excluded-dir names as the non-git fallback -- so a vendored .venv
+    # can no longer make a service the producer of everything it installed.
+    # Shells real git, like the other repo-boundary tests; sandbox-hermetic.
+    py_test(
+        name = "weld_cross_repo_manifest_scan_boundary_test",
+        srcs = ["weld_cross_repo_manifest_scan_boundary_test.py"],
+        deps = ["//weld/cross_repo", "//weld:repo_boundary"],
     )

@@ -163,9 +163,10 @@ class MultiTokenCoverageRegressionTest(unittest.TestCase):
 
         Before 8rm0.3 this pinned the defect (the strategy/test code nodes were
         filtered out before ranking; only the 4/4-coverage doc survived
-        strict-AND). 8rm0.3's ``max(2, N-1)`` admission (N=4 -> threshold 3)
-        now admits both 3/4 code nodes; the doc remains present (re-ranked, not
-        excluded). The distractor (0/4) must still never appear.
+        strict-AND). ADR 0075's ``max(2, N-1)`` admission bar, landed at
+        8rm0.3 and owned by :mod:`weld._coverage_admission` (N=4 -> threshold
+        3), now admits both 3/4 code nodes; the doc remains present (re-ranked,
+        not excluded). The distractor (0/4) must still never appear.
         """
         graph = _boundary_entrypoint_graph()
         ids = _ranked_ids(graph, _QUERY, limit=5)

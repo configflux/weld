@@ -13,13 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from weld._node_ids import file_id
-from weld.strategies._python_origin import (
-    make_resolved_target_node,
-    make_sentinel_node,
-    module_from_symbol_id,
-    origin_for_resolved,
-    origin_for_sentinel,
-)
+from weld.strategies._python_calls import call_edge, ensure_call_target_node
 
 if TYPE_CHECKING:
     from weld.strategies.python_callgraph import _CallGraphVisitor
@@ -60,53 +54,36 @@ def emit_module_scope_call_edges(
 ) -> None:
     """Emit one ``calls`` edge per module-level call site.
 
-    Mirrors the symbol-sourced ``calls`` loop in ``python_callgraph.extract``
-    exactly -- same node-minting rule for the target, same edge props shape
-    -- except the ``from`` endpoint is the module's file anchor instead of a
+    Shares the symbol-sourced loop's own minting rule and edge builder
+    (``weld.strategies._python_calls``) rather than mirroring them -- same
+    node-minting rule for the target, same props shape, by construction --
+    except the ``from`` endpoint is the module's file anchor instead of a
     symbol id. Deduplicated per target, matching the per-caller dedup the
     symbol-sourced loop already applies.
     """
     if not visitor.module_level_calls:
         return
-    from weld.strategies.python_callgraph import UNRESOLVED_PREFIX
-
     from_id = file_id(rel_path)
     nodes.setdefault(from_id, _file_anchor_stub(rel_path))
     seen: set[tuple[str, bool]] = set()
-    for target_id, resolved, raw, line, resolution in visitor.module_level_calls:
+    for entry in visitor.module_level_calls:
+        target_id, resolved, raw, line, resolution, hint = entry
         key = (target_id, resolved)
         if key in seen:
             continue
         seen.add(key)
-        if target_id.startswith(UNRESOLVED_PREFIX):
-            nodes.setdefault(
-                target_id,
-                make_sentinel_node(
-                    target_id, resolution, origin_for_sentinel(resolution)
-                ),
-            )
-        else:
-            target_module = module_from_symbol_id(target_id)
-            nodes.setdefault(
-                target_id,
-                make_resolved_target_node(
-                    target_id, origin_for_resolved(target_module, project_modules)
-                ),
-            )
+        ensure_call_target_node(nodes, target_id, resolution, project_modules)
         edges.append(
-            {
-                "from": from_id,
-                "to": target_id,
-                "type": "calls",
-                "props": {
-                    "source_strategy": "python_callgraph",
-                    "confidence": "definite" if resolved else "speculative",
-                    "resolved": resolved,
-                    "raw": raw,
-                    "resolution": resolution,
-                    "provenance": {"file": rel_path, "line": line},
-                },
-            }
+            call_edge(
+                from_id=from_id,
+                target_id=target_id,
+                resolved=resolved,
+                raw=raw,
+                line=line,
+                resolution=resolution,
+                rel_path=rel_path,
+                hint=hint,
+            )
         )
 
 

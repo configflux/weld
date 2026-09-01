@@ -118,7 +118,8 @@ class FindFilesMultiWordTest(unittest.TestCase):
     def test_distinct_word_hits_dominate_token_count(self) -> None:
         """Ranking must put a file hitting MORE distinct query words above a
         file hitting fewer words, even if the loser carries far more
-        matching tokens. This pins the tuple-sort contract so the ranking
+        matching tokens. This pins the tuple-sort contract documented on
+        :func:`weld.file_index_search._find_multi_word`, so the ranking
         cannot silently regress to a magnitude-fragile weighted integer (a
         real file in this repo has 513 tokens, which would defeat a naive
         512-based weight).

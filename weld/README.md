@@ -276,6 +276,10 @@ compatibility. To opt into Git ignore rules for scan-only children, set
 `scan.respect_gitignore: true` in `.weld/workspaces.yaml` or run
 `wd workspace bootstrap --respect-gitignore`. `scan.exclude_paths` also
 accepts bare directory names, relative paths, and `*` / `**` glob patterns.
+That setting governs which children are *registered*; cross-repo resolvers
+that read manifests out of a child working tree always honour Git visibility,
+so a file the child ignores never contributes a package name whatever
+`respect_gitignore` is set to.
 
 Example:
 

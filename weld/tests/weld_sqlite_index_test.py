@@ -178,9 +178,10 @@ class ReadTokenRowsTest(unittest.TestCase):
         """A query containing ``%`` must not widen to match all rows.
 
         The reader percent-encodes the term, but the inverted-index
-        path does its own substring search via LIKE. This test pins
-        the escape so a user-supplied term like ``%`` does not
-        accidentally pull every row.
+        path does its own substring search via LIKE. This test pins the
+        ``ESCAPE '\\'`` contract of
+        :func:`weld._sqlite_index.read_token_rows_for_token` so a
+        user-supplied term like ``%`` does not accidentally pull every row.
         """
         nodes = _sample_nodes()
         db_path, tmp = _build_db(nodes)

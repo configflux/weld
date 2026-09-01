@@ -18,6 +18,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from weld._errors import ERROR_HINTS, GRAPH_MISSING, default_summary
 from weld._graph_cli_emit import _emit, _emit_node_lookup, _out
 from weld._graph_cli_parser import build_parser
 from weld._graph_cli_single import run_single_repo
@@ -30,7 +31,9 @@ from weld._safe_text import sanitize_terminal_text
 # commands (add-*/rm-*/import/touch) and diagnostic commands
 # (stale/stats/dump/list/validate*) are intentionally excluded. ``find`` is
 # also excluded because it reads the file-index, not the graph -- users can
-# run ``wd build-index`` + ``wd find`` without ever producing a graph.
+# run ``wd build-index`` + ``wd find`` without ever producing a graph. That
+# exempts it from *this* precondition only: it carries its own, over the
+# artifact it does read (:mod:`weld._find_precondition`, ADR 0134).
 _READ_COMMANDS = frozenset(
     {"query", "context", "path", "callers", "references", "communities"}
 )
@@ -56,6 +59,12 @@ _READ_COMMANDS = frozenset(
 # the file-index, which a user may legitimately build without any graph.
 # Mutating commands stay out on ADR 0096's own rule -- commands that create
 # state stay deliberate.
+#
+# Seed-only is not precondition-free, and reading it that way was the N9
+# defect: ``find`` took the seed and then answered "no matches" from an index
+# the seed had not produced either. Its precondition lives with the artifact
+# it reads (:mod:`weld._find_precondition`), applied by both dispatchers
+# after this seeding step.
 _SEED_ONLY_COMMANDS = frozenset({"stale", "find", "stats", "list", "dump"})
 
 # Commands that rewrite .weld/graph.json. Each runs load -> mutate -> save,
@@ -111,8 +120,20 @@ def missing_graph_message(retry_cmd: str, cause: str | None = None) -> str:
     ``context`` / ``path`` / ``callers`` / ``references`` / ``trace`` /
     ``impact`` / ``diff`` / ``enrich``) when ``.weld/graph.json`` has not
     yet been produced. ``wd find`` is intentionally exempt -- it reads the
-    file-index, not the graph. Keep the wording stable -- onboarding docs
-    and tests match against its substrings.
+    file-index, not the graph, and refuses on *that* artifact instead
+    (:mod:`weld._find_precondition`).
+
+    The headline and the remediation are **read** from ``weld/_errors.py``
+    (:func:`~weld._errors.default_summary` and
+    :data:`~weld._errors.ERROR_HINTS` under ``graph_missing``), not spelled
+    here. Both were literals until bd ``5038-koqmb``, which made this block a
+    second source for a vocabulary those tables own: the same two strings also
+    reach an agent through :func:`weld._mcp_guard.missing_graph_payload`, which
+    has always derived them, so a reworded table used to move one surface and
+    leave this one saying what nothing else said any more. Keep the wording
+    stable -- onboarding docs and tests match against its substrings -- but
+    change it in ``weld/_errors.py``, which is now the only place it can be
+    changed.
 
     *cause* is an optional explanation of why this particular checkout has
     no graph, from :func:`weld._worktree_seed.seed_blocked_reason`. It sits
@@ -123,10 +144,10 @@ def missing_graph_message(retry_cmd: str, cause: str | None = None) -> str:
     construction -- every substring the block already had survives.
     """
     return (
-        "No Weld graph found.\n"
+        f"{default_summary(GRAPH_MISSING)}\n"
         + (f"{cause}\n" if cause else "")
-        + "Run: wd init (if no config), then wd discover.\n"
-        + f'Then retry: {retry_cmd}.'
+        + f"{ERROR_HINTS[GRAPH_MISSING]}\n"
+        + f"Then retry: {retry_cmd}."
     )
 
 
@@ -224,11 +245,13 @@ def main(argv: list[str] | None = None, *, prog: str = "wd") -> None:  # noqa: C
             # consumer. This is a routing fix, not new vocabulary: it reaches
             # the *same* precondition ``_READ_COMMANDS`` already hit below, at
             # or before ADR 0089's read-time flatten (``FederatedGraph`` loads
-            # the root graph in its constructor). ``find`` stays exempt on the
-            # same rule the single-repo route uses -- it answers off the
-            # file-index, so a graph-less root is not a cannot-answer state for
-            # it. Runs after the auto-refresh above so a refresh that
-            # legitimately builds the root graph is honoured first.
+            # the root graph in its constructor). ``find`` stays exempt from
+            # *this* check on the same rule the single-repo route uses -- it
+            # answers off the file-index, so a graph-less root is not a
+            # cannot-answer state for it -- and applies the equivalent check
+            # over the file-index inside ``run_federated_cli``. Runs after the
+            # auto-refresh above so a refresh that legitimately builds the root
+            # graph is honoured first.
             if cmd != "find":
                 ensure_graph_exists(
                     args.root, _retry_hint(cmd, args),

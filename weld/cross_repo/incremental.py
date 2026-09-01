@@ -33,7 +33,7 @@ from weld.cross_repo.base import (
     ResolverContext,
     run_resolvers,
 )
-from weld.workspace import UNIT_SEPARATOR
+from weld._federation_endpoints import edge_child_names
 from weld._notice import emit
 
 
@@ -137,13 +137,14 @@ def detect_drift(
 
 
 def _edge_children(edge: CrossRepoEdge) -> set[str]:
-    """Return the set of child names referenced by an edge's endpoints."""
-    children: set[str] = set()
-    if UNIT_SEPARATOR in edge.from_id:
-        children.add(edge.from_id.split(UNIT_SEPARATOR, 1)[0])
-    if UNIT_SEPARATOR in edge.to_id:
-        children.add(edge.to_id.split(UNIT_SEPARATOR, 1)[0])
-    return children
+    """Return the set of child names referenced by an edge's endpoints.
+
+    Both endpoint spellings count (ADR 0137 ss2). The separator split this
+    replaced saw only namespaced ids, so a repo-level edge looked like an edge
+    belonging to no child -- and this set decides which prior edges a drifted
+    child invalidates.
+    """
+    return edge_child_names(edge.from_id, edge.to_id)
 
 
 def run_resolvers_incremental(

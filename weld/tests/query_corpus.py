@@ -41,6 +41,9 @@ from weld.tests._query_corpus_nodes import (
     SUBJECT_NODES,
     fixture_nodes,
 )
+from weld.tests._query_corpus_traversal import (  # noqa: F401 -- re-export
+    TRAVERSAL_CORPUS,
+)
 
 #: One entry per reported query.
 #:
@@ -314,5 +317,6 @@ __all__ = [
     "CORPUS",
     "NOISE_NODES",
     "SUBJECT_NODES",
+    "TRAVERSAL_CORPUS",
     "fixture_nodes",
 ]

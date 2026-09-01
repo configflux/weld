@@ -14,7 +14,6 @@ import unittest
 from weld.cross_repo.base import CrossRepoEdge, ResolverContext, resolver_names
 from weld.cross_repo import compose_topology as _mod  # noqa: F401
 from weld.cross_repo.compose_topology import ComposeTopologyResolver
-from weld.workspace import UNIT_SEPARATOR
 
 # Shared minimal compose content used across many tests.
 _BASIC_COMPOSE = """\
@@ -79,9 +78,14 @@ class BasicEdgesTest(unittest.TestCase):
             _write(root, _BASIC_COMPOSE)
             edges = _resolve(root)
             self.assertEqual(len(edges), 1)
-            self.assertEqual(edges[0].type, "depends_on")
-            self.assertTrue(edges[0].from_id.startswith(f"repo-a{UNIT_SEPARATOR}"))
-            self.assertTrue(edges[0].to_id.startswith(f"repo-b{UNIT_SEPARATOR}"))
+            # bd ``5038-4v6fm``: the namespaced form is the wire contract for
+            # every cross-repo edge. Pinned as a literal on purpose -- this is
+            # the fixture the registry-wide oracle in
+            # weld_cross_repo_edge_type_parity_test.py is checked against, and
+            # reading the producer's own constant here would pass on any value.
+            self.assertEqual(edges[0].type, "cross_repo:depends_on")
+            self.assertEqual(edges[0].from_id, "repo:repo-a")
+            self.assertEqual(edges[0].to_id, "repo:repo-b")
 
     def test_multiple_depends_on(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -100,7 +104,7 @@ services:
             ctx = _ctx(root, _children("repo-a", "repo-b", "repo-c"))
             edges = ComposeTopologyResolver().resolve(ctx)
             self.assertEqual(len(edges), 2)
-            to_repos = sorted(e.to_id.split(UNIT_SEPARATOR)[0] for e in edges)
+            to_repos = sorted(e.to_id.removeprefix("repo:") for e in edges)
             self.assertEqual(to_repos, ["repo-b", "repo-c"])
 
 
@@ -145,7 +149,7 @@ services:
 """)
             edges = _resolve(root)
             self.assertEqual(len(edges), 1)
-            self.assertTrue(edges[0].to_id.startswith(f"repo-b{UNIT_SEPARATOR}"))
+            self.assertEqual(edges[0].to_id, "repo:repo-b")
 
 
 class MissingChildTest(unittest.TestCase):
@@ -211,8 +215,8 @@ services:
 """)
             edges = _resolve(root)
             self.assertEqual(len(edges), 1)
-            self.assertTrue(edges[0].from_id.startswith(f"repo-a{UNIT_SEPARATOR}"))
-            self.assertTrue(edges[0].to_id.startswith(f"repo-b{UNIT_SEPARATOR}"))
+            self.assertEqual(edges[0].from_id, "repo:repo-a")
+            self.assertEqual(edges[0].to_id, "repo:repo-b")
 
     def test_image_tag_stripped(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -267,8 +271,8 @@ services:
 """)
             edges = _resolve(root)
             self.assertEqual(len(edges), 1)
-            self.assertTrue(edges[0].from_id.startswith(f"repo-a{UNIT_SEPARATOR}"))
-            self.assertTrue(edges[0].to_id.startswith(f"repo-b{UNIT_SEPARATOR}"))
+            self.assertEqual(edges[0].from_id, "repo:repo-a")
+            self.assertEqual(edges[0].to_id, "repo:repo-b")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,18 @@ from typing import Any, Callable
 
 from weld._rel_path import rel_to_root
 
+#: Sentinel ID prefix for a call site whose target name could not be
+#: resolved against the module's imports or local definitions. Kept stable
+#: so consumers can filter / rank these distinctly from resolved targets.
+#:
+#: Lives here with the id READERS below (``module_from_symbol_id``,
+#: ``qualname_from_symbol_id``) and the node minters that stamp them, rather
+#: than in ``python_callgraph``, so an emitter can mint an id without
+#: importing the strategy that dispatches into it. ``python_callgraph``
+#: re-exports both minters under their historical names, so this is one
+#: definition, not a second one.
+UNRESOLVED_PREFIX = "symbol:unresolved:"
+
 #: Names that resolve to a Python built-in via implicit lookup.
 _BUILTIN_NAMES: frozenset[str] = frozenset(dir(builtins))
 #: Top-level module names exported by the Python standard library.
@@ -64,15 +76,33 @@ def project_module_set(
     return frozenset(out)
 
 
-def module_from_symbol_id(symbol_id: str) -> str:
+def symbol_id(module_path: str, qualname: str) -> str:
+    """Return a stable id for a Python symbol.
+
+    Symbol IDs preserve their original module-path and qualname casing
+    (ADR 0041 § Migration plan does not list ``symbol:py:*`` in the rename
+    table, and lowercasing class qualnames would silently rewrite every
+    symbol edge in the existing graph). The canonical slug rule applies to
+    ID *prefixes* and human-name segments; qualnames are program
+    identifiers and stay verbatim.
+    """
+    return f"symbol:py:{module_path}:{qualname}"
+
+
+def unresolved_id(name: str) -> str:
+    """Return the shared sentinel id for an unresolvable *name*."""
+    return f"{UNRESOLVED_PREFIX}{name}"
+
+
+def module_from_symbol_id(symbol_id_value: str) -> str:
     """Extract the dotted-module portion of a ``symbol:py:<mod>:<qual>`` id."""
-    parts = symbol_id.split(":", 3)
+    parts = symbol_id_value.split(":", 3)
     if len(parts) >= 3 and parts[0] == "symbol" and parts[1] == "py":
         return parts[2]
     return ""
 
 
-def qualname_from_symbol_id(symbol_id: str) -> str:
+def qualname_from_symbol_id(symbol_id_value: str) -> str:
     """Extract the bare ``<qualname>`` portion of a ``symbol:py:<mod>:<qual>`` id.
 
     Symmetric to :func:`module_from_symbol_id`: splits with ``maxsplit=3`` so
@@ -82,10 +112,10 @@ def qualname_from_symbol_id(symbol_id: str) -> str:
     that clobbered file-bearing project nodes on a full discover. Falls back
     to the trailing segment for ids that are not a well-formed python symbol.
     """
-    parts = symbol_id.split(":", 3)
+    parts = symbol_id_value.split(":", 3)
     if len(parts) == 4 and parts[0] == "symbol" and parts[1] == "py":
         return parts[3]
-    return symbol_id.split(":", 2)[-1]
+    return symbol_id_value.split(":", 2)[-1]
 
 
 def origin_for_resolved(module: str, project_modules: frozenset[str]) -> str:
@@ -149,6 +179,43 @@ def make_resolved_target_node(target_id: str, origin: str) -> dict[str, Any]:
     }
 
 
+def is_resolved_target_stub(node_id: str, node: dict[str, Any]) -> bool:
+    """Return True iff *node_id*/*node* is a :func:`make_resolved_target_node` output.
+
+    Lives beside the minter because two readers need it and a five-condition
+    fingerprint kept in two places drifts: :mod:`weld._discover_resolved_stub_purge`
+    (which drops such a stub once its last inbound edge is gone) and
+    :mod:`weld._graph_closure_reexport` (which retargets the edges pointing at
+    one when the module it names merely re-exports the symbol).
+
+    Keyed on the node's own props, never on id shape. Unlike the
+    ``symbol:unresolved:`` sentinel, whose id is disjoint from every real id by
+    construction, this id shape (``symbol:py:<module>:<qual>``) is exactly what
+    a genuinely-walked, ``definite`` symbol uses, so a rule keyed on shape
+    alone would match real symbols. That prefix is excluded here for the same
+    reason in reverse: ``make_sentinel_node`` stamps an identical props shape
+    beneath it, and the purge rule that owns it is a different rule.
+
+    A real, definite ``python_callgraph`` symbol always sets ``props.file`` at
+    mint time, so "no ``props.file``, ``speculative`` confidence" cannot
+    describe an actually-walked symbol. *node* reaches here from strategy
+    plugins, including project-local overrides under ``.weld/strategies/``, so
+    its shape is read defensively rather than trusted.
+    """
+    if not isinstance(node_id, str) or node_id.startswith("symbol:unresolved:"):
+        return False
+    if node.get("type") != "symbol":
+        return False
+    props = node.get("props")
+    if not isinstance(props, dict) or props.get("file"):
+        return False
+    return (
+        props.get("confidence") == "speculative"
+        and props.get("authority") == "derived"
+        and props.get("source_strategy") == "python_callgraph"
+    )
+
+
 def make_sentinel_node(target_id: str, resolution: str, origin: str) -> dict[str, Any]:
     """Build the node payload for an unresolved-prefix sentinel."""
     qualname = target_id.split(":", 2)[-1]
@@ -171,7 +238,9 @@ def make_sentinel_node(target_id: str, resolution: str, origin: str) -> dict[str
 
 
 __all__ = [
+    "UNRESOLVED_PREFIX",
     "is_builtin_name",
+    "is_resolved_target_stub",
     "is_stdlib_module",
     "make_resolved_target_node",
     "make_sentinel_node",
@@ -180,4 +249,6 @@ __all__ = [
     "origin_for_sentinel",
     "project_module_set",
     "qualname_from_symbol_id",
+    "symbol_id",
+    "unresolved_id",
 ]

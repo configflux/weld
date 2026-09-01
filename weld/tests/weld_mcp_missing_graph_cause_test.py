@@ -65,6 +65,9 @@ _GUARDED_TOOLS: dict[str, dict] = {
 #: Exempt by design, and for the same reasons the CLI exempts them:
 #: ``weld_find`` reads the file index rather than the graph, and
 #: ``weld_stale`` already reports a missing graph as its own answer.
+#: Exempt from *this* guard, not from having a precondition -- ``weld_find``
+#: refuses on a missing index instead (``weld._find_precondition``, pinned by
+#: ``weld_find_missing_index_test``).
 _EXEMPT_TOOLS: frozenset[str] = frozenset({"weld_find", "weld_stale"})
 
 #: Fragments of the cause a reader has to receive: what this checkout is,

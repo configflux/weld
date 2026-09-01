@@ -367,10 +367,11 @@ def resolve_includes_pass(
     for nid, node in new_nodes.items():
         nodes.setdefault(nid, node)
 
-    # Drop unresolved sentinel nodes that no longer have any inbound
-    # edges. (Other files may still need them.) Reuses
-    # weld._discover_unresolved_symbol_purge's "zero inbound edges of
-    # ANY kind" predicate (bd oao53) rather than re-deriving it here
+    # Drop unresolved sentinel nodes that no edge names any more.
+    # (Other files may still need them.) Reuses
+    # weld._discover_unresolved_symbol_purge's "no surviving edge of
+    # ANY kind, in EITHER direction" predicate (bd oao53, widened to both
+    # directions by bd 5038-q4t3d) rather than re-deriving it here
     # (bd 5038-t6mzx): the two call sites are complementary, not
     # duplicative, because they fire at different times -- this one
     # mid-pass, right after THIS call's own rewrites, so it can drop a
@@ -384,10 +385,13 @@ def resolve_includes_pass(
     # resolved sentinel there -- it must stay. Scoping the candidate
     # set to ``rewrites_by_target`` (not every sentinel in *nodes*) is
     # safe and exact: within one pass a sentinel can only ever reach
-    # zero inbound edges by having had at least one edge rewritten
-    # away from it (nothing else drops a ``symbol:unresolved:*``-typed
-    # edge in a single pass), so every id this predicate could still
-    # flag as emptied is already a member of ``rewrites_by_target``.
+    # zero edges by having had at least one edge rewritten away from it
+    # (nothing else drops a ``symbol:unresolved:*``-typed edge in a
+    # single pass), so every id this predicate could still flag as
+    # emptied is already a member of ``rewrites_by_target``. Counting
+    # edges in either direction (bd 5038-q4t3d) leaves that intact and
+    # the scoping strictly safer -- the widened predicate returns a
+    # SUBSET of what it used to.
     if rewrites_by_target:
         emptied = emptied_unresolved_symbol_node_ids(nodes, edges)
         for target in rewrites_by_target:

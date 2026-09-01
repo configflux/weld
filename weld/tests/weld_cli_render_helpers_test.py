@@ -316,11 +316,16 @@ class RendererPurityTest(unittest.TestCase):
         self.assertNotIn("children: 4 (0 stale)", text)
 
     def test_render_stale_children_mixed_lifecycle_breakdown(self) -> None:
+        # The states here are the ones ``weld._federation_staleness`` actually
+        # emits. It has no ``present`` state -- a child that is on disk and
+        # up to date is ``fresh`` -- and this summary once counted ``present``
+        # anyway, so ``present`` silently tracked ``stale`` and every fresh
+        # child fell into no bucket at all (bd d76r1.7).
         text = render_stale({
             "stale": True, "source_stale": False, "sha_behind": False,
             "graph_sha": "abc", "current_sha": "abc", "commits_behind": 0,
             "children": [
-                {"name": "a", "state": "present", "reason": "fresh",
+                {"name": "a", "state": "fresh", "reason": "fresh",
                  "commits_behind": 0},
                 {"name": "b", "state": "stale", "reason": "source_changed",
                  "commits_behind": 3},
@@ -344,17 +349,41 @@ class RendererPurityTest(unittest.TestCase):
             "stale": False, "source_stale": False, "sha_behind": False,
             "graph_sha": "abc", "current_sha": "abc", "commits_behind": 0,
             "children": [
-                {"name": "a", "state": "present", "reason": "fresh",
+                {"name": "a", "state": "fresh", "reason": "fresh",
                  "commits_behind": 0},
-                {"name": "b", "state": "present", "reason": "fresh",
+                {"name": "b", "state": "fresh", "reason": "fresh",
                  "commits_behind": 0},
             ],
         })
         self.assertIn("2 registered", text)
+        # Every child is on disk, so every child is present; nothing has
+        # drifted, so the stale sub-count is zero. The two are independent.
         self.assertIn("2 present", text)
         self.assertIn("0 stale", text)
         # No absent-state breakdown when every child is present.
         self.assertNotIn("missing=", text)
+
+    def test_render_stale_children_unrecognized_state_is_surfaced(self) -> None:
+        # The arithmetic must conserve: registered == present + sum(absent).
+        # A state the renderer does not know is reported under its own name
+        # rather than dropped, so a future oracle state cannot repeat the
+        # bug this summary already had -- a value in no bucket, invisible.
+        text = render_stale({
+            "stale": False, "source_stale": False, "sha_behind": False,
+            "graph_sha": "abc", "current_sha": "abc", "commits_behind": 0,
+            "children": [
+                {"name": "a", "state": "fresh", "reason": "fresh",
+                 "commits_behind": 0},
+                {"name": "b", "state": "unknown", "reason": "unknown",
+                 "commits_behind": 0},
+                {"name": "c", "state": "quarantined", "reason": "?",
+                 "commits_behind": 0},
+            ],
+        })
+        self.assertIn("3 registered", text)
+        self.assertIn("1 present", text)
+        self.assertIn("unknown=1", text)
+        self.assertIn("quarantined=1", text)
 
     def test_render_stale_non_federated_has_no_children_line(self) -> None:
         text = render_stale({

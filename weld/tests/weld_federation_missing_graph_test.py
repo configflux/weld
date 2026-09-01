@@ -13,9 +13,20 @@ double-take a human might.
 
 This suite locks the ADR 0134 contract on the federated route: every
 graph-backed federated read surfaces the same cannot-answer guidance
-(reasoned message + non-zero exit) the single-repo route does, while
-``wd find`` -- file-index-backed, not graph-backed -- stays exempt (exit 0),
-and a federation root that *does* have a root graph still serves normally.
+(reasoned message + non-zero exit) the single-repo route does, and a
+federation root that *does* have a root graph still serves normally.
+
+``wd find`` is the one command here that is not graph-backed, and it was
+originally pinned as *exempt* -- exit 0, "no matches" -- on the reasoning
+that a graph-less root is no obstacle to a file-index read. True as far as
+it goes, and it left the finding-02 shape intact one command over: the root
+in this fixture has no file index either, so ``find`` was answering a clean
+negative from an artifact that did not exist (finding N9, v0.24.0). It is
+still exempt from the *graph* precondition; it now carries the same
+precondition over the artifact it does read
+(:mod:`weld._find_precondition`), which is what this file asserts below.
+Its own suites are ``weld_find_missing_index_test`` (both routes, both
+surfaces) and ``weld_find_missing_index_cause_test`` (the worktree shape).
 """
 
 from __future__ import annotations
@@ -25,6 +36,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from weld._errors import ERROR_HINTS, FILE_INDEX_MISSING
 from weld._graph_cli import main as graph_cli_main
 from weld.workspace import ChildEntry, WorkspaceConfig, dump_workspaces_yaml
 
@@ -131,19 +143,23 @@ class FederationMissingGraphGuidanceTest(unittest.TestCase):
             ["--root", self._tmp, "references", "foo"], "wd references",
         )
 
-    # ----- find stays exempt (file-index, not graph): exit 0 -------------
+    # ----- find: guarded on the file-index, not on the graph -------------
 
-    def test_find_missing_graph_is_not_guarded(self):
-        """``wd find`` at a federation root answers off the file-index.
+    def test_find_missing_index_is_guarded(self):
+        """``wd find`` at this root has no file index either, so it refuses.
 
-        ADR 0134 keeps ``find`` a two-outcome tool: it never needed a graph,
-        so a graph-less federation root is not a cannot-answer condition for
-        it. "No matches" at exit 0 is the correct negative answer.
+        The distinction is which artifact is missing, not whether ``find``
+        gets to skip having one. It does not report ``No Weld graph found.``
+        -- it never needed a graph -- but a root whose own index and every
+        registered child's are absent cannot answer at all, and saying
+        "no matches" there is finding 02 in a command that dodged the fix.
         """
         exit_code, _stdout, stderr = _run_and_capture(
             ["--root", self._tmp, "find", "OrderReplayer"],
         )
-        self.assertEqual(exit_code, 0)
+        self.assertNotEqual(exit_code, 0)
+        self.assertIn(f"error[{FILE_INDEX_MISSING}]:", stderr)
+        self.assertIn(ERROR_HINTS[FILE_INDEX_MISSING], stderr)
         self.assertNotIn(_EXPECTED_PREFIX, stderr)
 
     # ----- present root graph still serves: no regression ----------------

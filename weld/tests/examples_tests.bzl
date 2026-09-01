@@ -29,7 +29,11 @@ def examples_tests():
             ":demo_discover_golden_files",
             "//examples:example_files",
         ],
+        # bd 5038-ipa1e / ADR 0139 mechanism 5: the shared golden invariants,
+        # depended on rather than copied into srcs -- //weld/tests:graph_invariants_lib
+        # is the one rule allowed to claim them (weld_graph_invariants_wiring_test).
         deps = [
+            ":graph_invariants_lib",
             "//weld:runtime",
         ],
         env = {"PYTHONHASHSEED": "0"},

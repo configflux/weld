@@ -36,7 +36,10 @@ _FEDERATION = (
     # ADR 0134 (Finding 02, ...uuxaz.2): a graph-backed federated read at a
     # root with no root graph.json must surface the same cannot-answer
     # "No Weld graph found" guidance + non-zero exit the single-repo path does,
-    # not a well-formed empty result at exit 0; wd find stays exempt.
+    # not a well-formed empty result at exit 0. wd find is exempt from that
+    # check and carries its own over the file-index instead (N9, ...d76r1.11):
+    # the root in the same fixture has no index either, so the exemption had
+    # left finding 02 reproducible one command over.
     "weld_federation_missing_graph_test",
     # ADR 0134 (Finding 01, ...uuxaz.3): wd brief federates at a polyrepo root
     # -- it spans child graphs like wd query / weld_brief -- instead of reading
@@ -68,8 +71,16 @@ _DETERMINISTIC = (
 # on root reads (part 3).
 _STALENESS = (
     "weld_federation_staleness_test",
-    "weld_federation_child_staleness_surface_test",
     "weld_federation_auto_refresh_test",
+)
+
+# ADR 0066 §2 + ADR 0138: the two suites that drive `wd stale` and
+# `wd workspace status` against real git repositories. They share the fixture
+# builders in _federation_staleness_fixtures.py -- one workspace shape for
+# both, rather than two that drift apart -- so both carry it in srcs.
+_STALENESS_SURFACES = (
+    "weld_federation_child_staleness_surface_test",
+    "weld_workspace_status_drift_test",
 )
 
 def federation_tests():
@@ -131,6 +142,29 @@ def federation_tests():
         deps = _RUNTIME_WORKSPACE,
     )
 
+    # ADR 0137 ss3: the federated endpoint contract -- the id index and its
+    # builder, `wd graph validate` at a workspace root, and the doctor Edges
+    # section. One shared on-disk workspace fixture, three subjects.
+    [py_test(
+        name = _name,
+        srcs = ["_federation_id_fixtures.py", _name + ".py"],
+        deps = _RUNTIME_WORKSPACE,
+    ) for _name in (
+        "weld_federation_id_index_test",
+        "weld_graph_validate_federated_test",
+        "weld_doctor_cross_repo_edges_test",
+    )]
+
+    # ADR 0137 ss1-2: the two endpoint id spaces and the one helper family
+    # that builds and parses them -- plus the three cross_repo parsers that
+    # used to split on the separator themselves, which is why the dep reaches
+    # //weld/cross_repo as well as the runtime.
+    py_test(
+        name = "weld_federation_endpoints_test",
+        srcs = ["weld_federation_endpoints_test.py"],
+        deps = _RUNTIME_WORKSPACE + ["//weld/cross_repo"],
+    )
+
     # bd v5t0: multi-token federated fan-out must not starve
     # lexicographically-later children.
     py_test(
@@ -145,3 +179,10 @@ def federation_tests():
         deps = _RUNTIME_WORKSPACE,
         env = _HASHSEED,
     ) for _name in _DETERMINISTIC + _STALENESS]
+
+    [py_test(
+        name = _name,
+        srcs = ["_federation_staleness_fixtures.py", _name + ".py"],
+        deps = _RUNTIME_WORKSPACE,
+        env = _HASHSEED,
+    ) for _name in _STALENESS_SURFACES]

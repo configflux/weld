@@ -3,6 +3,407 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.25.0 - 2026-09-01
+
+### Fixed
+
+- `wd callers` and `wd impact` now see a call made through a name unpacked from
+  a deferred-import helper. Python libraries routinely hide an import inside a
+  small function to break an import cycle -- `def _api(): from x import a, b;
+  return a, b` -- and then unpack what it returns at the call site: `a, b =
+  _api()`, then `b(...)`. The import itself was already understood, so a call
+  by the *imported* name resolved; the local name the unpack binds appears in
+  no import statement, so the call through it had no answer, and the real
+  definition under-reported its callers. That miss lands hardest on exactly the
+  functions the idiom exists to share, which are the ones "who calls this?" gets
+  asked about before a signature changes. Such a helper is now read where its
+  return value is written in its own source -- its body is nothing but imports
+  and one `return` of the names those imports bound -- and the unpacked name
+  resolves to the definition it holds. Everything else stays unresolved rather
+  than guessed: a helper that computes anything, is decorated, is imported from
+  another module or nested inside a function; a returned name it did not import
+  itself; a name two imports both bind; an unpack whose names do not line up
+  one-for-one with the return; and a name the surrounding scope binds a second
+  time. The rule reads the file's own import table, so it can never name a
+  module that table would not, and one scope's unpack binds nothing in a
+  sibling or nested scope.
+  <!-- verify: file=weld/strategies/_python_lazy_api.py grep="lazy_api_accessors" -->
+
+- Cross-repo dependency edges in a polyrepo root graph now all carry the same
+  type, `cross_repo:depends_on`. Three resolvers record the same fact -- repo A
+  depends on repo B -- by three different routes: `package_graph` reads build
+  manifests, `compose_topology` reads `depends_on` in a compose file, and
+  `package_import_resolver` reads import statements. Only the first spelled the
+  type with the `cross_repo:` prefix that marks a cross-repo edge; the other two
+  emitted a bare `depends_on`, which is also the ordinary *within*-repo
+  dependency type. So a tool filtering a workspace graph for cross-repo
+  dependencies -- by prefix, the only thing that distinguishes them -- saw one
+  resolver's edges and silently missed the other two's, while the edges it
+  missed were indistinguishable from single-repo ones sharing the graph. The
+  three now read one shared constant, so the spelling can no longer drift
+  between them, and every registered resolver is held to the prefix rule the
+  workspace graph validator already enforced. Nothing else changes: within-repo
+  `depends_on` edges are untouched, and the affected edges' endpoints and
+  properties are exactly as before.
+  <!-- verify: file=weld/_federation_endpoints.py grep="CROSS_REPO_DEPENDS_ON" -->
+- `wd callers` and `wd impact` now follow an explicit relative import to the
+  module it actually names. `from .helper import work` inside `pkg/caller.py`
+  means `pkg.helper` -- the interpreter reads the leading dot as "my own
+  package" -- but discovery dropped the dot and recorded the call against a
+  top-level `helper` module that exists nowhere, confidently and as
+  third-party. `from . import helper` was skipped outright, so a call through
+  it had no answer at all. Relative imports are how most Python libraries spell
+  their own internal calls, so on such a codebase this was the common case
+  rather than an edge: the definitions collected no callers, and "who else
+  breaks if I change this?" answered empty for a package's own internals. The
+  leading dots are now counted against the importing file's package, the same
+  arithmetic the interpreter does, including inside a package's `__init__.py`,
+  where one dot means that package itself rather than its parent. Two shapes
+  are refused rather than guessed, because the interpreter refuses them too: a
+  level that walks past the top-level package, and a relative import in a
+  module that is under no package at all. Both keep their honest "unresolved"
+  -- notably at the top of a tree, where the invented name and a real
+  neighbouring module can coincide. A codebase that spells every import
+  absolutely is unaffected.
+  <!-- verify: file=weld/strategies/_python_relative_import.py grep="absolute_module" -->
+- `wd callers` and `wd impact` now find the call sites of a function imported
+  by bare name from the file next door. A script directory -- one with no
+  `__init__.py`, the usual shape for a repository's `tools/` or `scripts/` --
+  is placed on `sys.path` by the interpreter itself, so `from helper import
+  work` there means the `helper.py` sitting beside the importer. Discovery read
+  the name the way the source spells it instead, and recorded the call against
+  a top-level `helper` module that exists nowhere, confidently and as
+  third-party. The real definition therefore collected no callers at all, and
+  "who else breaks if I change this?" -- the question a shared helper is asked
+  most -- answered with only the callers inside its own file. On this
+  repository that fix removes 233 invented symbols and re-points 1035 calls
+  onto the definitions they actually reach. The refusals are deliberate and
+  measured: a file that sits beside an `__init__.py` is inside a package, where
+  a bare name is an absolute import, so a module named after the library it
+  wraps (`providers/anthropic.py` importing `anthropic`) is never resolved to
+  itself; and a name with no matching file beside the importer keeps the
+  spelling it was given, so an ordinary third-party import is untouched. A
+  sibling that *is* there wins over a standard-library module of the same name,
+  which is what the interpreter does too.
+  <!-- verify: file=weld/strategies/_python_sibling_import.py grep="normalize_sibling_imports" -->
+
+- An incremental `wd discover` no longer keeps a placeholder symbol alive after
+  the last file that referenced it is deleted. When a package re-exports a name
+  through its `__init__.py`, discovery records a placeholder for the re-exported
+  symbol, and the module name then resolves to that placeholder for every file
+  importing the package -- including files that never mention the symbol.
+  Deleting the one file that actually used it left the placeholder standing on
+  the strength of those bystanders' import records, which discovery had itself
+  derived from the placeholder's presence, so each kept the other alive. A full
+  `wd discover` of the same tree records neither, and pointed the surviving
+  imports at the package instead, so a refreshed graph disagreed with a rebuilt
+  one and stayed that way. An import record derived from the graph no longer
+  counts as a reference; a real call, inheritance, or decorator still does, so a
+  placeholder shared by several files survives the loss of any one of them
+  exactly as before.
+  <!-- verify: file=weld/_discover_placeholder_anchor.py grep="_DERIVED_EDGE_STRATEGIES" -->
+- An incremental `wd discover` no longer throws away the standard-library
+  decorators it had already resolved. A symbol used only as a decorator --
+  `@dataclass`, `@property`, `@staticmethod`, `@abstractmethod` -- is recorded
+  as decorating the thing below it, so the record points *away* from it, and
+  the refresh's cleanup pass, which only ever looked at records pointing *at* a
+  symbol, read every one of them as unreferenced and deleted it. Nothing was
+  lost from the finished graph: the records left hanging were noticed and
+  repaired by re-reading the files that wrote them. But that repair redid the
+  entire refresh -- on this repository, 7 deleted symbols, 203 hanging records
+  and 122 untouched files re-read, every time a refresh had anything at all to
+  clean up. A symbol is now kept while any record still mentions it, in either
+  direction. A decorator that genuinely goes away with the last file that used
+  it is still removed, exactly as before.
+  <!-- verify: file=weld/_discover_placeholder_anchor.py grep="edge_anchored_node_ids" -->
+- `wd callers` and `wd impact` now find the call sites of a classmethod or
+  static method reached through an imported class. `from mypkg.corpus import
+  Corpus` followed by `Corpus.build(rows)` had no answer at all: discovery once
+  invented a `mypkg.corpus.build` that no module defines, and after that was
+  stopped the call simply went unresolved -- so either way the real
+  `Corpus.build` reported no callers, and the blast radius of changing it read
+  empty. The method's own symbol is now the target, decided after every glob has
+  been read and merged, where the class definition is actually visible. It is
+  decided conservatively, and the refusals are the point: the retarget happens
+  only when the imported name is a class discovery has read *and* the method is
+  one it defines. A constant that merely looks the same at the call site -- a
+  dict, a compiled regex, a message template -- keeps its honest "unresolved",
+  as does a class called on a member it inherits rather than defines, a
+  standard-library class, and a third-party one. Removing the method later
+  degrades the call back to unresolved on both the full and the incremental
+  path, rather than leaving a refreshed graph pointing at a symbol that is gone.
+  <!-- verify: file=weld/_graph_closure_import_attr.py grep="resolve_class_base" -->
+- A full `wd discover` and an incremental refresh now agree on a call into a
+  module that a *different* source glob owns. `from mypkg import helpers`
+  followed by `helpers.load()`, written in a file one glob covers while
+  `mypkg/helpers.py` is covered by another, resolved to `mypkg.helpers.load`
+  after an incremental refresh and to nothing at all on a full discover of the
+  same tree -- two different graphs for one unchanged repository, and which one
+  you got depended on how the graph had last been built. Discovery decides that
+  import from its own glob only, which is the same question on both paths, and
+  the wider one is now answered once, after every glob has been read and merged.
+  The refresh answer is the one that wins: a full discover reaches
+  `mypkg.helpers.load` too. Deleting `mypkg/helpers.py` degrades both paths back
+  to unresolved rather than leaving a refreshed graph pointing at a symbol that
+  is gone. Calls within a single glob, imports of a value rather than a
+  submodule, and standard-library imports are unchanged.
+  <!-- verify: file=weld/_graph_closure_import_attr.py grep="rewrite_import_attr_targets" -->
+- `wd callers` no longer answers with a function that does not exist. Calling a
+  method on an imported value -- `from mypkg.tables import LIMITS`, then
+  `LIMITS.get(name)` -- was resolved as though `LIMITS` named an imported
+  *module*, so the method name became a symbol of its own: a placeholder for
+  `mypkg.tables.get`, a function no module defines under any spelling. Asking
+  who calls it named the calling function, confidently, so a reader acting on
+  that answer got a false positive rather than a miss. Discovery now reads the
+  distinction the import statement already draws -- `import mypkg.tables as t`
+  binds a module, `from mypkg.tables import LIMITS` binds a value -- and leaves
+  a method call on a value unresolved rather than inventing a target for it. A
+  module import, a submodule import of your own code that discovery has walked
+  (`from mypkg import tables`, then `tables.load()`), and a plain call to an
+  imported function all resolve exactly as before. On weld's own tree this
+  removed 27 invented symbols, and the file-to-module dependency edges that had
+  been anchored on them moved onto names that exist.
+  <!-- verify: file=weld/strategies/_python_expr_resolve.py grep="_imported_value_attr" -->
+- `wd callers` and `wd impact` now see the callers of a symbol that consumers
+  import from a re-export facade. When a module publishes names it does not
+  define -- `from ._impl import parse` in a package's public `api.py`, then
+  `from mypkg.api import parse` everywhere else -- the call resolved against the
+  calling module's import table onto a placeholder for `mypkg.api.parse`, a
+  function that module does not have. Every consumer taking the documented
+  public import path hung off that placeholder, so asking who calls the real
+  definition answered "no callers" and the blast radius of changing a
+  re-exported symbol read as empty. Discovery now follows the facade's own
+  imports to the module that defines the name and drops the placeholder; on
+  weld's own tree that reconnected 91 calls across 44 symbols. The walk is
+  bounded and refuses to guess: it never leaves your own code, stops when two
+  imported modules both define the name, and terminates on an import cycle.
+  <!-- verify: file=weld/_graph_closure_reexport.py grep="rewrite_reexport_targets" -->
+- A documentation repository's `README.md` now becomes a graph node. `wd init`
+  wires a `**/*.md` source when a repository has no conventional docs directory
+  but does have markdown, and the `markdown` strategy skips `README.md` unless
+  a source entry sets `include_readme` — so the fallback indexed every markdown
+  file *except* the one that is usually the repository's index. On a docs repo
+  of 28 markdown files, the two that did not become nodes were its index pages.
+  The fallback now sets `include_readme` (the conventional `docs/` entry keeps
+  the default skip, where a README really is the project's front door rather
+  than one of its documents), and a README doc node takes its label from the
+  `#` title it declares instead of from its filename: a README titled
+  `# Platform Documentation` used to answer `wd query "Platform Documentation"`
+  with a different document, because "Readme" was the only name the graph knew
+  it by. Existing configs are unaffected until regenerated; add
+  `include_readme: true` to a source entry to opt in by hand.
+  <!-- verify: file=weld/_init_framework_sources.py grep="include_readme" -->
+- The unclaimed-source warning no longer sends you to the destructive fix.
+  `wd doctor` and `wd prime` end their "N C# files present but no wired
+  strategy claims 'csharp'" line with a remedy, and that remedy was
+  `wd init --force` alone -- the mode that regenerates `discover.yaml` from a
+  fresh scan and discards every hand edit, custom glob and comment in it.
+  `wd init --refresh` merges the missing entries in and keeps all of that, so
+  a maintainer who followed the advice literally threw away the config they
+  had tuned. The warning now names both, non-destructive first --
+  `run: wd init --refresh (keeps your entries) or wd init --force (regenerate
+  from scratch)` -- and `wd prime` lists `wd init --refresh` under **Next
+  steps**, because a step you are told to run should not be the one that
+  loses your work. `wd init`'s advisory for a config that recognised nothing
+  to wire points the same way.
+  <!-- verify: file=weld/_unclaimed_sources.py grep="def unclaimed_message" -->
+- `wd find` no longer answers `no matches` from a file index that does not
+  exist. `find` reads `.weld/file-index.json` rather than the graph, so it was
+  deliberately exempt from the "No Weld graph found." refusal every graph-backed
+  read gives -- and that exemption was read as having no precondition at all: in
+  a checkout with no index (a fresh worktree of a repository that ignores its
+  weld config, or any repo where `wd discover` has not run) it reported a clean
+  negative about a tree it had never searched, and exited 0 doing it. Next to
+  `wd query` and `wd brief`, which refuse the same checkout with guidance, that
+  is the one wrong answer a search can give: it reads as "no such file" and
+  sends you to grep. `find` now applies the same rule to the artifact it
+  actually reads. Where no index is reachable -- its own, and at a polyrepo root
+  every registered child's -- it emits `error[file_index_missing]` with the
+  remedy (`wd discover`) and exits non-zero; where the checkout could never have
+  received one, it names that prerequisite too, the same sentence the graph
+  route prints. Unchanged: an index that exists and matches nothing is a real
+  answer and still exits 0, and `find` never runs discovery for you. The MCP
+  `weld_find` tool returns the same `file_index_missing` payload the CLI message
+  is rendered from.
+  <!-- verify: file=weld/_find_precondition.py grep="def ensure_file_index_exists" -->
+- A polyrepo child no longer looks like the producer of every package in its
+  vendored virtualenv. The `package_graph` resolver reads build manifests out
+  of each child working tree, and it walked that tree with its own skip list:
+  a service carrying a `.venv` was credited with producing every distribution
+  inside it -- a `pyproject.toml` in a `.dist-info` directory, a `.proto`
+  shipped by a code generator -- so every sibling declaring one of those as a
+  dependency got an edge to it that no manifest in either repo supports. On a
+  workspace whose one service carried a virtualenv, eleven of seventeen
+  cross-repo edges were fabricated this way, and `scan.respect_gitignore` made
+  no difference because the scan never asked Git anything. The scan now reads
+  only the files a child repo claims: Git-visible files, so `.gitignore` is
+  honoured natively, falling back to the shared excluded-directory set for a
+  child that is not a Git repository. Vendored and build-output directories
+  stay excluded on both routes -- a `vendor/` tree a repo commits is code it
+  carries, not code it publishes.
+  <!-- verify: file=weld/cross_repo/_package_manifest_scan.py grep="def scan_child_manifests" -->
+- `wd init --refresh` now wires the same strategies `wd init --force` wires.
+  For each language it claims, refresh emitted only the tree-sitter entry and
+  its test-peer companion, while a full init routes that language through its
+  whole stack -- so on a .NET repo refresh wired three strategies where
+  `--force` wires ten, leaving the project, solution, MSBuild, test-framework,
+  ASP.NET and EF Core entries unreachable. Worse, it *cleared* the
+  unclaimed-source warning while doing so, so a maintainer who followed the
+  advice to a clean `wd doctor` had nothing left to tell them a further tier of
+  their codebase was still invisible. Both commands now emit from one table:
+  refresh wires the framework entries, `go_package`, the C# stack, and any
+  detected gRPC / event / ROS2 sources, and drops any entry your config already
+  wires rather than repeating it. Hand edits are still preserved exactly.
+  <!-- verify: file=weld/_init_language_entries.py grep="def language_source_entries" -->
+- `wd graph validate` no longer passes a polyrepo root graph whose cross-repo
+  edges point at nothing. Its federation branch only ever checked the *shape*
+  of an endpoint -- one separator, two non-empty halves -- and skipped the
+  dangling-reference check for anything that matched, so a root graph whose
+  every cross-repo edge referenced a node that existed in neither the root nor
+  any child reported `{"valid": true, "errors": []}` and exited 0. At a
+  workspace root each endpoint is now resolved against the ids the workspace
+  actually holds: one naming a node no repo has fails as a dangling reference,
+  and one pointing into a registered child that is missing, uninitialized, or
+  corrupt fails as an *unverifiable* one, naming the child and its state --
+  a reference that cannot be verified is not a verified reference. Outside a
+  workspace root, and for `wd graph validate-fragment`, the shape check is
+  unchanged: it is the correct answer when there are no children to resolve
+  into. `wd doctor` reports the same finding as a `[fail]` under `[Edges]`,
+  which previously only counted edges without asking whether they led
+  anywhere.
+  <!-- verify: file=weld/_federation_validate.py grep="def classify_endpoint" -->
+- `wd discover` at a polyrepo root stops writing cross-repo edges that no
+  reader can resolve. A resolver edge whose endpoints name nothing is dropped
+  with a warning naming the resolver that emitted it (capped per resolver, so
+  a wholly broken resolver cannot bury the rest of the output), rather than
+  being merged into a graph where it is unreachable. One buggy resolver still
+  cannot sink the pass. Discovery also records the resolver run itself on
+  `meta.cross_repo` -- which strategies ran, which children were read, and how
+  many edges were kept and dropped -- written whenever a pass happened,
+  including when it produced no edges at all, so a reader can tell "nothing
+  depends on this repo" from "nothing ever looked".
+  <!-- verify: file=weld/_discover_federate.py grep="def _stamp_cross_repo" -->
+- Importing a first-party Python module by the name the source actually uses
+  no longer mints a second, "external" copy of it beside the real file. A
+  package laid out under a source root -- `src/acme_notify/config.py` imported
+  as `from acme_notify.config import load_config`, or `src/broker.py` imported
+  from `src/main.py` as `from broker import Subscriber` -- was matched against
+  its full repository path (`src.acme_notify.config`), so the import never
+  found the file the graph already held and was recorded as an outside
+  dependency instead. Every such import added a spurious external node: 1441
+  of them in this repository alone, and `wd query` then answered with several
+  representations of one function, ranking the real definition below a
+  placeholder. Imports are now also resolved against the importing file's own
+  enclosing directories, nearest first, so they land on the file node. Names
+  belonging to the standard library are deliberately left alone -- a local
+  `warnings.py` does not shadow the standard `warnings` module -- and an
+  inferred match is only accepted when it lands on a real file, never on a
+  placeholder. Genuinely external packages, including those a sibling
+  repository publishes, are unaffected and still recorded as dependencies.
+  <!-- verify: file=weld/_graph_closure_modules.py grep="def python_source_root_candidates" -->
+- `wd stale` and `wd workspace status` now agree on how many child
+  repositories are checked out. Both report a `present` count, and the two
+  disagreed with each other and with `--json`: at a root with four healthy
+  children `wd stale` summarised them as `0 present, 0 stale`, and editing one
+  child changed that to `1 present, 1 stale` -- the present count was tracking
+  the stale count rather than counting anything, because the roster tallied a
+  `present` state the freshness check never produces (a child that is on disk
+  and up to date is reported `fresh`), leaving every healthy child in no
+  bucket at all. `wd workspace status` had the opposite half of the problem:
+  a child whose graph had drifted was moved out of `present` into `stale`, so
+  the same four children were counted 4, then 3. One meaning now holds on both
+  surfaces -- `present` is "checked out on disk", `stale` is a sub-count of
+  those whose graph is behind, and `missing` / `uninitialized` / `corrupt`
+  children are the absent ones, broken out by state. A child state neither
+  surface recognises is reported under its own name instead of being dropped,
+  so the counts always add up to the number of registered children. The
+  per-child lines and both `--json` payloads are unchanged.
+  <!-- verify: file=weld/_cli_render_freshness.py grep="_ON_DISK_CHILD_STATES" -->
+- Cross-repo resolvers that join whole repositories now emit edges that
+  resolve. A polyrepo root graph holds two kinds of node id -- a child's own
+  nodes, written `<child-name>\x1f<node-id>` and resolved inside that child,
+  and the root's own `repo:<name>` nodes, which live in no child at all. The
+  `package_graph` and `compose_topology` resolvers wrote a hybrid of the two,
+  `<child-name>\x1frepo:<child-name>`, which belongs to neither: every edge
+  they produced named a node that existed nowhere, so the manifest and
+  compose joins they correctly found were unreachable to every reader, and
+  `wd impact "repo:<producer>"` reported no dependents at all. Both now emit
+  the root's `repo:<name>` ids. One helper family builds and parses every
+  cross-repo endpoint, replacing the two hand-written spellings and the three
+  separate places that split an endpoint apart -- each of which read an edge
+  between two repositories as an edge touching no repository, which is why a
+  stale-child guard, an incremental invalidation and an override's
+  unknown-child warning all passed silently over exactly those edges.
+  <!-- verify: file=weld/_federation_endpoints.py grep="def repo_node_id" -->
+- `wd impact` on a `repo:<name>` node stops asserting a configuration fact it
+  never read. It used to print "no cross-repo resolver is wired
+  (cross_repo_strategies is empty)" whenever nothing pointed at the target --
+  including at workspaces whose `cross_repo_strategies` named a resolver in
+  the very file that sentence pointed at. The verdict is now read off the
+  record `wd discover` leaves behind: a repository whose resolvers ran and
+  found no dependents is a measured `0`, carrying `measured_by` with the
+  resolvers that measured it (rendered as `Measured by:` in the human output),
+  while a repository no resolver ever looked at stays `Risk: UNKNOWN` -- with
+  a reason that now distinguishes an empty `cross_repo_strategies` from one
+  that is set but whose pass never ran, and says which it is by reading the
+  file.
+  <!-- verify: file=weld/_impact_cannot_answer.py grep="def cross_repo_measured_by" -->
+- `wd workspace status` no longer counts a child that is gone. It reported the
+  lifecycle status stored in the workspace ledger, and that ledger records what
+  the last `wd discover` found -- so a child deleted, moved, or renamed since
+  then was still counted `present`, still rendered `present` on its own line,
+  and in `--json` still carried a derived `"freshness": {"state": "fresh"}` for
+  a directory that was not there. `wd stale`, which rebuilds the child roster
+  live, reported the same workspace correctly, so the two commands printed
+  different numbers for the same children. Every lifecycle status is now
+  re-probed on disk at read time, so both surfaces answer from one source.
+  Where the stored ledger and the disk disagree, the difference is named below
+  the child lines -- `docs-site: ledger says present, disk says missing`, with
+  `run: wd discover` as the remedy -- and `--json` carries the same as a
+  top-level `drift` array, always present and empty when the ledger agrees. A
+  child registered since the last discover, or dropped from `workspaces.yaml`,
+  is reported the same way. The command reports drift; it never writes the
+  ledger.
+  <!-- verify: file=weld/_workspace_drift.py grep="def reconcile" -->
+- `wd stats` reports child lifecycle from disk, so it no longer disagrees with
+  the other two surfaces. Its workspace block read the stored ledger, which was
+  the last place a child deleted since the previous `wd discover` still counted
+  as `present` -- `wd stale` and `wd workspace status` both reported it
+  `missing`. Every child is now re-probed at read time through the same code
+  path those commands use. The human summary also splits registered from
+  present, `workspaces: 3 registered, 2 present`, where it printed a bare
+  `workspaces: 3 children`: that was a registered count, and a bare count in
+  that position reads as "3 are here". When the stored ledger and the disk
+  disagree, one line follows -- `workspace ledger drift: 1 child differs from
+  the stored ledger -- run wd workspace status for detail` -- pointing at the
+  command that names which child and how; `wd stats` stays a summary and does
+  not repeat the per-child block. In `--json`, `workspaces` gains `present` and
+  `drift_count`, both always emitted, with `drift_count` at `0` when the ledger
+  agrees; every existing key keeps its name and meaning. A child registered but
+  never cloned now reads `missing` instead of `unknown` even before a ledger
+  has ever been written, and each child's `path` is now filled in from
+  `workspaces.yaml` -- it was `null` for every child as soon as a ledger
+  existed, because the ledger records the child's graph path under a different
+  name and never carried a `path` of its own.
+  <!-- verify: file=weld/_graph_stats_cli.py grep="def _child_rows" -->
+
+- An incremental `wd discover` no longer aborts when a graph on disk carries a
+  malformed placeholder property. The placeholder purge decides whether an
+  external-package node was authored by a strategy by reading
+  `props.source_strategy` back off `.weld/graph.json`, and it tested that value
+  for set membership without first checking it was a string -- so a hand-edited
+  or corrupted graph carrying, say, `"source_strategy": []` raised
+  `TypeError: unhashable type: 'list'` and took the whole incremental discover
+  down with it. The module's own contract already said a missing or non-dict
+  `props` reads as "not a purgeable placeholder" rather than raising; the value
+  check was the missing half. A non-string value now reads as "not matching" --
+  the safe side, retaining a node rather than purging one -- and the same guard
+  was applied to the one sibling purge rule with the same copied shape
+  (`props.origin` in the tree-sitter package purge). Well-formed graphs are
+  untouched: both predicates answer exactly as before on string-valued
+  properties.
+  <!-- verify: file=weld/_discover_external_package_purge.py grep="_is_edge_anchored_external_package" -->
+
 ## v0.24.0 - 2026-08-30
 
 ### Added

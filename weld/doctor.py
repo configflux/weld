@@ -27,7 +27,6 @@ strategy names are taken only from ``discover.yaml``.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -112,33 +111,15 @@ def _check_unclaimed_sources(root: Path) -> list[CheckResult]:
 
 
 def _check_graph_json(weld_dir: Path) -> list[CheckResult]:
-    """Report graph.json presence + schema/nodes/edges split into sections."""
-    path = weld_dir / "graph.json"
-    if not path.is_file():
-        return [CheckResult("fail", ".weld/graph.json not found", "Graph")]
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return [
-            CheckResult("fail", ".weld/graph.json is invalid or unreadable", "Graph")
-        ]
+    """Report graph.json presence, its counts, and its cross-repo references.
 
-    nodes = data.get("nodes", {})
-    edges = data.get("edges", [])
-    meta = data.get("meta", {}) or {}
-    schema_ver = meta.get("schema_version", "?")
-    n_nodes = len(nodes) if isinstance(nodes, dict) else 0
-    n_edges = len(edges) if isinstance(edges, list) else 0
-    return [
-        CheckResult(
-            "ok",
-            f".weld/graph.json found ({n_nodes} nodes, {n_edges} edges, schema v{schema_ver})",
-            "Graph",
-        ),
-        CheckResult("ok", f"schema v{schema_ver}", "Schema"),
-        CheckResult("ok", f"{n_nodes} nodes", "Nodes"),
-        CheckResult("ok", f"{n_edges} edges", "Edges"),
-    ]
+    At a workspace root the Edges section also reports endpoints that resolve
+    to nothing (ADR 0137 ss3). Delegates to
+    :func:`weld._doctor_graph_json.check_graph_json`; the body lives there so
+    this module stays under the line-count cap.
+    """
+    from weld._doctor_graph_json import check_graph_json
+    return check_graph_json(weld_dir, CheckResult)
 
 
 def _check_sqlite_sidecar(weld_dir: Path) -> list[CheckResult]:

@@ -33,6 +33,10 @@ import ast
 
 from weld.strategies._python_anchor import symbol_summary
 from weld.strategies._python_expr_resolve import _ExprResolutionMixin
+from weld.strategies._python_lazy_api import (
+    lazy_api_accessors,
+    local_alias_bindings,
+)
 from weld.strategies._python_scope_walk import _calls_in_own_scope
 
 #: Statement types that open a new naming scope. A ``def``/``class`` found
@@ -91,19 +95,26 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
         self,
         module_path: str,
         import_table: dict[str, tuple[str, str]],
-        project_modules: frozenset[str] = frozenset(),
+        glob_modules: frozenset[str] = frozenset(),
     ) -> None:
         self.module_path = module_path
         self.import_table = import_table
-        # Dotted module paths this run proved to be first-party (ADR 0042
-        # Python rules). Used to disambiguate ``from PARENT import CHILD``
-        # + ``CHILD.attr()``: when ``PARENT.CHILD`` is a known project
-        # module, CHILD is a *submodule* (a namespace-package member)
-        # rather than a value, so the attribute call resolves under
-        # ``PARENT.CHILD``, not the bare parent ``PARENT``. Empty by
-        # default so direct constructions keep the historical bare-parent
-        # behaviour.
-        self.project_modules = project_modules
+        # Dotted module paths of THIS GLOB's own files. Used to disambiguate
+        # ``from PARENT import CHILD`` + ``CHILD.attr()``: when
+        # ``PARENT.CHILD`` is a module this glob owns, CHILD is a *submodule*
+        # (a namespace-package member) rather than a value, so the attribute
+        # call resolves under ``PARENT.CHILD``, not the bare parent
+        # ``PARENT``. Empty by default so direct constructions keep the
+        # historical bare-parent behaviour.
+        #
+        # Deliberately NOT the wider ``project_modules`` the strategy tags
+        # origins with: that one is this glob's own set on a full discover and
+        # the cross-glob prior-node union on an incremental one (ADR 0074), so
+        # a resolution keyed on it answered differently on the two paths for
+        # one unchanged tree. What one glob owns is the same question on both.
+        # Anything wider is decided once on the merged graph, by
+        # ``weld._graph_closure_import_attr``.
+        self.glob_modules = glob_modules
         # qualname -> {"line": int, "name": str, "kind": str, "summary": str}
         # ``kind`` is one of ``class``, ``function``, ``method`` per the
         # python vocabulary declared in ``tools.tier_check_kinds`` and
@@ -111,8 +122,13 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
         # symbol's own opening docstring paragraph, always present (``""``
         # when there is no docstring).
         self.symbols: dict[str, dict] = {}
-        # caller-qualname -> list of (target_id, resolved, raw, line, resolution)
-        self.calls: dict[str, list[tuple[str, bool, str, int, str]]] = {}
+        # caller-qualname -> list of
+        # (target_id, resolved, raw, line, resolution, import_attr_hint).
+        # The hint is ``None`` unless resolution was deferred to the closure
+        # -- see ``weld.strategies._python_import_attr``.
+        self.calls: dict[
+            str, list[tuple[str, bool, str, int, str, dict[str, str] | None]]
+        ] = {}
         # class qualname -> list of raw base names (simple ``ast.Name``
         # or the final segment of an ``ast.Attribute``). Empty list when
         # the ClassDef has no explicit bases (``class A:`` => no
@@ -121,16 +137,20 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
         self.class_bases: dict[str, list[str]] = {}
         # One entry per ``decorator_list`` expression this run saw, at any
         # nesting depth (ADR 0122): (target_id, resolved, raw, line,
-        # resolution, decorated_qual). No scope/caller attribution is
-        # needed -- unlike a call, "X decorates Y" names only the
-        # decorator and the symbol it decorates, both already in hand at
-        # the point of definition.
-        self.decorates: list[tuple[str, bool, str, int, str, str]] = []
-        # Module-level statement call sites (ADR 0122): same 5-tuple shape
+        # resolution, decorated_qual, import_attr_hint). No scope/caller
+        # attribution is needed -- unlike a call, "X decorates Y" names
+        # only the decorator and the symbol it decorates, both already in
+        # hand at the point of definition.
+        self.decorates: list[
+            tuple[str, bool, str, int, str, str, dict[str, str] | None]
+        ] = []
+        # Module-level statement call sites (ADR 0122): same tuple shape
         # as one ``calls`` value entry, but with no owning symbol qualname
         # to key on -- the strategy layer sources these at the module's
         # ``file:`` node instead.
-        self.module_level_calls: list[tuple[str, bool, str, int, str]] = []
+        self.module_level_calls: list[
+            tuple[str, bool, str, int, str, dict[str, str] | None]
+        ] = []
         # ADR 0127 (bd lid2): resolved same-module value references, same
         # 5-tuple shape and same caller-qualname keying as ``calls`` --
         # see ``_collect_references``.
@@ -145,6 +165,15 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
         # site (bd q6yd). Stays empty when the visitor is pointed at a
         # non-Module node, which leaves the historical walk-order behaviour.
         self._module_level: set[str] = set()
+        # bd 80zz3. ``{accessor name: names it returns}`` for every
+        # lazy-import accessor this module defines, collected once by
+        # :meth:`visit_Module`; and, for the scope currently being swept,
+        # ``{local name: the imported name it was unpacked from}``. Both stay
+        # empty for a visitor pointed at a non-Module node and for the
+        # overwhelming majority of modules, which define no accessor -- see
+        # :mod:`weld.strategies._python_lazy_api` for the shape and its bounds.
+        self._lazy_api: dict[str, tuple[str, ...]] = {}
+        self._local_aliases: dict[str, str] = {}
         # Tracks whether the *immediate* enclosing scope is a class so
         # a ``def`` directly inside a ``ClassDef`` registers as
         # ``kind=method`` rather than ``kind=function``. Deeper closures
@@ -191,13 +220,17 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
     def visit_Module(self, node: ast.Module) -> None:  # noqa: N802
         """Collect module-scope names and module-level call sites."""
         self._module_level = _module_level_names(node)
+        # bd 80zz3: the accessor table is a property of the whole module, so
+        # it is read once here and consulted by every scope below.
+        self._lazy_api = lazy_api_accessors(node)
+        self._local_aliases = local_alias_bindings(node.body, self._lazy_api)
         # ADR 0122: a module-level statement executes at import time, in
         # no symbol's body -- sourced at the ``file:`` node by the
         # strategy layer, so recorded separately from ``calls``.
         for call in _calls_in_own_scope(node.body):
-            target_id, resolved, raw, resolution = self._resolve_call(call)
+            target_id, resolved, raw, resolution, hint = self._resolve_call(call)
             self.module_level_calls.append(
-                (target_id, resolved, raw, call.lineno, resolution)
+                (target_id, resolved, raw, call.lineno, resolution, hint)
             )
         # ADR 0127: a module-level bare-name value reference has the same
         # "no owning symbol" shape a module-level call does.
@@ -225,6 +258,14 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
                     bases.append(b.attr)
             self.class_bases[qual] = bases
         self._record_decorators(node.decorator_list, qual)
+        # bd 80zz3: a class body is a scope of its own, so an accessor
+        # unpacked in it binds for this body and nothing else. It stays in
+        # place across the recursive descent below and is restored after,
+        # because a method's decorator evaluates in THIS body -- while the
+        # method's own body re-derives its aliases from its own statements,
+        # which is what keeps the class's out of it.
+        outer_aliases = self._local_aliases
+        self._local_aliases = local_alias_bindings(node.body, self._lazy_api)
         # ADR 0122: a class body executes once, at class-definition time --
         # the same "this executes, so a call inside it is real" reasoning
         # already applied to a function's own body -- so its own direct
@@ -234,9 +275,9 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
         # nested method's calls are not swept in here, they get their own
         # correct attribution below via the recursive ``visit()``.
         for call in _calls_in_own_scope(node.body):
-            target_id, resolved, raw, resolution = self._resolve_call(call)
+            target_id, resolved, raw, resolution, hint = self._resolve_call(call)
             self.calls.setdefault(qual, []).append(
-                (target_id, resolved, raw, call.lineno, resolution)
+                (target_id, resolved, raw, call.lineno, resolution, hint)
             )
         # ADR 0127: a class-body bare-name value reference (e.g. a sibling
         # class named in a class-attribute tuple) is sourced at this
@@ -248,6 +289,7 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
         for child in node.body:
             self.visit(child)
         self._class_depth_stack.pop()
+        self._local_aliases = outer_aliases
         self._qual_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
@@ -267,7 +309,26 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
         qual = self._record_symbol(
             node.name, node.lineno, kind, symbol_summary(node)
         )
+        # Decorators are resolved BEFORE the alias swap below: a decorator
+        # expression evaluates in the ENCLOSING scope, at definition time, so
+        # the aliases that apply to it are the enclosing scope's.
         self._record_decorators(node.decorator_list, qual)
+        # bd 80zz3: this function's own unpacks, for this function's own body,
+        # and for the decorator of any def nested directly inside it (which
+        # evaluates here, in this scope) -- hence the restore after the descent
+        # rather than before it. A nested def's own BODY still starts from its
+        # own statements, so nothing leaks into it. A parameter of the same
+        # name is handed over because ``node.body`` alone cannot see the
+        # signature, and a name the signature already binds is not the
+        # unpack's.
+        outer_aliases = self._local_aliases
+        self._local_aliases = local_alias_bindings(
+            node.body,
+            self._lazy_api,
+            already_bound=frozenset(
+                a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg)
+            ),
+        )
         self._class_depth_stack.append(False)
         # ADR 0122 amendment (bd z0fh): a function's own body executes only
         # when the function is later CALLED -- the same "this executes, so
@@ -287,9 +348,9 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
         # (they evaluate here, when the nested ``def`` statement runs) --
         # the function-nested case ADR 0122 Decision item 4 deferred.
         for call in _calls_in_own_scope(node.body):
-            target_id, resolved, raw, resolution = self._resolve_call(call)
+            target_id, resolved, raw, resolution, hint = self._resolve_call(call)
             self.calls.setdefault(qual, []).append(
-                (target_id, resolved, raw, call.lineno, resolution)
+                (target_id, resolved, raw, call.lineno, resolution, hint)
             )
         # ADR 0127: a function-body bare-name value reference (e.g. a
         # class passed by name as a keyword-argument value, never called)
@@ -305,6 +366,7 @@ class _CallGraphVisitor(ast.NodeVisitor, _ExprResolutionMixin):
             ):
                 self.visit(child)
         self._class_depth_stack.pop()
+        self._local_aliases = outer_aliases
         self._qual_stack.pop()
 
 

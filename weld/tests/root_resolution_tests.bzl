@@ -176,6 +176,23 @@ def root_resolution_tests():
         env = {"PYTHONHASHSEED": "0"},
     )
 
+    # Field eval 0.24.0 N9 (bd d76r1.11), the same repository shape asked
+    # about the other artifact. `wd find` reads the file index, so it is
+    # exempt from the missing-GRAPH guard -- and an ignore-all repository
+    # withholds `discover.yaml` from every worktree, so gate 5 never runs and
+    # the index never arrives either. Its own target rather than a case in the
+    # hermetic suite because the claim is about a policy no worktree of the
+    # repository can escape: deleting an index from a worktree would prove
+    # something weaker. Rides the Mode A suite for that repository, and pins
+    # the restraint half too -- a DEFAULT Mode A worktree seeds and answers,
+    # so the guard has not turned into "find refuses in fresh worktrees".
+    py_test(
+        name = "weld_find_missing_index_cause_test",
+        srcs = _MODE_A_SUITE + ["weld_find_missing_index_cause_test.py"],
+        deps = _SEED_DEPS,
+        env = {"PYTHONHASHSEED": "0"},
+    )
+
     # bd kgx83, the third surface of the same finding. The two targets above
     # both fix `ensure_graph_exists`, the _READ_COMMANDS funnel; `stale` is a
     # _SEED_ONLY_COMMANDS member and must stay one (a probe that exits instead

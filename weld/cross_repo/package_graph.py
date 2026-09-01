@@ -14,8 +14,8 @@ It is the manifest-level complement to ``package_import_resolver``:
 
 * ``package_import_resolver`` joins *import evidence* -- a file node's
   ``imports_from`` list (populated from ``using`` / ``import`` statements)
-  -- to a sibling's ``type=package`` node, edge ``depends_on`` between the
-  two file/package nodes.
+  -- to a sibling's ``type=package`` node, edge ``cross_repo:depends_on``
+  between the two file/package nodes.
 * ``package_graph`` (this module) joins *build-manifest declarations* --
   what a repo says it depends on and produces -- to the sibling *repo*
   node, edge ``cross_repo:depends_on`` between ``repo:<name>`` nodes. That
@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import os
 
+from weld._federation_endpoints import CROSS_REPO_DEPENDS_ON, repo_node_id
 from weld.cross_repo._package_manifest_scan import (
     normalize_package_name,
     scan_child_manifests,
@@ -53,15 +54,7 @@ from weld.cross_repo.base import (
     ResolverContext,
     register_resolver,
 )
-from weld.workspace import UNIT_SEPARATOR, load_workspaces_yaml
-
-_EDGE_TYPE = "cross_repo:depends_on"
-
-
-def _repo_node_id(child_name: str) -> str:
-    """Return the federated ``repo:<name>`` node id for *child_name*."""
-    return f"{child_name}{UNIT_SEPARATOR}repo:{child_name}"
-
+from weld.workspace import load_workspaces_yaml
 
 def _load_child_paths(workspace_root: str) -> dict[str, str]:
     """Return ``{child_name: absolute_child_dir}`` from ``workspaces.yaml``.
@@ -135,9 +128,9 @@ class PackageGraphResolver(CrossRepoResolver):
                         continue
                     edges.append(
                         CrossRepoEdge(
-                            from_id=_repo_node_id(consumer),
-                            to_id=_repo_node_id(producer),
-                            type=_EDGE_TYPE,
+                            from_id=repo_node_id(consumer),
+                            to_id=repo_node_id(producer),
+                            type=CROSS_REPO_DEPENDS_ON,
                             props={
                                 "source_strategy": "package_graph",
                                 "confidence": "inferred",

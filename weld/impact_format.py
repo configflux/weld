@@ -40,6 +40,13 @@ def format_human(result: dict) -> str:
     cannot_answer = result.get("cannot_answer")
     if isinstance(cannot_answer, dict) and cannot_answer.get("reason"):
         lines.append(f"Reason: {cannot_answer['reason']}")
+    # ADR 0137 § 5: the other outcome of the same question, rendered in the same
+    # place and for the same reason -- a repo verdict is only as good as whether
+    # anything measured it, so the reader is told which resolvers did.
+    measured_by = result.get("measured_by")
+    if isinstance(measured_by, list):
+        named = ", ".join(str(name) for name in measured_by) or "(none)"
+        lines.append(f"Measured by: {named}")
     surfaces = result["affected_surfaces"]
     if any(surfaces.values()):
         lines.append("Affected surfaces:")

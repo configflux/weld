@@ -1,19 +1,15 @@
-"""Graph validation logic for the connected structure metadata contract.
+"""Node and ``meta`` validators for the connected structure metadata contract.
 
-Contains validators for nodes, edges, graph documents, and fragments.
 Extracted from ``weld.contract`` to keep the vocabulary constants module
-under the 400-line default.
+under the 400-line default, and since split again: edges live in
+:mod:`weld._contract_edge_validators` and the whole-document aggregators in
+:mod:`weld._graph_doc_validators`. All of them are re-exported from
+``weld.contract``, which stays the import path callers use.
 """
 from __future__ import annotations
 
-from weld._federation_validate import (
-    is_well_formed_cross_repo_edge_type as _is_cross_repo_type,
-    is_well_formed_federation_id as _is_federation_id,
-)
 from weld._validate_diagnostics import (
     REGEN_HINT as _REGEN_HINT,
-    dangling_ref_hint as _dangling_ref_hint,
-    missing_edge_field_hint as _missing_edge_hint,
     missing_node_field_hint as _missing_node_hint,
     vocab_hint as _vocab_hint,
 )
@@ -29,7 +25,6 @@ from weld._contract_types import (
     SECTION_KIND_VALUES,
     SURFACE_KIND_VALUES,
     TRANSPORT_VALUES,
-    VALID_EDGE_TYPES,
     VALID_NODE_TYPES,
     ValidationError,
 )
@@ -258,117 +253,8 @@ def validate_node(
     return errors
 
 
-def validate_edge(
-    edge: dict,
-    node_ids: set[str],
-    *,
-    check_refs: bool = True,
-    source_label: str | None = None,
-    federation: bool = False,
-) -> list[ValidationError]:
-    """Validate a single edge definition.
-
-    *node_ids* is the set of all valid node IDs for referential integrity.
-    When *check_refs* is False, referential-integrity checks are skipped.
-    *source_label* prefixes diagnostic paths (tracked project).
-    *federation* gates the cross-repo bypasses (separator-bearing IDs and
-    ``cross_repo:<suffix>`` edge types). It is set to True by
-    :func:`validate_graph` when the containing graph advertises
-    ``meta.schema_version == 2`` (tracked issue). Callers handling
-    fragments under federation may pass it explicitly. Even with
-    ``federation=True`` the bypass requires a *well-formed* id/prefix --
-    pathological strings still fail with a diagnostic naming the offender.
-    """
-    errors: list[ValidationError] = []
-    from_id = edge.get("from", "?")
-    to_id = edge.get("to", "?")
-    path = _prefix(source_label, f"edges[{from_id}->{to_id}]")
-
-    if "from" not in edge:
-        errors.append(ValidationError(
-            path, "from", "required field missing",
-            hint=_missing_edge_hint(from_id, to_id, "from"),
-        ))
-    elif (
-        check_refs
-        and from_id not in node_ids
-        and not (federation and _is_federation_id(from_id))
-    ):
-        errors.append(ValidationError(
-            path, "from", f"dangling reference: {from_id!r}",
-            hint=_dangling_ref_hint(from_id, node_ids),
-        ))
-
-    if "to" not in edge:
-        errors.append(ValidationError(
-            path, "to", "required field missing",
-            hint=_missing_edge_hint(from_id, to_id, "to"),
-        ))
-    elif (
-        check_refs
-        and to_id not in node_ids
-        and not (federation and _is_federation_id(to_id))
-    ):
-        errors.append(ValidationError(
-            path, "to", f"dangling reference: {to_id!r}",
-            hint=_dangling_ref_hint(to_id, node_ids),
-        ))
-
-    if "type" not in edge:
-        errors.append(ValidationError(
-            path, "type", "required field missing",
-            hint=_missing_edge_hint(from_id, to_id, "type"),
-        ))
-    elif (
-        edge["type"] not in VALID_EDGE_TYPES
-        and not (federation and _is_cross_repo_type(edge["type"]))
-    ):
-        errors.append(ValidationError(
-            path, "type",
-            f"invalid edge type: {edge['type']!r} on edge "
-            f"{from_id!r} -> {to_id!r}",
-            hint=_vocab_hint(
-                edge["type"], VALID_EDGE_TYPES, label="edge type",
-            ),
-        ))
-
-    if "props" not in edge:
-        errors.append(ValidationError(
-            path, "props", "required field missing",
-            hint=_missing_edge_hint(from_id, to_id, "props"),
-        ))
-    else:
-        _validate_edge_props(edge["props"], path, errors)
-
-    return errors
-
-
-def _validate_edge_props(
-    props: object, path: str, errors: list[ValidationError],
-) -> None:
-    """Validate edge ``props`` (ignores non-dict to preserve prior behavior)."""
-    if not isinstance(props, dict):
-        return
-    if "source_strategy" in props and not isinstance(props["source_strategy"], str):
-        errors.append(ValidationError(
-            path, "props.source_strategy", "must be a string",
-            hint=(
-                "props.source_strategy should be the producing strategy "
-                "name, e.g. \"python_callgraph\""
-            ),
-        ))
-    if "confidence" in props and props["confidence"] not in CONFIDENCE_VALUES:
-        errors.append(ValidationError(
-            path, "props.confidence",
-            f"invalid confidence: {props['confidence']!r}; "
-            f"valid: {sorted(CONFIDENCE_VALUES)}",
-            hint=_vocab_hint(
-                props["confidence"], CONFIDENCE_VALUES, label="confidence",
-            ),
-        ))
-
-
-# Top-level graph / fragment validators live in a sibling module
-# (_graph_doc_validators) so both files stay under the 400-line cap.
-# Re-export at module bottom keeps the public import path
-# ``from weld.contract import validate_graph, validate_fragment`` unchanged.
+# Edge validators live in ``_contract_edge_validators`` and the top-level
+# graph / fragment validators in ``_graph_doc_validators``, so all three
+# files stay under the 400-line cap. ``weld.contract`` re-exports every
+# public name from all three, so ``from weld.contract import validate_edge,
+# validate_graph, validate_fragment`` is unchanged.

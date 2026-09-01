@@ -111,7 +111,10 @@ def build_tools(
                 "Substring search over the .weld/file-index.json file keyword "
                 "index. Returns ranked file hits with matching tokens and an "
                 "integer score (= number of matching tokens, same signal used "
-                "for ordering)."
+                "for ordering). Needs no graph, but does need an index: where "
+                "none is readable it returns error_code file_index_missing "
+                "rather than an empty result, so an empty files list always "
+                "means the term was searched for and not found."
             ),
             input_schema={
                 "type": "object",

@@ -1,33 +1,23 @@
 """WELD-P1-006 -- installable MCP server smoke test.
 
 Pins three invariants the existing :mod:`weld_mcp_smoke_test` does not
-cover:
+cover (see each ``TestCase`` docstring below for the full contract):
 
-1. The MCP server's missing-graph contract is **actionable** -- every
-   graph-backed tool returns a structured error payload that mirrors the
-   CLI's :func:`weld._graph_cli.missing_graph_message` (stable
-   ``error_code='graph_missing'`` plus a hint and retry string).
+1. The missing-graph contract is actionable (``error_code='graph_missing'``
+   plus hint/retry, mirroring :func:`weld._graph_cli.missing_graph_message`).
 2. The stale-graph response from :func:`weld.mcp_server.weld_stale` is
-   **documented** -- the test asserts the canonical key set and value
-   types so consumers (Claude Code, Codex, MCP-aware tools) can rely on
-   it as a stable wire shape.
-3. The MCP server boots from an **installed** package, not just from the
-   repo source tree. This is the regression bar for the v0.8.0 wheel
-   miss (memory: ``v0-8-0-broken-shipped-0-8-1-hotfix``): build a wheel,
-   install it into an isolated prefix, and confirm
-   ``python -m weld.mcp_server --help`` runs from the installed copy.
+   documented as a stable wire shape.
+3. The MCP server boots from an **installed** package, not just the repo
+   source tree -- the regression bar for the v0.8.0 wheel miss (memory:
+   ``v0-8-0-broken-shipped-0-8-1-hotfix``).
 
-Layered for the local gate:
+Layered for the local gate: (1) and (2) run in-process under Bazel, fast
+and hermetic. (3) requires :mod:`ensurepip` / ``pip``, missing on the
+default devcontainer, so it ``skipTest``-s there; CI's Ubuntu runner has
+both.
 
-* The contract assertions (1) and (2) run in-process under Bazel: fast,
-  deterministic, and hermetic (no network, no subprocess).
-* The wheel-install smoke (3) requires :mod:`ensurepip` and ``pip wheel``
-  / ``pip install``. The default devcontainer ships without ensurepip,
-  so the test ``skipTest``-s when those toolchains are unavailable. CI
-  picks the path up because the Ubuntu runner has both.
-
-This file complements -- does not replace -- :mod:`weld_mcp_smoke_test`,
-which keeps the JSON-RPC handshake and tool-name pinning.
+Complements -- does not replace -- :mod:`weld_mcp_smoke_test`, which keeps
+the JSON-RPC handshake and tool-name pinning.
 """
 
 from __future__ import annotations
@@ -62,9 +52,8 @@ from weld.tests._source_tree_copy import (  # noqa: E402
 # 1. Missing-graph contract -- one assertion per graph-backed tool.
 # ---------------------------------------------------------------------------
 
-# Tools that the guard MUST cover. ``weld_find`` (file index, not graph)
-# and ``weld_stale`` (already exposes graph_sha=null + reason) are exempt
-# by design and are pinned separately below.
+# Tools that the graph_missing guard MUST cover. weld_find and weld_stale
+# are exempt (ADR 0134) -- see test_not_graph_guarded_tools_have_their_own_contract.
 _GUARDED_TOOLS: dict[str, dict] = {
     "weld_query": {"term": "anything"},
     "weld_context": {"node_id": "node:nope"},
@@ -79,7 +68,7 @@ _GUARDED_TOOLS: dict[str, dict] = {
     "weld_enrich": {},
 }
 
-_EXEMPT_TOOLS: frozenset[str] = frozenset({"weld_find", "weld_stale"})
+_NOT_GRAPH_GUARDED_TOOLS: frozenset[str] = frozenset({"weld_find", "weld_stale"})
 
 
 class MissingGraphContractTest(unittest.TestCase):
@@ -158,16 +147,18 @@ class MissingGraphContractTest(unittest.TestCase):
                         f"(handler in registry is not the wrapped one)",
                     )
 
-    def test_exempt_tools_do_not_error_on_missing_graph(self) -> None:
-        # weld_find reads the file index, not the graph. weld_stale
-        # already exposes ``graph_sha=null`` + a reason string. Both
-        # must remain side-effect-free and non-erroring on missing
-        # graphs (legacy contract).
+    def test_not_graph_guarded_tools_have_their_own_contract(self) -> None:
+        # weld_find reads the file index, not the graph: on a root with
+        # no file index it returns its own structured cannot-answer
+        # (``file_index_missing``, ADR 0134), never the graph guard's
+        # ``graph_missing``. weld_stale already exposes
+        # ``graph_sha=null`` + a reason string and never errors. Neither
+        # goes through the graph_missing guard.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             find_result = mcp_server.weld_find("anything", root=root)
-            self.assertNotIn("error_code", find_result)
-            self.assertIn("files", find_result)
+            self.assertEqual(find_result.get("error_code"), "file_index_missing")
+            self.assertIn("hint", find_result)
             stale_result = mcp_server.weld_stale(root=root)
             self.assertNotIn("error_code", stale_result)
 

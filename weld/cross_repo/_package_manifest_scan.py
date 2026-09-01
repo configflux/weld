@@ -35,14 +35,33 @@ separator munging: that would over-merge ``order-schema`` and
 The scan tolerates every malformed input (bad TOML, unreadable XML,
 missing files) by contributing nothing for that manifest rather than
 raising -- one bad file in one child must not sink the whole resolver.
+
+**Which files it may read (ADR 0137 s6).** Only the ones the child
+repository claims as its own, via
+:func:`weld.repo_boundary.iter_repo_files`: git-visible files, so
+``.gitignore`` is honoured natively, with the excluded-directory set as
+the fallback for a child that is not a git repository. A private
+``os.walk`` with a hand-maintained skip list read whatever was on disk,
+and a service that vendored a ``.venv`` was credited with *producing*
+every distribution inside it -- ``pandas`` out of a
+``dist-info/pyproject.toml``, ``google.protobuf`` out of a bundled
+``grpc_tools`` ``.proto`` -- so every sibling declaring those as
+dependencies got a fabricated edge to it (field-eval v0.24.0, N2).
+
+Git-visibility answers "does this repo claim this file", which is the
+whole of that finding. It does not answer "is this the repo's own package
+declaration", so the vendored / build-output directory names are applied
+on *both* routes -- see :data:`_NOT_OWN_DECLARATION_DIRS`.
 """
 
 from __future__ import annotations
 
-import os
 import re
 import tomllib
 import xml.etree.ElementTree as ET
+from pathlib import Path
+
+from weld.repo_boundary import EXCLUDED_DIR_NAMES, iter_repo_files
 
 #: Manifest filenames probed inside each child repo. Kept small and
 #: explicit; a new manifest family is added here plus a parser below.
@@ -51,11 +70,34 @@ _GO_MOD = "go.mod"
 _CSPROJ_SUFFIX = ".csproj"
 _PROTO_SUFFIX = ".proto"
 
-#: Directories never descended when scanning a child for manifests. These
-#: hold build output / vendored copies whose manifests are not the repo's
-#: own declaration and would produce phantom producers/consumers.
-_SKIP_DIRS: frozenset[str] = frozenset(
-    {".git", "bin", "obj", "node_modules", ".weld", "vendor", "packages"}
+#: Directory names holding build output or third-party copies. A manifest
+#: under one of these is never *this* repo's own declaration, whatever git
+#: thinks of it: a committed ``vendor/`` tree is code the repo carries, not
+#: code it publishes, and crediting it as a producer is the same fabricated
+#: edge N2 reported under a different directory name. So this set is applied
+#: on both routes -- git-backed and not -- and git-visibility narrows it
+#: further rather than replacing it.
+_NOT_OWN_DECLARATION_DIRS: frozenset[str] = frozenset({
+    ".venv",
+    "venv",
+    "site-packages",
+    ".tox",
+    "dist",
+    "build",
+    "target",
+    "bin",
+    "obj",
+    "vendor",
+    "packages",
+})
+
+#: What a child that is *not* a git repository is judged by instead: the
+#: shared repo-boundary set (``.git``, ``node_modules``, ``__pycache__``,
+#: ``.weld``, ``bazel-*``, ``.worktrees``, ...) plus the names above. Spelled
+#: as the union rather than relying on ``iter_repo_files`` to re-apply the
+#: shared half, so this constant reads as the whole fallback policy.
+_FALLBACK_EXCLUDED_DIRS: frozenset[str] = (
+    EXCLUDED_DIR_NAMES | _NOT_OWN_DECLARATION_DIRS
 )
 
 _PROTO_PACKAGE_RE = re.compile(r"^\s*package\s+([A-Za-z0-9_.]+)\s*;", re.MULTILINE)
@@ -194,25 +236,39 @@ def _scan_go_require_blocks(text: str, consumed: set[str]) -> None:
 def scan_child_manifests(child_dir: str) -> tuple[set[str], set[str]]:
     """Return ``(produced, consumed)`` package-name sets for one child repo.
 
-    Walks the child tree once (skipping build-output directories) and
-    dispatches each manifest to its parser. Returns raw, un-normalized
+    Reads the repo-visible files under *child_dir* once and dispatches
+    each manifest among them to its parser. Returns raw, un-normalized
     names; the caller normalizes at match time so both the produced and
     consumed side go through the identical key function.
+
+    A directory the child does not claim contributes nothing -- see the
+    module docstring for which files that admits and why.
     """
     produced: set[str] = set()
     consumed: set[str] = set()
-    if not os.path.isdir(child_dir):
+    root = Path(child_dir)
+    # ``Path("")`` is the current directory where ``os.path.isdir("")`` is
+    # False, so the empty string is rejected explicitly: an empty child path
+    # means "no such child", never "scan wherever this process happens to be".
+    if not child_dir or not root.is_dir():
         return produced, consumed
-    for current, dirnames, filenames in os.walk(child_dir):
-        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
-        for filename in sorted(filenames):
-            full = os.path.join(current, filename)
-            if filename == _PYPROJECT:
-                _scan_pyproject(full, produced, consumed)
-            elif filename == _GO_MOD:
-                _scan_go_mod(full, produced, consumed)
-            elif filename.endswith(_CSPROJ_SUFFIX):
-                _scan_csproj(full, consumed)
-            elif filename.endswith(_PROTO_SUFFIX):
-                _scan_proto(full, produced)
+
+    # ``iter_repo_files`` resolves the root it returns paths under, so
+    # relativize against the same resolved root rather than the argument.
+    root = root.resolve()
+    for path in iter_repo_files(
+        root, fallback_excluded_dir_names=_FALLBACK_EXCLUDED_DIRS
+    ):
+        if _NOT_OWN_DECLARATION_DIRS.intersection(path.relative_to(root).parts[:-1]):
+            continue
+        name = path.name
+        full = str(path)
+        if name == _PYPROJECT:
+            _scan_pyproject(full, produced, consumed)
+        elif name == _GO_MOD:
+            _scan_go_mod(full, produced, consumed)
+        elif name.endswith(_CSPROJ_SUFFIX):
+            _scan_csproj(full, consumed)
+        elif name.endswith(_PROTO_SUFFIX):
+            _scan_proto(full, produced)
     return produced, consumed

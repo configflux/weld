@@ -5,7 +5,15 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 
 from weld._graph_closure_deferred import deferred_edge_props, deferred_names_for
+from weld._graph_closure_import_attr import rewrite_import_attr_targets
+from weld._graph_closure_modules import (
+    external_package_name as _external_package_name,
+    first_file_node as _first_file_node,
+    module_candidates as _module_candidates,
+    python_source_root_candidates,
+)
 from weld._graph_closure_package_origin import origin_for_synthesised_package
+from weld._graph_closure_reexport import rewrite_reexport_targets
 from weld._node_ids import package_id as _canonical_package_id
 
 _STRATEGY = "graph_closure"
@@ -43,6 +51,16 @@ def close_graph(nodes: dict[str, dict], edges: list[dict]) -> None:
     """Add deterministic closure nodes/edges in-place."""
     path_index = _path_index(nodes)
     _link_source_backed_nodes(nodes, edges, path_index)
+    # Both retargets run ahead of the module index, because between them they
+    # remove facade stubs and (undoing a previous run) restore them, and
+    # ``_module_index`` keys a module with no file node to whichever symbol
+    # claims it. Running after would let the two discover paths index a
+    # different node set for the same tree. Ahead of ``_decorate_call_edges``
+    # too, so ``props.raw`` is read off the symbol an edge finally points at.
+    # The import-attr rule goes first: what it lands on is a stub the re-export
+    # walk then follows when that module merely re-exports the member.
+    rewrite_import_attr_targets(nodes, edges, path_index)
+    rewrite_reexport_targets(nodes, edges, path_index)
     module_index = _module_index(nodes, path_index)
     _link_imports(nodes, edges, path_index, module_index)
     _decorate_call_edges(nodes, edges)
@@ -94,6 +112,12 @@ def _module_index(nodes: dict[str, dict], path_index: dict[str, str]) -> dict[st
 
 
 def _index_python_module(index: dict[str, str], rel_path: str, node_id: str) -> None:
+    # Deliberately not routed through ``python_dotted_module`` even though the
+    # dotted half is the same rule: this index also keys a slash spelling, and
+    # the two are derived from the path's own parts. Swapping the dots in the
+    # dotted name for slashes is not the same string once a filename itself
+    # contains a dot, and rekeying an index no part of this change needs is not
+    # worth the tidier call site.
     path = PurePosixPath(rel_path)
     parts = list(path.with_suffix("").parts)
     if parts and parts[-1] == "__init__":
@@ -185,9 +209,17 @@ def _resolve_import(
         target = _resolve_path_like_import(name, source_file, path_index)
         if target:
             return target, "local_path"
+    # Three ranks, most specific first (N4, see ``weld._graph_closure_modules``):
+    # a source-root-relative reading of the whole name, then the literal name,
+    # then the same reading of its parent module.
+    before, after = python_source_root_candidates(name, language, source_file)
+    if target := _first_file_node(before, module_index):
+        return target, "local_module"
     for module_name in _module_candidates(name, language, source_file):
         if module_name in module_index:
             return module_index[module_name], "local_module"
+    if target := _first_file_node(after, module_index):
+        return target, "local_module"
     return None, "external"
 
 
@@ -332,40 +364,6 @@ def _normalize_import(raw: str) -> str:
     if value.startswith(("./", "../")):
         return value
     return _clean_posix(value)
-
-
-def _module_key(name: str, language: str) -> str:
-    value = name
-    if language == "python":
-        return value.replace("/", ".")
-    if language in {"typescript", "go", "rust"}:
-        return value.strip("/")
-    if language == "java" and value.endswith(".*"):
-        return value[:-2]
-    return value
-
-
-def _module_candidates(name: str, language: str, source_file: str) -> list[str]:
-    value = _module_key(name, language)
-    candidates = [value, value.replace("/", ".")]
-    if language == "rust":
-        rust = value.replace("::", ".").strip(".")
-        for prefix in ("crate.", "self.", "super."):
-            if rust.startswith(prefix):
-                rust = rust[len(prefix):]
-        candidates.extend([rust, rust.replace(".", "/")])
-        parts = PurePosixPath(source_file).parts
-        if parts and rust:
-            candidates.extend([f"{parts[0]}.{rust}", f"{parts[0]}/{rust}"])
-    return [c for c in dict.fromkeys(candidates) if c]
-
-
-def _external_package_name(name: str, language: str) -> str:
-    if language == "java":
-        value = name[:-2] if name.endswith(".*") else name
-        package, dot, _class = value.rpartition(".")
-        return package if dot else value
-    return name
 
 
 def _looks_like_file_import(name: str, language: str) -> bool:

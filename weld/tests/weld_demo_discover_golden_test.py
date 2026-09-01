@@ -11,6 +11,14 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest import mock
+
+from weld.tests._golden_invariants import (
+    GoldenScope,
+    check_golden_graph,
+    child_graphs_from_repo_nodes,
+)
+from weld.tests._golden_violation_fixtures import with_fabricated_external
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -19,6 +27,12 @@ _UPDATE_ENV = "UPDATE_WELD_DEMO_DISCOVER_GOLDENS"
 _UPDATE_COMMAND = (
     f"{_UPDATE_ENV}=1 python3 weld/tests/weld_demo_discover_golden_test.py"
 )
+
+#: ADR 0139 mechanism 5 / bd 5038-ipa1e. Both demo goldens close over their own
+#: edges -- the monorepo because it is one repo, the polyrepo because its two
+#: cross-repo endpoints resolve into the child graphs the run writes into the
+#: scratch tree and :func:`child_graphs_from_repo_nodes` hands back.
+_SCOPE = GoldenScope(family="demo_discover")
 
 _GENERATED_NAMES = {
     ".git",
@@ -148,7 +162,14 @@ def _seed_child_repo(child: Path) -> None:
     _git(child, "commit", "-q", "-m", "demo seed")
 
 
-def _discover_monorepo() -> dict:
+def _discover_monorepo() -> tuple[dict, dict[str, Any]]:
+    """The root graph and, explicitly, no children (ADR 0139 R6).
+
+    Both discover helpers return the pair so the child roster is always stated
+    rather than defaulted: ``{}`` here is the claim that these edges close over
+    one repo, and it is checkable, where a missing argument would only mean
+    somebody did not think about it.
+    """
     with TemporaryDirectory() as tmp:
         demo = _copy_demo("04-monorepo-typescript", Path(tmp))
         _run_discover(
@@ -159,10 +180,18 @@ def _discover_monorepo() -> dict:
             expect_stdout=False,
         )
         _run_validate(demo)
-        return _read_graph(demo)
+        return _read_graph(demo), {}
 
 
-def _discover_polyrepo() -> dict:
+def _discover_polyrepo() -> tuple[dict, dict[str, Any]]:
+    """The federated root graph plus every child graph its edges reach into.
+
+    The children are read before the scratch tree is torn down, because the
+    root's only edge is a ``cross_repo:calls`` whose endpoints are
+    ``<child>\\x1f<child-local-id>`` -- resolvable in the children's graphs and
+    nowhere else. Without them ``assert_edges_resolve`` would have to be skipped
+    on the one shipped golden that has a cross-repo edge to check.
+    """
     with TemporaryDirectory() as tmp:
         demo = _copy_demo("05-polyrepo", Path(tmp))
         for rel_path in ("services/api", "services/auth", "libs/shared-models"):
@@ -183,7 +212,8 @@ def _discover_polyrepo() -> dict:
             expect_stdout=False,
         )
         _run_validate(demo)
-        return _read_graph(demo)
+        graph = _read_graph(demo)
+        return graph, child_graphs_from_repo_nodes(graph, demo)
 
 
 def _normalise_graph(graph: dict[str, Any]) -> dict[str, Any]:
@@ -219,9 +249,21 @@ def _snapshot_text(graph: dict[str, Any]) -> str:
 class DemoDiscoverGoldenTest(unittest.TestCase):
     maxDiff = None
 
-    def assertMatchesGolden(self, name: str, graph: dict[str, Any]) -> None:
+    def assertMatchesGolden(
+        self,
+        name: str,
+        graph: dict[str, Any],
+        child_graphs: dict[str, Any],
+    ) -> None:
         actual = _normalise_graph(graph)
         golden_path = _GOLDEN_DIR / f"{name}.json"
+
+        # ADR 0139 mechanism 5: checked before the write, so the regen path
+        # cannot bake a violation the next compare would then assert faithfully.
+        check_golden_graph(
+            actual, scope=_SCOPE, label=f"{name} (discovered)",
+            child_graphs=child_graphs,
+        )
 
         if os.environ.get(_UPDATE_ENV) == "1":
             golden_path.parent.mkdir(parents=True, exist_ok=True)
@@ -234,6 +276,12 @@ class DemoDiscoverGoldenTest(unittest.TestCase):
             )
 
         expected = json.loads(golden_path.read_text(encoding="utf-8"))
+        # Before the equality assertion: a violating golden should name the
+        # invariant it breaks, not print a diff and leave the reader to infer it.
+        check_golden_graph(
+            expected, scope=_SCOPE, label=f"{name}.json",
+            child_graphs=child_graphs,
+        )
         self.assertEqual(
             actual,
             expected,
@@ -242,10 +290,72 @@ class DemoDiscoverGoldenTest(unittest.TestCase):
         )
 
     def test_monorepo_typescript_discover_matches_golden(self) -> None:
-        self.assertMatchesGolden("04-monorepo-typescript", _discover_monorepo())
+        graph, children = _discover_monorepo()
+        self.assertMatchesGolden("04-monorepo-typescript", graph, children)
 
     def test_polyrepo_root_discover_matches_golden(self) -> None:
-        self.assertMatchesGolden("05-polyrepo", _discover_polyrepo())
+        graph, children = _discover_polyrepo()
+        self.assertMatchesGolden("05-polyrepo", graph, children)
+
+
+#: This module, for redirecting ``_GOLDEN_DIR`` at a scratch copy. Under Bazel
+#: the module is imported as ``__main__``, so a dotted patch target would miss.
+_MODULE = sys.modules[__name__]
+
+_MONOREPO_GOLDEN = "04-monorepo-typescript"
+
+
+class GoldenInvariantHookTest(unittest.TestCase):
+    """``assertMatchesGolden`` rejects a violating payload on either path.
+
+    bd 5038-ipa1e / ADR 0139 mechanism 5. Discovery is not re-run: the base is
+    the shipped golden read off disk, which is the producer's own output, and the
+    violation is minted onto a copy of it by ``weld.graph_closure``'s minters.
+    """
+
+    def _harness(self) -> DemoDiscoverGoldenTest:
+        """An instance borrowed for ``assertMatchesGolden``; constructing a
+        TestCase does not run the named method."""
+        return DemoDiscoverGoldenTest("test_monorepo_typescript_discover_matches_golden")
+
+    def _clean_golden(self) -> dict:
+        path = _GOLDEN_DIR / f"{_MONOREPO_GOLDEN}.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_compare_path_rejects_a_violating_golden(self) -> None:
+        clean = self._clean_golden()
+        with TemporaryDirectory() as tmp:
+            scratch = Path(tmp)
+            (scratch / f"{_MONOREPO_GOLDEN}.json").write_text(
+                _snapshot_text(with_fabricated_external(clean)), encoding="utf-8",
+            )
+            # The regen switch is forced off, not merely assumed off. Whoever
+            # runs the documented `UPDATE_WELD_DEMO_DISCOVER_GOLDENS=1 python3
+            # weld/tests/weld_demo_discover_golden_test.py` has it set for the
+            # whole process, and this case would then overwrite its own injected
+            # golden with the clean payload and find nothing to reject -- passing
+            # in the fast loop and failing only in the hands of the one person
+            # regenerating.
+            with mock.patch.object(_MODULE, "_GOLDEN_DIR", scratch), \
+                 mock.patch.dict(os.environ, {_UPDATE_ENV: "0"}), \
+                 self.assertRaises(AssertionError) as caught:
+                self._harness().assertMatchesGolden(_MONOREPO_GOLDEN, clean, {})
+        self.assertIn("already holds first-party", str(caught.exception))
+
+    def test_regen_path_refuses_to_bake_a_violation(self) -> None:
+        violating = with_fabricated_external(self._clean_golden())
+        with TemporaryDirectory() as tmp:
+            scratch = Path(tmp)
+            written = scratch / f"{_MONOREPO_GOLDEN}.json"
+            with mock.patch.object(_MODULE, "_GOLDEN_DIR", scratch), \
+                 mock.patch.dict(os.environ, {_UPDATE_ENV: "1"}), \
+                 self.assertRaises(AssertionError) as caught:
+                self._harness().assertMatchesGolden(_MONOREPO_GOLDEN, violating, {})
+            self.assertIn("already holds first-party", str(caught.exception))
+            self.assertFalse(
+                written.exists(),
+                "regen wrote a graph carrying a fabricated external to the golden",
+            )
 
 
 if __name__ == "__main__":

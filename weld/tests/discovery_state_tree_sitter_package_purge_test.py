@@ -269,6 +269,41 @@ class EmptiedTreeSitterPackageNodeIdsTest(unittest.TestCase):
         }
         self.assertEqual(emptied_tree_sitter_package_node_ids(nodes, []), set())
 
+    def test_a_prop_value_of_any_type_answers_rather_than_raising(self) -> None:
+        """The VALUE half of the defensiveness the two tests above cover only
+        the SHAPE of (bd 5038-53jjg).
+
+        ``props`` is read back off ``.weld/graph.json``, which ADR 0115 treats
+        as unvetted repo text, so a well-formed dict can still carry
+        ``"origin": []`` -- and ``origin`` is the one key this predicate tests
+        by membership in :data:`_PURGEABLE_ORIGINS`, where an unhashable value
+        raised ``TypeError`` rather than answering, aborting this purge and the
+        whole incremental discover around it. Found by the sibling sweep bd
+        5038-53jjg ran after fixing the identical shape in
+        :mod:`weld._discover_external_package_purge`; ``_is_derived_edge``
+        (bd 5038-rwi34) is the guard both now use.
+
+        All three prop keys the predicate reads are exercised, not just the
+        membership one: ``source_strategy`` and ``authority`` are compared with
+        ``==`` and were already total over any value, and pinning them here
+        says that stays true if either is ever rewritten as a membership test
+        the way ``origin`` already is.
+        """
+        unhashable_and_non_string = (
+            [], ["external"], {"external": 1}, {"external"}, 7, None,
+        )
+        for key in ("origin", "source_strategy", "authority"):
+            for value in unhashable_and_non_string:
+                with self.subTest(key=key, value=value):
+                    node = _tree_sitter_package("Newtonsoft.Json")
+                    node["props"][key] = value
+                    self.assertEqual(
+                        emptied_tree_sitter_package_node_ids(
+                            {"package:csharp:newtonsoft.json": node}, [],
+                        ),
+                        set(),
+                    )
+
 
 class EmptiedPlaceholderNodeIdsTreeSitterPackageTest(unittest.TestCase):
     """The union entry point :mod:`weld.discovery_state` actually calls."""
@@ -278,6 +313,23 @@ class EmptiedPlaceholderNodeIdsTreeSitterPackageTest(unittest.TestCase):
         self.assertEqual(
             emptied_placeholder_node_ids(nodes, []), {"package:csharp:newtonsoft.json"},
         )
+
+    def test_a_malformed_origin_is_total_across_the_whole_union(self) -> None:
+        """Answering per-rule is not enough: this is the entry point
+        ``purge_stale_nodes`` calls, and it runs EVERY rule over EVERY node,
+        so a value this predicate now declines on safely could still raise --
+        or be claimed -- inside a sibling rule (bd 5038-53jjg).
+        """
+        for value in ([], {"external"}, 7, None):
+            with self.subTest(origin=value):
+                node = _tree_sitter_package("Newtonsoft.Json")
+                node["props"]["origin"] = value
+                self.assertEqual(
+                    emptied_placeholder_node_ids(
+                        {"package:csharp:newtonsoft.json": node}, [],
+                    ),
+                    set(),
+                )
 
     def test_java_unresolved_matches_the_union(self) -> None:
         nodes = {
