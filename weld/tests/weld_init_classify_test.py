@@ -200,5 +200,54 @@ class DetectAllParityTest(unittest.TestCase):
         self.assertEqual(actual["python_globs"], expected["python_globs"])
 
 
+class RootConfigEcosystemManifestTest(unittest.TestCase):
+    """Every ecosystem weld extracts from has its manifest claimed.
+
+    ``ROOT_CONFIG_NAMES`` is what turns a repo's manifests into ``config:``
+    nodes. ``tsconfig.json`` was missing from it while every other
+    ecosystem's manifest was present, so a TypeScript project's compiler
+    config -- the file weld itself reads for ``compilerOptions.paths``
+    alias resolution -- never became a node in that project's graph
+    (bd 5038-q9hba). The gap survived because the one gold set that
+    asserted the node was authored against a hand-written discover.yaml
+    that *did* claim it, while the gate that consumed the gold rebuilt its
+    config with ``wd init``: nothing compared the two.
+    """
+
+    def _detect(self, names: tuple[str, ...]) -> list[str]:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for name in names:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}\n")
+            return detect_root_configs(root, scan_files(root))
+
+    def test_root_manifests_are_detected(self) -> None:
+        """One manifest per ecosystem, each claimed at the repo root."""
+        manifests = (
+            "pyproject.toml", "package.json", "tsconfig.json",
+            "Cargo.toml", "go.mod", "Makefile", "MODULE.bazel",
+        )
+        detected = self._detect(manifests)
+        for name in manifests:
+            with self.subTest(manifest=name):
+                self.assertIn(
+                    name, detected,
+                    f"{name} is the canonical manifest of an ecosystem weld "
+                    f"extracts from and must be claimed as a root config; "
+                    f"detected={detected}",
+                )
+
+    def test_nested_tsconfig_does_not_fire(self) -> None:
+        """Root-only, like every other entry: a nested copy is not a root
+        config. A monorepo's ``apps/web/tsconfig.json`` is one package's
+        config, not the repository's, and claiming it here would mint a
+        ``config:tsconfig_json`` node whose id collides with the root's.
+        """
+        detected = self._detect(("apps/web/tsconfig.json",))
+        self.assertNotIn("tsconfig.json", detected)
+
+
 if __name__ == "__main__":
     unittest.main()

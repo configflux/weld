@@ -9,7 +9,7 @@ while the real ``pkg/helper.py`` definition collected no caller edge at all
 (bd ``zr486``).
 
 That is the same failure as the bare-name half next door in
-:mod:`weld.strategies._python_sibling_import` (bd ``sigz2``) and as bd
+:mod:`weld.strategies._python_source_root_import` (bd ``sigz2``) and as bd
 ``1m1g9``'s fabricated ``symbol:py:<module>:<method>``: a miss is recoverable,
 a confident wrong answer is what a reader acts on. It is also the half that
 matters most *outside* this repo -- the walked globs here hold no relative
@@ -27,8 +27,9 @@ file's own package, and this module is a transcription of CPython's
 it. Both refusals below are that sanity check, not a policy this repo chose.
 
 Correcting the table rather than the resolver is the same call
-:mod:`_python_sibling_import` documents and for the same reason: three separate
-branches of ``_ExprResolutionMixin._resolve_expr_target`` read the module slot,
+:mod:`_python_source_root_import` documents and for the same reason: three
+separate branches of ``_ExprResolutionMixin._resolve_expr_target`` read the
+module slot,
 and one of them hands ``props.import_attr`` on to
 :mod:`weld._graph_closure_import_attr`. Fixing the fact once, where the table
 is built, is what keeps them from drifting -- and the closure never has to

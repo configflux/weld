@@ -53,7 +53,14 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     kind = source.get("kind", "compose_env")
     if kind == "compose_env":
-        nodes, edges, discovered = extract_compose_env(root, pattern)
+        # bd b9xgd: ``exclude:`` reaches the config half now that it resolves
+        # through the ADR 0112 shared resolver. The callsite half still walks
+        # ``iter_python_asts``, which has its own resolve and no exclude
+        # vocabulary, so the key is passed only where it is honoured rather
+        # than accepted and silently dropped.
+        nodes, edges, discovered = extract_compose_env(
+            root, pattern, source.get("exclude", []),
+        )
     elif kind == "py_callsite":
         nodes, edges, discovered = extract_py_callsite(root, pattern)
     else:

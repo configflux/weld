@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 from weld._rel_path import rel_to_root
+from weld.strategies import _ts_dialect
 from weld.strategies._glob_resolve import resolve_glob_with_provenance
 from weld.strategies._helpers import StrategyResult
 from weld.strategies._tree_sitter_ids import (
@@ -93,8 +94,13 @@ def _load_ts_language(variant: str = "typescript") -> object:
 
 
 def _ts_variant_for(path: Path) -> str:
-    """Return the grammar variant key for a TypeScript/TSX file."""
-    return "tsx" if path.suffix.lower() == ".tsx" else "typescript"
+    """Return the grammar variant key for a TypeScript/TSX file.
+
+    Delegates to the shared table so this strategy and the ``tree_sitter``
+    one cannot drift about which grammar reads a ``.tsx`` file -- they did,
+    and the one that got it wrong is where gap G4 lived (bd lrnx1.5).
+    """
+    return _ts_dialect.grammar_variant(_ts_dialect.TYPESCRIPT_LANGUAGE, path)
 
 def _load_ts_queries() -> dict[str, str]:
     """Load the tree-sitter query definitions for TypeScript.

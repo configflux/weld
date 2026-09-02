@@ -18,8 +18,10 @@ from weld._init_framework_sources import (
     markdown_fallback_doc_source,
     yaml_has_wired_source,
 )
+from weld._init_entry_offer import EntryWiring, entry_keys
 from weld._init_interfaces import detect_interfaces, interface_source_entries
 from weld._init_language_entries import LanguageWiring, language_source_entries
+from weld._init_wired_ledger import render_ledger
 
 # Re-exports, not uses. The per-language wiring moved to
 # weld/_init_language_entries.py, but these names are referred to as
@@ -164,7 +166,30 @@ def generate_yaml(
             sections.extend(_make_stub(stub_glob, stub_type, stub_strat))
 
     block = "\n".join(sections) if sections else "  # No sources detected"
-    return f"{_YAML_HEADER}{_version_stamp()}\nsources:\n{block}\n"
+    record = _wired_entry_record(
+        languages, frameworks, python_globs, root_configs)
+    return f"{_YAML_HEADER}{_version_stamp()}{record}\nsources:\n{block}\n"
+
+
+def _wired_entry_record(
+    languages: dict[str, int], frameworks: list[tuple[str, str, str]],
+    python_globs: list[str], root_configs: list[str],
+) -> str:
+    """The ``# wired-entry:`` lines recording what this config was wired with.
+
+    A full init writes every entry the entry-shaped table can produce, so the
+    record is that table's whole key set. Written here rather than left for the
+    first ``wd init --refresh`` to infer, so that an entry deleted between the
+    init and that refresh reads as *removed* rather than as never offered --
+    which is the difference between a merge that respects a hand edit and one
+    that undoes it (bd 5038-j5o5d).
+    """
+    return render_ledger(set(entry_keys(EntryWiring(
+        root_configs=tuple(root_configs),
+        frameworks=tuple(frameworks),
+        python_globs=tuple(python_globs),
+        languages=frozenset(languages),
+    ))))
 
 
 def _version_stamp() -> str:
@@ -303,7 +328,7 @@ def main(argv: list[str] | None = None) -> None:
     root = Path(args.root).resolve()
     output = Path(args.output) if args.output else root / ".weld" / "discover.yaml"
     if args.refresh:
-        from weld._init_refresh import run_refresh
+        from weld._init_refresh_report import run_refresh
         run_refresh(root, output)
         return
     success = init(root, output, force=args.force)

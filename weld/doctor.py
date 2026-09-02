@@ -50,7 +50,6 @@ from weld._doctor_strategies import (check_failed_files, check_failed_sources,
 from weld._doctor_suppressions import handle_ack_flags, load_suppressions
 from weld._doctor_trust import check_language_trust
 from weld._safe_text import sanitize_terminal_text
-from weld._yaml import parse_yaml
 
 
 @dataclass(frozen=True)
@@ -75,24 +74,17 @@ class CheckResult:
 # ── individual checks ────────────────────────────────────────────────
 
 
-def _check_discover_yaml(weld_dir: Path) -> list[CheckResult]:
-    path = weld_dir / "discover.yaml"
-    if not path.is_file():
-        return [CheckResult("fail", ".weld/discover.yaml not found", "Config")]
-    try:
-        data = parse_yaml(path.read_text(encoding="utf-8"))
-        sources = data.get("sources", []) if isinstance(data, dict) else []
-        count = len(sources) if isinstance(sources, list) else 0
-    except Exception:
-        count = 0
-    suffix = "entries" if count != 1 else "entry"
-    return [
-        CheckResult(
-            "ok",
-            f".weld/discover.yaml found ({count} source {suffix})",
-            "Config",
-        )
-    ]
+def _check_discover_yaml(weld_dir: Path, root: Path) -> list[CheckResult]:
+    """Report the discovery config, or its considered absence (ADR 0141 D3).
+
+    At a root that federates, an absent ``discover.yaml`` is a note rather
+    than a failure -- such a root has no sources of its own to discover.
+    Delegates to :func:`weld._doctor_config.check_discover_yaml`; the body
+    (and the reasoning behind that verdict) lives there so this module stays
+    under the line-count cap.
+    """
+    from weld._doctor_config import check_discover_yaml
+    return check_discover_yaml(weld_dir, root, CheckResult)
 
 
 def _check_gitignore(weld_dir: Path) -> list[CheckResult]:
@@ -101,7 +93,7 @@ def _check_gitignore(weld_dir: Path) -> list[CheckResult]:
 
 
 def _check_unclaimed_sources(root: Path) -> list[CheckResult]:
-    """Warn when a language present on disk has no wired strategy (ADR 0135).
+    """Warn when files on disk have no wired strategy (ADR 0135, ADR 0144).
 
     Delegates to :func:`weld._unclaimed_sources.check_unclaimed_sources`; the
     detection logic lives there so this module stays under the line-count cap.
@@ -213,7 +205,7 @@ def doctor(root: Path) -> list[CheckResult]:
 
     results: list[CheckResult] = []
     results.extend(_check_python_version())
-    results.extend(_check_discover_yaml(weld_dir))
+    results.extend(_check_discover_yaml(weld_dir, root))
     results.extend(_check_unclaimed_sources(root))
     results.extend(_check_gitignore(weld_dir))
     results.extend(_check_graph_json(weld_dir))
@@ -257,6 +249,10 @@ Exit codes:
   1  invalid setup -- one or more errors detected
          (e.g. missing .weld/discover.yaml, corrupt .weld/graph.json,
           unresolved strategy reference)
+
+A workspace root that federates (.weld/workspaces.yaml present) and has no
+.weld/discover.yaml is not an invalid setup -- it has no sources of its own
+to discover -- so there the absent config is a note and the exit code stays 0.
 
 Notes ([note]) flag soft recommendations such as missing optional
 providers or missing MCP config; dismiss them per project with

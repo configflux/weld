@@ -1,20 +1,27 @@
 """What the script-relative-import rule declines, and why each refusal earns it.
 
-bd sigz2. The rule that resolves a bare import to the file beside its importer (``weld.strategies._python_sibling_import``, and
-what it resolves is ``weld_python_callgraph_sibling_import_test``) is an
-*inference*: nothing in the syntax says "sibling", only the interpreter's own
-``sys.path[0]`` behaviour does. So the interesting half is the refusals, and
-every one below is a shape live in this repo rather than an invented hazard.
+bd sigz2. The rule that resolves a bare import to the file beside its importer
+(``weld.strategies._python_source_root_import``, and what it resolves is
+``weld_python_callgraph_sibling_import_test``) is an *inference*: nothing in the
+syntax says "sibling", only the interpreter's own ``sys.path[0]`` behaviour
+does. So the interesting half is the refusals, and every one below is a shape
+live in this repo rather than an invented hazard.
 
-The rule's two conditions get two refusals each way:
+Read against the generalized rule (bd z98p7, ADR 0143), each case below is the
+same refusal reached one way or another -- the walk that looks for the
+``sys.path`` entry, and the glob bound on what it may name:
 
 * **The importer's directory has no ``__init__.py``.** Beside one, a bare name
-  is an absolute import. ``weld/providers/anthropic.py`` opens ``from anthropic
-  import Anthropic`` -- the third-party SDK -- and ``weld/strategies/
-  tree_sitter.py`` opens ``import tree_sitter``. Each names its own file, so a
-  sibling-first rule without this gate resolves the module to *itself*: worse
-  than the bug being fixed, and the reason the check is a filesystem probe
-  rather than a glob-membership test.
+  is an absolute import that cannot mean a sibling. ``weld/providers/
+  anthropic.py`` opens ``from anthropic import Anthropic`` -- the third-party
+  SDK -- and ``weld/strategies/tree_sitter.py`` opens ``import tree_sitter``.
+  Each names its own file, so a sibling-first rule resolves the module to
+  *itself*: worse than the bug being fixed. Under the generalized rule the walk
+  answers this by climbing past the package to the real source root, which for
+  both of those files is the repository root, where there is no prefix to add
+  and the written name stands. It is still a filesystem probe rather than a
+  glob-membership test, because "is this directory a package" must not vary
+  with how the glob was written.
 * **The candidate is a module the glob owns.** Nine files under ``tools/`` open
   ``import tier_check_grammar_gate``, whose module is ``weld/tests/``'s, reached
   through Bazel runfiles rather than from beside the importer; no glob matches
@@ -35,7 +42,14 @@ from weld.tests._import_table_fixture import ExtractCase, write
 
 
 class PackageDirectorySiblingTest(ExtractCase):
-    """A directory WITH ``__init__.py`` -- where the sibling reading is wrong."""
+    """A directory WITH ``__init__.py`` -- where the sibling reading is wrong.
+
+    ``provider/`` is a package and the repository root above it is not, so the
+    source root is the root, the prefix is empty, and the written name stands.
+    The generalized rule reaches the same refusal by climbing rather than by
+    stopping (bd z98p7): had ``provider/`` sat under a source root, the
+    candidate would have been that root's ``anthropic``, never this file.
+    """
 
     def build_tree(self) -> None:
         write(self.tmp, "provider/__init__.py", "")

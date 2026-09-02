@@ -184,6 +184,12 @@
         "srcs_edges": false,
         "test_edges": false
       },
+      "next": {
+        "deps_edges": false,
+        "nodes_emitted": false,
+        "srcs_edges": false,
+        "test_edges": false
+      },
       "npm": {
         "deps_edges": false,
         "nodes_emitted": false,

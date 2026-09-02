@@ -36,7 +36,9 @@ from weld.strategies import (
     _rust_tree_sitter,
     _ts_call_graph,
     _ts_definitions,
+    _ts_dialect,
     _ts_doc_comments,
+    _ts_file_props,
     _ts_parse,
     _typescript_inherits,
     _typescript_tree_sitter,
@@ -56,7 +58,7 @@ except ImportError:
 _INSTALL_MSG = (
     "tree_sitter strategy requires: "
     "pip install tree-sitter tree-sitter-python "
-    "tree-sitter-typescript tree-sitter-go tree-sitter-rust "
+    "tree-sitter-typescript tree-sitter-javascript tree-sitter-go tree-sitter-rust "
     "tree-sitter-cpp tree-sitter-c-sharp tree-sitter-java"
 )
 
@@ -84,43 +86,33 @@ def load_language_queries(language: str) -> dict[str, str]:
         FileNotFoundError: No query file for *language*.
         ValueError: Query file exists but is malformed.
     """
-    lang_dir = _languages_dir()
-    query_file = lang_dir / f"{language}.yaml"
+    query_file = _languages_dir() / f"{language}.yaml"
     if not query_file.exists():
         raise FileNotFoundError(
             f"No tree-sitter query file for language '{language}': "
-            f"expected {query_file}"
+            f"expected the bundled weld/languages/{query_file.name}"
         )
 
-    text = query_file.read_text(encoding="utf-8")
+    def _malformed(detail: object) -> ValueError:
+        return ValueError(f"Malformed query file {query_file.name}: {detail}")
+
     try:
-        data = parse_yaml(text)
+        data = parse_yaml(query_file.read_text(encoding="utf-8"))
     except Exception as exc:
-        raise ValueError(
-            f"Malformed query file {query_file.name}: {exc}"
-        ) from exc
+        raise _malformed(exc) from exc
 
     if not isinstance(data, dict) or "queries" not in data:
-        raise ValueError(
-            f"Malformed query file {query_file.name}: "
-            f"missing 'queries' key"
-        )
+        raise _malformed("missing 'queries' key")
 
     queries = data["queries"]
     if not isinstance(queries, dict):
-        raise ValueError(
-            f"Malformed query file {query_file.name}: "
-            f"'queries' must be a mapping"
-        )
+        raise _malformed("'queries' must be a mapping")
 
     # Validate each query is a non-empty string
     result: dict[str, str] = {}
     for name, query_str in queries.items():
         if not isinstance(query_str, str) or not query_str.strip():
-            raise ValueError(
-                f"Malformed query file {query_file.name}: "
-                f"query '{name}' must be a non-empty string"
-            )
+            raise _malformed(f"query '{name}' must be a non-empty string")
         result[name] = query_str.strip()
 
     return result
@@ -189,6 +181,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         )
         return StrategyResult(nodes, edges, discovered_from)
 
+    # ``language: tsx`` is a dialect spelling, not a language of its own; the
+    # per-file grammar dispatch in ``_ts_parse`` handles the rest.
+    language = _ts_dialect.canonical_language(language)
+
     # Load query patterns for this language
     try:
         queries = load_language_queries(language)
@@ -247,6 +243,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
         if emit_calls:
             cg_nodes, cg_edges = _extract_call_edges(fpath, rel_path, language, queries, cache=parse_cache)
+            if ts_caches is not None:  # ADR 0142 D2: bind imported callees
+                _typescript_tree_sitter.bind_call_imports(
+                    cg_edges, rel_path, ts_caches.get("first_party"),
+                )
             nodes.update(cg_nodes)
             edges.extend(cg_edges)
 
@@ -265,7 +265,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
             )
 
         exports = symbols.get("exports", [])
-        if not exports and not runtime_startup:
+        # A barrel -- or its CommonJS twin -- defines nothing, so without this
+        # it drops out of the graph entirely (ADR 0142 D5/D6, gaps G5 and G6).
+        publishing = _ts_file_props.has_publication_evidence(symbols)
+        if not exports and not publishing and not runtime_startup:
             continue
 
         nid = _make_node_id(rel_path, id_prefix)
@@ -288,7 +291,10 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         if classes:
             node_props["types"] = classes
 
-        imports = symbols.get("imports", [])
+        # A re-export is an import the file never spells as one, so its
+        # specifier joins ``imports_from`` (ADR 0142 D5).
+        imports = _ts_file_props.merge_reexport_sources(symbols)
+        _ts_file_props.stamp_publication_evidence(node_props, symbols)
         if imports:
             # Go's raw capture is quote-wrapped (bd bt5m); clean it before
             # it reaches imports_from so Go matches every sibling
@@ -304,7 +310,7 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
                 _go_tree_sitter.stamp_import_origins(node_props, imports, go_module_path)
             elif language == "rust":
                 _rust_tree_sitter.stamp_import_origins(node_props, imports, rust_cargo)
-        _ts_parse.stamp_type_uses(node_props, symbols)  # ADR 0061
+        _ts_file_props.stamp_type_uses(node_props, symbols)  # ADR 0061
         node_props["source_strategy"] = source_strategy
         node_props["authority"] = "derived"
         node_props["confidence"] = "definite"

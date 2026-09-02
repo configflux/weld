@@ -46,6 +46,23 @@ def _wired_strategies(text: str) -> set[str]:
     }
 
 
+def _wired_languages(text: str) -> set[str]:
+    """``language:`` values of every *uncommented* source entry in ``text``.
+
+    Strategy names alone cannot tell a TypeScript-only refresh from a
+    TypeScript-and-JavaScript one: both wire ``tree_sitter``. The language
+    field is what separates them, and it is the field the JavaScript half of
+    ADR 0142 D1 turns on.
+    """
+    data = parse_yaml(text)
+    sources = data.get("sources", []) if isinstance(data, dict) else []
+    return {
+        s.get("language")
+        for s in sources
+        if isinstance(s, dict) and s.get("language")
+    }
+
+
 def _write(root: Path, config: str) -> Path:
     """Create ``root/.weld/discover.yaml`` with ``config`` and return its path."""
     (root / ".weld").mkdir(parents=True, exist_ok=True)
@@ -84,6 +101,22 @@ _DOTNET_SERVICE: dict[str, str] = {
     "src/Api/ReplayOptions.cs": "namespace Api;\n",
     "tests/Api.Tests/OrderTests.cs": "namespace Api.Tests;\n",
     "doc/order-gateway.md": "# Order Gateway\n",
+}
+
+#: A Node service in both dialects, importing express: the third shape, added
+#: with ADR 0142 D1. Its own case because it is the only stack whose *language
+#: detection* was incomplete rather than its entry table -- ``javascript`` was
+#: absent from :data:`weld._unclaimed_sources._CLAIMING_STRATEGIES`, so a repo
+#: whose ``.js`` files nothing wired was not merely unreported but
+#: unrefreshable: refresh wires exactly the languages that detector returns.
+_NODE_SERVICE: dict[str, str] = {
+    "package.json": '{"name": "api", "private": true}\n',
+    "src/server.ts": (
+        'import express from "express";\n\nexport const app = express();\n'
+    ),
+    "src/legacy.js": 'const express = require("express");\n',
+    "src/server.test.ts": "export const cases = [];\n",
+    "doc/api.md": "# api\n",
 }
 
 #: A Go module importing gin: covers the other half of the reduced table --
@@ -177,6 +210,28 @@ class ForceParityTest(unittest.TestCase):
         self.assertIn("go_package", refreshed)  # ADR 0132
         self.assertIn("gin", refreshed)  # ADR 0071
         self.assertIn("test_peer", refreshed)  # ADR 0046
+
+    def test_node_refresh_wires_every_strategy_force_wires(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            refreshed_text, forced_text = self._refreshed_and_forced(
+                Path(tmp), _NODE_SERVICE)
+        refreshed = _wired_strategies(refreshed_text)
+        forced = _wired_strategies(forced_text)
+        self.assertTrue(forced, "--force wired no strategies at all")
+        self.assertEqual(
+            sorted(forced - refreshed), [],
+            f"--refresh wires less than --force on a Node repo: "
+            f"refresh={sorted(refreshed)} force={sorted(forced)}",
+        )
+        self.assertIn("express", refreshed)  # ADR 0071 / ADR 0142 D1
+        self.assertIn("test_peer", refreshed)  # ADR 0046
+        # Both dialect families, not just the one that happens to carry the
+        # tree_sitter name: a refresh that saw only TypeScript would satisfy
+        # every strategy-level assertion above and still leave every .js file
+        # invisible, which is the JavaScript half of gap G1.
+        self.assertEqual(
+            _wired_languages(refreshed_text), _wired_languages(forced_text))
+        self.assertIn("javascript", _wired_languages(refreshed_text))
 
     def test_hand_edits_survive_the_wider_wiring(self) -> None:
         """Parity must not have been bought by regenerating the file."""

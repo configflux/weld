@@ -22,7 +22,12 @@ from pathlib import Path
 
 from weld._discover_state_check import inventory_describes_graph, save_state_for_graph
 from weld._graph_anchors import compute_files_with_no_nodes, files_missing_from_graph
-from weld.discovery_state import DiscoveryState, load_state, save_state
+from weld.discovery_state import (
+    STATE_VERSION,
+    DiscoveryState,
+    load_state,
+    save_state,
+)
 from weld.strategies._strategy_failure import (
     STRATEGY_FAILURE_KEY,
     drain_strategy_failures,
@@ -80,13 +85,17 @@ class VanishedFileIsAFailureTest(unittest.TestCase):
 
     ``compute_files_with_no_nodes`` withholds the files a strategy *reported*
     as failures, which covers every strategy served the run-start listing from
-    the glob memo. The ones that re-list inside their own ``extract``
-    (``pydantic``, ``fastapi``, ``worker_stage``) never see a file deleted
-    before that listing, so they report nothing and the orchestrator would
-    otherwise write the path into ``files_with_no_nodes`` -- the set that
-    means "a strategy looked and decided". That exemption is keyed on the path
-    alone, so a file that returned byte-identical would never be dirty and the
-    ADR 0008 per-file repair would never re-run it.
+    the glob memo. A strategy that re-lists inside its own ``extract`` never
+    sees a file deleted before that listing, so it reports nothing and the
+    orchestrator would otherwise write the path into ``files_with_no_nodes``
+    -- the set that means "a strategy looked and decided". That exemption is
+    keyed on the path alone, so a file that returned byte-identical would
+    never be dirty and the ADR 0008 per-file repair would never re-run it.
+
+    ``pydantic`` and ``fastapi`` were in that group until bd b9xgd moved them
+    onto the ADR 0112 shared resolver; ``worker_stage`` still is, and so is
+    any project-local strategy override weld does not own. The check is not
+    scoped to a list of strategy names for exactly that reason.
 
     Only this layer can tell: the inventory says the file belonged to a
     source, and no strategy claimed it.
@@ -198,10 +207,17 @@ class StateRoundTripTest(unittest.TestCase):
         )
 
     def test_a_state_from_an_older_weld_reads_as_no_failures(self) -> None:
+        """An older weld means a MISSING FIELD, not an older schema version.
+
+        A state at a superseded ``version`` is refused outright by
+        ``load_state``, so the version stamped here is read from the code:
+        a bump (ADR 0143 D4 made one) must not quietly turn this case into
+        the rejection case.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps({
-                "version": 1,
+                "version": STATE_VERSION,
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "files": {"a.py": "sha256:x"},
                 "files_with_no_nodes": ["b.py"],
@@ -216,7 +232,7 @@ class StateRoundTripTest(unittest.TestCase):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps({
-                "version": 1,
+                "version": STATE_VERSION,
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "files": {"a.py": "sha256:x"},
                 "files_with_failed_strategy": "not-a-list",

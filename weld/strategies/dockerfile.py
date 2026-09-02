@@ -1,10 +1,15 @@
 """Strategy: Dockerfile nodes with base image info and COPY/ADD source edges.
 
-ADR 0045 (Layer C2): emit ``dockerfile:<stem> --contains--> file:<src>``
+ADR 0045 (Layer C2): emit ``dockerfile:<path> --contains--> file:<src>``
 for each ``COPY`` and ``ADD`` instruction whose source resolves to a
 repo-relative path. Multi-stage ``COPY --from=<stage>`` and URL ``ADD``
 are explicitly skipped (counters surface on the dockerfile node's props
 so consumers see the overapproximation).
+
+The node id is the Dockerfile's own repo-relative path, so a repository
+gets one node per image rather than one node per file *stem*;
+:mod:`weld.strategies._dockerfile_ids` owns that minting and the
+back-compat alias for the stem id it replaced (bd bz5w9).
 
 Directory-COPY bridge: when ``COPY ./app /service/app`` resolves to an
 on-disk directory, the strategy ALSO emits
@@ -13,10 +18,10 @@ interior file. Without this bridge, ``wd impact app/lib.py`` cannot
 reverse-traverse to the dockerfile (the only contains-edge from the
 dockerfile is to ``file:app``, with no edge linking ``file:app/lib.py``
 back to ``file:app``). Walks are bounded: the resolved dir must live
-strictly inside the discovery root (``.`` / repo root is rejected with a
-``dir_walk_skipped`` counter), symlinks are skipped, and excluded
-directory names (``.git``, ``node_modules``, ``__pycache__``) are
-honoured exactly as the rest of discovery does.
+strictly inside the discovery root (``.`` / repo root is rejected here
+with a ``dir_walk_skipped`` counter), and the walk itself skips symlinks
+and excluded directory names -- see
+:mod:`weld.strategies._dockerfile_copy_walk`.
 """
 
 from __future__ import annotations
@@ -25,11 +30,13 @@ import shlex
 from pathlib import Path
 
 from weld._rel_path import rel_to_root
-from weld.strategies._glob_resolve import resolve_glob
-from weld.strategies._helpers import (
-    StrategyResult,
-    is_excluded_dir_name,
+from weld.strategies._dockerfile_copy_walk import walk_dir_children
+from weld.strategies._dockerfile_ids import (
+    dockerfile_node_id,
+    legacy_alias_by_path,
 )
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 # Conventional service-id mapping kept for back-compat with older
 # fixtures and the legacy ``dockerfile --builds--> service:<bare>`` edge.
@@ -102,62 +109,15 @@ def _parse_copy_add_sources(
     return sources, multistage
 
 
-def _walk_dir_children(abs_dir: Path, root_resolved: Path) -> list[str]:
-    """Return sorted repo-relative posix paths for files under *abs_dir*.
-
-    *root_resolved* must be the caller's already-resolved discovery
-    root; passing it in avoids re-running ``Path.resolve()`` once per
-    walk in a loop.
-
-    Bounds:
-
-    * skips symlinks (file or dir) -- they would let the walk escape the
-      repo root in surprising ways and the dockerfile build wouldn't
-      have followed them anyway without an explicit ``COPY --link``.
-    * honours :func:`is_excluded_dir_name` so vendored ``node_modules``
-      / ``__pycache__`` / ``.git`` trees never balloon the contains-edge
-      count.
-    * yields only files whose resolved path stays strictly under *root*
-      (defensive; symlink skip above already covers the common escape
-      vector).
-    * deterministic: results are returned in lexicographic order so
-      golden bytes stay stable across filesystems.
-    """
-    children: list[str] = []
-    # Manual recursion so we can prune excluded directories cheaply
-    # without paying ``rglob`` cost on a vendored ``node_modules`` tree.
-    stack: list[Path] = [abs_dir]
-    while stack:
-        current = stack.pop()
-        try:
-            entries = sorted(current.iterdir())
-        except (OSError, PermissionError):
-            continue
-        for entry in entries:
-            if entry.is_symlink():
-                continue
-            name = entry.name
-            if entry.is_dir():
-                if is_excluded_dir_name(name):
-                    continue
-                stack.append(entry)
-                continue
-            if not entry.is_file():
-                continue
-            try:
-                resolved = entry.resolve()
-                rel = resolved.relative_to(root_resolved)
-            except (OSError, ValueError):
-                continue
-            children.append(rel.as_posix())
-    children.sort()
-    return children
-
-
 def _process_dockerfile(
-    df: Path, root: Path, rel_path: str,
+    df: Path, root: Path, rel_path: str, nid: str,
 ) -> tuple[dict, list[dict], dict[str, dict]]:
     """Return (props, edges, file_nodes) for a single Dockerfile.
+
+    *nid* is minted by the caller rather than re-derived here: this
+    function and :func:`extract` used to compute the same id from the
+    same expression independently, which is how the two stayed wrong
+    together (bd bz5w9).
 
     *file_nodes* is the set of ``file:<rel-path>`` source nodes the
     Dockerfile COPYs / ADDs from. They must be emitted alongside the
@@ -166,7 +126,6 @@ def _process_dockerfile(
     motivated this fix-forward (Layer C2 QA blocker).
     """
     base_image = ""
-    nid = f"dockerfile:{df.stem.replace('.', '_')}"
     edges: list[dict] = []
     file_nodes: dict[str, dict] = {}
     multistage_skipped = 0
@@ -281,7 +240,7 @@ def _process_dockerfile(
             if target in walked_dirs:
                 continue
             walked_dirs.add(target)
-            for child_rel in _walk_dir_children(abs_dir, root_resolved):
+            for child_rel in walk_dir_children(abs_dir, root_resolved):
                 child_id = f"file:{child_rel}"
                 if child_id == target:
                     # Defensive: never self-loop a directory back to
@@ -356,14 +315,28 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
 
     pattern = source["glob"]
     excludes = source.get("exclude", [])
-    for df in resolve_glob(root, pattern, excludes):
-        rel_path = rel_to_root(df, root)
+    # Matched up front, and keyed by repo-relative path, because the
+    # back-compat alias is a property of the whole match set: whether the
+    # replaced stem id names one Dockerfile unambiguously cannot be decided
+    # one file at a time. ``resolve_glob`` already returns a sorted, unique
+    # list, so the dict preserves both.
+    by_path = {rel_to_root(df, root): df for df in resolve_glob(
+        root, pattern, excludes,
+    )}
+    legacy_aliases = legacy_alias_by_path(by_path.keys())
+
+    for rel_path, df in by_path.items():
         discovered_from.append(rel_path)
 
-        props, df_edges, df_file_nodes = _process_dockerfile(df, root, rel_path)
+        nid = dockerfile_node_id(rel_path)
+        props, df_edges, df_file_nodes = _process_dockerfile(
+            df, root, rel_path, nid,
+        )
         if not props:
             continue
-        nid = f"dockerfile:{df.stem.replace('.', '_')}"
+        legacy_id = legacy_aliases.get(rel_path)
+        if legacy_id:
+            props["aliases"] = [legacy_id]
         nodes[nid] = {
             "type": "dockerfile",
             "label": df.name,

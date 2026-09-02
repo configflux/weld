@@ -13,41 +13,17 @@ answers the questions agents and humans repeatedly ask about a codebase: where
 a capability lives, which docs are authoritative, what build and test surfaces
 a change touches, and what boundaries constrain the implementation.
 
-<!-- evaluator-note: latest=v0.25.0 -->
-> **Evaluators: start with v0.25.0.** v0.25.0 is the current
-> recommended starting point. Headline features added since v0.14.0:
-> a 14-tool MCP server for graph-backed agent context
-> (`weld_query`, `weld_find`, `weld_context`, `weld_path`,
-> `weld_brief`, `weld_stale`, `weld_callers`, `weld_references`,
-> `weld_export`, `weld_trace`, `weld_impact`, `weld_enrich`,
-> `weld_diff`, `weld_review`); `wd impact` blast-radius queries
-> driven by node, file list, working tree, or git diff range, with a
-> stale-graph gate; `wd review` JSON-first triage for speculative
-> edges; an end-to-end C# strategy stack (solution/project parsing,
-> MSBuild targets, test-framework detection, ASP.NET routes, EF Core,
-> inheritance edges, per-method call graphs) that auto-wires on
-> `wd init` when matching artifacts are present; `wd init`
-> auto-wiring of the interface strategies (gRPC `.proto` services and
-> Python bindings, Kafka / Celery / Redis event channels,
-> `runtime-contract.md` healthchecks, and generic DDS `.idl` data
-> contracts and topic channels) when matching artifacts are
-> present; multi-language origin classification, Bazel `srcs` /
-> `deps` edges, Dockerfile and
-> Compose copy edges, and multi-language test-peer edges across
-> Python, Go, TypeScript / JavaScript, Rust, Java, C#, and C++;
-> `wd communities` topic-level navigation of large graphs; opt-in
-> eager inverted-index aggregation for faster cold-cache queries on
-> large federations; a C++ amalgamation-file rank boost so single-file
-> headers (e.g. `nlohmann/json`) surface ahead of incidental mentions;
-> alias-aware lookup that resolves legacy node IDs through one minor
-> version; and human-readable text output by default for the
-> retrieval surface, with `--json` available for tools and the MCP
-> server. ROS2 is labeled Tier 2 (preview) until its own harness pass
-> runs; every other language family (Python, C#, Java, C++) follows
-> the Tier-1 language support contract for entrypoints, modules,
-> call graphs, test peers, and origin classification. See
-> [`CHANGELOG.md`](CHANGELOG.md) for the per-release entries from
-> v0.15.0 onward.
+<!-- evaluator-note: latest=v0.26.0 -->
+> **Evaluators: start with v0.26.0.** v0.26.0 is the current
+> recommended starting point. New in this release over the previous one:
+> Next.js app-router routes; a TypeScript/JavaScript surface on which
+> `wd callers` and `wd impact` answer at function granularity (first-party
+> imports and `tsconfig` aliases bound to their files, JSX components,
+> default exports, barrels, CommonJS); npm and MSBuild packages in the
+> cross-repo package graph; `wd init --refresh` merging newly-wired
+> entries into a hand-edited config; and directory-segment globs and
+> brace groups resolving the same way in every strategy.
+> [`CHANGELOG.md`](CHANGELOG.md) has the full per-release entries.
 
 **Try it in 5 minutes →** [docs/tutorial-5-minutes.md](docs/tutorial-5-minutes.md)
 walks through `wd init`, `discover`, `brief`, `query`, `context`, and `path`
@@ -472,8 +448,8 @@ pending its own harness run.
 | Language | Extraction surface | Grammar package | Status |
 |---|---|---|---|
 | Python | modules, classes, functions, imports, call graph | built-in (no extra) | **Tier 1** |
-| TypeScript | exports, classes, imports | `tree-sitter-typescript` | **Tier 1** |
-| JavaScript | exports, classes, imports | `tree-sitter-javascript` | Tier 2 |
+| TypeScript | exports, re-exports, classes, imports, best-effort call graph (`.ts` and `.tsx`) | `tree-sitter-typescript` | **Tier 1** |
+| JavaScript | functions, classes, exports (ESM and CommonJS `module.exports`), imports (`import` and `require`) | `tree-sitter-javascript` | Tier 2 |
 | Go | exports, types, imports | `tree-sitter-go` | **Tier 1** |
 | Rust | exports, types, imports | `tree-sitter-rust` | **Tier 1** |
 | C# | types, methods, properties, attributes, namespaces, using dependencies, best-effort call graph | `tree-sitter-c-sharp` | **Tier 1** |
@@ -497,6 +473,76 @@ For non-preview tree-sitter languages, exact identifier queries such as
 `wd query GetAsync` prefer first-class definition `symbol:` nodes before
 owning files or package-level fallbacks. File results remain available when
 the graph has no exact symbol candidate.
+
+### TypeScript / JavaScript — first-party imports
+
+In a monorepo, the name a file imports is often not a package. Weld
+resolves two such spellings to the file that defines them, so a
+workspace-internal dependency is an edge between your own files rather
+than a `package:` node claiming the code is external:
+
+- **npm workspace member names.** The root `package.json`'s `workspaces`
+  globs (npm's array form and yarn's `{"packages": [...]}` form) name the
+  member directories; each member's own `name` is then a first-party
+  spelling. `import { formatPrice } from "@acme/shared"` binds to the
+  file that member's `exports["."]`, `types`, `main` or conventional
+  `index` entry point points at — including when `main` names a build
+  output that a source checkout has not produced. Sub-path imports
+  (`@acme/shared/money`) resolve against the member directory.
+- **`tsconfig` path aliases.** `compilerOptions.baseUrl` and
+  `compilerOptions.paths` from the nearest `tsconfig.json` (or
+  `jsconfig.json`) at or above the importing file. `@/lib/greeting`
+  resolves the way that app's own compiler resolves it, so two apps in
+  one repo may give the same alias two different meanings. Comments and
+  trailing commas in the config are tolerated. `extends` chains are not
+  followed: aliases declared only in a shared base config are not
+  resolved.
+
+Both maps are read once per `wd discover`. The resolved target is
+recorded on the importing file node as `props.import_targets`, and the
+`depends_on` edge carries `resolution: first_party`. Nothing else about
+an import changes: a genuine dependency still mints its `package:` node
+with the origin classification it always had.
+
+### TypeScript / JavaScript — who calls this function
+
+A TypeScript source entry written with `emit_calls: true` (which `wd init`
+writes) records a `calls` edge per call site. Two readings make those edges
+answerable rather than merely present:
+
+- **The caller is the export the call sits inside.** A call in
+  `export async function GET()` is attributed to `GET`, and one in
+  `export const handler = () => …` to `handler`, so `wd callers` and
+  `wd impact` answer at function granularity. A call in a non-exported
+  helper, or in an anonymous callback at module level, stays attributed to
+  its file: weld names a symbol only where it extracted one.
+- **The callee is the definition its import names.** A callee whose name
+  arrived through a named import binds to the exported symbol behind that
+  import — directly when the imported module defines it, and, when the
+  module is a package entry point that defines nothing of its own (the
+  `index.ts` barrel shape), to the single definition of that name inside
+  that package. Two candidates is an ambiguity rather than a coin flip, and
+  the call stays unresolved.
+
+What weld cannot bind stays visible as an unresolved callee instead of
+quietly disappearing: a third-party function, a method called on a value,
+and a name the package does not define all keep that state — so "we cannot
+say" reads differently from "nothing calls this".
+
+### TypeScript — barrel files
+
+A barrel — an `index.ts` whose whole content is `export { x } from
+"./money"` — is what a package's `main` points at, so it is where reads
+that arrive through the package name land. Weld records what it forwards:
+the names on the file node's `props.reexports`, and the module it forwards
+them from in `props.imports_from`, which resolves to a `depends_on` edge on
+the defining file like any other import. `export * from "./money"` records
+the dependency without the names, which is all that form states.
+
+Re-exported names are kept out of `props.exports` on purpose. That list is
+what becomes `symbol:` definition nodes, and a barrel defines nothing — so
+`wd callers` and `wd impact` on `formatPrice` still answer about the one
+module that declares it, not about every barrel that republishes it.
 
 ### C++ — Tier 1 details
 
@@ -735,6 +781,67 @@ Run `wd init` to generate a starter config, or write one by hand. See
 the [Strategy Cookbook](weld/docs/strategy-cookbook.md) for the full list
 of bundled strategies.
 
+Patterns take `*` (one path segment), `**` (any depth), `?`, `[abc]`, and a
+single `{a,b}` alternative group, anywhere in the pattern — so a monorepo can
+write `apps/*/package.json` or `services/*/src/**/*.{ts,tsx}` per package
+rather than one repository-wide glob. Each entry also accepts an `exclude:`
+list of patterns to skip. The pattern vocabulary belongs to the config, not to
+the strategy you point it at: `api/*/routers/*.py` wired to `fastapi` names the
+same files `services/*/src/*.py` wired to `python_module` does, and the same
+goes for `pydantic`, `compose` and `events`. Freshness reads that same
+vocabulary: a file your patterns name — through a `{a,b}` group or a `*`
+segment as much as through a plain suffix — is in scope for `wd stale` exactly
+as it is for `wd discover`, so adding one to a configured project is noticed as
+missing from the graph on the next read.
+
+`wd init` wires a source entry for every language it reports finding, and one
+entry covers a language's whole *dialect family* — `**/*.{ts,tsx}` for
+TypeScript, `**/*.{js,jsx,mjs,cjs}` for JavaScript — so a Next.js repository's
+`.tsx` pages and components are claimed by the same entry as its `.ts`
+modules. One entry is all they need: weld reads JSX with the TSX grammar and
+plain TypeScript with the TypeScript one, choosing per file from its
+extension, so a default-exported component in a `.tsx` page reaches the graph
+like any other export. `language: tsx` is accepted as a spelling of the same
+thing if you split the globs by hand, and records the files as TypeScript
+either way — one language, one symbol namespace, whichever dialect a file is
+written in. A framework it names is wired too: detecting Express writes an
+`express` route entry, detecting Next.js writes a `next` one, the same way
+detecting Gin or Axum writes a `gin` or `axum` one. The TypeScript and
+JavaScript entries are written with `emit_calls: true`, which is what records
+the function-level call evidence `wd callers` and `wd impact` answer from.
+
+Next.js is detected from the markers a project carries rather than from an
+import, because an app-router handler imports nothing from `next`: a
+`next.config.*` file, or a `next` dependency in a `package.json`. The `next`
+strategy then reads the app-router file conventions — every HTTP-verb function
+an `app/**/route.ts` exports, and every `app/**/page.tsx`, becomes a `route:`
+node at the URL its directory chain spells. Route groups (`(marketing)`) and
+parallel slots (`@modal`) drop out of that URL as Next.js drops them, dynamic
+segments (`[id]`, `[...slug]`) keep their source spelling, and a private
+`_folder` is left out of routing entirely. A page reads as the `GET` it
+answers, so "what URLs does this app expose" is one question with one kind of
+answer whichever framework declared them; `props.route_source` separates
+hand-written handlers from pages.
+
+A route entry and a language entry routinely claim the same file, and both
+answers survive. The handler file keeps everything the language pass recorded
+about it — its exports, its imports, its line count — while the route entry
+adds the `route:` nodes and the `exposes` edge saying which file serves them.
+That holds whichever order the two entries appear in, so appending a framework
+to a `discover.yaml` that already claims the language is safe. A config that
+wires only the route entry still gets a file node for the boundary file, so
+the `exposes` edge always has both ends.
+
+A Dockerfile is identified by its path, so a repository that builds several
+images gets a node per image. `apps/shop/Dockerfile` and `apps/blog/Dockerfile`
+are `dockerfile:apps/shop/Dockerfile` and `dockerfile:apps/blog/Dockerfile`,
+each carrying its own base image and its own `contains` edges to the files it
+`COPY`s, and each reachable on its own from `wd context` and `wd impact`. A
+Dockerfile at the repository root keeps the short `dockerfile:Dockerfile`
+id it has always had, and where a project's only Dockerfile lives in a
+subdirectory the old short id still resolves to it, so existing links and
+bookmarks keep working.
+
 The `markdown` strategy skips `README.md` by default — next to
 `docs/architecture.md` a README is the project's front door, not one of its
 documents. Set `include_readme: true` on a source entry to index it anyway.
@@ -748,23 +855,42 @@ it gives itself instead of under "Readme".
 
 When a new weld release adds strategies for a language your repo uses, an
 existing `discover.yaml` keeps discovering with the old config — `wd doctor`
-and `wd prime` flag the drift (a language present on disk that no wired
-strategy claims). Two ways to close the gap:
+and `wd prime` flag the drift (files on disk that no wired strategy claims,
+including a dialect such as `.tsx` that an older `**/*.ts` entry misses).
+Two ways to close the gap:
 
-- `wd init --refresh` — **non-destructive**: merges source entries for the
-  newly-detected languages into your existing `discover.yaml`, appended under a
-  marked `refresh` section. Your hand edits — custom globs, extra strategies,
-  exclusions, and comments — are preserved exactly, and the `# generated-by:
-  weld <version>` stamp is bumped so the config reads as current. For each
-  language it wires, `--refresh` wires **the same strategies `--force` would**:
-  the whole detected stack, not just the tree-sitter backbone — so a C# repo
-  gets the project, solution, MSBuild, test-framework, ASP.NET, EF Core and
-  namespace-anchor entries, a Go repo gets `go_package` and its framework
-  entries, and detected gRPC / event / ROS2 sources are offered too (anything
-  your config already wires is left as you wrote it, never duplicated). A
-  config that already claims every on-disk language is a no-op (it just
+- `wd init --refresh` — **non-destructive**: merges newly-detected sources into
+  your existing `discover.yaml`, appended under a marked `refresh` section.
+  Your hand edits — custom globs, extra strategies, exclusions, and comments —
+  are preserved exactly, and the `# generated-by: weld <version>` stamp is
+  bumped so the config reads as current. Refresh delivers two kinds of thing:
+
+  - **Languages** nothing on disk claims. For each one it wires **the same
+    strategies `--force` would**: the whole detected stack, not just the
+    tree-sitter backbone — so a C# repo gets the project, solution, MSBuild,
+    test-framework, ASP.NET, EF Core and namespace-anchor entries, a Go repo
+    gets `go_package` and its framework entries, and detected gRPC / event /
+    ROS2 sources are offered too.
+  - **Entries a language cannot stand for**: a root configuration file
+    (`tsconfig.json`, `package.json`, `go.mod`, `Cargo.toml`, `Makefile` …)
+    that joined weld's table after your config was written, and a framework
+    entry (`express`, `next`, `gin`, `axum`, and the Python set) for a
+    language your config already claims — the case where the language check
+    has nothing to say and the entry is missing all the same.
+
+  Anything your config already wires is left as you wrote it, never
+  duplicated, and a config that is current on both counts is a no-op (it just
   refreshes the stamp). Refresh edits an existing config; run plain `wd init`
   first if none exists.
+
+  **An entry you delete stays deleted.** `wd init` and `wd init --refresh`
+  record what they wired as `# wired-entry:` comment lines under the version
+  stamp, so refresh can tell an entry it never offered from one you removed on
+  purpose — and only offers the first. The lines are inert comments; delete
+  one and the next refresh offers that entry again. A `discover.yaml` written
+  before weld kept that record seeds it from its own entries the first time
+  you refresh, so an entry you had removed long ago may come back once;
+  remove it again and it stays out.
 - `wd init --force` — **destructive**: regenerates the whole config from a
   fresh scan, discarding any hand edits. Use it when you want a clean starter
   config back, not a merge.
@@ -1190,7 +1316,10 @@ cross_repo_strategies: [service_graph]
   even when gitignored. These settings decide which children are
   *registered*. Cross-repo resolvers that read manifests out of a child
   working tree always honour Git visibility -- an ignored file contributes no
-  package name regardless of `respect_gitignore`.
+  package name regardless of `respect_gitignore`. Neither does a manifest
+  inside a vendored or build-output directory (`node_modules/`, `vendor/`,
+  `.venv/`, `bin/`, `obj/`, ...), even in a repo that commits one: carrying a
+  copy of somebody else's package is not publishing it.
 - **children**: Each entry has a `path` (relative to the workspace root)
   and an optional `name` (auto-derived from the path if omitted, e.g.
   `services/api` becomes `services-api`). Optional `tags` provide
@@ -1198,9 +1327,10 @@ cross_repo_strategies: [service_graph]
 - **cross_repo_strategies**: Ordered list of resolvers that produce
   cross-repo edges in the root graph. Available resolvers include
   `service_graph`, `grpc_service_binding`, `compose_topology`,
-  `channel_binding`, `package_graph` (manifest package-dependency to
-  producing repo), and `package_import_resolver` (import evidence to a
-  sibling package node).
+  `channel_binding`, `package_graph` (manifest package-dependency to the
+  producing repo, reading producer names from `pyproject.toml`, `go.mod`,
+  npm `package.json`, MSBuild `.csproj`, and `.proto` manifests), and
+  `package_import_resolver` (import evidence to a sibling package node).
 
 ### Running discovery at the workspace root
 
@@ -1215,6 +1345,15 @@ for every present child, and runs the declared cross-repo resolvers to emit
 edges between children. Children that are missing, uninitialized, or corrupt
 degrade gracefully -- they are skipped and recorded in the workspace ledger
 but do not block discovery.
+
+A root that only federates needs no `.weld/discover.yaml` of its own: the
+registry and the child graphs are its whole discovery input, and no source glob
+is resolved at the root. `wd doctor` reports that absence as a `[note]` rather
+than an error, so a healthy workspace root exits 0. `wd prime` says the same
+thing — an `[INFO  ]` line naming federation as the reason, with no `wd init`
+next step — and drops its "consider adding more sources to discover.yaml"
+advisory there, because a meta-graph holding one node per child is the shape
+federation is meant to produce, not a thin configuration.
 
 Federation also re-tags `props.origin` on cross-child symbol references:
 a Python target imported from a sibling child whose strategy saw it as
@@ -1513,7 +1652,7 @@ repo boundaries. They are declared in the `cross_repo_strategies` list in
 |---|---|
 | `service_graph` | Matches HTTP client call sites in one repo to API endpoint definitions in another. Emits `cross_repo:calls` edges carrying the matched host, port, path, and method. |
 | `channel_binding` | Matches event-channel producers in one repo to consumers in another that reference the same `channel:<transport>:<topic>` node. Emits `cross_repo:channel_flow` edges (producer -> consumer) carrying the matched channel, transport, and topic. |
-| `package_graph` | Matches a *manifest-declared* package dependency in one repo -- a C# `<PackageReference>`, a Python `pyproject.toml` `[project].dependencies` entry, or a `go.mod` `require` -- to the sibling repo that *produces* that package (by its `pyproject.toml` name, `go.mod` module, or a `.proto` package name). Emits `cross_repo:depends_on` edges from the consuming `repo:<name>` node to the producing `repo:<name>` node, so `wd impact "repo:<producer>"` sees its consumers. This is the schema-library polyrepo shape that URL-host (`service_graph`) and topic (`channel_binding`) matching miss. Name matching is case-insensitive; no version is checked, so edges carry `confidence: inferred`. |
+| `package_graph` | Matches a *manifest-declared* package dependency in one repo -- a C# `<PackageReference>`, a Python `pyproject.toml` `[project].dependencies` entry, an npm `package.json` runtime `dependencies` entry, or a `go.mod` `require` -- to the sibling repo that *produces* that package. Producer names come from five manifest families: a `pyproject.toml` `[project].name`, a `go.mod` module path, a `package.json` `name` (unless the package declares itself `private`, npm's own "never published"), an MSBuild `.csproj` `<PackageId>` (falling back to the project filename, NuGet's own `dotnet pack` default, unless the project declares `<IsPackable>false</IsPackable>`), or a `.proto` package name. Only npm *runtime* `dependencies` are read: `devDependencies`, `peerDependencies` and `optionalDependencies` declare no run-time dependency on a sibling repo. An npm workspace's members are read where they sit, including under `packages/`, and a dependency satisfied inside the same repo is not a cross-repo edge. Emits `cross_repo:depends_on` edges from the consuming `repo:<name>` node to the producing `repo:<name>` node, so `wd impact "repo:<producer>"` sees its consumers. This is the schema-library polyrepo shape that URL-host (`service_graph`) and topic (`channel_binding`) matching miss. Name matching is case-insensitive; no version is checked, so edges carry `confidence: inferred`. |
 | `grpc_service_binding` | Matches gRPC service definitions (`rpc:grpc:*` nodes from the `grpc_proto` strategy) in one repo to gRPC client stubs and their call-site `invokes` edges (from the `grpc_bindings` strategy) in other repos. Emits `cross_repo:grpc_calls` edges from the client stub to the service definition. |
 | `compose_topology` | Reads `docker-compose.yml` / `compose.yaml` / `compose.yml` at the workspace root and emits `cross_repo:depends_on` edges between the `repo:<name>` nodes of services whose images or service names map to registered child repos. |
 | `package_import_resolver` | Matches *import evidence* -- consumer nodes carrying an `imports_from` list -- against package producer nodes (`type: package`) declared in sibling repos, and emits `cross_repo:depends_on` edges from the importing consumer to the producing package. Complements `package_graph`, which matches manifest declarations rather than imports. |
@@ -1667,16 +1806,34 @@ points at
 [github.com/en/copilot](https://docs.github.com/en/copilot/how-tos/use-copilot-cli)
 rather than a `pip install` line.
 
+**A workspace root that only federates.** A federated `wd discover` reads
+`.weld/workspaces.yaml` and the children's graphs and resolves no source glob
+at the root, so a root that only federates has nothing of its own to discover
+and needs no `discover.yaml`. Where the registry is present and
+`discover.yaml` is absent, doctor reports the absent config as a `[note]`
+rather than a `[fail]`, and a healthy workspace root exits 0. The two
+neighbouring shapes are unchanged — a root that federates *and* discovers
+keeps its `[ok]` line with the source count, and a plain repository that has
+simply not been initialised yet still gets the `[fail]`. `wd prime` follows
+the same rule on its own two lines about the config: the absence is an
+`[INFO  ]` line saying the root federates rather than an `[ACTION]` with a
+`wd init` next step, and the `Graph has only N nodes — consider adding more
+sources to discover.yaml` advisory is dropped, since it is a sentence about a
+config this root has no use for. Its neighbouring shapes are unchanged too — a
+root that federates *and* discovers keeps its `[OK    ]` line **and** the
+node-count advisory, because there the config exists and the root really does
+resolve sources of its own.
+
 **Stale-config detection.** `.weld/discover.yaml` is generated once by
 `wd init` and never revisited, so a checkout initialised before a
 strategy shipped keeps discovering with the old config — a repo can have
 100% of a language's source invisible to the graph while everything else
 reports healthy. `wd doctor` and `wd prime` guard against this: each runs
-the `wd init` detection pass read-only and, for any language present on
-disk that no wired strategy claims, emits a warning such as
+the `wd init` detection pass read-only and, for any file on disk that no
+wired strategy claims, emits a warning such as
 
 ```
-[warn] 8 C# files present but no wired strategy claims 'csharp' -> run: wd init --refresh (keeps your entries) or wd init --force (regenerate from scratch)
+[warn] 8 C# files present that no wired strategy claims -> run: wd init --refresh (keeps your entries) or wd init --force (regenerate from scratch)
 ```
 
 Both remedies are named, non-destructive one first: `--refresh` merges the
@@ -1685,12 +1842,20 @@ scan and discards hand edits. `wd prime` lists `wd init --refresh` under
 **Next steps** for the same reason — a step you are told to run should not
 be the one that throws your customisation away.
 
-The check is language-granular (a repo that merely lacks an optional
-framework extractor but does wire the language stays quiet), never raises
-the exit code, and is suppressible per language via `wd doctor --ack
+A wired entry claims the files its glob actually matches, so a config
+wiring only `**/*.ts` is told about the `.tsx` files beside them — the
+warning names the *unclaimed* file count, not the language's total. It
+stays quiet about what you scoped on purpose: a repo that merely lacks an
+optional framework extractor but does wire the language, an entry
+scaffolded for files that do not exist yet, a language absent from disk,
+or a subtree your config deliberately leaves out (one claimed file per
+file type settles it). The check never raises the exit code and is
+suppressible per language via `wd doctor --ack
 unclaimed-source-<language>`. `wd init` also stamps the generating weld
 version into each `discover.yaml` (`# generated-by: weld <version>`) so
-config drift is visible against `wd --version`.
+config drift is visible against `wd --version`, and records what it wired
+below that stamp (`# wired-entry:` lines) so `wd init --refresh` can tell an
+entry it never offered from one you removed on purpose.
 
 The `mcp SDK` probe checks the version, not just the import: the MCP
 stdio server requires `mcp>=2`, so an older SDK is reported as a `[warn]`
@@ -1893,7 +2058,7 @@ the CLI.
 
 For a tour of what each command above actually prints, see
 [Graph visualization examples](docs/visualization-examples.md) — real
-terminal snippets captured against `wd 0.25.0`.
+terminal snippets captured against `wd 0.26.0`.
 
 ## Install
 

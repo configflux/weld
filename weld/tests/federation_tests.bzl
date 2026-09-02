@@ -186,3 +186,22 @@ def federation_tests():
         deps = _RUNTIME_WORKSPACE,
         env = _HASHSEED,
     ) for _name in _STALENESS_SURFACES]
+
+    # bd 5038-lcq0c.3 / ADR 0141 D1: the unit half of field-eval M1 -- a
+    # federated root discover records the workspaces.yaml content it read, the
+    # working-tree gate stops asking a discover.yaml scope question about a
+    # path its inventory already answers, and a verdict the gate cannot
+    # enumerate names the doubt instead of nothing. Rides the shared real-git
+    # fixtures for the same reason the two surfaces above do: the recording is
+    # only meaningful against a root that genuinely committed, discovered and
+    # published. The extra :graph_invariants_lib dep is load-bearing rather
+    # than convenient -- the basis assertion is
+    # _staleness_invariants.assert_stale_verdict_names_its_basis, the same
+    # function the M1 e2e probe applies, so this cannot pass by agreeing with
+    # a second local copy of the contract about how it is spelled.
+    py_test(
+        name = "weld_federation_basis_test",
+        srcs = ["_federation_staleness_fixtures.py", "weld_federation_basis_test.py"],
+        deps = _RUNTIME_WORKSPACE + ["//weld/tests:graph_invariants_lib"],
+        env = _HASHSEED,
+    )

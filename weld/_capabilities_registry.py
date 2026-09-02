@@ -133,6 +133,7 @@ STRATEGY_CAPABILITIES: dict[str, StrategyCapability] = {
     "gin": _fw("gin", ("nodes_emitted",), (".go",)),  # ADR 0071: Go routes
     "axum": _fw("axum", ("nodes_emitted",), (".rs",)),  # ADR 0071: Rust routes
     "express": _fw("express", ("nodes_emitted",), (".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx")),  # bd 2jt5.2.15: TS/JS routes
+    "next": _fw("next", ("nodes_emitted",), (".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx")),  # bd lrnx1.7: Next.js app-router routes
     "pydantic": _fw("pydantic", ("nodes_emitted",), (".py",)),
     "sqlalchemy": _fw("sqlalchemy", ("nodes_emitted",), (".py",)),
     "http_client": _fw("http_client", ("nodes_emitted",), (".py",)),

@@ -17,6 +17,10 @@ source "${SCRIPT_DIR}/weld_test_lib.sh"
 # shellcheck source=weld/tests/_incremental_discovery_lib.sh
 source "${SCRIPT_DIR}/_incremental_discovery_lib.sh"
 ROOT="$(weld_test_repo_root "${SCRIPT_DIR}")"
+# Read the schema version from the code rather than hardcoding it: a bump
+# (ADR 0143 D4 made one) discards the inventory and forces a full pass, which
+# this suite exercises on purpose -- it is not a reason to edit an assertion.
+STATE_VERSION="$(cd "${ROOT}" && python3 -c 'from weld.discovery_state import STATE_VERSION; print(STATE_VERSION)')"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
@@ -83,7 +87,7 @@ python3 -c "
 import json, sys
 with open('${PROJECT}/.weld/discovery-state.json') as f:
     state = json.load(f)
-if state.get('version') != 1:
+if state.get('version') != ${STATE_VERSION}:
     print(f'FAIL: state version incorrect after recovery: {state.get(\"version\")}')
     sys.exit(1)
 " && pass "state file recovered after corruption" || fail "state file not recovered"
@@ -183,11 +187,11 @@ if len(g.get('nodes', {})) < 2:
     print(f'FAIL: expected >=2 nodes after version mismatch fallback')
     sys.exit(1)
 
-# State should be overwritten with correct version
+# State should be overwritten with the version this code writes
 with open('${PROJECT}/.weld/discovery-state.json') as f:
     state = json.load(f)
-if state['version'] != 1:
-    print(f'FAIL: state not updated to version 1 after mismatch')
+if state['version'] != ${STATE_VERSION}:
+    print(f'FAIL: state not updated to version ${STATE_VERSION} after mismatch')
     sys.exit(1)
 " && pass "version mismatch triggers full fallback and state update" || fail "version mismatch fallback failed"
 

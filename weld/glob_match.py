@@ -178,9 +178,10 @@ def walk_glob(
     or ``node_modules`` and removes the symlink amplification path that
     previously let Bazel runfiles leak into discovery.
 
-    For patterns without ``**``, delegates to pathlib (no recursion,
-    single-directory glob) and drops the directories ``Path.glob`` matches,
-    so both branches return the same kind of thing (bd 0d73).
+    For patterns without ``**`` whose directory part is literal, delegates to
+    pathlib (no recursion, single-directory glob) and drops the directories
+    ``Path.glob`` matches, so both branches return the same kind of thing (bd
+    0d73). A wildcard in that part takes the traversal branch (bd uhxjc).
 
     Symlinks are never followed (``followlinks=False`` default). The
     repo-boundary filter is applied to the final list so git-hidden and
@@ -231,7 +232,8 @@ def expand_braces(pattern: str) -> list[str]:
     than :func:`weld._source_resolve.resolve_source_files` -- the call that
     decides which files discovery records as in scope -- so a brace glob would
     emit nodes for files the ADR 0101 accounting never knew were in scope, and
-    editing one of them would never mark the graph stale.
+    editing one of them would never mark the graph stale. That accounting
+    calls this from its own read path too, and did not once (bd 2z5no).
 
     *Exclude* patterns are deliberately not expanded: that is
     :func:`matches_exclude`'s vocabulary, which ADR 0020 fixed and bd ds5g
@@ -286,13 +288,45 @@ def _walk_glob_uncached(
     return out
 
 
+_GLOB_META = "*?["  # What makes a component a pattern, not a name (`**` aside).
+
+
+def _directory_part_is_literal(pattern: str) -> bool:
+    """True when everything before the last ``/`` is a plain path."""
+    # No ``/`` at all means no directory part -- literal by definition.
+    head, sep, _ = pattern.rpartition("/")
+    return not sep or not any(char in head for char in _GLOB_META)
+
+
 def _walk_one(
     root: Path,
     pattern: str,
     excl: list[str],
 ) -> list[Path]:
-    """Walk one brace-free pattern."""
-    if "**" not in pattern:
+    """Walk one brace-free pattern, split on a stattable directory part.
+
+    The flat branch stats that part, so it means something only when the part
+    names a real directory. For ``apps/*/package.json`` it does not -- the
+    parent is the literal ``<root>/apps/*``, which no filesystem has -- so it
+    returned ``[]`` and the pattern matched **nothing at all** (bd uhxjc):
+    bd t06t's defect (``docs/**/*.md`` -> the literal ``docs/**``) one branch
+    over, still live because that fix only reached the *strategies*. Silence
+    rather than a subset, so no partial result gives the user a clue.
+
+    Such a pattern takes the traversal below, not ``root.glob()``, which
+    would resolve the paths but re-open three settled contracts: pathlib
+    yields matching *directories* beside files (bd 0d73), has no descent to
+    prune so the directory form of ``exclude:`` loses its meaning (bd eerc,
+    bd 9gdq), and skips neither ``EXCLUDED_DIR_NAMES`` nor nested repo
+    copies. The traversal does all three, and :func:`_glob_pattern_to_regex`
+    already renders a lone ``*`` as ``[^/]*`` -- one segment, never spanning
+    ``/`` -- so this shape needs no new vocabulary, only the branch already
+    speaking it. It walks from *root*, not the literal prefix: that is what
+    every ``**`` pattern already costs, and a prefix-rooted variant would be
+    a third resolution path to hold in agreement with the other two, the
+    drift ADR 0112 prevents.
+    """
+    if "**" not in pattern and _directory_part_is_literal(pattern):
         parent = (root / pattern).parent
         if not parent.is_dir():
             return []

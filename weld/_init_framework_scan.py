@@ -142,3 +142,41 @@ def iter_framework_scan_targets(
         ]
         if relevant:
             yield f, relevant, outstanding
+
+
+def line_has_import(line: str, pattern: str) -> bool:
+    """Return True when a source *line* declares the import *pattern*.
+
+    Matched at the start of the stripped line so a framework name mentioned
+    inside a string literal or a comment is not a detection.
+
+    Go quoted-path patterns (``"github.com/gin-gonic/gin"``) appear inside an
+    ``import`` block, so the line can legitimately start with a double quote.
+    For ``.go`` files ``detect_frameworks`` pre-filters lines through
+    :func:`weld._init_go_imports.iter_go_import_lines` (which strips block
+    comments, raw strings and non-import lines); the substring check below is
+    defense-in-depth for callers that bypass that pre-filter.
+
+    Lives beside the bounded scan it serves rather than in
+    :mod:`weld.init_detect`: both halves of "which patterns may this file
+    match, and does this line match one" now read together, and the detector
+    module keeps room under its line cap for the detectors themselves.
+    """
+    stripped = line.strip()
+    is_go_quoted = pattern.startswith('"') and pattern.endswith('"')
+    if is_go_quoted:
+        if stripped.startswith(("#", "//")):
+            return False
+        return pattern in stripped
+    if stripped.startswith(("#", "//", '"', "'", "(", "[")):
+        return False
+    if pattern.startswith(("from ", "import ", "use ")):
+        # Python (from/import) and Rust (use) imports are start-of-line
+        # declarations; a prefix match is precise (ADR 0071).
+        return stripped.startswith(pattern)
+    if "require(" in pattern:
+        return (
+            pattern in stripped
+            and ("=" in stripped or stripped.startswith("require("))
+        )
+    return False

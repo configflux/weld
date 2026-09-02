@@ -57,6 +57,38 @@ class InScopeEquivalenceTest(unittest.TestCase):
     def test_globstar_glob_recurses(self) -> None:
         self.assertIn("pkg/sub/two.py", self._matched())
 
+    def test_wildcard_directory_segment_glob_resolves(self) -> None:
+        # bd uhxjc: the matcher always translated `apps/*/package.json`
+        # correctly; `walk_glob`'s flat branch resolved nothing for it, so
+        # these two files were in scope and permanently uncoverable. Named
+        # here as well as caught by the two equivalence cases above, because
+        # this is the shape the shared fixture used not to carry at all.
+        self.assertIn("apps/a/package.json", self._matched())
+        self.assertIn("apps/b/package.json", self._matched())
+
+    def test_wildcard_directory_segment_glob_spans_one_segment(self) -> None:
+        self.assertNotIn("apps/b/nested/package.json", self._matched())
+
+    def test_brace_alternative_glob_resolves_every_alternative(self) -> None:
+        # bd 2z5no: `walk_glob` expands `{json,toml}` into one pattern per
+        # alternative before walking; the matcher translated the pattern as
+        # written, and `_glob_pattern_to_regex` escapes `{` into a literal, so
+        # the entry matched nothing at all. Under-reporting, so it cost
+        # detections rather than refresh loops -- which is why it was silent.
+        # Reachable on every stock Node repo: `wd init` writes `**/*.{ts,tsx}`
+        # and `**/*.{js,jsx,mjs,cjs}`, so the never-ingested signal was dead
+        # for the whole language. Named here as well as caught by the two
+        # equivalence cases above, because this is a shape the shared fixture
+        # used not to carry at all.
+        self.assertIn("cfg/app.json", self._matched())
+        self.assertIn("cfg/app.toml", self._matched())
+
+    def test_brace_alternative_glob_matches_only_its_alternatives(self) -> None:
+        # The narrow half: a group is its alternatives, never "any suffix".
+        # Without this, expanding to a wildcard would pass the case above and
+        # put every neighbouring file permanently in scope.
+        self.assertNotIn("cfg/app.yaml", self._matched())
+
     def test_pattern_exclude_applies(self) -> None:
         self.assertNotIn("pkg/vendor/dep.py", self._matched())
 

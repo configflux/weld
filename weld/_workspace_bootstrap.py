@@ -32,7 +32,6 @@ from pathlib import Path
 from weld._gitattributes_writer import write_repo_git_policy
 from weld._workspace_bootstrap_result import BootstrapResult
 from weld.init import init as _root_init
-from weld._graph_meta_sidecar import write_graph_with_meta
 from weld.init_workspace import merge_yaml_and_scan_children
 from weld.workspace import DEFAULT_MAX_DEPTH, ChildEntry, ScanConfig, WorkspaceConfig
 from weld.workspace_state import (
@@ -217,6 +216,7 @@ def bootstrap_workspace(
     # ``discover`` for recurse. Importing at call time keeps module-load
     # order clean whichever one is imported first.
     from weld._discover_recurse import recurse_children
+    from weld._federation_basis import publish_root_graph
     from weld.federation_root import build_root_meta_graph
     from weld.workspace_state import WorkspaceLock
 
@@ -371,11 +371,12 @@ def bootstrap_workspace(
         # Rebuild ledger AFTER recurse so federation_root sees fresh state.
         state = build_workspace_state(root_path, config)
         graph = build_root_meta_graph(root_path, config, state)
-        # ADR 0065: write the root graph.json (volatile meta stripped)
-        # plus its graph-meta.json sidecar via the same paired writer
-        # the standalone federated-root discover uses, so the bootstrap
-        # root graph is byte-stable / content-addressable too.
-        write_graph_with_meta(root_path / ".weld" / "graph.json", graph)
+        # The same publisher the standalone federated-root discover uses:
+        # ADR 0065's paired write (byte-stable, content-addressable) plus
+        # ADR 0141 D1's basis record. ``wd init`` mints an *untracked*
+        # workspaces.yaml -- M1's exact input -- so the very first
+        # ``wd stale`` here is the one that read stale and named nothing.
+        publish_root_graph(root_path, graph)
         save_workspace_state(root_path, state)
 
     result.children_present = sorted(

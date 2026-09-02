@@ -219,9 +219,10 @@ def _emit_for_file(
             source=route.source,
         )
         # Placeholder boundary file node so the exposes edge survives the
-        # dangling-edge post-pass when tree_sitter is not paired; a real
-        # tree_sitter file node overwrites it via ``nodes.update`` when it
-        # is. ``setdefault`` never clobbers an already-richer node.
+        # dangling-edge post-pass when tree_sitter is not paired; when it is,
+        # the placeholder's ``inferred`` rank loses the node id to the real
+        # file node under the ADR 0103 merge veto, in either entry order
+        # (bd iurvv). ``setdefault`` is the same refusal within one result.
         nodes.setdefault(boundary_id, boundary_file_node(rel_path))
         edges.append(exposes_edge(boundary_id, rid))
         any_emitted = True

@@ -30,8 +30,17 @@ YAML_SUFFIXES: frozenset[str] = frozenset({".yml", ".yaml"})
 
 # Well-known root configuration files. Order is preserved so
 # detect_root_configs returns them in the documented order.
+#
+# The list carries one canonical manifest per ecosystem weld extracts from:
+# ``pyproject.toml`` for Python, ``package.json`` for Node, ``Cargo.toml``
+# for Rust, ``go.mod`` for Go, ``MODULE.bazel`` / ``.bazelrc`` for Bazel,
+# ``Makefile`` for Make. ``tsconfig.json`` is TypeScript's, and it was the
+# one missing: weld already *reads* it for ``compilerOptions.paths`` alias
+# resolution (``weld.strategies._ts_tsconfig_paths``), yet ``wd init`` left
+# it unclaimed, so the manifest that decides how a TS project resolves its
+# own imports never became a node in that project's graph (bd 5038-q9hba).
 ROOT_CONFIG_NAMES: tuple[str, ...] = (
     "MODULE.bazel", ".bazelrc", "CLAUDE.md", "AGENTS.md",
-    ".env.example", "pyproject.toml", "package.json",
+    ".env.example", "pyproject.toml", "package.json", "tsconfig.json",
     "Makefile", "Cargo.toml", "go.mod",
 )

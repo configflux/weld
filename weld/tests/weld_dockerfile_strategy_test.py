@@ -83,7 +83,10 @@ class DockerfileCopySimpleTest(unittest.TestCase):
             result = extract(
                 root, {"glob": "services/api/Dockerfile"}, {},
             )
-            df_id = "dockerfile:Dockerfile"
+            # Keyed on the Dockerfile's own repo-relative path, not its
+            # stem -- the identity contract pinned in
+            # ``weld_dockerfile_identity_test`` (bd bz5w9).
+            df_id = "dockerfile:services/api/Dockerfile"
             tos = sorted(
                 e["to"] for e in result.edges
                 if e["from"] == df_id and e["type"] == "contains"

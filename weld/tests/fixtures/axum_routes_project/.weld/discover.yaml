@@ -9,9 +9,10 @@
 # init auto-detection.
 sources:
   # axum HTTP routes: route:<METHOD>:<path> nodes for handler registration.
-  # Listed BEFORE the tree_sitter entry so the canonical tree_sitter
-  # file node wins the later nodes.update merge over axum's thin
-  # boundary-file placeholder (weld.discover applies sources in order).
+  # Listed before the tree_sitter entry because that is the order `wd
+  # init` emits; either order gives the same file node, since the thin
+  # boundary-file placeholder states a weaker confidence than the
+  # canonical tree_sitter node and loses the merge to it.
   - glob: "**/*.rs"
     type: route
     strategy: axum

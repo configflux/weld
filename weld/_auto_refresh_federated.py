@@ -235,7 +235,7 @@ def _locked_refresh(
         retag_federated_origins_on_disk,
     )
     from weld._discover_sidecar import persist_sqlite_sidecar
-    from weld._graph_meta_sidecar import write_graph_with_meta
+    from weld._federation_basis import publish_root_graph
     from weld._discover_recurse import recurse_children
     from weld.federation_root import build_root_meta_graph
     from weld.workspace_state import (
@@ -262,7 +262,10 @@ def _locked_refresh(
 
         target = root / ".weld" / "graph.json"
         enforce_nonempty_federated_write(target, graph, state, allow_empty=False)
-        write_graph_with_meta(target, graph)  # ADR 0065 paired write
+        # ADR 0065 paired write + the ADR 0141 D1 basis this pass read: a
+        # published root graph that records nothing is the state whose next
+        # read condemns a dirty ``workspaces.yaml`` it cannot name (M1).
+        publish_root_graph(root, graph, target)
         persist_sqlite_sidecar(target.parent, graph)  # ADR 0058 sidecar
         save_workspace_state(root, state)
 

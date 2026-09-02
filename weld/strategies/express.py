@@ -64,6 +64,7 @@ from weld.strategies._express_routes_helpers import (
 from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies._helpers import StrategyResult
 from weld.strategies._provenance import file_provenance
+from weld.strategies._ts_route_helpers import strip_line_comments
 
 #: Matches an ``express`` import / require. Covers ES-module
 #: ``import express from 'express'`` / ``import { Router } from "express"``,
@@ -146,25 +147,6 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     return StrategyResult(nodes, edges, discovered_from)
 
 
-def _strip_line_comments(text: str) -> str:
-    """Drop the ``// ...`` tail of each line so commented-out route
-    callsites do not mint routes.
-
-    A conservative line-level strip: anything from the first ``//`` to
-    end-of-line is removed. This can over-trim a ``//`` inside a string
-    literal on a route line (e.g. a URL with ``//``), but express route
-    paths are server-relative (``/users``) and never contain ``//``, so
-    no real route is lost. Block comments (``/* ... */``) are not
-    stripped; a route callsite inside one is rare and the express-import
-    gate already bounds false positives.
-    """
-    out: list[str] = []
-    for line in text.splitlines():
-        idx = line.find("//")
-        out.append(line if idx < 0 else line[:idx])
-    return "\n".join(out)
-
-
 def _verbs_in_chain(chain: str) -> list[str]:
     """Return the upper-cased express verbs named in a ``.route`` chain.
 
@@ -239,10 +221,11 @@ def _scan_routes(text: str) -> list[ExpressRoute]:
     Results are collected into a set keyed by the route tuple, then sorted
     so the caller emits route nodes in a stable ``(verb, path, source)``
     order regardless of source layout (ADR 0012 determinism). ``//`` line
-    comments are stripped first so a commented-out registration does not
-    surface as a route.
+    comments are stripped first (the shared
+    :func:`weld.strategies._ts_route_helpers.strip_line_comments`) so a
+    commented-out registration does not surface as a route.
     """
-    text = _strip_line_comments(text)
+    text = strip_line_comments(text)
     found: set[ExpressRoute] = set()
     for match in _VERB_CALL_RE.finditer(text):
         path = match.group(3)
@@ -298,9 +281,10 @@ def _emit_for_file(
             source=route.source,
         )
         # Placeholder boundary file node so the exposes edge survives the
-        # dangling-edge post-pass when tree_sitter is not paired; a real
-        # tree_sitter file node overwrites it via ``nodes.update`` when it
-        # is. ``setdefault`` never clobbers an already-richer node.
+        # dangling-edge post-pass when tree_sitter is not paired; when it is,
+        # the placeholder's ``inferred`` rank loses the node id to the real
+        # file node under the ADR 0103 merge veto, in either entry order
+        # (bd iurvv). ``setdefault`` is the same refusal within one result.
         nodes.setdefault(boundary_id, boundary_file_node(rel_path))
         edges.append(exposes_edge(boundary_id, rid))
         any_emitted = True

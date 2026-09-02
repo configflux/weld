@@ -52,6 +52,24 @@ MAX_STALE_SOURCES: int = 50
 #: freshness verdict to give at all".
 NO_GRAPH_REASON = "no graph"
 
+#: The top-level ``reason`` for a graph condemned by the working-tree signal
+#: on evidence that signal cannot enumerate (ADR 0141 D1). ADR 0134's rule --
+#: a verdict nobody can act on is worse than no verdict -- has a staleness
+#: instance, and field-eval finding M1 was it: ``stale: yes`` with an empty
+#: ``stale_sources``, every other field reassuring, and the advised
+#: ``wd discover`` unable to clear it. ``weld._stale_reasons`` says the
+#: basis-less states "stay distinguished by the existing top-level ``reason``
+#: / ``graph_sha`` / ``commits_behind`` fields"; this is the working-tree
+#: signal keeping that promise, which nothing did before. Distinct from the
+#: ``stale_sources`` vocabulary in that module, which is closed at four
+#: strings and answers "which file diverged, and why" -- inventing a fifth
+#: there would mean minting a path to blame, which ADR 0141 rules out.
+#:
+#: Unlike :data:`NO_GRAPH_REASON` this one is actionable by the remedy the
+#: stale-gated commands already print: a discovery pass records the inventory
+#: whose absence produced it.
+UNVOUCHED_SOURCES_REASON = "dirty sources, and no inventory to vouch for them"
+
 
 def _cap_stale_sources(entries: list[dict]) -> tuple[list[dict], int]:
     """Sort *entries* by path and cap at :data:`MAX_STALE_SOURCES`.
@@ -124,6 +142,14 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
     inventing a path; the existing ``reason`` / ``graph_sha`` /
     ``commits_behind`` fields already distinguish them. See
     :mod:`weld._stale_reasons` for the closed four-string vocabulary.
+
+    One state used to leave ``stale_sources`` empty and set *none* of those
+    fields either: the working-tree gate condemning a dirty path against an
+    inventory that does not exist. That verdict named nothing at all, which
+    is what field-eval finding M1 met at a federation root. It now carries
+    :data:`UNVOUCHED_SOURCES_REASON` (ADR 0141 D1), so every ``stale: true``
+    this function returns points a reader at something -- a path, a missing
+    basis, unreachable history, coverage doubt, or the doubt itself.
 
     A root with **no graph at all** answers ``reason="no graph"`` (bd 0nqy).
     Everything else here is a comparison *against* a recorded basis, and
@@ -225,6 +251,7 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
     # on disk at all is caught by ``coverage_stale`` below, so this branch is
     # free to trust the hashes it holds only while that check still runs after
     # it.
+    unvouched = False
     if not source_stale:
         dirty = working_tree_dirty_sources(root, tracked, detect_renames=False)
         # The bool gate runs first, unchanged, and still short-circuits on
@@ -235,6 +262,16 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
         if dirty and dirty_sources_diverge(root, dirty):
             source_stale = True
             stale_sources = dirty_sources_diverge_detail(root, dirty)
+            # The gate may not condemn on a state its own detail declines to
+            # name (ADR 0141 D1). The two answer the same question from the
+            # same inventory, so they disagree only where that inventory is
+            # missing entirely -- and then the honest report is the doubt
+            # itself, on the field ``weld._stale_reasons`` already points a
+            # reader at. Asserted at the composer rather than inside either
+            # escape, so it holds for whichever one fired and for any added
+            # later; the whole defect was one escape quietly acquiring no
+            # counterpart in the detail.
+            unvouched = not stale_sources
     # Coverage dimension: probed only once the cheaper signals have cleared
     # the graph, so a genuinely stale read pays nothing extra.
     coverage = False
@@ -260,10 +297,17 @@ def compute_stale_info(graph_path: Path, meta: dict) -> dict:
         if drift_is_graph_only(root, gsha):
             sha_behind = False
     capped_sources, omitted = _cap_stale_sources(stale_sources)
-    return {
+    info = {
         "stale": source_stale, "source_stale": source_stale,
         "sha_behind": sha_behind, "graph_sha": gsha,
         "current_sha": cur, "commits_behind": behind,
         "coverage_stale": coverage,
         "stale_sources": capped_sources, "stale_sources_omitted": omitted,
     }
+    if unvouched:
+        # Added rather than always present: ``reason`` is absent on every
+        # payload that has a basis to give, so no existing shape changes and
+        # a consumer that branches on the key still sees only the states that
+        # have nothing else to say. ``render_stale`` already prints it.
+        info["reason"] = UNVOUCHED_SOURCES_REASON
+    return info

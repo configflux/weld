@@ -31,26 +31,58 @@ refresh (only the unclaimed ones) without either reordering the other's output.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from weld._init_csharp import csharp_source_entries
 from weld._init_framework_sources import (
     _add_framework_sources,
     _add_go_framework_sources,
     _add_rust_framework_sources,
+    _add_ts_js_framework_sources,
     _source_entry,
 )
 from weld._init_go import go_package_source_entry
 from weld._init_ros2 import ros2_source_entries
+from weld.glob_match import expand_braces
 
-# Tree-sitter-backed languages: name -> tuple of file extensions (C++ covers
-# .cpp/.cc/.h/...). Languages in ``_TREE_SITTER_EMIT_CALLS`` also emit
-# function-level call graph nodes via the per-source ``emit_calls`` flag.
+# Tree-sitter-backed languages: name -> the source glob(s) ``wd init`` writes
+# for it. Most languages are one extension and therefore one glob; C++ spreads
+# over ten. The TypeScript and JavaScript families use a *brace* glob because a
+# dialect is not a different language: ``.tsx`` is TypeScript and ``.jsx`` is
+# JavaScript to :data:`weld.init_detect.EXT_TO_LANG`, which counts them, so a
+# per-extension ``**/*.ts`` left every ``.tsx`` file init had just counted
+# unclaimed -- three-sevenths of a Next.js repo's TypeScript, invisible to the
+# first ``wd discover`` its owner ever ran (ADR 0142 D1, gap G1). The glob is
+# the family, so adding a dialect is one alternative here rather than a second
+# entry to keep in step. ``weld.glob_match.expand_braces`` is what makes the
+# form match at all, and is what this module reads back for the YAML comment so
+# the glob and the extensions it advertises cannot drift.
+#
+# ``.mjs``/``.cjs`` are in the JavaScript family glob but not in ``EXT_TO_LANG``
+# on purpose: the counter answers "is there JavaScript here", which one ``.js``
+# file already settles, while the glob has to claim every file the answer
+# implies. A repo of nothing but ``.mjs`` is a real gap and belongs to
+# ``EXT_TO_LANG``, not here.
+#
+# Languages in ``_TREE_SITTER_EMIT_CALLS`` also emit function-level call graph
+# nodes via the per-source ``emit_calls`` flag.
 _TREE_SITTER_LANGUAGES: dict[str, tuple[str, ...]] = {
-    "csharp": (".cs",), "go": (".go",), "rust": (".rs",), "typescript": (".ts",),
-    "cpp": (".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".ipp", ".tpp"),
-    "java": (".java",),
+    "csharp": ("**/*.cs",), "go": ("**/*.go",), "rust": ("**/*.rs",),
+    "typescript": ("**/*.{ts,tsx}",),
+    "javascript": ("**/*.{js,jsx,mjs,cjs}",),
+    "cpp": (
+        "**/*.c", "**/*.cc", "**/*.cpp", "**/*.cxx", "**/*.h",
+        "**/*.hpp", "**/*.hh", "**/*.hxx", "**/*.ipp", "**/*.tpp",
+    ),
+    "java": ("**/*.java",),
 }
-_TREE_SITTER_EMIT_CALLS: frozenset[str] = frozenset({"cpp", "csharp"})
+# TypeScript and JavaScript join C++ and C# here because call evidence is the
+# raw material gap G2's resolution has to have: a stock TS graph with no
+# ``calls`` edges leaves ``wd callers`` nothing to resolve, however good the
+# resolver (ADR 0142 D1).
+_TREE_SITTER_EMIT_CALLS: frozenset[str] = frozenset({
+    "cpp", "csharp", "javascript", "typescript",
+})
 # Tree-sitter languages whose test convention a glob can target, paired
 # with the glob(s) the matching ``weld.strategies._test_peer_*`` resolver
 # recognizes, so `wd init` scaffolds a `test_peer` source entry (the
@@ -71,6 +103,12 @@ _TREE_SITTER_TEST_PEER_GLOBS: dict[str, tuple[str, ...]] = {
     "go": ("**/*_test.go",),
     "typescript": ("**/*.test.ts", "**/*.spec.ts", "**/__tests__/*.ts"),
 }
+
+#: The two languages the express framework strategy can be detected from --
+#: :data:`weld._init_framework_scan._LANG_FRAMEWORKS` scans one extension set
+#: for it, and :data:`weld.init_detect.EXT_TO_LANG` splits that set across
+#: these two names.
+_TS_JS_LANGUAGES: frozenset[str] = frozenset({"javascript", "typescript"})
 
 
 def _language_label(language: str) -> str:
@@ -133,9 +171,11 @@ def _add_language_framework_entries(
     Every framework these helpers wire is detected by reading source files of
     exactly one language family (``weld._init_framework_scan._LANG_FRAMEWORKS``):
     SQLAlchemy / FastAPI / Flask / Pydantic / HTTPClient from ``.py``, Gin from
-    ``.go``, Axum from ``.rs``. So a detected framework implies its language is
-    in the detected set, and gating here can only ever *narrow* a refresh -- it
-    never drops an entry a full init would have emitted.
+    ``.go``, Axum from ``.rs``, Express from ``.js``/``.jsx``/``.ts``/``.tsx``.
+    So a detected framework implies its language is in the detected set, and
+    gating here can only ever *narrow* a refresh -- it never drops an entry a
+    full init would have emitted. Express is the one framework whose family
+    spans two of this module's languages, hence the two-key test below.
     """
     frameworks = list(wiring.frameworks)
     python_globs = list(wiring.python_globs)
@@ -149,6 +189,10 @@ def _add_language_framework_entries(
     # for the same merge-order reason (ADR 0071).
     if "rust" in wiring.languages:
         _add_rust_framework_sources(code, frameworks)
+    # TypeScript/JavaScript framework strategies (express), same order and
+    # the same reason (ADR 0071, ADR 0142 D1).
+    if wiring.languages & _TS_JS_LANGUAGES:
+        _add_ts_js_framework_sources(code, frameworks)
 
 
 def _add_python_entries(
@@ -183,19 +227,31 @@ def _add_python_entries(
         added.add(glob)
 
 
+def _glob_extensions(glob: str) -> str:
+    """The extensions *glob* claims, for its YAML comment (``.ts, .tsx``).
+
+    Read back out of the glob through the same brace expansion the resolver
+    applies, so a family glob and the comment above it cannot disagree about
+    which dialects the entry actually covers.
+    """
+    return ", ".join(
+        dict.fromkeys(Path(alt).suffix for alt in expand_braces(glob))
+    )
+
+
 def _add_tree_sitter_entries(wiring: LanguageWiring, code: list[str]) -> None:
-    """One ``tree_sitter`` entry per extension, plus Go's package anchor."""
-    for lang, exts in _TREE_SITTER_LANGUAGES.items():
+    """One ``tree_sitter`` entry per source glob, plus Go's package anchor."""
+    for lang, globs in _TREE_SITTER_LANGUAGES.items():
         if lang not in wiring.languages:
             continue
         extras: dict[str, str] = {"language": lang}
         if lang in _TREE_SITTER_EMIT_CALLS:
             extras["emit_calls"] = "true"
         label = _language_label(lang)
-        for ext in exts:
+        for glob in globs:
             code.append(_source_entry(
-                f"**/*{ext}", "file", "tree_sitter",
-                comment=f"{label} sources ({ext})",
+                glob, "file", "tree_sitter",
+                comment=f"{label} sources ({_glob_extensions(glob)})",
                 extra=extras,
             ))
         if lang == "go":  # ordered after tree_sitter, like the C# stack below

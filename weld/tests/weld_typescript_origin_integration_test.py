@@ -231,9 +231,12 @@ class TypescriptOriginCachesTest(unittest.TestCase):
             )
             self.assertIsNotNone(caches)
             assert caches is not None  # for the type-checker
+            # ``first_party`` joined the two manifest sets with bd
+            # 5038-lrnx1.4 (ADR 0142 D3): the workspace-member and tsconfig
+            # alias index, built per root for the same reason they are.
             self.assertEqual(
                 set(caches.keys()),
-                {"package_deps", "node_modules_packages"},
+                {"package_deps", "node_modules_packages", "first_party"},
             )
 
     def test_tsx_jsx_javascript_supported(self) -> None:

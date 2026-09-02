@@ -57,13 +57,28 @@ fails to reproduce reads as out of scope, which under-reports staleness for a
 brand-new file rather than making one permanently uncoverable. That is the
 same exposure ADR 0101 already accepts for tracked files.
 
-Undecidable inputs stay conservative -- no inventory, an empty one, or no
-configured ``sources`` all report divergence, which is exactly the pre-fix
-``dirty => stale`` behaviour. A graph whose inventory cannot speak for it at
-all is a separate question, and the caller already asks it: ``coverage_stale``
-runs immediately after this clears and refuses a non-vouching inventory
-(``inventory_vouches_for_graph``), so nothing here needs to re-ask -- but the
-two must stay in that order.
+Undecidable inputs stay conservative -- no inventory, or an empty one, reports
+divergence, which is exactly the pre-fix ``dirty => stale`` behaviour. So does
+an unrecorded dirty file at a root with no configured ``sources``, because
+nothing can then say whether discovery would read it. What is *not*
+undecidable, and used to be treated as such, is a dirty file the inventory
+already holds a hash for: scope has no bearing on it, so ``sources`` is
+consulted only when there is an unrecorded path to classify (ADR 0141 D1).
+Loading them unconditionally is what made a pure federation root -- whose only
+discovery input is ``.weld/workspaces.yaml`` and which has no ``discover.yaml``
+at all -- condemn its own config file on every read, unclearable by the
+``wd discover`` the message advises (field-eval finding M1).
+
+A graph whose inventory cannot speak for it at all is a separate question, and
+the caller already asks it: ``coverage_stale`` runs immediately after this
+clears and refuses a non-vouching inventory (``inventory_vouches_for_graph``),
+so nothing here needs to re-ask -- but the two must stay in that order.
+
+Where this gate does still condemn on an input it cannot enumerate, the
+composer says so: :func:`weld._staleness.compute_stale_info` stamps a
+top-level ``reason`` whenever this returns ``True`` and
+:func:`dirty_sources_diverge_detail` comes back empty, so no verdict reaches a
+reader without a basis (ADR 0141 D1, ADR 0134).
 
 Both sides of every comparison here are the *index* path vocabulary (git's
 porcelain output and ``DiscoveryState.files``), which bd v552 made POSIX end
@@ -102,9 +117,6 @@ def dirty_sources_diverge(root: Path, dirty: Iterable[str]) -> bool:
     state = load_state(root)
     if state is None or not state.files:
         return True
-    sources = _load_sources(root)
-    if not sources:
-        return True
 
     recorded_hashes: list[tuple[str, str]] = []
     unrecorded_on_disk: list[str] = []
@@ -117,9 +129,23 @@ def dirty_sources_diverge(root: Path, dirty: Iterable[str]) -> bool:
         recorded_hashes.append((rel, recorded))
 
     # Cheapest discriminator first: a never-ingested source in scope settles
-    # the answer without hashing anything.
-    if unrecorded_on_disk and in_scope_files(sources, unrecorded_on_disk):
-        return True
+    # the answer without hashing anything. Scope is only ever asked about an
+    # *unrecorded* path, so ``sources`` is loaded here rather than up front:
+    # a dirty path the inventory already holds a hash for is answered by that
+    # hash, and asking a scope question about it would only give a root with
+    # no ``discover.yaml`` to answer it a way to condemn a file it can in
+    # fact vouch for. That is the second half of finding M1 -- a federation
+    # root has no sources of its own, and the escape fired on its own config
+    # file (ADR 0141 D1).
+    if unrecorded_on_disk:
+        sources = _load_sources(root)
+        if not sources:
+            # Undecidable, and still conservative: something is dirty, on
+            # disk, and unrecorded, and nothing here can say whether
+            # discovery would read it.
+            return True
+        if in_scope_files(sources, unrecorded_on_disk):
+            return True
 
     for rel, recorded in recorded_hashes:
         try:
@@ -155,12 +181,19 @@ def dirty_sources_diverge_detail(root: Path, dirty: Iterable[str]) -> list[dict]
       :data:`weld._stale_reasons.CONTENT_DIFFERS`.
     * ingested, now unreadable -- :data:`weld._stale_reasons.INGESTED_FILE_VANISHED`.
 
-    Undecidable inputs (no inventory, no configured sources) return ``[]``:
-    the boolean gate reads them conservatively as divergent (pre-fix
-    ``dirty => stale`` behaviour, unchanged here), but there is no
-    per-path evidence to name, so this under-reports detail rather than
-    inventing a claim it cannot back -- the same choice ADR 0017's
-    amendments make for the other bases-less states.
+    No inventory at all returns ``[]``: the boolean gate reads that
+    conservatively as divergent (pre-fix ``dirty => stale`` behaviour,
+    unchanged here), but there is no per-path evidence to name, so this
+    under-reports detail rather than inventing a claim it cannot back -- the
+    same choice ADR 0017's amendments make for the other bases-less states.
+    No configured ``sources`` costs only the *unrecorded* paths their entry,
+    for the same reason: their scope is the unanswerable part, and discarding
+    the recorded paths' evidence along with them was pure loss.
+
+    The caller never leaves such a verdict bare. When the gate returns
+    ``True`` and this returns nothing, ``compute_stale_info`` stamps the
+    top-level ``reason`` instead, so the payload still names what condemned
+    it (ADR 0141 D1).
     """
     paths = list(dirty)
     if not paths:
@@ -177,9 +210,6 @@ def dirty_sources_diverge_detail(root: Path, dirty: Iterable[str]) -> list[dict]
     state = load_state(root)
     if state is None or not state.files:
         return []
-    sources = _load_sources(root)
-    if not sources:
-        return []
 
     recorded_hashes: list[tuple[str, str]] = []
     unrecorded_on_disk: list[str] = []
@@ -193,7 +223,11 @@ def dirty_sources_diverge_detail(root: Path, dirty: Iterable[str]) -> list[dict]
 
     out: list[dict] = []
     if unrecorded_on_disk:
-        never_ingested = in_scope_files(sources, unrecorded_on_disk)
+        # Mirrors the gate: scope is asked only about unrecorded paths, and a
+        # root with no sources to answer with contributes no entries rather
+        # than discarding the ones the hashes below *can* name.
+        sources = _load_sources(root)
+        never_ingested = in_scope_files(sources, unrecorded_on_disk) if sources else set()
         out.extend(
             {"path": rel, "reason": NEVER_INGESTED}
             for rel in unrecorded_on_disk if rel in never_ingested

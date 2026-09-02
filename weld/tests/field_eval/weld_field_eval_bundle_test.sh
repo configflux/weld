@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# The evaluator's field-eval bundle, run as a gate (bd ...d76r1.12).
+# The evaluator's field-eval bundle, run as a gate (bd ...d76r1.12, ...lcq0c.2).
 #
-# An external evaluation reports a defect by *running weld* and showing what
-# it printed. Twice now that has been these four scripts. `weld/tests/field_eval/`
-# holds their copies -- make-fixture.sh, bootstrap-fixture.sh and
-# verify-previous-fixes.sh byte for byte, plus verify-0.24.0-fixes.sh written
-# from run-all-repros.sh's probes in the same PASS/FAIL format -- and this is
-# the target that runs them, in the order the evaluator does:
+# An external evaluation reports a defect by *running weld* and showing what it
+# printed. Three rounds have now handed back the same shape of thing, and
+# `weld/tests/fixtures/field_eval/` holds the v0.25.0 round's scripts byte for
+# byte -- make-fixture.sh, bootstrap-fixture.sh, verify-all-fixes.sh. They sit
+# under `fixtures/` rather than beside this file because that is what they are:
+# received artifacts, not source we author, and editing one to satisfy a
+# repo standard would break the only property that makes this lane worth
+# having. (Concretely: round three's make-fixture.sh is 510 lines, over the
+# 400-line cap, and `tools/lint_repo.py` already treats `weld/tests/fixtures/`
+# as data for exactly this reason.) This file is ours and stays linted. It runs
+# them in the order the evaluator does:
 #
-#   make-fixture -> bootstrap-fixture -> verify-previous-fixes -> verify-0.24.0-fixes
+#   make-fixture -> bootstrap-fixture -> verify-all-fixes
 #
 # `wd` is a shim on PATH running `python3 -m weld` out of this checkout, so the
 # scripts execute unmodified: what the next evaluator runs is what this runs.
+#
+# One verification script where the v0.24.0 round had two: verify-all-fixes.sh
+# supersedes both verify-previous-fixes.sh (theirs) and verify-0.24.0-fixes.sh
+# (ours), asserting all eighteen findings from the first two rounds plus the
+# four behaviours 0.25.0 introduced -- 22 checks in one PASS/FAIL run.
+# run-all-repros.sh is deliberately *not* absorbed: it writes transcripts for a
+# human and asserts nothing, and M1-M4 are probes in
+# weld_field_eval_v0250_e2e_test.py instead.
 #
 # This is the *shell surface* twin of the hermetic py_test corpus
 # (weld_field_eval_{corpus,e2e,regression_e2e}_test), not a replacement for it.
@@ -20,14 +33,16 @@
 # port can. It is also the release-audit evidence for field-eval findings
 # (docs/testing-hygiene.md, "Fixing a field finding").
 #
-# Two skips, both narrow and both loud:
+# One skip and one tolerance, both narrow and both loud:
 #
 # * no ambient `git` -- nothing here can run, so the whole target skips;
-# * no ambient `tree_sitter_c_sharp` -- only verify-previous-fixes.sh's checks
-#   03a and 08 read symbol-level C# extraction, and the repo deliberately does
-#   not pin that grammar (ADR 0069). That one script skips; the nine v0.24.0
-#   checks are grammar-independent by construction and still run, so the lane
-#   never degrades to a no-op on a machine without the grammar.
+# * no ambient `tree_sitter_c_sharp` -- checks 03a and 08 are the only two of
+#   the 22 that read symbol-level C# extraction, and the repo deliberately does
+#   not pin that grammar (ADR 0069). With one verification script left, the
+#   v0.24.0 shape -- skip the script whole -- would leave this lane asserting
+#   nothing at all, so the script runs either way and exactly that two-id
+#   failure set is tolerated when the grammar is absent. A third failing check,
+#   a check that did not run, or any total other than EXPECTED_CHECKS is red.
 
 #: Two layouts to resolve against, and the difference is Bazel's: an `sh_test`
 #: binary is installed at `<package>/<name>`, so under runfiles this script
@@ -40,7 +55,7 @@ if [[ -f "${SCRIPT_DIR}/weld_test_lib.sh" ]]; then
 else
   TESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 fi
-FIXTURE_DIR="${TESTS_DIR}/field_eval"
+FIXTURE_DIR="${TESTS_DIR}/fixtures/field_eval"
 # shellcheck source=weld/tests/weld_test_lib.sh
 source "${TESTS_DIR}/weld_test_lib.sh"
 
@@ -162,6 +177,7 @@ from pathlib import Path
 REPOS = (
     ".",
     "libs/order-schema",
+    "libs/billing-schema",
     "services/order-gateway",
     "services/notify-service",
     "docs-site",
@@ -218,23 +234,100 @@ print(f"  identical: {len(shell)} files, identical tracked sets in {len(REPOS)} 
 PYDRIFT
 }
 
+# ------------------------------------------------------- verify-all-fixes
+#: How many checks the script must print, and the two of them that read
+#: symbol-level C# extraction. The count is pinned rather than read off the
+#: run: a script that silently stopped running half its checks would
+#: otherwise be a smaller green run instead of a failure. A bundle that adds
+#: a check bumps this in the same commit that copies the script in.
+#:
+#: 22, not the 21 the bundle's own README and header say: the evaluator
+#: counts *findings*, and finding 03 is checked twice -- 03a asserts the
+#: positive (a C# repo reports csharp symbols) and 03b the negative (a
+#: Python-only one does not). Counted here as what the script prints, since
+#: that is what this guard can actually see.
+EXPECTED_CHECKS=22
+GRAMMAR_DEPENDENT_CHECKS="03a 08"
+
+# Run the evaluator's verification script and judge its PASS/FAIL lines
+# rather than only its exit status. Without an ambient `tree_sitter_c_sharp`
+# the two grammar-dependent checks fail -- the script is a byte-for-byte copy
+# with no skip of its own -- and it is the *only* verification script in this
+# lane, so skipping it would leave the target asserting nothing. Tolerating
+# exactly those two ids keeps the other twenty live and still fails on a
+# third.
+#: The received script writes four fixed absolute paths -- /tmp/wv25-good.yaml,
+#: -refresh.txt, -force.txt -- so two copies of it running at once overwrite
+#: each other's state and check N7 compares one run's `--refresh` output
+#: against another run's `--force`. Measured: green alone, red in 2 of 3 under
+#: `--runs_per_test=3`, and the same race is reachable from two worktrees
+#: gating at once, where it would read as a real regression in `wd init`.
+#:
+#: It is fixed here rather than there because the script is a received
+#: artifact this lane must run byte for byte -- editing it would break the one
+#: property the lane has. A whole-machine lock changes nothing the script sees,
+#: only when it runs. `flock` is util-linux and effectively always present; if
+#: it is not, the run proceeds unserialised rather than skipping, and says so.
+_LOCK="/tmp/weld-field-eval-bundle.lock"
+
+run_verify_script() { # run_verify_script <logfile>
+  if command -v flock >/dev/null 2>&1; then
+    flock "${_LOCK}" "${FIXTURE_DIR}/verify-all-fixes.sh" "${WS}" >"$1" 2>&1
+    return
+  fi
+  printf 'NOTE: no flock; running verify-all-fixes.sh unserialised.\n'
+  "${FIXTURE_DIR}/verify-all-fixes.sh" "${WS}" >"$1" 2>&1
+}
+
+verify_all_fixes() {
+  local log="${WORK}/verify-all-fixes.log"
+  local rc=0
+  run_verify_script "${log}" || rc=$?
+  cat "${log}"
+
+  local ran failed tolerated unexpected id failed_count
+  ran="$(grep -cE '^[[:space:]]+(PASS|FAIL)[[:space:]]' "${log}" || true)"
+  if [[ "${ran}" -ne "${EXPECTED_CHECKS}" ]]; then
+    printf 'FAIL: ran %s checks, expected %s\n' "${ran}" "${EXPECTED_CHECKS}"
+    return 1
+  fi
+  if [[ "${rc}" -eq 0 ]]; then return 0; fi
+
+  failed="$(awk '$1 == "FAIL" { printf "%s ", $2 }' "${log}")"
+  if [[ -z "${failed}" ]]; then
+    printf 'FAIL: exited %s with no FAIL line to account for it\n' "${rc}"
+    return 1
+  fi
+  tolerated=""
+  if ! "${PY}" -c "import tree_sitter_c_sharp" >/dev/null 2>&1; then
+    tolerated="${GRAMMAR_DEPENDENT_CHECKS}"
+  fi
+  unexpected=""
+  failed_count=0
+  for id in ${failed}; do
+    failed_count=$((failed_count + 1))
+    case " ${tolerated} " in
+      *" ${id} "*) ;;
+      *) unexpected="${unexpected} ${id}" ;;
+    esac
+  done
+  if [[ -n "${unexpected}" ]]; then
+    printf 'FAIL: checks failed that this environment does not excuse:%s\n' \
+      "${unexpected}"
+    return 1
+  fi
+  printf 'TOLERATED: %s-- no ambient tree_sitter_c_sharp, which this repo\n' "${failed}"
+  printf '           deliberately does not pin (ADR 0069). The other %s checks passed.\n' \
+    "$((EXPECTED_CHECKS - failed_count))"
+  return 0
+}
+
 # ------------------------------------------------------------------ bundle
 WS="${WORK}/ws"
 step "drift guard: make-fixture.sh vs the py_test materialiser" drift_guard
 step "make-fixture.sh" "${FIXTURE_DIR}/make-fixture.sh" "${WS}"
 step "bootstrap-fixture.sh" "${FIXTURE_DIR}/bootstrap-fixture.sh" "${WS}"
-
-if "${PY}" -c "import tree_sitter_c_sharp" >/dev/null 2>&1; then
-  step "verify-previous-fixes.sh" "${FIXTURE_DIR}/verify-previous-fixes.sh" "${WS}"
-else
-  printf '\n=== verify-previous-fixes.sh\n'
-  printf 'SKIP: checks 03a and 08 need an ambient tree_sitter_c_sharp grammar,\n'
-  printf '      which this repo does not pin (ADR 0069), and the script is a\n'
-  printf '      byte-for-byte copy with no skip of its own. Its other eight\n'
-  printf '      checks run in the fast loop as //weld/tests:weld_field_eval_regression_e2e_test.\n'
-fi
-
-step "verify-0.24.0-fixes.sh" "${FIXTURE_DIR}/verify-0.24.0-fixes.sh" "${WS}"
+step "verify-all-fixes.sh" verify_all_fixes
 
 printf '\n'
 if [[ "${RC}" -eq 0 ]]; then

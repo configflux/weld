@@ -117,6 +117,16 @@ def cross_repo_tests():
         deps = ["//weld/cross_repo", "//weld:runtime", "//weld:contract", "//weld:workspace"],
     )
 
+    # Finding M4 (field-eval v0.25.0) / ADR 0141 D2: the per-ecosystem
+    # registry behind that scan -- what each manifest family contributes, and
+    # the structural guard that a reader cannot join the registry without
+    # declaring a producer half. Pure filesystem writes; sandbox-hermetic.
+    py_test(
+        name = "weld_cross_repo_manifest_readers_test",
+        srcs = ["weld_cross_repo_manifest_readers_test.py"],
+        deps = ["//weld/cross_repo"],
+    )
+
     # Finding N2 (field-eval v0.24.0) / ADR 0137 s6: which files that scan is
     # allowed to read. The manifests come off the repo boundary -- git-visible
     # files, excluded-dir names as the non-git fallback -- so a vendored .venv

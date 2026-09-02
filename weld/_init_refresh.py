@@ -7,23 +7,38 @@ stale config was ``--force``, so a maintainer who had customised the config
 either lost those edits or kept an invisible-source graph.
 
 ``--refresh`` is the middle path. It treats the *entire existing file text* as
-user-owned and appends -- never rewrites -- the source entries for languages
-present on disk that no wired strategy claims. The unit of detection is the
-language (ADR 0135), reused verbatim from :mod:`weld._unclaimed_sources`, so
-this module wires exactly the classes the drift check reports and nothing more.
+user-owned and appends -- never rewrites -- what two comparisons report:
+
+1. **Languages** with files on disk that no wired strategy claims. The unit of
+   detection is the language (ADR 0135) and the unit of *claiming* is a matched
+   file (ADR 0144), both reused verbatim from :mod:`weld._unclaimed_sources`,
+   so this module wires exactly the classes the drift check reports and nothing
+   more -- including the dialect case, where a config wiring ``**/*.ts`` gets
+   the ``**/*.{ts,tsx}`` family glob appended beside it.
+2. **Entries** a language can never stand for: a root config, and a framework
+   entry for a language that is already claimed (ADR 0144 § 2026-09-02, bd
+   5038-j5o5d). ``tsconfig.json`` is not a language, so no amount of language
+   detection could ever deliver it to an existing project; the second
+   comparison is keyed on the entry (:mod:`weld._init_entry_offer`) and
+   subtracts both what the config carries and what weld recorded writing into
+   it (:mod:`weld._init_wired_ledger`), so an entry removed by hand stays out.
 
 Merge semantics (append-only, text-preserving):
 
 - **User-owned**: the whole existing ``discover.yaml`` -- every entry, comment,
   exclusion, and custom strategy is kept byte-for-byte and never reordered.
-- **Generated**: new ``- glob:`` entries for unclaimed languages only, appended
-  under a marked refresh section at the end of the ``sources:`` block.
+- **Generated**: the entries the two comparisons report -- ``- glob:`` blocks
+  for an unclaimed language's stack and for a detected framework, and a
+  ``- files:`` block for detected root configs -- appended together under one
+  marked refresh section at the end of the ``sources:`` block.
 - **Conflict handling**: an unclaimed language is by definition one *nothing*
-  wired claims, so its own entries cannot collide. The whole-repo stacks
-  (ROS2, the interface strategies) are keyed on artifacts rather than on a
-  language, so those *can* already be wired -- any block whose exact
-  ``glob`` + ``strategy`` pair the config already carries is dropped before
-  the append.
+  wired claims, so its own entries cannot collide. Everything else can: the
+  whole-repo stacks (ROS2, the interface strategies) are keyed on artifacts
+  rather than on a language, and the entry pass is keyed on the entry by
+  construction. Any block whose ``glob``/``files`` + ``strategy`` key the
+  config already carries is dropped before the append -- and so is one the
+  *other* pass is appending in the same run, which is the only shape the two
+  overlap on (a framework entry for a language that is also unclaimed).
 - **Strategy parity** (field eval v0.24.0 N7): the entries come from
   :func:`weld._init_language_entries.language_source_entries`, the same table
   ``wd init`` generates a fresh config from, so ``--refresh`` wires the C#
@@ -34,6 +49,9 @@ Merge semantics (append-only, text-preserving):
 - **Version stamp** (Finding 05): the ``# generated-by: weld <version>`` line is
   updated (or inserted) to the current version, so a refreshed config reads as
   current -- the stamp bump is the visible signal a refresh ran.
+- **Wired-entry record**: the ``# wired-entry:`` comment lines are rewritten to
+  what weld has now wired, which is what makes the second comparison
+  reversible -- delete a line and the next refresh offers that entry again.
 
 Security posture: writes only ``discover.yaml`` (atomic replace); never prints
 the absolute project root.
@@ -42,12 +60,19 @@ the absolute project root.
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from weld._init_entry_offer import (
+    EntryKey,
+    EntryWiring,
+    block_entry_key,
+    block_glob_and_strategy,
+    entry_blocks,
+    entry_keys,
+)
 from weld._init_language_entries import LanguageWiring, language_source_entries
-from weld._safe_text import sanitize_terminal_line
+from weld._init_wired_ledger import apply_ledger, config_entry_keys, ledger_keys
 from weld._unclaimed_sources import (
     UnclaimedClass,
     detect_unclaimed_source_classes,
@@ -74,23 +99,16 @@ class RefreshResult:
     stamp_updated: bool
     #: The new full file text (already written to disk by :func:`refresh`).
     new_text: str
-
-
-#: Matches the ``- glob: "..."`` line of a generated entry block, and the
-#: ``strategy:`` line under it. Together they key a block against what the
-#: existing config already wires. A block neither pattern matches is kept:
-#: the guard exists to avoid duplicates, never to silently drop wiring.
-_BLOCK_GLOB_RE = re.compile(r'^\s*-\s+glob:\s+"(?P<glob>.*)"\s*$', re.MULTILINE)
-_BLOCK_STRATEGY_RE = re.compile(r"^\s*strategy:\s+(?P<strategy>\S+)\s*$", re.MULTILINE)
-
-
-def _block_key(block: str) -> tuple[str, str] | None:
-    """``(glob, strategy)`` for a generated entry block, or None if unreadable."""
-    glob = _BLOCK_GLOB_RE.search(block)
-    strategy = _BLOCK_STRATEGY_RE.search(block)
-    if glob is None or strategy is None:
-        return None
-    return glob.group("glob"), strategy.group("strategy")
+    #: ``(strategy, target)`` keys the entry-shaped pass appended, in the order
+    #: they were written. Kept apart from ``wired`` because the two answer
+    #: different questions -- which languages were invisible, and which
+    #: detected entries this config had never been offered.
+    entries: tuple[EntryKey, ...] = ()
+    #: True when the ``# wired-entry:`` record changed. Reported, because a run
+    #: that wires nothing can still write the file -- seeding the record of a
+    #: config that predates it -- and saying "nothing to change" there would be
+    #: false.
+    record_updated: bool = False
 
 
 def _wired_block_keys(text: str) -> set[tuple[str, str]]:
@@ -117,7 +135,42 @@ def _wired_block_keys(text: str) -> set[tuple[str, str]]:
     return keys
 
 
-def _detect_wiring(root: Path, files: list[Path], languages: list[str]) -> LanguageWiring:
+@dataclass(frozen=True)
+class _Detection:
+    """One pass of ``wd init``'s detectors, shared by both comparisons.
+
+    The language pass and the entry pass need overlapping halves of the same
+    detection (``detect_frameworks`` reads source files, so running it twice is
+    the one cost worth avoiding here). Detecting once and selecting twice is
+    also what keeps the two passes describing the same repository.
+    """
+
+    files: list[Path]
+    detected: dict
+    frameworks: tuple[tuple[str, str, str], ...]
+    languages: frozenset[str]
+
+
+def _detect(root: Path, files: list[Path]) -> _Detection:
+    """Run the shared detectors once over *files*."""
+    from weld._init_classify import classify_files
+    from weld.init_detect import (
+        detect_all_from_classified,
+        detect_frameworks,
+        detect_languages,
+    )
+
+    return _Detection(
+        files=files,
+        detected=detect_all_from_classified(classify_files(root, files)),
+        frameworks=tuple(detect_frameworks(root, files)),
+        languages=frozenset(detect_languages(files)),
+    )
+
+
+def _language_wiring(
+    root: Path, det: _Detection, languages: list[str],
+) -> LanguageWiring:
     """Run the language-scoped detectors ``wd init`` runs, for *languages*.
 
     Every field but ``languages`` is a whole-repo detection artifact, computed
@@ -126,51 +179,111 @@ def _detect_wiring(root: Path, files: list[Path], languages: list[str]) -> Langu
     a full init's output rather than a different set (see
     :class:`weld._init_language_entries.LanguageWiring`).
     """
-    from weld._init_classify import classify_files
     from weld._init_csharp import detect_csharp_artifacts
     from weld._init_interfaces import detect_interfaces, interface_source_entries
-    from weld.init_detect import (
-        detect_all_from_classified,
-        detect_frameworks,
-        detect_languages,
-        detect_ros2,
-    )
+    from weld.init_detect import detect_ros2
 
-    detected = detect_all_from_classified(classify_files(root, files))
     python_globs = (
-        detected["python_globs"] if "python" in detect_languages(files) else []
+        det.detected["python_globs"] if "python" in det.languages else []
     )
     selected = frozenset(languages)
     return LanguageWiring(
         languages=selected,
-        frameworks=tuple(detect_frameworks(root, files)),
+        frameworks=det.frameworks,
         python_globs=tuple(python_globs),
         csharp_flags=(
-            detect_csharp_artifacts(files) if "csharp" in selected else None
+            detect_csharp_artifacts(det.files) if "csharp" in selected else None
         ),
-        ros2_pkg_roots=tuple(detect_ros2(root, files)),
+        ros2_pkg_roots=tuple(detect_ros2(root, det.files)),
         interface_sources=tuple(interface_source_entries(
-            detect_interfaces(root, files, detected["compose_files"]), python_globs,
+            detect_interfaces(root, det.files, det.detected["compose_files"]),
+            python_globs,
         )),
     )
 
 
-def _entries_for_languages(root: Path, languages: list[str], config_text: str) -> list[str]:
+def _entry_wiring(det: _Detection) -> EntryWiring:
+    """The entry-shaped detectors' view of the same detection pass.
+
+    ``languages`` is the set present on disk rather than the unclaimed subset:
+    a framework entry is missing or not independently of whether its language
+    is claimed, which is why this comparison exists beside the language one
+    (bd 5038-j5o5d).
+    """
+    return EntryWiring(
+        root_configs=tuple(det.detected["root_configs"]),
+        frameworks=det.frameworks,
+        python_globs=(
+            tuple(det.detected["python_globs"])
+            if "python" in det.languages else ()
+        ),
+        languages=det.languages,
+    )
+
+
+def _entries_for_languages(
+    root: Path, det: _Detection, languages: list[str], config_text: str,
+) -> list[str]:
     """Return the entry blocks to append so *languages* are wired like a full init.
 
-    The second file walk (``scan_files``) is deliberate: the unclaimed set comes
-    from :func:`weld._unclaimed_sources.detect_unclaimed_source_classes`
-    unchanged, so the doctor warning and the remedy can never disagree about
-    what is unclaimed. ``wd init --refresh`` is an explicit, infrequent command;
-    one extra bounded walk buys that agreement.
+    The unclaimed set comes from
+    :func:`weld._unclaimed_sources.detect_unclaimed_source_classes` unchanged,
+    so the doctor warning and the remedy can never disagree about what is
+    unclaimed.
     """
     if not languages:
         return []
-    from weld.init_detect import scan_files
-
-    code, tests = language_source_entries(_detect_wiring(root, scan_files(root), languages))
+    code, tests = language_source_entries(
+        _language_wiring(root, det, languages))
     wired = _wired_block_keys(config_text)
-    return [block for block in (*code, *tests) if _block_key(block) not in wired]
+    return [
+        block for block in (*code, *tests)
+        if block_glob_and_strategy(block) not in wired
+    ]
+
+
+def _pending_keys(blocks: list[str]) -> set[EntryKey]:
+    """``(strategy, glob)`` for blocks the language pass is already appending.
+
+    The two passes overlap on exactly one shape: a framework entry for a
+    language that is *also* unclaimed. The language pass emits that language's
+    whole stack, framework entries included, and the entry pass emits framework
+    entries whatever the language's claim status -- which is the gap it exists
+    for. Without this the appended section carried the same ``strategy: gin``
+    entry twice.
+    """
+    return {
+        key for key in (block_entry_key(block) for block in blocks)
+        if key is not None
+    }
+
+
+def _entries_for_config(
+    det: _Detection, config_text: str, pending: set[EntryKey],
+) -> tuple[list[str], list[EntryKey], set[EntryKey]]:
+    """The entry-shaped pass: blocks to append, their keys, and the new record.
+
+    ``known`` is what the config carries, union what weld recorded writing into
+    it, union what the language pass is appending in this same run. A detected
+    entry therefore drops out of the offer because it is wired now, because it
+    is being wired now, or because it was wired once and has been removed
+    since -- the last being the distinction an append-only diff against the
+    live config cannot make.
+
+    The returned record folds three sets together: what was already recorded,
+    the detectable keys this config already accounts for (which is how a config
+    written before the record existed seeds itself, once), and what this run
+    appended -- through either pass, so a framework entry the language pass
+    wrote is as durable against a hand removal as one this pass wrote.
+    """
+    wiring = _entry_wiring(det)
+    carried = config_entry_keys(config_text)
+    recorded = ledger_keys(config_text)
+    blocks, keys = entry_blocks(
+        wiring, frozenset(carried | recorded | pending))
+    detectable = set(entry_keys(wiring))
+    accounted = detectable & (carried | pending)
+    return blocks, keys, recorded | accounted | set(keys)
 
 
 def _apply_stamp(text: str, version: str | None) -> tuple[str, bool]:
@@ -211,17 +324,24 @@ def _append_refresh_block(text: str, entries: list[str], version: str | None) ->
 
 
 def refresh(root: Path, output: Path) -> RefreshResult | None:
-    """Merge unclaimed-language strategies into an existing ``discover.yaml``.
+    """Merge newly-detected sources into an existing ``discover.yaml``.
 
     Returns ``None`` when ``output`` does not exist (the caller must direct the
     user to ``wd init`` first -- refresh only edits, never creates). Otherwise
-    detects unclaimed languages (ADR 0135), appends their entries, updates the
-    version stamp, writes atomically, and returns a :class:`RefreshResult`.
-    A config with no unclaimed language is a no-op on entries: only the stamp
-    is refreshed, so ``wired`` is empty and the caller reports "already
-    current".
+    runs both comparisons -- unclaimed languages (ADR 0135, ADR 0144) and
+    unoffered entries (ADR 0144 § 2026-09-02) -- appends what each reports,
+    updates the version stamp and the wired-entry record, writes atomically,
+    and returns a :class:`RefreshResult`. A config both comparisons find
+    current is a no-op on entries: only the stamp is refreshed, so ``wired``
+    and ``entries`` are both empty and the caller reports "already current".
+
+    The one file walk feeds both passes; ``detect_unclaimed_source_classes``
+    keeps its own, deliberately, so the doctor warning and the remedy cannot
+    disagree about what is unclaimed. ``wd init --refresh`` is an explicit,
+    infrequent command; one extra bounded walk buys that agreement.
     """
     from weld._version import weld_version
+    from weld.init_detect import scan_files
 
     if not output.is_file():
         return None
@@ -229,14 +349,19 @@ def refresh(root: Path, output: Path) -> RefreshResult | None:
     text = output.read_text(encoding="utf-8")
     unclaimed = detect_unclaimed_source_classes(root)
     version = weld_version() or None
+    det = _detect(root, scan_files(root))
 
-    entries = _entries_for_languages(
-        root, [item.language for item in unclaimed], text)
+    blocks = _entries_for_languages(
+        root, det, [item.language for item in unclaimed], text)
+    entry_only, wired_keys, record = _entries_for_config(
+        det, text, _pending_keys(blocks))
+    blocks.extend(entry_only)
 
     new_text = text
-    if entries:
-        new_text = _append_refresh_block(new_text, entries, version)
+    if blocks:
+        new_text = _append_refresh_block(new_text, blocks, version)
     new_text, stamp_updated = _apply_stamp(new_text, version)
+    new_text, record_updated = apply_ledger(new_text, record)
 
     if new_text != text:
         _atomic_write(output, new_text)
@@ -245,6 +370,8 @@ def refresh(root: Path, output: Path) -> RefreshResult | None:
         wired=tuple(unclaimed),
         stamp_updated=stamp_updated,
         new_text=new_text,
+        entries=tuple(wired_keys),
+        record_updated=record_updated,
     )
 
 
@@ -253,44 +380,3 @@ def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".refresh-tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
-
-
-def run_refresh(root: Path, output: Path) -> None:
-    """CLI entry for ``wd init --refresh``: run the merge and report on stderr.
-
-    A missing config is an explicit cannot-answer (ADR 0134): refresh edits, it
-    does not create, so it points at ``wd init`` rather than silently writing a
-    fresh config. Reporting lives here (not in init.py) to keep that module
-    under its line cap.
-    """
-    result = refresh(root, output)
-    if result is None:
-        print(
-            f"No discover.yaml at {output.name} to refresh: run `wd init` first "
-            "to bootstrap a config, then `wd init --refresh` to merge in "
-            "newly-detected strategies.",
-            file=sys.stderr,
-        )
-        return
-    if not result.wired:
-        tail = ("Version stamp refreshed." if result.stamp_updated
-                else "Nothing to change.")
-        print(
-            "discover.yaml is already current: every language present on disk "
-            f"has a wired strategy. {tail}",
-            file=sys.stderr,
-        )
-        return
-    print(
-        f"Merged {len(result.wired)} newly-detected language(s) into "
-        f"{output.name}, preserving your existing entries:",
-        file=sys.stderr,
-    )
-    for item in result.wired:
-        label = "C#" if item.language == "csharp" else item.language
-        print(
-            sanitize_terminal_line(f"  wired {label} ({item.file_count} files)"),
-            file=sys.stderr,
-        )
-    print("Run `wd discover` to rebuild the graph with the new sources.",
-          file=sys.stderr)

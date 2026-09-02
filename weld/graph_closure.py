@@ -4,20 +4,27 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
+from weld._graph_closure_call_edges import (
+    UNRESOLVED_PREFIX as _UNRESOLVED_PREFIX,
+    decorate_call_edges as _decorate_call_edges,
+)
 from weld._graph_closure_deferred import deferred_edge_props, deferred_names_for
 from weld._graph_closure_import_attr import rewrite_import_attr_targets
 from weld._graph_closure_modules import (
+    FIRST_PARTY_UNBOUND,
     external_package_name as _external_package_name,
     first_file_node as _first_file_node,
+    first_party_targets as _first_party_targets,
     module_candidates as _module_candidates,
     python_source_root_candidates,
+    resolve_first_party as _resolve_first_party,
 )
 from weld._graph_closure_package_origin import origin_for_synthesised_package
 from weld._graph_closure_reexport import rewrite_reexport_targets
+from weld._graph_closure_ts_calls import resolve_ts_call_targets
 from weld._node_ids import package_id as _canonical_package_id
 
 _STRATEGY = "graph_closure"
-_UNRESOLVED_PREFIX = "symbol:unresolved:"
 _CODE_EXTS = (
     ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".cs", ".java",
     ".cpp", ".cc", ".cxx", ".c", ".h", ".hh", ".hpp", ".hxx",
@@ -61,6 +68,9 @@ def close_graph(nodes: dict[str, dict], edges: list[dict]) -> None:
     # walk then follows when that module merely re-exports the member.
     rewrite_import_attr_targets(nodes, edges, path_index)
     rewrite_reexport_targets(nodes, edges, path_index)
+    # The TypeScript twin of the two above: same undo-then-re-derive discipline,
+    # same reason to run before ``_decorate_call_edges`` reads an endpoint.
+    resolve_ts_call_targets(nodes, edges, path_index)
     module_index = _module_index(nodes, path_index)
     _link_imports(nodes, edges, path_index, module_index)
     _decorate_call_edges(nodes, edges)
@@ -175,13 +185,16 @@ def _link_imports(
             _ensure_file_anchor(nodes, path_index, rel_path, node) if rel_path else node_id
         )
         language = _language_for(node, rel_path)
+        first_party = _first_party_targets(props)
         for raw in sorted({str(value) for value in imports if str(value).strip()}):
             normalized = _normalize_import(raw)
             if not normalized:
                 continue
             target_id, resolution = _resolve_import(
-                normalized, rel_path, language, path_index, module_index,
+                normalized, rel_path, language, path_index, module_index, first_party,
             )
+            if resolution == FIRST_PARTY_UNBOUND:
+                continue  # never an external claim about first-party code
             if target_id is None:
                 package_name = _external_package_name(normalized, language)
                 target_id = _ensure_package_node(nodes, package_name, language)
@@ -204,7 +217,11 @@ def _resolve_import(
     language: str,
     path_index: dict[str, str],
     module_index: dict[str, str],
+    first_party: dict[str, str] | None = None,
 ) -> tuple[str | None, str]:
+    # Highest rank, ahead of every path and module reading (ADR 0142 D3).
+    if (bound := _resolve_first_party(name, first_party, path_index)) is not None:
+        return bound
     if name.startswith(".") or "/" in name or _looks_like_file_import(name, language):
         target = _resolve_path_like_import(name, source_file, path_index)
         if target:
@@ -239,29 +256,6 @@ def _resolve_path_like_import(
         if item in path_index:
             return path_index[item]
     return None
-
-
-def _decorate_call_edges(nodes: dict[str, dict], edges: list[dict]) -> None:
-    for edge in edges:
-        if edge.get("type") != "calls":
-            continue
-        props = edge.setdefault("props", {})
-        target_id = str(edge.get("to") or "")
-        resolved = not target_id.startswith(_UNRESOLVED_PREFIX)
-        props.setdefault("resolved", resolved)
-        props.setdefault("resolution", "resolved" if resolved else "unresolved")
-        props.setdefault("raw", _raw_callee(target_id, nodes.get(target_id)))
-        provenance = props.setdefault("provenance", {})
-        if not isinstance(provenance, dict):
-            provenance = {}
-            props["provenance"] = provenance
-        source = nodes.get(str(edge.get("from") or ""))
-        source_props = source.get("props") if isinstance(source, dict) else {}
-        if isinstance(source_props, dict):
-            if source_props.get("file"):
-                provenance.setdefault("file", source_props["file"])
-            if isinstance(source_props.get("line"), int):
-                provenance.setdefault("line", source_props["line"])
 
 
 def _ensure_file_anchor(
@@ -383,15 +377,6 @@ def _clean_posix(value: str) -> str:
             continue
         parts.append(part)
     return "/".join(parts)
-
-
-def _raw_callee(target_id: str, target_node: dict | None) -> str:
-    if target_id.startswith(_UNRESOLVED_PREFIX):
-        return target_id[len(_UNRESOLVED_PREFIX):]
-    props = target_node.get("props") if isinstance(target_node, dict) else {}
-    if isinstance(props, dict) and isinstance(props.get("qualname"), str):
-        return str(props["qualname"]).rsplit(".", 1)[-1]
-    return target_id.rsplit(":", 1)[-1]
 
 
 def _add_edge(edges: list[dict], src: str, dst: str, edge_type: str, props: dict) -> None:

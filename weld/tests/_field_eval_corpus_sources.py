@@ -1,21 +1,27 @@
-"""File bodies for the field-eval v0.24.0 synthetic workspace.
+"""File bodies for the field-eval synthetic workspace: Python, proto, markdown.
 
 Split out of :mod:`weld.tests._field_eval_corpus_fixture` so both stay under
 the 400-line cap: this module is *only* the payload (what each fixture file
-contains), the fixture module is the layout and the git plumbing.
+contains), the fixture module is the layout and the git plumbing. The C# and
+MSBuild bodies were split off in turn, for the same reason, and live in
+:mod:`weld.tests._field_eval_corpus_sources_csharp`.
 
 Every constant here is a faithful transcription of the evaluator's
-``fixture/make-fixture.sh`` from the 0.24.0 findings bundle. The bundle is not
-committed (user decision, bd ...d76r1) -- this module is where its content
-survives, so **treat the shell script as the source of truth**: if a probe in
+``fixture/make-fixture.sh``, now the 0.25.0 bundle's copy of it -- which is
+in-tree at ``weld/tests/fixtures/field_eval/make-fixture.sh`` and is
+compared against what this module writes, byte for byte, by
+``//weld/tests:weld_field_eval_bundle_test``'s drift guard. No findings bundle
+is itself committed (user decision, bd ...d76r1), so
+**treat the shell script as the source of truth**: if a probe in
 ``weld_field_eval_e2e_test`` stops reproducing, the first question is whether
 a body here drifted from the one the evaluator ran.
 
 Load-bearing details that look like noise but are not:
 
 * The proto ``package acme.platform.order.schema.v1`` and the csproj
-  ``<PackageReference Include="Acme.Platform.Order.Schema">`` differ in case on
-  purpose -- ``package_graph`` must join them case-insensitively.
+  ``<PackageReference Include="Acme.Platform.Order.Schema">`` (next door)
+  differ in case on purpose -- ``package_graph`` must join them
+  case-insensitively.
 * ``.venv/.../pandas-3.0.2.dist-info/pyproject.toml`` and
   ``grpc_tools/_proto/google/protobuf/any.proto`` are the *vendored* manifests
   finding N2 is about: a resolver that walks them credits notify-service with
@@ -25,6 +31,10 @@ Load-bearing details that look like noise but are not:
   about.
 * ``docs-site`` has five markdown files, one of which is ``README.md`` -- the
   file finding N8 says the fallback source skips.
+* ``scripts/`` has no ``__init__.py`` and ``run_report.py`` imports its
+  neighbour by bare name: bare-name resolution *because the interpreter puts
+  that directory on sys.path* is check X4's whole shape, and an ``__init__``
+  there would quietly turn it into an ordinary dotted import.
 """
 
 from __future__ import annotations
@@ -72,122 +82,6 @@ SCHEMA_FILES: dict[str, str] = {
     ),
     "pyproject.toml": '[project]\nname = "order-schema"\nversion = "1.0.0"\n',
 }
-
-# -------------------------------------------------------------- gateway child
-
-_ORDER_REPLAYER_CS = """\
-using System;
-using System.Collections.Generic;
-using Acme.Platform.Order.Schema.V1;
-
-namespace Acme.Platform.OrderGateway.OrderReplayer;
-
-/// <summary>Replays a recorded order log against a running gateway.</summary>
-public class OrderReplayer
-{
-    private readonly IReplayTarget _target;
-
-    public OrderReplayer(IReplayTarget target) => _target = target;
-
-    public void ReplayOrder(OrderLogEntry entry)
-    {
-        var evt = new OrderPlacedEvent { OrderId = entry.OrderId };
-        _target.Send(evt);
-    }
-
-    public void ReplayOrderLog(IEnumerable<OrderLogEntry> entries)
-    {
-        foreach (var entry in entries) ReplayOrder(entry);
-    }
-
-    public string SerializeOrderMessage(OrderPlacedEvent evt) => evt.ToString();
-}
-"""
-
-_ORDER_LOG_ENTRY_CS = """\
-namespace Acme.Platform.OrderGateway.OrderReplayer;
-
-public class OrderLogEntry
-{
-    public string OrderId { get; set; } = string.Empty;
-    public long Timestamp { get; set; }
-}
-"""
-
-_IREPLAY_TARGET_CS = """\
-using Acme.Platform.Order.Schema.V1;
-
-namespace Acme.Platform.OrderGateway.OrderReplayer;
-
-public interface IReplayTarget
-{
-    void Send(OrderPlacedEvent evt);
-}
-"""
-
-_HANDLER_CS = """\
-using Acme.Platform.Order.Schema.V1;
-
-namespace Acme.Platform.OrderGateway.Handlers;
-
-/// <summary>Produces an OrderShippedEvent once an order is picked.</summary>
-public class OrderPlacedEventHandler
-{
-    public OrderShippedEvent Handle(OrderPlacedEvent placed)
-    {
-        return new OrderShippedEvent { OrderId = placed.OrderId, Carrier = "default" };
-    }
-}
-"""
-
-#: Both ``<PackageReference>`` entries matter: the first is the real join to
-#: the schema child, the second is what a vendored ``google.protobuf`` .proto
-#: inside notify-service's .venv fabricates a join to (finding N2).
-GATEWAY_CSPROJ = """\
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <OutputType>Exe</OutputType>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="Acme.Platform.Order.Schema" Version="1.0.0" />
-    <PackageReference Include="Google.Protobuf" Version="3.31.1" />
-  </ItemGroup>
-</Project>
-"""
-
-#: Seven C# files -- the count ``wd doctor`` reports in the unclaimed-source
-#: warning the N6/N7 probes read.
-GATEWAY_FILES: dict[str, str] = {
-    "src/OrderReplayer/OrderReplayer.cs": _ORDER_REPLAYER_CS,
-    "src/OrderReplayer/OrderLogEntry.cs": _ORDER_LOG_ENTRY_CS,
-    "src/OrderReplayer/IReplayTarget.cs": _IREPLAY_TARGET_CS,
-    "src/OrderReplayer/ReplayOptions.cs": (
-        "namespace Acme.Platform.OrderGateway.OrderReplayer;\n\n"
-        "public class ReplayOptions\n{\n"
-        '    public string TargetName { get; set; } = "default";\n'
-        "    public int DelayMs { get; set; }\n}\n"
-    ),
-    "src/OrderReplayer/ReplayProgram.cs": (
-        "namespace Acme.Platform.OrderGateway.OrderReplayer;\n\n"
-        "public static class ReplayProgram\n{\n"
-        "    public static void Main(string[] args) { }\n}\n"
-    ),
-    "src/OrderReplayer/ReplayUtilities.cs": (
-        "namespace Acme.Platform.OrderGateway.OrderReplayer;\n\n"
-        "public static class ReplayUtilities\n{\n"
-        "    public static string Normalize(string value) => value.Trim();\n}\n"
-    ),
-    "src/Handlers/OrderPlacedEventHandler.cs": _HANDLER_CS,
-    "src/OrderGateway.csproj": GATEWAY_CSPROJ,
-    "doc/order-gateway.md": (
-        "# Order Gateway\n\nAccepts orders and replays recorded order logs.\n"
-    ),
-}
-
-#: The file the N5 probe appends to in order to make one child stale.
-GATEWAY_TOUCH_FILE = "src/OrderReplayer/ReplayUtilities.cs"
 
 # --------------------------------------------------------------- notify child
 
@@ -287,14 +181,115 @@ def run(path: str) -> dict:
     return cfg
 '''
 
-#: Finding N4: a first-party package imported by its own dotted name. Written
-#: *after* the notify commit in make-fixture.sh, so these arrive untracked --
-#: reproduced faithfully, because "untracked but not ignored" is precisely the
-#: git-visibility state the N2 fix has to keep discovering.
+#: Finding N4: a first-party package imported by its own dotted name.
 NOTIFY_FIRST_PARTY_FILES: dict[str, str] = {
     "src/acme_notify/__init__.py": "",
     "src/acme_notify/config.py": _ACME_NOTIFY_CONFIG,
     "src/acme_notify/runner.py": _ACME_NOTIFY_RUNNER,
+}
+
+_ACME_NOTIFY_HELPER = '''\
+"""Target of an explicit relative import."""
+
+
+def work(value: int) -> int:
+    return value * 2
+'''
+
+_ACME_NOTIFY_RELATIVE_CALLER = '''\
+"""Calls a sibling module through an explicit relative import."""
+
+from .helper import work
+
+
+def double_it(value: int) -> int:
+    return work(value)
+'''
+
+_ACME_NOTIFY_LAZY_API = (
+    '"""The cycle-breaking idiom: an import hidden in a function, '
+    'unpacked at the call site."""\n'
+    "\n"
+    "\n"
+    "def _api():\n"
+    "    from acme_notify.config import load_config, DEFAULT_RETRIES\n"
+    "\n"
+    "    return load_config, DEFAULT_RETRIES\n"
+    "\n"
+    "\n"
+    "def build(path: str) -> dict:\n"
+    "    load_config, DEFAULT_RETRIES = _api()\n"
+    "    cfg = load_config(path)\n"
+    '    cfg["retries"] = DEFAULT_RETRIES\n'
+    "    return cfg\n"
+)
+
+_ACME_NOTIFY_CORPUS = '''\
+"""Class exposing a classmethod used by another module."""
+
+
+class Corpus:
+    def __init__(self, rows: list) -> None:
+        self.rows = rows
+
+    @classmethod
+    def build(cls, rows: list) -> "Corpus":
+        return cls(rows)
+
+    @staticmethod
+    def empty() -> "Corpus":
+        return Corpus([])
+'''
+
+_ACME_NOTIFY_CORPUS_USER = '''\
+"""Calls a classmethod through the imported class."""
+
+from acme_notify.corpus import Corpus
+
+
+def make(rows: list) -> Corpus:
+    return Corpus.build(rows)
+
+
+def make_empty() -> Corpus:
+    return Corpus.empty()
+'''
+
+_SHARED_HELPER = '''\
+"""A helper sitting beside its caller in a directory with no __init__.py."""
+
+
+def shared_work(value: str) -> str:
+    return value.strip().lower()
+'''
+
+_RUN_REPORT = (
+    '"""Imports its neighbour by bare name -- the interpreter puts this dir '
+    'on sys.path."""\n'
+    "\n"
+    "from shared_helper import shared_work\n"
+    "\n"
+    "\n"
+    "def report(value: str) -> str:\n"
+    "    return shared_work(value)\n"
+)
+
+#: The four Python import shapes v0.25.0's ``make-fixture.sh`` added, each the
+#: fixture half of a behaviour that release introduced: an explicit relative
+#: import (check X3), a lazy import unpacked at the call site, a classmethod
+#: reached through an imported class, and a sibling bare-name import in a
+#: directory with no ``__init__.py`` (check X4). ``scripts/`` deliberately has
+#: no ``__init__.py``: bare-name resolution *because the interpreter puts that
+#: directory on sys.path* is the whole shape, and a package there would make
+#: it an ordinary dotted import instead.
+NOTIFY_V0250_FILES: dict[str, str] = {
+    "src/acme_notify/helper.py": _ACME_NOTIFY_HELPER,
+    "src/acme_notify/relative_caller.py": _ACME_NOTIFY_RELATIVE_CALLER,
+    "src/acme_notify/lazy_api.py": _ACME_NOTIFY_LAZY_API,
+    "src/acme_notify/corpus.py": _ACME_NOTIFY_CORPUS,
+    "src/acme_notify/corpus_user.py": _ACME_NOTIFY_CORPUS_USER,
+    "scripts/shared_helper.py": _SHARED_HELPER,
+    "scripts/run_report.py": _RUN_REPORT,
 }
 
 _VENV = ".venv/lib/python3.12/site-packages"
@@ -357,6 +352,12 @@ DOCS_FILES: dict[str, str] = {
 }
 
 # ------------------------------------------------ probe-time config mutation
+
+#: The file the N5 probe appends to in order to make one child stale. A path,
+#: not a body -- it stays here with the other probe-time constants rather than
+#: following the gateway's C# payload into
+#: :mod:`weld.tests._field_eval_corpus_sources_csharp`.
+GATEWAY_TOUCH_FILE = "src/OrderReplayer/ReplayUtilities.cs"
 
 #: The team's narrowed, hand-maintained ``discover.yaml`` that the N6/N7 probe
 #: writes over the gateway's generated one (``run-all-repros.sh``). The comment

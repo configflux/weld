@@ -51,7 +51,6 @@ from pathlib import Path
 
 from weld._discover_federate import merge_cross_repo_edges
 from weld._errors import RESULT_UNKNOWN
-from weld._federation_endpoints import endpoint_child_name
 from weld._graph_cli import main as graph_cli_main
 from weld._unclaimed_sources import detect_unclaimed_source_classes
 from weld.contract import SCHEMA_VERSION
@@ -59,12 +58,15 @@ from weld.federation_root import build_root_meta_graph
 from weld.graph import Graph
 from weld.impact_core import format_human, impact
 from weld.tests._field_eval_corpus_fixture import (
+    BILLING,
     CHILDREN,
     GATEWAY,
     NOTIFY,
     SCHEMA,
     materialize_workspace,
 )
+from weld.tests._field_eval_corpus_sources_csharp import BILLING_PACKAGE_ID
+from weld.tests._field_eval_e2e_harness import cross_repo_joins
 from weld.tests._graph_invariants import (
     assert_answered_empty,
     assert_cannot_answer,
@@ -75,10 +77,13 @@ from weld.workspace_state import build_workspace_state, load_workspace_config
 
 _TS = "2026-08-29T00:00:00+00:00"
 
-#: The two joins the manifests on disk genuinely support. Everything else the
-#: resolver emits comes from the vendored ``.venv`` (finding N2).
+#: The joins the manifests on disk genuinely support. Everything else the
+#: resolver emits comes from the vendored ``.venv`` (finding N2). The third
+#: arrived with the corpus's C#-only producer child, whose package name is
+#: declared only in an MSBuild ``<PackageId>`` (finding M4, bd lcq0c.4).
 _REAL_JOINS = {
     (GATEWAY[0], SCHEMA[0], "Acme.Platform.Order.Schema"),
+    (GATEWAY[0], BILLING[0], BILLING_PACKAGE_ID),
     (NOTIFY[0], SCHEMA[0], "order-schema"),
 }
 
@@ -125,24 +130,6 @@ class _FederatedRootMixin:
         }
         return merged, children
 
-    @staticmethod
-    def _joins(graph: dict) -> set[tuple[str, str, str]]:
-        """``{(from-child, to-child, package)}``, read spelling-agnostically.
-
-        Through :func:`endpoint_child_name`, which knows both endpoint shapes
-        (ADR 0137 ss1). A raw separator split reads a repo-level endpoint as
-        the whole id, which would make the N2 probe below fail on an id
-        convention rather than on the join it exists to pin.
-        """
-        return {
-            (
-                str(endpoint_child_name(str(edge.get("from")))),
-                str(endpoint_child_name(str(edge.get("to")))),
-                str((edge.get("props") or {}).get("package")),
-            )
-            for edge in graph_edges(graph)
-        }
-
     def _workspace(self) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)  # type: ignore[attr-defined]
@@ -160,8 +147,8 @@ class CrossRepoManifestJoinTest(_FederatedRootMixin, unittest.TestCase):
     def test_csharp_and_python_consumers_both_join_the_schema_repo(self) -> None:
         merged, _children = self._federate(self._workspace())
         self.assertTrue(
-            _REAL_JOINS <= self._joins(merged),
-            f"a real manifest join is missing: {sorted(self._joins(merged))}",
+            _REAL_JOINS <= cross_repo_joins(merged),
+            f"a real manifest join is missing: {sorted(cross_repo_joins(merged))}",
         )
 
     def test_resolver_output_is_byte_stable(self) -> None:
@@ -188,7 +175,7 @@ class CrossRepoManifestJoinTest(_FederatedRootMixin, unittest.TestCase):
 
     def test_the_vendored_tree_contributes_no_join(self) -> None:
         merged, _children = self._federate(self._workspace())
-        self.assertEqual(self._joins(merged), _REAL_JOINS)
+        self.assertEqual(cross_repo_joins(merged), _REAL_JOINS)
 
 
 class ImpactCannotAnswerAtRootTest(unittest.TestCase):

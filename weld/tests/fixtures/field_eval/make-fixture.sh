@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Creates a synthetic Weld polyrepo workspace that reproduces the reported defects
-# against weld 0.24.0.
-# No proprietary content. Safe to run anywhere; everything lands under $TARGET.
+# Creates a synthetic Weld polyrepo workspace that exercises the findings reported
+# against 0.23.1 and 0.24.0, plus the Python import shapes fixed in 0.25.0.
+# No proprietary content. Everything lands under $TARGET.
 #
 #   ./make-fixture.sh [TARGET_DIR]     (default: ./weld-repro-workspace)
 #
-# Layout produced:
 #   <root>/                       git repo, federation root (.weld/workspaces.yaml tracked)
 #     libs/order-schema/          git repo, protobuf contracts
-#     services/order-gateway/     git repo, C# (tree-sitter), consumes the schema via `using`
-#     services/notify-service/    git repo, Python, consumes the schema via `import`
-#     docs-site/                  git repo, markdown at root + adrs/
+#     services/order-gateway/     git repo, C# (tree-sitter), consumes schema + Google.Protobuf
+#     services/notify-service/    git repo, Python: dotted imports, first-party package,
+#                                 relative/sibling/lazy-api shapes, vendored .venv
+#     docs-site/                  git repo, markdown at root + adrs/, depends on pandas
 
 set -euo pipefail
 
@@ -75,6 +75,31 @@ name = "order-schema"
 version = "1.0.0"
 EOF
 git_init "$S"; git_commit "$S" "order schema"
+
+# ------------------------------------------- child: C#-only schema library
+# Its produced package name exists ONLY in a .csproj -- no .proto, no pyproject --
+# so it isolates whether package_graph derives producers from MSBuild projects.
+B="$TARGET/libs/billing-schema"
+mkdir -p "$B/src"
+cat > "$B/src/Acme.Platform.Billing.Schema.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>Acme.Platform.Billing.Schema</PackageId>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>
+EOF
+cat > "$B/src/InvoiceIssuedEvent.cs" <<'EOF'
+namespace Acme.Platform.Billing.Schema;
+
+public class InvoiceIssuedEvent
+{
+    public string InvoiceId { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+}
+EOF
+git_init "$B"; git_commit "$B" "billing schema"
 
 # ------------------------------------------------------- child: C# service
 G="$TARGET/services/order-gateway"
@@ -175,6 +200,7 @@ cat > "$G/src/OrderGateway.csproj" <<'EOF'
   <ItemGroup>
     <PackageReference Include="Acme.Platform.Order.Schema" Version="1.0.0" />
     <PackageReference Include="Google.Protobuf" Version="3.31.1" />
+    <PackageReference Include="Acme.Platform.Billing.Schema" Version="1.0.0" />
   </ItemGroup>
 </Project>
 EOF
@@ -254,7 +280,6 @@ name = "notify-service"
 version = "1.0.0"
 dependencies = ["order-schema>=1.0.0"]
 EOF
-git_init "$N"; git_commit "$N" "notify service"
 
 # --- N4 shape: a first-party package imported by its own dotted name ---
 mkdir -p "$N/src/acme_notify"
@@ -281,10 +306,96 @@ def run(path: str) -> dict:
     return cfg
 EOF
 
+# --- 0.25.0 shape: explicit relative import inside a package ---
+cat > "$N/src/acme_notify/helper.py" <<'EOF'
+"""Target of an explicit relative import."""
+
+
+def work(value: int) -> int:
+    return value * 2
+EOF
+cat > "$N/src/acme_notify/relative_caller.py" <<'EOF'
+"""Calls a sibling module through an explicit relative import."""
+
+from .helper import work
+
+
+def double_it(value: int) -> int:
+    return work(value)
+EOF
+
+# --- 0.25.0 shape: lazy-api helper whose return value is unpacked ---
+cat > "$N/src/acme_notify/lazy_api.py" <<'EOF'
+"""The cycle-breaking idiom: an import hidden in a function, unpacked at the call site."""
+
+
+def _api():
+    from acme_notify.config import load_config, DEFAULT_RETRIES
+
+    return load_config, DEFAULT_RETRIES
+
+
+def build(path: str) -> dict:
+    load_config, DEFAULT_RETRIES = _api()
+    cfg = load_config(path)
+    cfg["retries"] = DEFAULT_RETRIES
+    return cfg
+EOF
+
+# --- 0.25.0 shape: classmethod reached through an imported class ---
+cat > "$N/src/acme_notify/corpus.py" <<'EOF'
+"""Class exposing a classmethod used by another module."""
+
+
+class Corpus:
+    def __init__(self, rows: list) -> None:
+        self.rows = rows
+
+    @classmethod
+    def build(cls, rows: list) -> "Corpus":
+        return cls(rows)
+
+    @staticmethod
+    def empty() -> "Corpus":
+        return Corpus([])
+EOF
+cat > "$N/src/acme_notify/corpus_user.py" <<'EOF'
+"""Calls a classmethod through the imported class."""
+
+from acme_notify.corpus import Corpus
+
+
+def make(rows: list) -> Corpus:
+    return Corpus.build(rows)
+
+
+def make_empty() -> Corpus:
+    return Corpus.empty()
+EOF
+
+# --- 0.25.0 shape: sibling bare-name import in a script dir (no __init__.py) ---
+mkdir -p "$N/scripts"
+cat > "$N/scripts/shared_helper.py" <<'EOF'
+"""A helper sitting beside its caller in a directory with no __init__.py."""
+
+
+def shared_work(value: str) -> str:
+    return value.strip().lower()
+EOF
+cat > "$N/scripts/run_report.py" <<'EOF'
+"""Imports its neighbour by bare name -- the interpreter puts this dir on sys.path."""
+
+from shared_helper import shared_work
+
+
+def report(value: str) -> str:
+    return shared_work(value)
+EOF
+
 # --- N2 shape: a vendored dependency tree inside a child repo ---
 # A real .venv is ~1 GB; only the metadata the resolver reads is recreated here.
 VENV="$N/.venv/lib/python3.12/site-packages"
-mkdir -p "$VENV/pandas-3.0.2.dist-info" "$VENV/grpc_tools/_proto/google/protobuf"
+mkdir -p "$VENV/pandas-3.0.2.dist-info" "$VENV/grpc_tools/_proto/google/protobuf" "$VENV/pandas"
 cat > "$VENV/pandas-3.0.2.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: pandas
@@ -294,7 +405,6 @@ EOF
 cat > "$VENV/pandas-3.0.2.dist-info/RECORD" <<'EOF'
 pandas/__init__.py,,
 EOF
-mkdir -p "$VENV/pandas"
 cat > "$VENV/pandas/__init__.py" <<'EOF'
 __version__ = "3.0.2"
 EOF
@@ -303,7 +413,6 @@ cat > "$VENV/pandas-3.0.2.dist-info/pyproject.toml" <<'EOF'
 name = "pandas"
 version = "3.0.2"
 EOF
-# a vendored .proto that declares a well-known third-party package
 cat > "$VENV/grpc_tools/_proto/google/protobuf/any.proto" <<'EOF'
 syntax = "proto3";
 
@@ -319,6 +428,7 @@ EOF
 cat > "$N/.gitignore" <<'EOF'
 .venv/
 EOF
+git_init "$N"; git_commit "$N" "notify service"
 
 # ------------------------------------------------------ child: docs-only repo
 D="$TARGET/docs-site"
@@ -367,6 +477,8 @@ scan:
 children:
   - name: libs-order-schema
     path: libs/order-schema
+  - name: libs-billing-schema
+    path: libs/billing-schema
   - name: services-order-gateway
     path: services/order-gateway
   - name: services-notify-service

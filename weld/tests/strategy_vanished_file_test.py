@@ -14,21 +14,29 @@ by how the strategy lists its files:
   ``glob_scope`` memo (bd cjij) reproduces the production window exactly: the
   listing is taken when the run begins and every strategy re-resolving that
   glob is served it, naming files that need not still be on disk.
-* ``fastapi``, ``pydantic`` and ``worker_stage`` list through ``Path.glob`` or
-  ``Path.iterdir``, which the memo never reaches, so their window is the
-  narrower one *inside* a single ``extract``: between the listing (which shells
-  git through the repo-boundary filter) and each file's own read. A dangling
-  symlink holds exactly that window open permanently -- the listing names the
-  path and the read raises ``FileNotFoundError`` on it -- so it is the same
-  defect frozen still rather than raced for.
+* ``fastapi``, ``pydantic`` and ``worker_stage`` are exercised through the
+  narrower window *inside* a single ``extract``: between the listing (which
+  shells git through the repo-boundary filter) and each file's own read. A
+  dangling symlink holds exactly that window open permanently -- the listing
+  names the path and the read raises ``FileNotFoundError`` on it -- so it is
+  the same defect frozen still rather than raced for.
+
+  ``fastapi`` and ``pydantic`` were in that group because they listed with
+  ``Path.glob``, which the memo never reaches; bd b9xgd moved both onto the
+  ADR 0112 shared resolver, so the memo serves them too and the wider window
+  applies as well. Their cases stay on the dangling symlink rather than
+  moving: it holds the read window open with or without a memo, so it keeps
+  proving the read guard itself rather than the listing that fed it.
 
 ``worker_stage`` is the one that does not fit the vanish shape, and is not
-forced into it: it pre-checks ``init_py.exists()``, so a file already gone is
-skipped before the read and its only vanish window is the tight
-``exists()``-to-read race. That pre-check stays, because it is what separates
-"this directory is not a worker stage" (a decision) from "the file is
-unreadable" (a failure), so its guard is proven through the other arm of the
-same ``except``: bytes that will not decode.
+forced into it. It is also the only one here that still re-lists inside its own
+``extract``, with ``Path.iterdir`` over the glob's parent -- directory-shaped,
+so the shared resolver has no file resolve of its own to take over. It
+pre-checks ``init_py.exists()``, so a file already gone is skipped before the
+read and its only vanish window is the tight ``exists()``-to-read race. That
+pre-check stays: it is what separates "this directory is not a worker stage"
+(a decision) from "the file is unreadable" (a failure), so the guard is proven
+through the other arm of the same ``except`` -- bytes that will not decode.
 
 Each case asserts two things. A sibling file must still anchor -- that is what
 makes it a regression test rather than an assertion that passes just as well on
@@ -169,7 +177,7 @@ class _MemoCase(_TreeCase):
 
 
 class PydanticVanishedFileTest(_TreeCase):
-    """``pydantic`` -- ``contracts_dir.glob`` then an unguarded read."""
+    """``pydantic`` -- the shared resolver, then a guarded read."""
 
     SOURCE = {"glob": "contracts/*.py"}
 

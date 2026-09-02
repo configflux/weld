@@ -3,6 +3,432 @@
 
 All notable user-facing changes to this project are recorded here.
 
+## v0.26.0 - 2026-09-02
+
+### Added
+
+- Next.js is a framework weld knows. An app-router application used to reach
+  the graph as files and symbols with nothing to say what it serves: the two
+  functions in `app/api/orders/route.ts` were two exports, never the
+  `GET /api/orders` and `POST /api/orders` the app actually answers, and a
+  page was not a URL at all. `wd init` now detects Next.js and wires a `next`
+  route entry the way it wires `express`, `gin` or `axum`, and that strategy
+  reads the app-router conventions: every HTTP-verb function an
+  `app/**/route.ts` exports, and every `app/**/page.tsx`, becomes a `route:`
+  node at the URL its directory chain spells. Route groups (`(marketing)`) and
+  parallel slots (`@modal`) drop out of that URL exactly as Next.js drops them,
+  dynamic segments (`[id]`, `[...slug]`) keep the spelling the source gives
+  them, and a private `_folder` is not routed at all. A page reads as the `GET`
+  it answers rather than as a shape of its own, so `wd query`, `wd context` and
+  a route inventory give one kind of answer to "what does this app expose"
+  whichever framework declared it; `props.route_source` tells a hand-written
+  handler from a page when you want only one of them. Detection keys on a
+  `next.config.*` file or a `next` dependency in a `package.json` rather than
+  on an import, because an app-router handler imports nothing from `next` —
+  a repository can be an entire Next.js application with no `from "next"` in
+  it. Existing projects pick this up with `wd init --refresh`, which merges
+  the new entry into a `discover.yaml` without discarding hand edits.
+  <!-- verify: file=weld/strategies/next.py grep="app-router" -->
+
+### Fixed
+
+- `wd init --refresh` now delivers a newly-wired *entry*, not only a newly-read
+  language. Refresh could only ever add source entries for a language nothing
+  on disk claimed, and a root configuration file is not a language: when
+  `tsconfig.json` joined the manifests weld wires by default, every existing
+  TypeScript project kept a graph with no node for the file that decides how
+  the project resolves its own imports, and the only command that added the
+  entry was `wd init --force` — which discards the hand edits `--refresh`
+  exists to preserve. Every diagnostic said the config was current, because by
+  the only question refresh asked, it was. Refresh now also compares the
+  entries weld detects against the entries your config carries, so a root
+  config that joined the table after your config was written is merged in, and
+  so is a framework entry (`express`, `next`, `gin`, `axum`, and the Python
+  set) for a language your config already claims — the case where the language
+  check has nothing to say and the entry is missing all the same. Append-only
+  and hand-edit preserving as before.
+
+  An entry you delete stays deleted: `wd init` and `wd init --refresh` record
+  what they wired as `# wired-entry:` comment lines under the version stamp,
+  and refresh only offers entries that record has never held. The lines are
+  inert comments — delete one and the next refresh offers that entry again. A
+  `discover.yaml` written before weld kept that record seeds it from its own
+  entries the first time you refresh, so an entry you had removed long ago may
+  come back once; remove it again and it stays out.
+  <!-- verify: file=weld/_init_wired_ledger.py grep="wired-entry" -->
+
+- Every Dockerfile in a repository is its own node. A Dockerfile used to be
+  identified by its file name alone, so a monorepo that builds one image per
+  app — `apps/shop/Dockerfile`, `apps/blog/Dockerfile` — got a single
+  `dockerfile:Dockerfile` node standing for all of them, and `Dockerfile`
+  beside `Dockerfile.dev` in one directory collapsed the same way. The
+  survivor was not simply the last one read: it kept the first image's `FROM`
+  while accumulating every image's `COPY` edges, so `wd context` on it named a
+  base image belonging to one service and source files belonging to another,
+  and `wd impact` on a file copied by the blog image reported the shop image
+  as affected. Nothing warned, and `wd stats` reported one Dockerfile, which
+  looks plausible in a repository that has several. A Dockerfile is now
+  identified by its path, so each gets its own node with its own base image
+  and its own `contains` edges. A Dockerfile at the repository root keeps the
+  short `dockerfile:Dockerfile` id unchanged, and where a project's only
+  Dockerfile lives in a subdirectory the old short id still resolves to it, so
+  existing links, bookmarks and saved queries keep working. Compose
+  `depends_on` edges point at the same per-image ids, so a service still
+  reaches the Dockerfile it builds from. Run `wd discover` to pick this up;
+  existing graphs are rebuilt automatically on the next run.
+  <!-- verify: file=weld/strategies/_dockerfile_ids.py grep="repo-relative path is the identity" -->
+
+- A framework route entry no longer costs a handler file its evidence. When a
+  `discover.yaml` claimed the same file twice — once with a language entry and
+  once with a framework route entry (`express`, `next`, `gin` or `axum`) — the
+  file node for every file the route strategy found a route in was reduced to
+  its path, its language and its role. Its `exports`, its imports, the
+  first-party import targets `wd impact` follows, its `types` and its
+  `line_count` were all gone, so `wd context` on an HTTP handler — the file a
+  reader is most likely to ask about — reported less than `wd context` on the
+  plain module beside it, and anything reading `props.exports` saw none.
+  Whether it happened at all depended on the order the two entries appeared in
+  the file, which is why a `wd init`-generated config was unaffected and a
+  hand-edited one that appended the framework afterwards was not. Both orders
+  now give the same answer: the file keeps everything the language pass
+  recorded about it, and the `route:` nodes and the `exposes` edge naming
+  their declaring file are unchanged. A configuration that wires only the
+  route strategy still gets a file node for the boundary file, exactly as
+  before. Existing projects pick this up on the next `wd discover`.
+  <!-- verify: file=weld/strategies/_ts_route_helpers.py grep="confidence: inferred" -->
+
+- A `glob:` with a wildcard in a *directory* segment now matches. A
+  `discover.yaml` entry like `apps/*/package.json`, `services/*/src/*.py` or
+  `packages/*/Dockerfile` resolved to nothing at all — no nodes, no error, and
+  `wd discover` still exiting 0, so there was no partial result to notice.
+  This mattered most in a monorepo, where per-package globs are the natural
+  way to write a config, and it did not stop at the missing nodes: because the
+  freshness accounting resolved those patterns correctly while discovery did
+  not, every file such a glob named was reported as "in-scope file never
+  ingested" the moment a clean `wd discover` finished, leaving the repository
+  permanently stale and paying a refresh on every read that could never fix
+  it. Both are gone: the files are discovered, `wd stale` reads clean after a
+  discover, and editing one of them is noticed as the content change it is.
+  `*` still spans exactly one path segment, so `apps/*/package.json` matches
+  `apps/web/package.json` and not `apps/web/vendor/package.json` — use
+  `apps/**/package.json` for that — and single-directory globs such as
+  `src/*.py` are unchanged. Existing projects pick the files up on the next
+  `wd discover`; no config change is needed.
+  <!-- verify: file=weld/glob_match.py grep="_directory_part_is_literal" -->
+
+- Four strategies now resolve `glob:` the way every other one does. `fastapi`,
+  `pydantic`, `compose` and the `events` config surface each carried their own
+  copy of the path resolution the rest of the strategies share, so the fix
+  above did not reach them — and they failed in two different ways. `fastapi`
+  and `pydantic` emitted *nothing* for a pattern like `api/*/routers/*.py` or
+  any `**` glob: no routes, no contracts, no error. `compose` and `events`
+  quietly read the repository root instead, so a `deploy/*/docker-compose.yml`
+  entry declared services and channels from whatever compose file happened to
+  sit at the top level and none from the files it named — a wrong answer that
+  looks like a right one. Both are gone: all four resolve exactly the files
+  their glob matches, at any depth, and `exclude:` now applies to them as it
+  already did elsewhere. A FastAPI route is attributed to the app module
+  beside *its own* routers directory rather than to one directory for the
+  whole pattern, which is what makes per-service layouts come out right.
+  Single-directory globs are unchanged, and existing projects pick this up on
+  the next `wd discover` with no config change.
+  <!-- verify: file=weld/strategies/compose.py grep="resolve_glob" -->
+
+- `wd stale` now understands a `{a,b}` glob group, so a new file in a
+  TypeScript or JavaScript project is noticed. `wd discover` has always
+  expanded a group like `**/*.{ts,tsx}` and read every file it names, but the
+  check that asks whether a graph has fallen behind read the pattern as
+  written — and a brace group means nothing there, so it matched no file at
+  all. The two halves disagreed in silence: the files were in the graph, while
+  the accounting believed none of them had ever been in scope. That left the
+  check blind for a whole class of project, because these are exactly the
+  entries `wd init` writes for TypeScript (`**/*.{ts,tsx}`) and JavaScript
+  (`**/*.{js,jsx,mjs,cjs}`). Add a module to a project configured that way and
+  nothing reacted: `wd stale` answered `stale: no`, no refresh ran, and reads
+  kept answering "no such symbol" for a file sitting in the tree. It is
+  reported now — as `in-scope file never ingested`, the same way any other
+  never-read file is — and the refresh that follows picks it up. Nothing else
+  moves: a group still names exactly its alternatives and never a wildcard, a
+  freshly discovered project still reads clean rather than stale, and a
+  configuration with no brace group in it answers exactly as it did before.
+  <!-- verify: file=weld/_staleness_coverage.py grep="expand_braces" -->
+
+- Stale-config detection now reads what your config *claims*, not what it
+  *mentions*. `wd doctor`, `wd prime` and `wd init --refresh` compared the
+  languages on disk against the flat set of strategy names the config named
+  anywhere, so a `discover.yaml` wiring one `**/*.ts` entry counted as
+  claiming JavaScript, Go, Rust, Java and C++ as well — and counted as
+  claiming the `.tsx` files beside its `.ts` ones, which nothing was reading.
+  On the upgrade path every existing Node project takes, that meant a repo of
+  `a.ts`, `p.tsx` and `legacy.js` had two of three files invisible to the
+  graph while `wd doctor` reported nothing and `wd init --refresh` answered
+  "discover.yaml is already current". A wired entry now claims the files its
+  glob actually matches, so the same repo is told about both gaps and
+  `--refresh` wires them — the dialect-family glob and the JavaScript entry —
+  without discarding the entry you wrote by hand. The warning names the
+  unclaimed file count rather than the language's total, and stays quiet about
+  what you scoped on purpose: an entry scaffolded for files that do not exist
+  yet, a language absent from disk, and a subtree your config deliberately
+  leaves out are all silent, exactly as before.
+  <!-- verify: file=weld/_unclaimed_sources.py grep="A claim is a matched file" -->
+- `wd init` now claims a TypeScript project's `tsconfig.json`. Every other
+  ecosystem's manifest was already wired as a root config -- `pyproject.toml`,
+  `package.json`, `Cargo.toml`, `go.mod`, `MODULE.bazel`, `Makefile` -- and
+  TypeScript's was the omission, so a stock `wd discover` on a TS repository
+  produced a graph with no node for the file that decides how that repository
+  resolves its own imports. Weld already *reads* it, for the
+  `compilerOptions.paths` aliases behind first-party import resolution; it
+  simply never recorded that it had. `tsconfig.json` at the repository root
+  now becomes a `config:` node like the manifests beside it, so `wd query
+  tsconfig` finds it and a config inventory is complete. Root-level only, as
+  every entry in that list is: a monorepo's `apps/web/tsconfig.json` belongs
+  to one package, not to the repository. A fresh `wd init` writes the entry,
+  and `wd init --refresh` merges it into an existing `discover.yaml` beside
+  the entries you wrote by hand.
+  <!-- verify: file=weld/init_detect_constants.py grep="tsconfig.json" -->
+
+- `wd callers` now answers for TypeScript. Call evidence was recorded, but
+  neither end of it could be used: every call ran from a synthetic
+  whole-*file* symbol to an `unresolved` callee that nothing ever bound, so
+  asking who calls a shared function returned nothing in every configuration
+  — on a workspace where three files called it. Both ends are now read from
+  what the code says. A call is attributed to the export it sits inside, so
+  `export async function GET()` calling `formatPrice` is recorded as `GET`
+  calling it rather than as "the route file" calling it; and a callee whose
+  name arrived through a named import binds to the exported symbol behind
+  that import, including through a package's re-export-only `index.ts`
+  barrel, where the definition is looked up inside the package the import
+  named. `wd callers` and `wd impact` therefore answer at function
+  granularity for TypeScript the way they already did for Python. Nothing is
+  guessed to get there: a name a package defines twice is an ambiguity and
+  stays unresolved, as do a third-party function, a method called on a value,
+  and every other callee the graph cannot bind — so "we cannot say" is still
+  visibly different from "nothing calls this". The evidence arrives with the
+  next `wd discover`, which rebuilds in full.
+  <!-- verify: file=weld/_graph_closure_ts_calls.py grep="resolve_ts_call_targets" -->
+
+- A third-party package imported by a file named after it no longer vanishes
+  from the graph. Weld resolves an import against the importing file's own
+  ancestor directories, so `providers/anthropic.py` writing `import anthropic`
+  offered `providers.anthropic` as a reading -- which is the importing file
+  itself. Weld drops an edge from a file to itself, so the dependency did not
+  merely point somewhere odd, it disappeared: no package node, no edge, nothing
+  anywhere in the graph to say the file used that SDK. On weld's own tree that
+  hid `anthropic`, `openai`, `ollama` and `tree_sitter` -- every provider SDK it
+  ships an extra for, plus its parser dependency -- so a package inventory, a
+  `wd impact` from one of them, or a cross-repo join on the package name all
+  under-reported, with nothing to show anything was missing. A reading that
+  lands on the importing file is now refused and the walk continues outward, so
+  a file named after the package it imports resolves exactly as any other file
+  importing that name does. Only the inferred readings are bound: a module that
+  genuinely imports itself is still read as itself, and no other import moves.
+  The fix arrives with the next `wd discover`; no full rebuild is needed.
+  <!-- verify: file=weld/_graph_closure_modules.py grep="_readings" -->
+- A function defined under a `src/` layout now reports its callers. 0.25.0
+  fixed the *file* level of this: `src/acme/config.py` imported as `from
+  acme.config import load_config` stopped minting a second, external copy of
+  the module. The symbol level was still split in two. Weld names a symbol
+  after the path its file sits at -- `src.acme.config` -- while every import
+  in such a tree writes the name the *source root* makes importable,
+  `acme.config`, so each call was recorded against a second symbol keyed on
+  the written spelling. That shadow held the call edges and knew no file; the
+  real definition knew its file and answered `wd callers` with nothing. One
+  function, two identities, and `wd impact` blind to the half that mattered.
+  An absolute import is now read the way the interpreter reads it: weld walks
+  up from the importing file while `__init__.py` is there, and the first
+  directory without one is the entry Python puts on `sys.path` and the name a
+  written import resolves under. So `acme.config` and `src.acme.config` are
+  one module, the calls land on the definition, and no shadow is minted. The
+  same reading already applied to a script directory importing the file next
+  to it; it now applies from inside a package tree, which is what a `src/`
+  layout is. Node ids do not change, and nothing is guessed: a written name
+  the tree does not actually contain keeps the spelling it was given, one the
+  glob already owns is never re-pointed, and a module never resolves an import
+  to itself. The first `wd discover` after upgrading rebuilds in full, which
+  is what moves an existing graph's call edges onto the definitions.
+  <!-- verify: file=weld/strategies/_python_source_root_import.py grep="_source_root_prefix" -->
+- The cross-repo `package_graph` resolver now recognises a .NET project as the
+  *producer* of the package its consumers name. A `.csproj` used to tell weld
+  only what a repo consumed -- its `<PackageReference>` entries -- so a schema
+  or client library whose published name exists nowhere but its project file
+  could be joined *from* but never *to*, and every reference pointing at it
+  resolved to nothing. On a .NET-heavy workspace that is most of the dependency
+  graph, absent silently rather than reported missing. A project file now also
+  declares what its repo publishes: `<PackageId>` when it states one, otherwise
+  the project filename, which is the name `dotnet pack` would give it. A
+  project declaring `<IsPackable>false</IsPackable>` publishes nothing and is
+  credited with nothing, and a `<PackageId>` still holding an unexpanded
+  `$(...)` property reference is not read as a package name. Producer manifests
+  are read through one per-ecosystem registry -- `pyproject.toml`, `go.mod`,
+  `.csproj` and `.proto` -- and the gitignore and vendored-tree boundary
+  applies to producers exactly as it does to the consumed side, so a copied-in
+  project file under `vendor/`, `packages/`, `bin/` or `obj/` still makes no
+  repo the producer of somebody else's package.
+  <!-- verify: file=weld/cross_repo/_manifest_readers.py grep="MANIFEST_READERS" -->
+- `wd doctor` no longer fails a polyrepo workspace root for having no
+  `discover.yaml`. A federated `wd discover` reads `.weld/workspaces.yaml` and
+  the children's own graphs and resolves no source glob at the root, so a root
+  that only federates has nothing of its own to discover and needs no
+  `discover.yaml` -- but doctor graded that absence `[fail]`, so the healthiest
+  possible workspace reported `Status: errors` and exited 1 while `wd workspace
+  status` showed every child green. Anything gating on that exit code read a
+  correct setup as a broken one. Where the registry is present and
+  `discover.yaml` is absent, the absence is now a `[note]` that says why -- this
+  root federates; it has no sources of its own to discover -- and the exit code
+  stays 0. Doctor settles that by asking the same question every graph-backed
+  read already asks about a root, so the two can no longer disagree about what
+  a workspace root is. Nothing else moves: a root that federates *and*
+  discovers keeps its `[ok]` line with the source count, and a plain repository
+  missing `discover.yaml` is still an error and still exits 1.
+  <!-- verify: file=weld/_doctor_config.py grep="this root federates" -->
+- `wd prime` no longer tells a polyrepo workspace root to run `wd init` for a
+  `discover.yaml` it has no use for. At a root whose only discovery input is
+  `.weld/workspaces.yaml`, prime reported `[ACTION] discover.yaml not found`
+  with `-> Run: wd init`, and then `[INFO  ] Graph has only 1 node — consider
+  adding more sources to discover.yaml`. Neither line could be acted on:
+  `wd init` there re-scaffolds a stub config that federated discovery never
+  resolves, and a root meta-graph holding one node per present child is exactly
+  the shape federation is meant to produce — so the only next step prime
+  offered was one that makes the setup worse, and it contradicted `wd doctor`,
+  which already treats that absence as a note. Both lines are federation-aware
+  now: the absent config is an `[INFO  ]` line saying the root federates and
+  has no sources of its own to discover, the node-count advisory is dropped,
+  and a healthy workspace root finishes with `Weld is up to date. No actions
+  needed.` Prime settles this by asking the same question every graph-backed
+  read already asks about a root, so the two commands can no longer disagree
+  about what a workspace root is. Nothing else moves: a root that federates
+  *and* discovers keeps its `[OK    ]` line with the source count **and** keeps
+  the node-count advisory, because there the config exists and the root really
+  does resolve sources; and a plain repository with no `discover.yaml` still
+  gets the `[ACTION]` and the `wd init` next step.
+  <!-- verify: file=weld/_prime_config.py grep="this root federates" -->
+- `wd init` now wires the TypeScript and JavaScript it just told you it found.
+  It counted your `.tsx` files, counted your `.js` files, and named the Express
+  it detected -- then wrote a config claiming only `**/*.ts`. On a Next.js app
+  that is most of the repository: every page, layout and component invisible to
+  the first `wd discover` you ever run, with nothing to say so, because the
+  language *was* wired and only its other dialects were not. Init now writes one
+  entry per dialect family -- `**/*.{ts,tsx}` for TypeScript and
+  `**/*.{js,jsx,mjs,cjs}` for JavaScript -- so a dialect it counts is a dialect
+  it claims. Detecting Express now wires the `express` route strategy the same
+  way detecting Gin or Axum wires theirs, and both family entries carry
+  `emit_calls`, so a stock TypeScript graph records the call evidence
+  `wd callers` and `wd impact` are answered from. JavaScript also joins the
+  languages `wd doctor` and `wd prime` report as unclaimed, so a repository
+  whose JavaScript nothing speaks for is now both reported and fixable by
+  `wd init --refresh` -- previously it was not merely unreported, it was
+  unrefreshable. An existing config is left exactly as you wrote it: a config
+  that already wires a `**/*.ts` entry by hand gets the `**/*.{ts,tsx}` family
+  entry and the framework entry merged in beside it, and the entry you wrote
+  stays.
+  <!-- verify: file=weld/_init_language_entries.py grep="{ts,tsx}" -->
+- A TypeScript import that names your own workspace package, or an alias from
+  your own `tsconfig`, now points at the file that defines it. In an npm
+  workspaces monorepo `import { formatPrice } from "@acme/shared"` minted a
+  `package:typescript:acme-shared` node — a claim that the code lives outside
+  the repository, three directories from where it actually is — and
+  `import { greeting } from "@/lib/greeting"` did the same, because nothing in
+  discovery read `compilerOptions.paths` at all. So the shared package a
+  monorepo is built around had no incoming edges from the apps that use it:
+  `wd impact` on it reported nothing, `wd context` showed no consumers, and a
+  dependency inventory listed first-party code as a third-party dependency.
+  Weld now reads the workspace member map out of the root `package.json` and
+  the alias map out of the nearest `tsconfig.json` (or `jsconfig.json`) above
+  the importing file, and binds both spellings to their defining files —
+  honouring `exports`/`types`/`main` entry points, falling back to the
+  conventional `index` locations when a declared entry names a build output
+  the checkout has not produced, and scoping each alias to the config that
+  declares it so two apps may give `@/*` two different meanings. Nothing else
+  about an import moves: a genuine dependency still mints its package node
+  with the origin it always had, and a first-party name whose file the graph
+  does not hold draws no edge rather than a false external one. Arrives with
+  the next `wd discover`; the discovery-state version is bumped, so the first
+  run after upgrading is a full one.
+  <!-- verify: file=weld/strategies/_ts_first_party.py grep="FirstPartyImports" -->
+- The cross-repo `package_graph` resolver now reads npm `package.json`
+  manifests, so a workspace of Node repositories gets a dependency graph
+  instead of an empty one. It read Python, Go, MSBuild and protobuf manifests
+  and nothing else, so an app declaring `"@acme/ui-kit": "^1.2.0"` beside the
+  repository that publishes `@acme/ui-kit` was joined to nothing -- and
+  nothing said so: `wd impact` on that library's repo node reported no
+  dependents for a package the whole workspace depended on. A `package.json`
+  now declares both halves. Its `name` is what the repository publishes, and
+  its runtime `dependencies` are what it consumes; `devDependencies`,
+  `peerDependencies` and `optionalDependencies` are deliberately not edges,
+  since a build-time tool and a contract with whoever installs the package are
+  not run-time dependencies on a sibling repository. A package marked
+  `"private": true` publishes nothing -- npm's own rule -- so a workspace root
+  or an application is never credited with producing a package named after it.
+  Workspace members are read where they sit, `packages/` included, and a
+  dependency satisfied inside the same repository stays inside it instead of
+  becoming a cross-repo edge. A vendored `node_modules` declares nothing even
+  in a repository that commits it: one `npm install` leaves a complete
+  self-naming manifest for every transitive dependency on disk, and reading
+  those would credit your app with producing `react`.
+  <!-- verify: file=weld/cross_repo/_manifest_readers.py grep="read_package_json" -->
+- One malformed manifest in one child repository no longer costs a workspace
+  every cross-repo edge. A `package.json` or `pyproject.toml` nested thousands
+  of levels deep makes the parser raise a recursion error rather than report
+  bad syntax, and that walked straight past the per-manifest guard: the
+  resolver as a whole was abandoned with a single warning, so one unreadable
+  file silently deleted every package edge in the graph -- including the ones
+  nothing near it had anything to do with. Such a manifest now contributes
+  nothing, exactly as an unparseable one always did, and every other manifest
+  in the workspace is read normally.
+  <!-- verify: file=weld/cross_repo/_manifest_readers.py grep="RecursionError" -->
+- A component in a `.tsx` file reaches the graph. `tree-sitter-typescript`
+  ships two grammars, and weld used the one that does not know JSX for every
+  TypeScript file -- so `<main>` in a Next.js page was a syntax error, error
+  recovery swallowed the declaration around it, and `export default function
+  Home()` produced no symbol, no exports and no imports. A Next.js app's pages,
+  layouts and components are all that shape, so its own screens were the part
+  of it weld could not see, and nothing said so: the file still had a node, it
+  was simply empty. Weld now chooses the grammar per file from its extension,
+  so a `.tsx` file is read as JSX and its `.ts` neighbour as plain TypeScript,
+  under the one entry `wd init` already writes. `language: tsx` is accepted as
+  a spelling of the same thing -- it used to name a grammar module that has
+  never existed -- and records the file as TypeScript either way, so one
+  language keeps one symbol namespace whichever dialect a file is written in.
+  <!-- verify: file=weld/strategies/_ts_dialect.py grep="grammar_variant" -->
+- A barrel file now leads somewhere. An `index.ts` whose whole content is
+  `export { formatPrice } from "./money"` is what a package's `main` points
+  at, so every read arriving through the package name arrives there -- and it
+  had no node of its own, no exports, no imports, and one outbound edge, to
+  its own call-graph sentinel. The module it published was unreachable from
+  the entry point that published it. Weld now records the names on the file
+  node's `props.reexports` and the module they come from in
+  `props.imports_from`, which resolves to a `depends_on` edge on the defining
+  file exactly as a plain import does; `export * from "./money"` records the
+  dependency without the names, which is all that form states. Re-exported
+  names stay out of `props.exports`: that list is what becomes `symbol:`
+  definition nodes, and a barrel defines nothing, so `wd callers` and `wd
+  impact` still answer about the module that declares a function rather than
+  about every barrel that republishes it. A renamed re-export records the name
+  it publishes, and a local `export { a }` -- which forwards nothing -- is
+  unaffected.
+  <!-- verify: file=weld/strategies/_ts_file_props.py grep="reexported_names" -->
+
+- JavaScript now delivers the surface the platform table has been claiming for
+  it. A `.js` or `.jsx` file wired as `language: javascript` produced *nothing*
+  — not a symbol, not an import, not even a file node — because weld shipped no
+  JavaScript query file at all, and queries are loaded before any file is read,
+  so the whole source entry was abandoned with one warning naming an absolute
+  path inside the install. A Node service written in CommonJS was invisible to
+  every question the graph answers. It now contributes its functions and
+  classes as symbols attributed to the file that declares them, its
+  `module.exports` / `exports.x` names as the module's published surface, and
+  its dependencies from both `import` and `require("…")` — so a required
+  third-party package becomes a package node with a `depends_on` edge, the same
+  evidence a TypeScript import has always produced. `module.exports =
+  require("./impl")` is read as the re-export it is, which keeps a package's
+  entry-point facade in the graph rather than dropping the file every consumer
+  arrives at first. What is *not* promoted is deliberate: a top-level `const`
+  bound to a `require` is an import rather than a definition, and a name
+  republished through `module.exports` is recorded as published without
+  claiming this file defines it. JavaScript remains Tier 2. The evidence
+  arrives with the next `wd discover`, which rebuilds in full.
+  <!-- verify: file=weld/languages/javascript.yaml grep="commonjs_exports" -->
+
 ## v0.25.0 - 2026-09-01
 
 ### Fixed
@@ -85,7 +511,7 @@ All notable user-facing changes to this project are recorded here.
   spelling it was given, so an ordinary third-party import is untouched. A
   sibling that *is* there wins over a standard-library module of the same name,
   which is what the interpreter does too.
-  <!-- verify: file=weld/strategies/_python_sibling_import.py grep="normalize_sibling_imports" -->
+  <!-- verify: file=weld/strategies/_python_source_root_import.py grep="normalize_source_root_imports" -->
 
 - An incremental `wd discover` no longer keeps a placeholder symbol alive after
   the last file that referenced it is deleted. When a package re-exports a name

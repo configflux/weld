@@ -1,10 +1,14 @@
 """The v0.23.1 field-eval fixes, still holding -- the evaluator's own suite.
 
-``fixture/verify-previous-fixes.sh`` is what the external evaluator re-ran
-against 0.24.0 before reporting anything new: nine checks, one per finding
-they had filed against 0.23.1. It passed 9/9. This file is that script, ported
-to run against the same workspace through ``python -m weld`` in a subprocess,
-so the next release finds out from our own gate rather than from a report.
+The evaluator's ``verify-previous-fixes.sh`` is what they re-ran against
+0.24.0 before reporting anything new: nine checks, one per finding they had
+filed against 0.23.1. It passed 9/9. This file is that script, ported to run
+against the same workspace through ``python -m weld`` in a subprocess, so the
+next release finds out from our own gate rather than from a report. Round
+three folded those nine checks, numbering intact, into ``verify-all-fixes.sh``
+-- the script the shell lane now runs -- so the copy in
+``weld/tests/field_eval/`` is that one and the methods below still carry the
+evaluator's original ids.
 
 Unlike its sibling ``weld_field_eval_e2e_test`` (nine *new* findings, all
 expected failures), everything here must pass **today**. Two checks cannot:
@@ -57,7 +61,7 @@ def tearDownModule() -> None:
 
 
 class PreviousFixesStillHoldTest(unittest.TestCase):
-    """One method per check in ``verify-previous-fixes.sh``, same numbering."""
+    """One method per v0.23.1 check, in the evaluator's own numbering."""
 
     ws: FieldEvalWorkspace
 
@@ -119,7 +123,11 @@ class PreviousFixesStillHoldTest(unittest.TestCase):
     def test_06_impact_refuses_to_fabricate_a_verdict(self) -> None:
         # No resolver is wired at the shipped default, so a measured 0 is
         # impossible and impact must say so rather than score a LOW.
-        result = self.ws.wd("impact", f"repo:{SCHEMA[0]}", "--allow-stale")
+        #
+        # ``--allow-stale`` is gone with the bug it was working around
+        # (field-eval M1, bd lcq0c.3). Nothing weakens: a refusal prints an
+        # error instead of a verdict, so the ``assertIn`` below fails on one.
+        result = self.ws.wd("impact", f"repo:{SCHEMA[0]}")
         self.assertIn("Risk: UNKNOWN", result.output, result.output)
         self.assertNotIn("Risk: LOW", result.output)
 

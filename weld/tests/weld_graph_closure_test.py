@@ -18,6 +18,10 @@ from weld.serializer import dumps_graph  # noqa: E402
 LANGUAGE_MATRIX = {
     "python": ("src/python/main.py", "src/python/dep.py", "./dep", "json"),
     "typescript": ("web/main.ts", "web/dep.ts", "./dep", "react"),
+    # Paths deliberately share no stem with the TypeScript row above: the
+    # closure's path index is keyed on the extension-less path, so ``web/main``
+    # would name both files at once in the merged all-language fixture.
+    "javascript": ("web/legacy.js", "web/util.js", "./util", "express"),
     "go": ("go/main.go", "go/internal/dep.go", "go/internal/dep", "net/http"),
     "rust": ("src/main.rs", "src/dep.rs", "crate::dep", "serde"),
     "csharp": ("src/csharp/Main.cs", "src/csharp/Dep.cs", "src.csharp.Dep", "System.Text"),

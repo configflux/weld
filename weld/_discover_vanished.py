@@ -10,10 +10,17 @@ listing simply did not mention it.
 Which strategies can see this at all depends on how they list. Strategies
 that go through ``walk_glob`` are served the run-start listing from the glob
 memo (bd cjij), so a vanished file still reaches their read guard and is
-reported as a failure (bd pt38 / bd o642). The ones that re-list inside their
-own ``extract`` with ``Path.glob`` or ``Path.iterdir`` -- ``pydantic``,
-``fastapi``, ``worker_stage`` -- cannot report what their listing never
-named.
+reported as a failure (bd pt38 / bd o642). A strategy that re-lists inside its
+own ``extract`` cannot report what its listing never named. ``pydantic`` and
+``fastapi`` were in that second group until bd b9xgd moved them onto the
+ADR 0112 shared resolver, so today ``worker_stage`` is the only one left --
+it walks the glob's parent with ``Path.iterdir`` rather than resolving the
+glob at all, which is a directory-shaped strategy and not a resolve the
+shared module can take over.
+
+That shrinking list does not shrink this check: it is the orchestration
+layer's answer for *any* strategy, including a project-local
+``.weld/strategies/`` override weld does not own and cannot make memo-served.
 
 So the check lives here, in the orchestration layer, rather than in any
 strategy: only this layer holds both halves of the fact. The inventory says

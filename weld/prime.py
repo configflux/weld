@@ -31,34 +31,20 @@ def _action(msg: str, cmd: str) -> tuple[str, str]:
     line = _status("ACTION", msg) + f"\n           -> Run: {cmd}"
     return line, cmd
 
-def _check_discover_yaml(weld_dir: Path) -> tuple[list[str], list[str]]:
-    lines: list[str] = []
-    steps: list[str] = []
-    path = weld_dir / "discover.yaml"
-    if not path.is_file():
-        line, cmd = _action("discover.yaml not found", "wd init")
-        lines.append(line)
-        steps.append(cmd)
-    else:
-        count = _count_active_sources(path)
-        lines.append(_status("OK", f"discover.yaml exists ({count} active source{'s' if count != 1 else ''})"))
-    return lines, steps
+def _check_discover_yaml(weld_dir: Path, root: Path) -> tuple[list[str], list[str]]:
+    """Report the discovery config, or its considered absence (ADR 0141 D3).
 
-def _count_active_sources(path: Path) -> int:
-    try:
-        from weld._yaml import parse_yaml
+    A root whose only discovery input is the workspace registry is not missing
+    a config it has no use for. That rule and the rest of the logic live in
+    :mod:`weld._prime_config` so this file stays under the 400-line cap
+    (CLAUDE.md / AGENTS.md policy).
+    """
+    from weld._prime_config import check_discover_yaml
 
-        data = parse_yaml(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            sources = data.get("sources", [])
-            if isinstance(sources, list):
-                return len(sources)
-    except Exception:
-        pass
-    return 0
+    return check_discover_yaml(weld_dir, root, _status, _action)
 
 def _check_unclaimed_sources(root: Path) -> tuple[list[str], list[str]]:
-    """Surface languages on disk that no wired strategy claims (ADR 0135).
+    """Surface files on disk that no wired strategy claims (ADR 0135, 0144).
 
     Field-eval Finding 05: a stale ``discover.yaml`` leaves a language's source
     invisible while prime reports healthy. Detection lives in
@@ -92,11 +78,13 @@ def _check_graph_json(weld_dir: Path, root: Path) -> tuple[list[str], list[str]]
     else:
         lines.append(_status("OK", "graph.json exists and is up to date"))
 
-    # Size check
+    # Size check. The advisory is a sentence about discover.yaml, so it shares
+    # the federation guard with the config check -- see weld/_prime_config.py.
+    from weld._prime_config import node_count_lines
+
     nodes = data.get("nodes", {})
     total = len(nodes)
-    if total < 5:
-        lines.append(_status("INFO", f"Graph has only {total} node{'s' if total != 1 else ''} — consider adding more sources to discover.yaml"))
+    lines.extend(node_count_lines(total, weld_dir, root, _status))
 
     # Description coverage. Logic lives in _prime_coverage so this file
     # stays under the 400-line cap (CLAUDE.md / AGENTS.md policy).
@@ -356,7 +344,7 @@ def prime(root: Path, active_agent: str | None = None) -> str:
     all_steps: list[str] = []
 
     for check in (
-        lambda: _check_discover_yaml(weld_dir),
+        lambda: _check_discover_yaml(weld_dir, root),
         lambda: _check_unclaimed_sources(root),
         lambda: _check_graph_json(weld_dir, root),
         lambda: _check_file_index(weld_dir),

@@ -177,6 +177,13 @@ class NoInventoryFallbackTest(DirtyTreeFixture):
     so the inventory holds exactly what is on disk and the uncommitted edit no
     longer marks the graph stale. Removing the basis is then the only change
     in play, and the assertion cannot pass for the ordinary reason.
+
+    "Nothing recorded to compare against" is the whole claim, and the two
+    inputs it covers are not the same input. No *inventory* leaves every dirty
+    path unanswerable. No *sources* leaves only the unrecorded ones
+    unanswerable -- the recorded ones are answered by their own hashes, and
+    condemning those too is what field-eval M1 met at a federation root (bd
+    lcq0c.3, ADR 0141 D1). Both halves are asserted below, in that order.
     """
 
     def setUp(self) -> None:
@@ -195,12 +202,48 @@ class NoInventoryFallbackTest(DirtyTreeFixture):
         # name -- under-report rather than invent one.
         self.assertEqual(self.stale()["stale_sources"], [])
 
-    def test_missing_config_falls_back_to_dirty_means_stale(self) -> None:
-        # Without ``sources`` there is no way to tell an un-ingested source
-        # from a file discovery would never read, so the conservative answer
-        # is the only sound one.
+    def test_missing_config_still_condemns_an_unrecorded_dirty_file(self) -> None:
+        # The conservative half, and the whole of what "no sources" can
+        # soundly decide: this file is dirty, on disk, and absent from the
+        # inventory, and without ``sources`` there is no way to tell an
+        # un-ingested source from a file discovery would never read.
         (self.root / ".weld" / "discover.yaml").unlink()
-        self.assertStale("no sources config must fall back to dirty => stale")
+        (self.root / "src" / "c.py").write_text("c = 1\n", encoding="utf-8")
+        self.assertIn(
+            "src/c.py",
+            self.dirty(["./"]),
+            "fixture must put the unrecorded file in the dirty set",
+        )
+        self.assertTrue(
+            self.stale(discovered_from=["./"])["source_stale"],
+            "no sources config must still condemn an unrecorded dirty file",
+        )
+
+    def test_missing_config_does_not_condemn_a_settled_recorded_file(self) -> None:
+        """The narrowing bd lcq0c.3 / ADR 0141 D1 made, and why it is sound.
+
+        This used to read stale, and the reason given was the one above --
+        which is a statement about an *unrecorded* path. It has no bearing on
+        this one: the inventory holds ``src/a.py``'s hash, the hash still
+        matches, so the graph demonstrably read exactly what is on disk. What
+        some source glob would resolve cannot change that. Asking the scope
+        question before looking is what made a pure federation root -- no
+        ``discover.yaml`` at all, one registry file as its whole basis --
+        condemn its own config on every read, unclearable by discovering
+        (field-eval M1).
+
+        Losing this loses no signal. A ``discover.yaml`` that changed or
+        vanished invalidates the *incremental basis*, not the content claim,
+        and that is bd 4fpj's job: ``config_fingerprint`` forces the next run
+        to full discovery. :mod:`weld._discover_basis` already records that
+        freshness stays quiet about a config edit "for as long as the tree
+        stays clean" -- so the old answer here was not a config signal, it
+        was the same silence with a dirty file standing in front of it.
+        """
+        (self.root / ".weld" / "discover.yaml").unlink()
+        self.assertSettled(
+            "a settled recorded file must not be condemned by a missing config"
+        )
 
 
 class SettledTreeStillDefersToVouchingTest(DirtyTreeFixture):

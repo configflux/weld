@@ -10,15 +10,23 @@ did: ``python -m weld`` in a subprocess, one workspace on disk, the graphs the
 product itself writes.
 
 The bootstrap is a port of the bundle's ``fixture/bootstrap-fixture.sh``:
-``wd init`` + ``wd discover --safe`` in each of the four children, then a
-federated ``wd discover`` at the root. It runs once per test class
-(``setUpClass``); the probes on top of it are what each test method owns.
+``wd init`` + ``wd discover --safe`` in each child, then a federated
+``wd discover`` at the root. It runs once per test module (``setUpModule``);
+the probes on top of it are what each test method owns.
 
 Environment is pinned rather than inherited -- fixed ``PYTHONHASHSEED``/``TZ``/
 locale, ``HOME`` redirected into the tempdir so no ambient git or weld config
-is read, telemetry off, and ``WELD_AUTO_REFRESH=0`` so a read can never
-silently rewrite the graph a probe is about to assert on (the evaluator sets
-that same variable by hand in the N5 probe, for the same reason).
+is read, telemetry off, and ``WELD_AUTO_REFRESH=0`` so ADR 0051's
+auto-refresh-on-read can never silently rewrite the graph a probe is about to
+assert on (the evaluator sets that same variable by hand in the N5 probe, for
+the same reason).
+
+The red-probe marker contract -- ``expected_finding_failure`` and
+``finding_marker`` -- used to live here and now lives in
+:mod:`weld.tests._probe_markers`, which the Node/Next.js readiness corpus
+shares (bd lrnx1.1). Import them from there: one decorator and one reader mean
+both inventory guards police the same thing, and a re-export here would be a
+second spelling of a name with one home.
 """
 
 from __future__ import annotations
@@ -27,14 +35,15 @@ import json
 import os
 import subprocess
 import sys
-import unittest
 from pathlib import Path
 
+from weld._federation_endpoints import endpoint_child_name
 from weld.tests._field_eval_corpus_fixture import (
     CHILDREN,
     materialize_workspace,
     write_workspaces_yaml,
 )
+from weld.tests._graph_invariants import graph_edges
 
 #: Every ``wd`` invocation is bounded. Generous: the assertion is never about
 #: how long a command took, only that it terminated (test-hygiene "wallclock").
@@ -143,8 +152,8 @@ class FieldEvalWorkspace:
         """Lay the workspace down under *tmp*, always with real git repos.
 
         ``git=True`` is not optional here: every child's lifecycle state comes
-        from git, so without it the ledger calls all four ``missing`` and the
-        federated route the probes exercise never runs.
+        from git, so without it the ledger calls every child ``missing`` and
+        the federated route the probes exercise never runs.
         """
         home = Path(tmp) / "home"
         home.mkdir(parents=True, exist_ok=True)
@@ -255,29 +264,33 @@ class FieldEvalWorkspace:
         return (self.root / rel / ".weld" / "discover.yaml").read_text(encoding="utf-8")
 
 
-def expected_finding_failure(finding: str, bd_issue: str, summary: str):
-    """Mark a probe as still reproducing *finding*; the fix task flips it.
+def cross_repo_joins(root_graph: dict) -> set[tuple[str, str, str]]:
+    """``{(from-child, to-child, package)}`` for every cross-repo edge.
 
-    ``unittest.expectedFailure`` takes no reason, and a probe with no recorded
-    reason is one nobody can tell from a test that was quietly given up on. So
-    the finding id, its bd issue and a one-line summary are stapled to the
-    method -- rendered into its docstring (visible in ``-v`` output) and left
-    on ``__weld_expected_finding__`` for the structural guard that checks no
-    probe is ever silenced instead of fixed.
+    Endpoints are read child-name-first and spelling-agnostically, through the
+    helper that knows both shapes (ADR 0137 ss1): the probes that use this ask
+    *which repos got joined*, and reading it through an id convention would
+    make them fail on a spelling rather than on the join they exist to pin.
     """
-
-    def decorate(func):
-        func.__weld_expected_finding__ = (finding, bd_issue, summary)
-        doc = (func.__doc__ or "").rstrip()
-        func.__doc__ = (
-            f"{doc}\n\n    EXPECTED FAILURE until {finding} is fixed "
-            f"({bd_issue}): {summary}\n    "
+    return {
+        (
+            str(endpoint_child_name(str(edge.get("from")))),
+            str(endpoint_child_name(str(edge.get("to")))),
+            str((edge.get("props") or {}).get("package")),
         )
-        return unittest.expectedFailure(func)
+        for edge in graph_edges(root_graph)
+    }
 
-    return decorate
 
+def callers_in_graph(graph: dict, target: str) -> set[str]:
+    """Every symbol the graph records as calling *target*.
 
-def finding_marker(case: type[unittest.TestCase], name: str):
-    """Return the ``(finding, bd_issue, summary)`` a test method carries, if any."""
-    return getattr(getattr(case, name, None), "__weld_expected_finding__", None)
+    What the graph *attributes*, which a probe compares against what ``wd
+    callers`` reports for the same function -- the two are not the same thing
+    when one function has more than one identity (finding M2).
+    """
+    return {
+        str(edge.get("from"))
+        for edge in graph_edges(graph)
+        if edge.get("type") == "calls" and edge.get("to") == target
+    }

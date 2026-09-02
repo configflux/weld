@@ -20,8 +20,8 @@ from weld._incremental_purge import purge_edges_by_provenance
 from weld._notice import emit
 from weld._rel_path import canonical_rel_path, canonical_rel_paths
 
-#: Current state file schema version.  Bump when the on-disk format changes.
-STATE_VERSION: int = 1
+#: State file schema version.  Bump on a format or resolution change (2: ADR 0143; 3, 4: ADR 0142 -- D2/D3 resolution, D4/D5 TSX dispatch and re-exports).
+STATE_VERSION: int = 4
 
 #: Filename for the discovery state, adjacent to graph.json.
 STATE_FILENAME: str = "discovery-state.json"

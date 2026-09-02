@@ -1,0 +1,67 @@
+# Tree-sitter queries for JavaScript symbol extraction.
+#
+# A separate file rather than a reuse of `typescript.yaml`: the TypeScript
+# queries name productions the JavaScript grammar does not have at all
+# (`interface_declaration`, `type_alias_declaration`, `enum_declaration`,
+# `type_identifier`), and a query naming an unknown node type fails to compile
+# -- which the strategy swallows, so the bucket would come back silently empty
+# rather than loudly wrong. The JavaScript grammar also parses JSX natively, so
+# `.jsx` needs no per-file dialect dispatch the way `.tsx` does.
+#
+# `exports` is "what this module declares", the same reading `python.yaml` and
+# `go.yaml` give a language that puts no `export` keyword on a declaration:
+# ESM export declarations plus program-scope function and class declarations.
+# Two deliberate restrictions:
+#
+# * Program-scope anchored. JavaScript nests named functions constantly --
+#   closures, factories, IIFE module patterns -- and an unanchored capture
+#   (which is what Python takes) would promote every inner helper to a
+#   definition symbol. The module surface is what a tier claim is about.
+# * No bare `(lexical_declaration ...)` pattern. `const express =
+#   require("express")` is an import binding, and capturing top-level `const`
+#   wholesale would mint `express` and `router` as definitions of the file that
+#   imported them. Only the `export const` form counts, because there the
+#   keyword says the name is published.
+#
+# CommonJS publication lands in its own bucket rather than in `exports`, for
+# the reason re-exports do (`weld/strategies/_ts_file_props.py`): `exports` is
+# promoted to `symbol:` nodes with `confidence: definite`, and
+# `module.exports = { router }` republishes an imported binding rather than
+# defining one.
+#
+# `module.exports = require("./impl")` joins `reexport_sources` instead,
+# because that is what it is: the CommonJS spelling of `export * from
+# "./impl"`, forwarding a whole module under no name of its own. It is also
+# what keeps a package's entry-point facade in the graph -- a file that
+# declares nothing gets a file node only on publication evidence.
+#
+# The `require` and `module.exports` patterns are the first use of a
+# tree-sitter text predicate (`#eq?`) in any weld language file, which is why
+# every value below is single-quoted: the predicate argument is a
+# double-quoted string, and `weld/_yaml.py` strips the outer quote pair
+# without interpreting escapes. Without the predicate,
+# `(call_expression function: (identifier) arguments: (arguments (string)))`
+# also matches `describe("some suite", ...)` and every other one-string call,
+# and `imports_from` fills with test names. py-tree-sitter applies text
+# predicates inside `QueryCursor.matches`, and `weld/pyproject.toml` pins
+# `tree-sitter>=0.25`; `weld_javascript_extraction_test` holds that contract
+# with a negative case, so a binding that stopped applying predicates fails
+# there rather than in a user's graph.
+#
+# Not here on purpose: a binding query for `const { X } = require("...")`.
+# `_ts_call_sites.import_bindings` reads the `name:`/`alias:` fields of an
+# `import_specifier`, which an `object_pattern` does not have, so the pattern
+# would capture and bind nothing until that reader learns the shape.
+
+language: javascript
+grammar_package: tree_sitter_javascript
+
+queries:
+  exports: '(export_statement (function_declaration name: (identifier) @name)) (export_statement (generator_function_declaration name: (identifier) @name)) (export_statement (class_declaration name: (identifier) @name)) (export_statement (lexical_declaration (variable_declarator name: (identifier) @name))) (export_statement (variable_declaration (variable_declarator name: (identifier) @name))) (program (function_declaration name: (identifier) @name)) (program (generator_function_declaration name: (identifier) @name)) (program (class_declaration name: (identifier) @name))'
+  classes: '(export_statement (class_declaration name: (identifier) @name)) (program (class_declaration name: (identifier) @name))'
+  imports: '(import_statement source: (string) @name) (call_expression function: (identifier) @_require arguments: (arguments (string) @name) (#eq? @_require "require"))'
+  import_bindings: '(import_statement (import_clause (named_imports (import_specifier) @specifier)) source: (string) @source)'
+  reexports: '(export_statement (export_clause (export_specifier !alias name: (identifier) @name)) source: (string)) (export_statement (export_clause (export_specifier alias: (identifier) @name)) source: (string))'
+  reexport_sources: '(export_statement source: (string) @name) (assignment_expression left: (member_expression object: (identifier) @_module property: (property_identifier) @_exports) right: (call_expression function: (identifier) @_require arguments: (arguments (string) @name)) (#eq? @_module "module") (#eq? @_exports "exports") (#eq? @_require "require"))'
+  commonjs_exports: '(assignment_expression left: (member_expression object: (identifier) @_module property: (property_identifier) @_exports) right: (object (shorthand_property_identifier) @name) (#eq? @_module "module") (#eq? @_exports "exports")) (assignment_expression left: (member_expression object: (identifier) @_module property: (property_identifier) @_exports) right: (object (pair key: (property_identifier) @name)) (#eq? @_module "module") (#eq? @_exports "exports")) (assignment_expression left: (member_expression object: (identifier) @_module property: (property_identifier) @_exports) right: (identifier) @name (#eq? @_module "module") (#eq? @_exports "exports")) (assignment_expression left: (member_expression object: (identifier) @_exports property: (property_identifier) @name) (#eq? @_exports "exports")) (assignment_expression left: (member_expression object: (member_expression object: (identifier) @_module property: (property_identifier) @_exports) property: (property_identifier) @name) (#eq? @_module "module") (#eq? @_exports "exports"))'
+  calls: '(call_expression function: (identifier) @name) (call_expression function: (member_expression property: (property_identifier) @name))'

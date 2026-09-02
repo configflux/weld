@@ -245,6 +245,7 @@ required_languages = (
     "csharp.yaml",
     "go.yaml",
     "typescript.yaml",
+    "javascript.yaml",
     "rust.yaml",
     "cpp.yaml",
 )

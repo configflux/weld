@@ -4,9 +4,12 @@ Layer C2 (ADR 0045) makes each declared service a first-class
 ``service:<stem>:<name>`` node, with:
 
 - ``compose:<stem> --contains--> service:<stem>:<name>`` per service.
-- ``service:<stem>:<name> --depends_on--> dockerfile:<stem>`` when
+- ``service:<stem>:<name> --depends_on--> dockerfile:<path>`` when
   ``service.build`` is set (string dir, mapping with ``context`` +
-  ``dockerfile``, or direct file path).
+  ``dockerfile``, or direct file path). The dockerfile half of that
+  id is the target's repo-relative path, minted by the same helper
+  ``weld.strategies.dockerfile`` mints the node from, so the two
+  agree by construction (bd bz5w9).
 - ``service:<stem>:<name> --contains--> file:<env-file>`` per
   ``env_file:`` entry (string or list).
 - ``runtime_image`` prop on the service node when ``service.image`` is
@@ -92,7 +95,7 @@ class ComposeServiceNodesTest(unittest.TestCase):
 
 
 class ComposeBuildResolutionTest(unittest.TestCase):
-    def test_build_string_dir_resolves_to_dockerfile_stem(self) -> None:
+    def test_build_string_dir_resolves_to_dockerfile_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             _write(root / "docker-compose.yml", (
@@ -109,7 +112,9 @@ class ComposeBuildResolutionTest(unittest.TestCase):
                 if e["from"] == api_id and e["type"] == "depends_on"
             ]
             self.assertEqual(len(depends), 1)
-            self.assertEqual(depends[0]["to"], "dockerfile:Dockerfile")
+            self.assertEqual(
+                depends[0]["to"], "dockerfile:api/Dockerfile",
+            )
 
     def test_build_mapping_with_explicit_dockerfile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -129,8 +134,10 @@ class ComposeBuildResolutionTest(unittest.TestCase):
                 e["to"] for e in result.edges
                 if e["from"] == api_id and e["type"] == "depends_on"
             ]
-            # Stem matches the dockerfile.py id derivation rules.
-            self.assertEqual(depends, ["dockerfile:Containerfile"])
+            # The id matches what dockerfile.py mints for that same
+            # file: the context directory joined with the declared
+            # name, repo-relative.
+            self.assertEqual(depends, ["dockerfile:api/Containerfile"])
 
     def test_build_dangling_dockerfile_still_emits_edge(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -149,8 +156,36 @@ class ComposeBuildResolutionTest(unittest.TestCase):
                 e["to"] for e in result.edges
                 if e["from"] == api_id and e["type"] == "depends_on"
             ]
-            # Edge still emitted (target stem assumed Dockerfile by convention).
-            self.assertEqual(depends, ["dockerfile:Dockerfile"])
+            # Edge still emitted (target name assumed Dockerfile by
+            # convention), and it names the path the file would have.
+            self.assertEqual(depends, ["dockerfile:api/Dockerfile"])
+
+    def test_build_outside_the_repo_root_emits_no_edge(self) -> None:
+        """A build path that escapes the root has no node to point at.
+
+        Distinct from the dangling case above, which is a repo-relative path
+        that merely has no file yet: graph closure can reconcile that one when
+        the file appears. A path outside the root can never be walked by this
+        repo's discovery, so its edge would dangle forever -- and there is no
+        repo-relative path to spell an id from in the first place (bd bz5w9).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            (root / "api").mkdir(parents=True)
+            _write(root / "docker-compose.yml", (
+                "services:\n"
+                "  api:\n"
+                "    build: ../elsewhere\n"
+            ))
+            (Path(tmpdir) / "elsewhere").mkdir()
+
+            result = extract(root, {"glob": "docker-compose.yml"}, {})
+            depends = [
+                e["to"] for e in result.edges
+                if e["from"] == "service:default:api"
+                and e["type"] == "depends_on"
+            ]
+            self.assertEqual(depends, [])
 
 
 class ComposeEnvFileTest(unittest.TestCase):

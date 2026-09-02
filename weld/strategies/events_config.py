@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 
 from weld._rel_path import rel_to_root
-from weld.strategies._helpers import filter_glob_results
+from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies.events_shared import (
     channel_id,
     channel_node,
@@ -149,21 +149,28 @@ def _iter_env_declarations(text: str) -> list[tuple[str, str]]:
     return found
 
 def extract_compose_env(
-    root: Path, pattern: str
+    root: Path, pattern: str, excludes: list[str] | None = None,
 ) -> tuple[dict[str, dict], list[dict], list[str]]:
-    """Extract declared channel env vars from docker-compose files."""
+    """Extract declared channel env vars from docker-compose files.
+
+    bd b9xgd: this used to resolve its own glob -- ``(root / pattern).parent``,
+    then ``parent = root`` when that was not a directory, then one directory's
+    worth of ``glob()``. That is the copy ADR 0112 says is gone, kept here
+    because this strategy was never migrated, and its fallback made the
+    failure *worse* than the silent one its siblings had: for any ``**``
+    pattern or wildcard directory segment the parent is a literal path and
+    never a directory, so the strategy quietly globbed the repo root instead
+    and declared channels from whatever compose file happened to sit there.
+
+    *excludes* is threaded from the source entry rather than defaulted away:
+    routing through the shared resolver without it would swap one silent gap
+    for another, since the old resolve never honoured ``exclude:`` at all.
+    """
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
     discovered_from: list[str] = []
 
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        parent = root
-    candidates = filter_glob_results(
-        root, sorted(parent.glob(Path(pattern).name))
-    )
-
-    for cf in candidates:
+    for cf in resolve_glob(root, pattern, excludes):
         if not cf.is_file():
             continue
         try:

@@ -19,6 +19,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from weld._node_ids import package_id as _canonical_package_id
+from weld.strategies._ts_call_sites import (
+    bind_hint_target,
+    read_ts_import_hint,
+    strip_quotes as _strip_quotes,
+)
+from weld.strategies._ts_first_party import (
+    FirstPartyImports,
+    build_first_party_imports,
+)
 from weld.strategies._typescript_origin import (
     classify_import_specifier,
     load_node_modules_packages,
@@ -35,20 +44,27 @@ _TS_LANGUAGES: frozenset[str] = frozenset(
 )
 
 
-def build_caches(root: Path, language: str) -> dict[str, frozenset[str]] | None:
-    """Pre-compute the per-root ``package.json`` / ``node_modules/`` caches.
+def build_caches(root: Path, language: str) -> dict[str, object] | None:
+    """Pre-compute the per-root manifest / workspace / ``tsconfig`` caches.
 
     Returns ``None`` for non-TS / JS languages so the caller's dispatch
     stays a single ``is None`` check; otherwise returns a dict with
-    ``package_deps`` and ``node_modules_packages`` keys. The helper is
-    total: missing manifests / directories yield empty frozen-sets,
-    not exceptions.
+    ``package_deps``, ``node_modules_packages`` and ``first_party``
+    keys. The helper is total: missing manifests / directories yield
+    empty frozen-sets and an empty first-party index, not exceptions.
+
+    ``first_party`` is the ADR 0142 D3 index -- the workspace member map
+    plus the per-directory ``tsconfig`` alias memo. It is built here, once
+    per discovery run, for the same reason the two manifest sets are: the
+    files it reads are per-root, and paying for them per *source file*
+    would be a manifest read for every import in the repository.
     """
     if language not in _TS_LANGUAGES:
         return None
     return {
         "package_deps": load_package_deps(root),
         "node_modules_packages": load_node_modules_packages(root),
+        "first_party": build_first_party_imports(root),
     }
 
 
@@ -64,6 +80,7 @@ def enrich_file_node(
     root: Path,
     package_deps: frozenset[str] | None = None,
     node_modules_packages: frozenset[str] | None = None,
+    first_party: FirstPartyImports | None = None,
 ) -> None:
     """Emit per-import ``package`` nodes for the TS / JS file.
 
@@ -72,12 +89,20 @@ def enrich_file_node(
     (``package`` + ``depends_on``) so consumers can filter or rank
     imports by origin.
 
-    ``package_deps`` and ``node_modules_packages`` are optional caches
-    so a strategy that processes many files in one root can pay the
-    manifest read cost once. When omitted the helper computes them
-    eagerly from ``root``; the manifest readers are total (they never
-    raise) so an empty-cache result simply means the relevant signal
-    was absent on disk.
+    ``package_deps``, ``node_modules_packages`` and ``first_party`` are
+    optional caches so a strategy that processes many files in one root
+    can pay the manifest read cost once. When omitted the helper
+    computes them eagerly from ``root``; the manifest readers are total
+    (they never raise) so an empty-cache result simply means the
+    relevant signal was absent on disk.
+
+    ADR 0142 D3: a specifier the *first-party* index binds -- an npm
+    workspace member name, or a ``tsconfig`` alias in scope for this
+    file -- names a file in this repository, not a package. It is
+    recorded on the file node as ``props.import_targets`` and mints no
+    package node at all, which is the treatment relative imports have
+    always had. ``weld.graph_closure._link_imports`` reads that map and
+    lands the ``depends_on`` edge on the defining file.
     """
     imports = list(symbols.get("imports", []))
     if not imports:
@@ -87,7 +112,16 @@ def enrich_file_node(
         package_deps = load_package_deps(root)
     if node_modules_packages is None:
         node_modules_packages = load_node_modules_packages(root)
+    if first_party is None:
+        first_party = build_first_party_imports(root)
 
+    # The file this helper is enriching, as the graph spells it. Read from
+    # the props the caller is about to mint the node with, rather than taken
+    # as a parameter, so the path the alias lookup is scoped by and the path
+    # the node reports are the same string by construction.
+    rel_path = str(node_props.get("file") or "")
+
+    targets: dict[str, str] = {}
     seen: set[str] = set()
     for raw in imports:
         if not raw:
@@ -102,6 +136,11 @@ def enrich_file_node(
         if specifier in seen:
             continue
         seen.add(specifier)
+
+        bound = first_party.resolve(specifier, rel_path)
+        if bound and bound != rel_path:
+            targets[specifier] = bound
+            continue
 
         origin = classify_import_specifier(
             specifier,
@@ -153,25 +192,47 @@ def enrich_file_node(
             }
         )
 
+    if targets:
+        # Sorted so the prop is byte-identical whatever order the grammar
+        # captured the imports in -- the determinism contract every discover
+        # path shares (ADR 0012).
+        node_props["import_targets"] = dict(sorted(targets.items()))
 
-def _strip_quotes(raw: str) -> str:
-    """Strip the surrounding quote characters from a tree-sitter capture.
 
-    The TypeScript grammar's ``import_statement`` source rule captures
-    the string node *with* its delimiters (``"react"`` not ``react``).
-    The strip is conservative: only the matching first/last character
-    is removed, and only when both ends agree on a quote style.
+def bind_call_imports(
+    edges: list[dict],
+    rel_path: str,
+    first_party: FirstPartyImports | None,
+) -> None:
+    """Bind each call edge's import hint to the file its specifier names.
+
+    The call-graph pass records *which* import introduced a callee's name
+    (:mod:`weld.strategies._ts_call_sites`) but not what that name resolves
+    to: the first-party index reads manifests off disk and only this layer
+    holds it. So the two halves meet here, once per file, right after the
+    edges are minted -- and the hint is complete before it ever reaches the
+    graph, which is what lets ``weld._graph_closure_ts_calls`` stay a pure
+    function of the nodes and edges it is handed.
+
+    A specifier the index does not bind keeps ``target: ""``: a third-party
+    package, or a relative import, which the closure resolves for itself
+    against the path index rather than paying a filesystem walk for a
+    question the graph can already answer.
     """
-    if len(raw) < 2:
-        return raw
-    first = raw[0]
-    last = raw[-1]
-    if first == last and first in ('"', "'", "`"):
-        return raw[1:-1]
-    return raw
+    if first_party is None:
+        return
+    for edge in edges:
+        props = edge.get("props")
+        hint = read_ts_import_hint(props)
+        if hint is None:
+            continue
+        bound = first_party.resolve(hint.specifier, rel_path)
+        if bound and bound != rel_path:
+            bind_hint_target(props, bound)
 
 
 __all__ = [
+    "bind_call_imports",
     "build_caches",
     "enrich_file_node",
 ]

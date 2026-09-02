@@ -41,6 +41,7 @@ from weld._discover_strategies import (
 )
 from weld._discover_summary import (drain_context_warnings as _drain_context_warnings,
                                     emit_summary as _emit_summary)
+from weld._federation_basis import publish_root_graph as _publish_root_graph
 from weld._yaml import parse_yaml
 from weld.contract import SCHEMA_VERSION  # noqa: F401 -- re-export for consumers
 from weld.discovery_state import load_state
@@ -48,7 +49,6 @@ from weld._source_resolve import resolve_source_file_map
 from weld._graph_anchors import (files_missing_from_graph,
                                  files_missing_strategy_outputs,
                                  graph_files_with_nodes)
-from weld._graph_meta_sidecar import write_graph_with_meta as _write_graph_with_meta
 from weld.federation_root import build_root_meta_graph
 from weld.workspace import WorkspaceConfigError
 from weld.workspace_state import (WorkspaceLock, WorkspaceLockedError,
@@ -315,22 +315,22 @@ def discover(
         # after any recurse pass has refreshed each child's graph.json:
         # resolvers consume child graphs by reading those files.
         graph = merge_cross_repo_edges(root, workspace_config, state, graph)
-        if output is not None:
-            _enforce_nonempty_federated_write(
-                output, graph, state, allow_empty=allow_empty,
-            )
-            # ADR 0065: write graph.json (volatile meta stripped) plus the
-            # graph-meta.json sidecar when the target is the canonical name.
-            _write_graph_with_meta(output, graph)
-            if with_sqlite and output.name == "graph.json":  # ADR 0058: sidecar pairs by name
-                _persist_sqlite_sidecar(output.parent, graph)
-        elif write_root_graph:
-            target = root / ".weld" / "graph.json"
+        # One write shape: *output* names the target, else the canonical name
+        # when asked for it. The two branches this replaces differed only in
+        # that name and in an ADR 0058 test the canonical target satisfies.
+        target = output if output is not None else (
+            root / ".weld" / "graph.json" if write_root_graph else None
+        )
+        if target is not None:
             _enforce_nonempty_federated_write(
                 target, graph, state, allow_empty=allow_empty,
             )
-            _write_graph_with_meta(target, graph)  # ADR 0065
-            if with_sqlite:
+            # ADR 0065 paired write + the ADR 0141 D1 basis, one call so a
+            # published root graph cannot lose the inventory vouching for
+            # what it read (M1). The sqlite sidecar pairs by name (ADR 0058)
+            # and the basis follows the same rule: --output elsewhere, neither.
+            _publish_root_graph(root, graph, target)
+            if with_sqlite and target.name == "graph.json":
                 _persist_sqlite_sidecar(target.parent, graph)
         save_workspace_state(root, state)
         return graph

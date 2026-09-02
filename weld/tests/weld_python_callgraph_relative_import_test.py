@@ -238,7 +238,7 @@ class PackageInitRelativeImportTest(ExtractCase):
 class NamespacePackageRelativeImportTest(ExtractCase):
     """Both import rules are live in a PEP 420 directory; they must compose.
 
-    A directory with no ``__init__.py`` is where ``_python_sibling_import``
+    A directory with no ``__init__.py`` is where ``_python_source_root_import``
     fires -- and it is also a legal namespace package, where a relative import
     is legal too. The relative rule runs first and produces an already-absolute
     name; the sibling rule's ``glob_modules`` membership test is what stops it

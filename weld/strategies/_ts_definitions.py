@@ -9,6 +9,12 @@ from weld.strategies._ts_call_graph import ts_module_from_path
 T1_DEFINITION_LANGUAGES = {
     "python",
     "typescript",
+    # JavaScript is Tier 2, not Tier 1, and is in this set anyway: the set
+    # names the languages whose ``exports`` bucket is promoted to ``symbol:``
+    # nodes, which is the extraction floor a tier is measured *against*
+    # (ADR 0142 D6). Its absence is what made the README's "exports, classes,
+    # imports" claim false for every ``.js`` file in a graph.
+    "javascript",
     "go",
     "rust",
     "java",

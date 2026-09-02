@@ -36,11 +36,14 @@ Resolution is best-effort and explicitly partial -- see ADR
    the three branches that read it -- rather than each branch learning them.
    ``_python_relative_import`` resolves an explicit relative import against the
    importing file's own package, so ``from .helper import work`` in
-   ``pkg/caller.py`` means ``pkg.helper``; ``_python_sibling_import`` then
-   handles the bare-name case, where a directory with no ``__init__.py`` is
-   itself on ``sys.path`` and ``from helper import work`` in ``tools/lint.py``
-   means ``tools.helper``. Neither invents a module: each refuses and leaves
-   the call to rule 3 when it cannot name a real one.
+   ``pkg/caller.py`` means ``pkg.helper``; ``_python_source_root_import`` then
+   handles the absolute case, binding a written name against the first
+   ancestor directory that is not a package -- the one Python puts on
+   ``sys.path`` -- so ``from helper import work`` in ``tools/lint.py`` means
+   ``tools.helper`` and ``from acme_notify.config import load_config`` in
+   ``src/acme_notify/runner.py`` means ``src.acme_notify.config``. Neither
+   invents a module: each refuses and leaves the call to rule 3 when it
+   cannot name a real one.
 3. **Unresolved fallback**: anything else becomes
    ``symbol:unresolved:<name>``. Strategies never silently drop a call.
 
@@ -77,7 +80,7 @@ from weld.strategies._python_output_sink import mark_output_sink_callers
 from weld.strategies._python_references import emit_reference_edges
 from weld.strategies._python_relative_import import absolute_module, package_of
 from weld.strategies._python_scope_calls import emit_module_scope_call_edges
-from weld.strategies._python_sibling_import import normalize_sibling_imports
+from weld.strategies._python_source_root_import import normalize_source_root_imports
 from weld.strategies._python_origin import (  # noqa: F401 -- re-export
     UNRESOLVED_PREFIX,
     is_builtin_name,
@@ -266,12 +269,13 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
         # The table's module slot is read the way the interpreter reads it,
         # before any of the three branches that consume it: an explicit
         # relative import is arithmetic on this file's own package, done while
-        # node.level is still in hand (bd zr486), and a bare name in a
-        # directory that is not a package binds against that directory rather
-        # than sys.path proper (bd sigz2).
-        import_table = normalize_sibling_imports(
+        # node.level is still in hand (bd zr486), and an absolute name binds
+        # against the source root -- the first ancestor directory that is not
+        # a package -- rather than sys.path proper (bd sigz2, z98p7).
+        import_table = normalize_source_root_imports(
             _build_import_table(tree, package=package_of(module_path, py)),
             module_path=module_path,
+            rel_path=rel_path,
             source_dir=py.parent,
             glob_modules=glob_modules,
         )

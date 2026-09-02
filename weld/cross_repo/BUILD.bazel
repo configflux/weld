@@ -29,6 +29,7 @@ py_library(
         "channel_binding.py",
         "compose_topology.py",
         "grpc_service_binding.py",
+        "_manifest_readers.py",
         "_package_manifest_scan.py",
         "_resolver_context.py",
         "incremental.py",

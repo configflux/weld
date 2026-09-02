@@ -111,10 +111,14 @@ def boundary_file_node(rel_path: str) -> dict:
     Emitted so the ``file: -> exposes -> route:`` edge survives the
     dangling-edge post-pass when the gin strategy runs *without* the Go
     ``tree_sitter`` strategy paired on the same glob (e.g. a focused
-    strategy test). When the pair runs, ``nodes.update`` in
-    :func:`weld.discover._run` overwrites this placeholder with the
-    canonical tree-sitter file node. Mirrors the flask handler-symbol
-    placeholder pattern.
+    strategy test). Mirrors the flask handler-symbol placeholder pattern.
+
+    When the pair *does* run, the canonical tree-sitter file node wins the
+    node id, and ``confidence: inferred`` is what makes that true in both
+    entry orders (bd iurvv) -- see
+    :func:`weld.strategies._axum_routes_helpers.boundary_file_node` for why
+    the ``nodes.update`` this docstring used to name stopped being the rule
+    at ADR 0103, and what the unranked stub did instead.
     """
     return {
         "type": "file",
@@ -123,6 +127,7 @@ def boundary_file_node(rel_path: str) -> dict:
             "file": rel_path,
             "language": "go",
             "source_strategy": GIN_SOURCE_STRATEGY,
+            "confidence": "inferred",
             "roles": ["implementation"],
         },
     }

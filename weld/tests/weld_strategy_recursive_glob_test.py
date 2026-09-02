@@ -34,11 +34,15 @@ from __future__ import annotations
 import unittest
 
 from weld.strategies import (
+    compose,
     dockerfile,
+    events,
+    fastapi,
     firstline_md,
     frontmatter_md,
     gh_workflow,
     markdown,
+    pydantic,
     runbook,
     sqlalchemy,
     tool_script,
@@ -106,6 +110,39 @@ def html_page(tag: str) -> str:
     )
 
 
+def router_py(tag: str) -> str:
+    return f"""
+    from fastapi import APIRouter
+
+    router = APIRouter()
+
+
+    @router.get("/{tag}")
+    def {tag}_index():
+        return {{"tag": "{tag}"}}
+    """
+
+
+def contract_py(tag: str) -> str:
+    return f"""
+    from pydantic import BaseModel
+
+
+    class {tag.capitalize()}Contract(BaseModel):
+        identifier: str
+    """
+
+
+def compose_yml(tag: str) -> str:
+    return f"""
+    services:
+      {tag}:
+        image: alpine:3
+        environment:
+          KAFKA_{tag.upper()}_TOPIC: {tag}-topic
+    """
+
+
 def workflow_yml(tag: str) -> str:
     return f"""
     name: {tag}
@@ -143,6 +180,24 @@ CASES: tuple[Case, ...] = (
     _case("tool_script", tool_script, ".sh", shell),
     _case("viz_frontend", viz_frontend, ".html", html_page),
     _case("yaml_meta", yaml_meta, ".yml", workflow_yml),
+    # bd b9xgd: four more of the same family, found after ADR 0112 landed.
+    # These never moved onto the shared resolver at all, so they kept the
+    # guard in two shapes -- `fastapi`/`pydantic` early-return (silence),
+    # `compose`/`events` fall back to `parent = root` and emit the root
+    # directory's files instead (the wrong set). One battery, because the
+    # contract is the same one the ten above pin.
+    _case("fastapi", fastapi, ".py", router_py),
+    _case("pydantic", pydantic, ".py", contract_py),
+    _case("compose", compose, ".yml", compose_yml),
+    Case(
+        "events", events, "pkg/**/*.yml",
+        f"{_KEEP_DIR}/zzkeep.yml", compose_yml("zzkeep"),
+        f"{_DROP_DIR}/zzdrop.yml", compose_yml("zzdrop"),
+        keep_marker="zzkeep", drop_markers=_DROP_MARKERS,
+        # The facade dispatches on `kind`, so the case goes through the real
+        # `events.extract` rather than reaching into `events_config`.
+        extra_source={"kind": "compose_env"},
+    ),
 )
 
 

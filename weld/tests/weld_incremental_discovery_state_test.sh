@@ -14,6 +14,10 @@ source "${SCRIPT_DIR}/weld_test_lib.sh"
 # shellcheck source=weld/tests/_incremental_discovery_lib.sh
 source "${SCRIPT_DIR}/_incremental_discovery_lib.sh"
 ROOT="$(weld_test_repo_root "${SCRIPT_DIR}")"
+# Read the schema version from the code rather than hardcoding it: a bump
+# (ADR 0143 D4 made one) discards the inventory and forces a full pass, which
+# this suite exercises on purpose -- it is not a reason to edit an assertion.
+STATE_VERSION="$(cd "${ROOT}" && python3 -c 'from weld.discovery_state import STATE_VERSION; print(STATE_VERSION)')"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
@@ -45,8 +49,8 @@ import json, sys
 with open('${STATE_FILE}') as f:
     state = json.load(f)
 errors = []
-if state.get('version') != 1:
-    errors.append(f'expected version 1, got {state.get(\"version\")}')
+if state.get('version') != ${STATE_VERSION}:
+    errors.append(f'expected version ${STATE_VERSION}, got {state.get(\"version\")}')
 if 'created_at' in state:
     errors.append('created_at is back: the inventory records claims about the '
                   'tree, not when the run happened, so a no-change discover '

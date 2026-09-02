@@ -14,8 +14,10 @@ from weld._init_csharp import detect_csharp_artifacts
 from weld._init_framework_scan import (
     _MAX_FILES_PER_LANG,
     iter_framework_scan_targets,
+    line_has_import as _line_has_import,
 )
 from weld._init_go_imports import iter_go_import_lines
+from weld._init_next_markers import detect_next_framework
 from weld.init_detect_constants import (
     DOC_DIR_NAMES,
     MONOREPO_TOP_DIRS,
@@ -77,9 +79,12 @@ FRAMEWORK_PATTERNS: list[tuple[str, str, str]] = [
     ("from pydantic", "Pydantic", "pydantic"),
     ("import pydantic", "Pydantic", "pydantic"),
     ("from prisma", "Prisma", "python_module"),
-    ("import express", "Express", "python_module"),
-    ("require('express')", "Express", "python_module"),
-    ('require("express")', "Express", "python_module"),
+    # ``express``, not the ``python_module`` these three said for years: the
+    # strategy that actually extracts these routes (ADR 0142 D1, gap G1 --
+    # ``weld._init_framework_sources._add_ts_js_framework_sources``).
+    ("import express", "Express", "express"),
+    ("require('express')", "Express", "express"),
+    ('require("express")', "Express", "express"),
     ("from gin", "Gin", "python_module"),
     ("import gin", "Gin", "python_module"),
     # Real Go projects import gin via the canonical module path. The
@@ -147,43 +152,17 @@ def detect_languages(files: list[Path]) -> dict[str, int]:
             counts[lang] = counts.get(lang, 0) + 1
     return dict(sorted(counts.items(), key=lambda x: -x[1]))
 
-def _line_has_import(line: str, pattern: str) -> bool:
-    """Check if a source line contains the import pattern.
-
-    Only matches at the start of a stripped line to avoid false positives
-    from string literals or comments that mention framework names.
-    """
-    stripped = line.strip()
-    # Go quoted-path patterns (``"github.com/gin-gonic/gin"``) appear in
-    # an ``import`` block, so the line can legitimately start with a
-    # double quote. For .go files ``detect_frameworks`` pre-filters lines
-    # via :func:`weld._init_go_imports.iter_go_import_lines` (strips block
-    # comments, raw strings, non-import lines); the substring check below
-    # is defense-in-depth for callers that bypass that pre-filter.
-    is_go_quoted = pattern.startswith('"') and pattern.endswith('"')
-    if is_go_quoted:
-        if stripped.startswith(("#", "//")):
-            return False
-        return pattern in stripped
-    if stripped.startswith(("#", "//", '"', "'", "(", "[")):
-        return False
-    if pattern.startswith(("from ", "import ", "use ")):
-        # Python (from/import) and Rust (use) imports are start-of-line
-        # declarations; a prefix match is precise (ADR 0071).
-        return stripped.startswith(pattern)
-    if "require(" in pattern:
-        return (
-            pattern in stripped
-            and ("=" in stripped or stripped.startswith("require("))
-        )
-    return False
-
 def detect_frameworks(
     root: Path, files: list[Path],
 ) -> list[tuple[str, str, str]]:
     """Grep source files for known framework imports.
 
     Returns list of (framework_name, strategy_name, detected_in_path).
+
+    Next.js is folded in at the end from
+    :func:`weld._init_next_markers.detect_next_framework`, which reads project
+    markers rather than import lines -- see that module for why the framework
+    cannot be found the way the others are.
 
     The scan is bounded by three early-exit rules to keep ``wd init`` fast on
     large monorepos (see ADR 0027):
@@ -229,7 +208,12 @@ def detect_frameworks(
                     detected[framework] = (strategy, rel)
                     file_remaining.discard(framework)
                     outstanding.discard(framework)
-    return [(fw, strat, path) for fw, (strat, path) in detected.items()]
+    # Next.js is detected from project markers, not from an import line: an
+    # app-router handler imports nothing from ``next`` (ADR 0142 D4). Appended
+    # last so the import-scanned frameworks keep the order they always had.
+    return [
+        (fw, strat, path) for fw, (strat, path) in detected.items()
+    ] + detect_next_framework(root, files)
 
 def detect_structure(root: Path, files: list[Path] | None = None) -> str:
     """Detect if this is a monorepo or single-service project."""

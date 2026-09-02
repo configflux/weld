@@ -115,10 +115,19 @@ def boundary_file_node(rel_path: str) -> dict:
     Emitted so the ``file: -> exposes -> route:`` edge survives the
     dangling-edge post-pass when the axum strategy runs *without* the
     Rust ``tree_sitter`` strategy paired on the same glob (e.g. a focused
-    strategy test). When the pair runs, ``nodes.update`` in
-    :func:`weld.discover._run` overwrites this placeholder with the
-    canonical tree-sitter file node. Mirrors the gin boundary-file
-    placeholder pattern.
+    strategy test). Mirrors the gin boundary-file placeholder pattern and
+    the shared TypeScript one in
+    :func:`weld.strategies._ts_route_helpers.boundary_file_node`.
+
+    When the pair *does* run, the canonical tree-sitter file node wins the
+    node id, and ``confidence: inferred`` is what makes that true in both
+    entry orders (bd iurvv). The docstring here used to say ``nodes.update``
+    in :func:`weld.discover._run` overwrote the placeholder; ADR 0103 replaced
+    that update with :func:`weld._discover_node_merge.claim_supersedes`, whose
+    veto fires only when both sides state a comparable confidence -- so a stub
+    that stated none was not overwritten but *did the overwriting* whenever
+    the axum entry was declared after the tree-sitter one, and the Rust file's
+    ``props.exports`` went with it.
     """
     return {
         "type": "file",
@@ -127,6 +136,7 @@ def boundary_file_node(rel_path: str) -> dict:
             "file": rel_path,
             "language": "rust",
             "source_strategy": AXUM_SOURCE_STRATEGY,
+            "confidence": "inferred",
             "roles": ["implementation"],
         },
     }

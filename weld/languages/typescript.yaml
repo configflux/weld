@@ -1,4 +1,21 @@
 # Tree-sitter queries for TypeScript symbol extraction.
+#
+# One query file, two grammars: `.ts` is parsed with `language_typescript()`
+# and `.tsx` with `language_tsx()` (weld/strategies/_ts_dialect.py). The node
+# vocabulary below is common to both -- only the JSX productions differ -- so
+# nothing here needs a dialect of its own.
+#
+# `reexports` / `reexport_sources` both require the `source:` field, which is
+# what separates `export { a } from "./m"` (a forward) from a local
+# `export { a }` (a definition this file already captured under `exports`).
+# Keeping them out of `exports` is deliberate: that bucket is promoted to
+# `symbol:` definition nodes, and a barrel defines nothing (ADR 0142 D5).
+#
+# `reexports` is two patterns because the published name is the alias when
+# there is one: `export { formatPrice as fmt } from "./m"` publishes `fmt`,
+# and a consumer importing `formatPrice` from it gets nothing. The negated
+# field `!alias` is what keeps the un-aliased pattern from also matching the
+# renamed form and claiming both names.
 
 language: typescript
 grammar_package: tree_sitter_typescript
@@ -7,4 +24,7 @@ queries:
   exports: "(export_statement (function_declaration name: (identifier) @name)) (export_statement (class_declaration name: (type_identifier) @name)) (export_statement (lexical_declaration (variable_declarator name: (identifier) @name))) (export_statement (interface_declaration name: (type_identifier) @name)) (export_statement (type_alias_declaration name: (type_identifier) @name)) (export_statement (enum_declaration name: (identifier) @name))"
   classes: "(export_statement (class_declaration name: (type_identifier) @name)) (export_statement (interface_declaration name: (type_identifier) @name))"
   imports: "(import_statement source: (string) @name)"
+  import_bindings: "(import_statement (import_clause (named_imports (import_specifier) @specifier)) source: (string) @source)"
+  reexports: "(export_statement (export_clause (export_specifier !alias name: (identifier) @name)) source: (string)) (export_statement (export_clause (export_specifier alias: (identifier) @name)) source: (string))"
+  reexport_sources: "(export_statement source: (string) @name)"
   calls: "(call_expression function: (identifier) @name) (call_expression function: (member_expression property: (property_identifier) @name))"

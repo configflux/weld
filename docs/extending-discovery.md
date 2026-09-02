@@ -128,6 +128,14 @@ once:
   that parent is the literal path `docs/**`, which is never a directory,
   so the guard makes your strategy emit *nothing* — silence, not a
   subset, which is a trap with no partial result to notice.
+- **a wildcard in a *directory* segment** — `apps/*/package.json`,
+  `services/*/src/*.py`, `packages/*/Dockerfile` all resolve, and `*`
+  spans exactly one segment (so `apps/*/package.json` does not reach
+  `apps/b/nested/package.json`; write `apps/**/package.json` for that).
+  Same trap as the bullet above, and for the same reason: the parent of
+  `apps/*/package.json` is the literal path `apps/*`, which is never a
+  directory, so a `.parent.is_dir()` guard makes the pattern match
+  nothing at all.
 - **`{a,b}` brace alternatives** — `packages/ui/src/**/*.{ts,tsx}`
   expands, unions and de-duplicates. `Path.glob` does not understand
   braces, so without this the pattern matches nothing at all.
@@ -243,8 +251,19 @@ the later entry wins as before. So a placeholder emitted only to keep
 an edge from dangling — no `file`, no `line`, `confidence:
 speculative` — cannot overwrite the real declaration another entry
 parsed, whatever order the entries are declared in. Emit placeholders
-freely; just mark them `speculative` and give the definite claim every
-prop you actually proved.
+freely; just give the definite claim every prop you actually proved.
+
+**Stamping the placeholder's `confidence` is not optional.** The veto
+compares two ranks, so it can only fire when *both* sides state one. A
+placeholder that states no `confidence` at all is not "weakest" — it is
+unrankable, the comparison is skipped, and the driver falls back to
+last-writer-wins, so your placeholder silently *replaces* the real node
+whenever your entry happens to be declared after the one that parsed the
+file. Which rank to state is a judgement about what you observed:
+`speculative` for a node you never saw (a call target defined outside
+your glob), `inferred` for one you did read but did not fully extract
+(the boundary `file:` node a route strategy stands up for the file it
+scanned). Either one is ranked; stating none is the bug.
 
 **This guarantee is per source entry, not per file.** `extract()` is
 called once per source entry, and if your `glob` matches several

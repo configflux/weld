@@ -7,14 +7,24 @@ invisible to the graph while `wd doctor` reports healthy (field eval v0.23.1
 Finding 05).
 
 This module runs the *same* read-only detection pass `wd init` uses
-(:func:`weld.init_detect.scan_files` + :func:`~weld.init_detect.detect_languages`
--- extension-only, no file contents read) and compares the languages present on
-disk against the strategies the config actually wires. A language present on
-disk that no wired strategy claims is *unclaimed*: its source is invisible.
+(:func:`weld.init_detect.scan_files` -- extension-only, no file contents read)
+and asks, of the files it finds, which ones an enabled source entry actually
+claims. A language with files no entry claims is *unclaimed*: that source is
+invisible.
 
-Granularity is deliberately the language, not the framework (ADR 0135 noise
-control): a repo that merely lacks an optional framework extractor but does wire
-``python_module`` is silent -- only a language nothing claims is reported.
+**A claim is a matched file, not a strategy name** (ADR 0144). The original
+check compared languages on disk against the flat set of ``strategy:`` values
+the config mentions, which read one ``tree_sitter`` entry as claiming every
+tree-sitter language, and read a glob that matches none of a language's files
+as claiming it anyway -- so a config wiring ``**/*.ts`` spoke for the ``.tsx``
+files ``EXT_TO_LANG`` counts as the same language, and two-thirds of a Node
+repo stayed invisible with every diagnostic reporting it healthy.
+
+Granularity is deliberately the language for *reporting* and the extension for
+*claiming* (ADR 0144 noise control): a repo that merely lacks an optional
+framework extractor but does wire ``python_module`` is silent, and so is one
+whose config scopes a language to a subtree on purpose -- one claimed ``.py``
+file settles Python. Only a file class nothing reads is reported.
 
 Security posture: never prints the absolute project root or environment. The
 only user-facing values are language names and integer file counts.
@@ -23,13 +33,13 @@ only user-facing values are language names and integer file counts.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from weld._yaml import parse_yaml
 
-#: Minimum files of a language before an unclaimed language is reported. The
-#: field-eval repro is 8 ``.cs`` files, and any invisible language is a real
-#: gap, so the floor is 1 (effectively "present at all"). Kept as a named knob
+#: Minimum *unclaimed* files of a language before it is reported. The
+#: field-eval repro is 8 ``.cs`` files, and any invisible file is a real gap,
+#: so the floor is 1 (effectively "present and unread"). Kept as a named knob
 #: rather than a literal so the noise threshold has one documented home.
 _MIN_FILES = 1
 
@@ -44,11 +54,11 @@ _REMEDY = (
     f"{_REFRESH} (keeps your entries) or {_FORCE} (regenerate from scratch)"
 )
 
-#: Language -> set of strategy names that, when wired in ``discover.yaml``,
-#: mean that language's source is claimed. A language is claimed when the
-#: config wires *any* strategy in its set (ADR 0135: membership, not id
-#: equality -- we report a language nothing speaks for, not a missing optional
-#: extractor). ``tree_sitter`` is the common backbone for the tree-sitter
+#: Language -> the strategy names that can *read* that language. An entry
+#: claims a file only if its strategy is in the file's language's set (ADR
+#: 0135: membership, not id equality -- we report a language nothing speaks
+#: for, not a missing optional extractor) *and* its glob matches that file
+#: (ADR 0144). ``tree_sitter`` is the common backbone for the tree-sitter
 #: languages; the framework/build strategies are additive claimers.
 _CLAIMING_STRATEGIES: dict[str, frozenset[str]] = {
     "python": frozenset({"python_module", "python_callgraph"}),
@@ -59,7 +69,14 @@ _CLAIMING_STRATEGIES: dict[str, frozenset[str]] = {
     }),
     "go": frozenset({"tree_sitter", "go_package", "gin"}),
     "rust": frozenset({"tree_sitter", "axum"}),
-    "typescript": frozenset({"tree_sitter"}),
+    "typescript": frozenset({"tree_sitter", "express", "next"}),
+    # JavaScript was absent from this table until ADR 0142 D1, so a repo whose
+    # ``.js`` files nothing wired was not merely unreported -- it was
+    # unrefreshable, because ``wd init --refresh`` wires exactly the languages
+    # this function returns. The omission was invisible while ``wd init`` had
+    # no JavaScript entry to offer; now that it has one, a JavaScript repo can
+    # be told about the gap and can close it.
+    "javascript": frozenset({"tree_sitter", "express", "next"}),
     "cpp": frozenset({"tree_sitter", "cpp_buildsystem_detector"}),
     "java": frozenset({"tree_sitter"}),
 }
@@ -67,85 +84,170 @@ _CLAIMING_STRATEGIES: dict[str, frozenset[str]] = {
 
 @dataclass(frozen=True)
 class UnclaimedClass:
-    """A language present on disk that no wired strategy claims."""
+    """A language with files on disk that no enabled source entry claims.
+
+    ``file_count`` is the number of *unclaimed* files, which for a language
+    nothing wires at all -- the field eval v0.23.1 Finding 05 case -- is every
+    file it has.
+    """
 
     language: str
     file_count: int
 
 
-def _wired_strategies(weld_dir: Path) -> set[str]:
-    """Return the set of strategy names referenced by enabled sources.
+def _enabled_sources(weld_dir: Path) -> list[dict]:
+    """Return the enabled source entries of ``discover.yaml``.
 
-    A source entry with ``enabled: false`` does not count as wiring its
-    strategy -- a disabled entry leaves the language just as invisible as a
-    missing one. Mirrors :func:`weld._doctor_strategies._collect_strategy_usage`
-    but returns only the enabled set (the disabled/enabled split is not needed
-    here).
+    A source entry with ``enabled: false`` claims nothing -- a disabled entry
+    leaves the source just as invisible as a missing one. An unreadable config
+    claims nothing either: the caller then reports every language it finds,
+    which is the truthful answer for a config weld cannot read.
     """
     path = weld_dir / "discover.yaml"
     if not path.is_file():
-        return set()
+        return []
     try:
         data = parse_yaml(path.read_text(encoding="utf-8"))
         sources = data.get("sources", []) if isinstance(data, dict) else []
     except Exception:  # noqa: BLE001 -- an unreadable config claims nothing.
-        return set()
-    wired: set[str] = set()
-    for src in sources:
-        if not isinstance(src, dict):
-            continue
-        if src.get("enabled") is False:
-            continue
-        strat = src.get("strategy")
-        if isinstance(strat, str):
-            wired.add(strat)
-    return wired
+        return []
+    return [
+        src
+        for src in sources
+        if isinstance(src, dict) and src.get("enabled") is not False
+    ]
 
 
-def detect_unclaimed_from_counts(
-    language_counts: dict[str, int], wired: set[str],
+def _claim_entries(sources: list[dict], language: str) -> list[dict]:
+    """The entries that could claim *language*, by strategy.
+
+    Brace groups used to be expanded here before the entries were handed on,
+    because :func:`weld._staleness_coverage.in_scope_files` did not expand
+    them itself -- so an unexpanded ``**/*.{ts,tsx}``, what ``wd init`` writes
+    for every TypeScript repo, matched nothing there and the remedy could
+    never close what this reports. That resolver now expands as ``walk_glob``
+    does (bd 2z5no), which is where the expansion belongs: this asks which
+    files an entry claims, and how a ``glob:`` resolves is the resolver's
+    business, not its caller's. The dialect probe over the real CLI
+    (``weld_unclaimed_dialect_e2e_test``) is unchanged and still green, which
+    is what says the pre-expansion had become redundant rather than merely
+    unused.
+    """
+    claimers = _CLAIMING_STRATEGIES.get(language) or frozenset()
+    return [src for src in sources if src.get("strategy") in claimers]
+
+
+#: How many candidate paths :func:`_any_claimed` hands the resolver at a time.
+#: Big enough that a claimed class usually settles in one pass, small enough
+#: that settling never costs the whole class.
+_CLAIM_PROBE_CHUNK = 64
+
+
+def _any_claimed(entries: list[dict], paths: list[str]) -> bool:
+    """True when *entries* resolve at least one of *paths*.
+
+    Asked in chunks because the answer is a boolean while
+    :func:`weld._staleness_coverage.in_scope_files` resolves every path it is
+    given: on this repo that is 1760 Python files against eight Python entries
+    for a question the first matched file settles. Chunking keeps the one
+    shared resolution path (its regex translation, its exclude semantics, its
+    structural prunes) rather than open-coding a cheaper near-copy.
+    """
+    from weld._staleness_coverage import in_scope_files
+
+    for start in range(0, len(paths), _CLAIM_PROBE_CHUNK):
+        if in_scope_files(entries, paths[start:start + _CLAIM_PROBE_CHUNK]):
+            return True
+    return False
+
+
+def _unclaimed_file_counts(
+    sources: list[dict], rel_paths: list[str],
+) -> dict[str, int]:
+    """Per-language count of *rel_paths* no entry in *sources* claims.
+
+    The claim unit is the **extension**, not the file: a language's ``.tsx``
+    files are unclaimed when no entry that can read TypeScript matches any of
+    them, even though its ``.ts`` files are matched. Per-file accounting would
+    report every deliberately-unscoped file (951 of this repo's 1760 Python
+    files live under ``examples/`` and ``weld/tests/fixtures/``), and
+    per-language accounting lets one matched ``.ts`` speak for an unread
+    ``.tsx`` -- ADR 0144 has the measurements.
+
+    Only languages in :data:`_CLAIMING_STRATEGIES` are considered: a language
+    weld cannot extract at all is not something re-running ``wd init`` would
+    fix, so reporting it would be noise, not signal.
+    """
+    from weld.init_detect import EXT_TO_LANG
+
+    by_class: dict[tuple[str, str], list[str]] = {}
+    for rel in rel_paths:
+        ext = PurePosixPath(rel).suffix.lower()
+        language = EXT_TO_LANG.get(ext)
+        if language is None or language not in _CLAIMING_STRATEGIES:
+            continue
+        by_class.setdefault((language, ext), []).append(rel)
+
+    counts: dict[str, int] = {}
+    entries_by_language: dict[str, list[dict]] = {}
+    for (language, _ext), paths in by_class.items():
+        if language not in entries_by_language:
+            entries_by_language[language] = _claim_entries(sources, language)
+        entries = entries_by_language[language]
+        if entries and _any_claimed(entries, paths):
+            continue
+        counts[language] = counts.get(language, 0) + len(paths)
+    return counts
+
+
+def detect_unclaimed_from_sources(
+    sources: list[dict], rel_paths: list[str],
 ) -> list[UnclaimedClass]:
-    """Pure comparison of detected languages against wired strategies.
+    """Pure comparison of files on disk against what the config claims.
 
     Split from the disk walk so it is unit-testable without a filesystem and
-    reused by both the doctor and prime surfaces. Only languages in
-    :data:`_CLAIMING_STRATEGIES` are considered -- a language with no known
-    claiming set (one weld cannot extract at all) is not something re-running
-    ``wd init`` would fix, so reporting it would be noise, not signal.
+    reused by both the doctor and prime surfaces. *rel_paths* are
+    repo-relative POSIX paths, the vocabulary ``glob:`` matches in.
 
     Returns unclaimed classes sorted by descending file count then name, so the
     most-invisible language leads.
     """
-    unclaimed: list[UnclaimedClass] = []
-    for lang, count in language_counts.items():
-        if count < _MIN_FILES:
-            continue
-        claimers = _CLAIMING_STRATEGIES.get(lang)
-        if claimers is None:
-            continue
-        if wired & claimers:
-            continue
-        unclaimed.append(UnclaimedClass(lang, count))
+    unclaimed = [
+        UnclaimedClass(language, count)
+        for language, count in _unclaimed_file_counts(sources, rel_paths).items()
+        if count >= _MIN_FILES
+    ]
     unclaimed.sort(key=lambda u: (-u.file_count, u.language))
     return unclaimed
 
 
 def detect_unclaimed_source_classes(root: Path) -> list[UnclaimedClass]:
-    """Return languages present under ``root`` that no wired strategy claims.
+    """Return languages under ``root`` with files no source entry claims.
 
-    Runs the ``wd init`` detection pass read-only (extension-only language
-    counting over the repo-bounded file walk) and compares it against the
-    strategies ``.weld/discover.yaml`` wires. Read-only: touches nothing.
+    Runs the ``wd init`` detection pass read-only (the repo-bounded file walk,
+    extension-only, no file contents read) and intersects it with what
+    ``.weld/discover.yaml``'s enabled entries resolve. One walk, no second
+    traversal: the claim is decided by matching the list already in hand.
+    Read-only -- touches nothing.
     """
-    from weld.init_detect import detect_languages, scan_files
+    from weld._rel_path import rel_to_root
+    from weld.init_detect import EXT_TO_LANG, scan_files
 
     weld_dir = root / ".weld"
     if not weld_dir.is_dir():
         return []
-    wired = _wired_strategies(weld_dir)
-    files = scan_files(root)
-    counts = detect_languages(files)
-    return detect_unclaimed_from_counts(counts, wired)
+    sources = _enabled_sources(weld_dir)
+    # Only a file whose extension names a language can be claimed or unclaimed,
+    # and relativising a path costs more than the whole claim match does, so
+    # the rest are dropped before the conversion. A *superset* of what
+    # :func:`_unclaimed_file_counts` keeps -- it still applies its own rule, so
+    # this can never become a second, drifting filter.
+    rel_paths = [
+        rel_to_root(path, root)
+        for path in scan_files(root)
+        if path.suffix.lower() in EXT_TO_LANG
+    ]
+    return detect_unclaimed_from_sources(sources, rel_paths)
 
 
 def _label(language: str) -> str:
@@ -162,11 +264,17 @@ def unclaimed_message(item: UnclaimedClass) -> str:
     a fresh scan and discards hand edits, so naming it alone told a maintainer
     following the advice to throw their own customisation away;
     ``wd init --refresh`` merges the missing entries in and keeps it.
+
+    The count is the *unclaimed* files, so the sentence says "files ... that no
+    wired strategy claims" rather than the original "files present but no wired
+    strategy claims '<language>'": since ADR 0144 a language can be partly
+    claimed -- a wired ``**/*.ts`` beside unread ``.tsx`` files -- and the
+    original wording would be false there.
     """
     plural = "file" if item.file_count == 1 else "files"
     return (
-        f"{item.file_count} {_label(item.language)} {plural} present but no "
-        f"wired strategy claims '{item.language}' -> run: {_REMEDY}"
+        f"{item.file_count} {_label(item.language)} {plural} present that no "
+        f"wired strategy claims -> run: {_REMEDY}"
     )
 
 

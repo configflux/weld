@@ -1,4 +1,11 @@
-"""Purge + re-run dirty sources, widening once for orphaned surviving edges.
+"""Purge + re-run dirty sources, widening the scope where a clean file moved.
+
+Two widenings live here, and they sit on either side of the merge because they
+answer different questions. :func:`source_root_dependents` runs *before* the
+first pass: a created or deleted ``__init__.py`` moves the ``sys.path`` entry
+its whole subtree resolves against, so those files have to be in scope the
+first time the strategy parses them (ADR 0143 D5). The orphan loop below runs
+*after*: it can only know which surviving edges dangle once a pass has run.
 
 ADR 0074 (fourth amendment, bd znzu): a clean file's edge can survive a
 stale-node purge by provenance and still end up dangling, if the node it
@@ -31,6 +38,59 @@ from weld._discover_orphan_edges import orphaned_producer_files
 from weld._discover_strategies import IncrementalHint, run_source as _run_source
 from weld.discovery_state import purge_stale_nodes
 
+#: The file whose presence makes a directory a package, and so decides which
+#: *ancestor* directory Python puts on ``sys.path`` for every file beneath it
+#: -- the source root :mod:`weld.strategies._python_source_root_import` walks
+#: to when it reads an absolute import (ADR 0143 D5).
+_PACKAGE_MARKER = "__init__.py"
+
+
+def source_root_dependents(
+    stale: set[str], source_file_map: list[list[str]],
+) -> set[str]:
+    """Return the Python files whose source root a stale marker file moves.
+
+    ``__init__.py`` presence is part of the import-resolution basis, not just
+    of the marker file's own content: creating one turns its directory into a
+    package and pushes the ``sys.path`` entry one level up for **every** file
+    in its subtree, and deleting one pulls it back down. Only the marker is
+    dirty on such a round, so without this the incremental path would keep
+    resolutions a full discover of the same tree would not produce -- the
+    equivalence ADR 0008 and ADR 0074 hold every strategy to, violated today
+    by the shipped bare-name rule and closed here (ADR 0143 D5).
+
+    Widening here rather than inside ``python_callgraph`` is what makes it one
+    mechanism instead of two. A strategy can only widen what it *parses*, and
+    that is not enough twice over: a **deleted** marker reaches ``stale`` and
+    never ``dirty``, so with nothing else changed no source runs at all; and
+    re-parsing a file whose node is not also stale re-mints edges beside the
+    surviving ones rather than replacing them. Both halves need the dirty
+    *and* the stale set moved together, which is this layer's to do -- and it
+    is the same widen-and-redo the orphan pass below already performs.
+
+    *stale* is the union of changed and vanished files, so an ``__init__.py``
+    that was merely edited widens its subtree too. That over-admission is
+    deliberate: what matters is the marker's existence, this layer is handed
+    content-change and vanish in one set, and re-deriving a subtree a full
+    discover would derive identically costs time and can never cost an answer.
+    The bound it inherits: a marker no source glob resolves is not hashed, so
+    it is invisible to the file-hash delta -- the same blind spot every other
+    incremental basis has for a file discovery never reads.
+    """
+    directories = {
+        rel[: -len(_PACKAGE_MARKER)]
+        for rel in stale
+        if rel == _PACKAGE_MARKER or rel.endswith(f"/{_PACKAGE_MARKER}")
+    }
+    if not directories:
+        return set()
+    return {
+        rel
+        for files in source_file_map
+        for rel in files
+        if rel.endswith(".py") and any(rel.startswith(d) for d in directories)
+    }
+
 
 def run_incremental_merge(
     root: Path,
@@ -61,6 +121,14 @@ def run_incremental_merge(
     resolve no files at all (a command-only ``external_json`` adapter). See
     :func:`weld._discover_basis.sources_needing_retry`.
     """
+    # Before the first pass, not after it: a moved source root changes what
+    # the strategy *resolves*, so the subtree has to be in scope the first
+    # time it parses. See :func:`source_root_dependents`.
+    moved = source_root_dependents(stale, source_file_map)
+    if moved:
+        dirty = dirty | moved
+        stale = stale | moved
+
     ex_nodes, ex_edges, context, ran_df = _merge_once(
         root, sources, source_file_map, existing_graph, dirty, stale,
         safe=safe, retry_entry_ids=retry_entry_ids,

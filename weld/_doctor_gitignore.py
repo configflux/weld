@@ -96,10 +96,11 @@ def check_seeding_config(weld_dir: Path, result_cls: type[Any]) -> list[Any]:
     as ``root / ".weld"``, the same way every check here takes it.
 
     Silent when there is no config to carry (``_check_discover_yaml``
-    already fails on that, and two findings about one absent file is
-    noise), and silent whenever git cannot answer -- outside a
-    repository, or with no ``git`` binary -- on the same fail-closed rule
-    as every check above.
+    already reports the absence -- a failure in a plain repository, a
+    note at a federation root that has no sources of its own -- and two
+    findings about one absent file is noise), and silent whenever git
+    cannot answer -- outside a repository, or with no ``git`` binary --
+    on the same fail-closed rule as every check above.
     """
     if not (weld_dir / "discover.yaml").is_file():
         return []

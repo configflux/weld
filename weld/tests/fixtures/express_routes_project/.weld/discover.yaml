@@ -8,10 +8,10 @@
 # route nodes deterministic without depending on init auto-detection.
 sources:
   # express HTTP routes: route:<METHOD>:<path> nodes for handler
-  # registration. Listed BEFORE the tree_sitter entry so the canonical
-  # tree_sitter file node wins the later nodes.update merge over express's
-  # thin boundary-file placeholder (weld.discover applies sources in
-  # order).
+  # registration. Listed before the tree_sitter entry because that is the
+  # order `wd init` emits; either order gives the same file node, since
+  # the thin boundary-file placeholder states a weaker confidence than the
+  # canonical tree_sitter node and loses the merge to it.
   - glob: "src/**/*.ts"
     type: route
     strategy: express

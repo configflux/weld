@@ -32,6 +32,8 @@ YAML_HEADER = """\
 #   flask           — AST: Flask/Blueprint + @app.route/@bp.route decorators
 #   gin             — Regex: gin route registration (r.GET/POST/Any/Handle)
 #   axum            — Regex: axum route registration (.route("/p", get(h)))
+#   express         — Regex: express route registration (app.get / .route(..).get)
+#   next            — Files: Next.js app-router route.* handler exports + page.*
 #   pydantic        — AST: BaseModel subclasses, fields, docstrings
 #   worker_stage    — AST: __init__.py __all__ exports in stage subdirs
 #   dockerfile      — Line parse: FROM base image
@@ -44,7 +46,7 @@ YAML_HEADER = """\
 #   config_file     — Static config file node
 #   python_module     — AST: top-level classes and functions
 #   python_callgraph  — AST: function-level symbols + calls edges (ADR 0004)
-#   tree_sitter       — Tree-sitter AST: exports, types, imports (Go, Rust, TS, C#, Java, C/C++)
+#   tree_sitter       — Tree-sitter AST: exports, types, imports (Go, Rust, TS, JS, C#, Java, C/C++)
 #   grpc_proto        — AST: .proto service/rpc/message/enum extraction
 #   grpc_bindings     — AST: Python gRPC server/client bindings -> rpc edges
 #   events            — Async channels (Kafka/Celery/Redis; compose env + py call sites)

@@ -149,6 +149,80 @@ class CSharpDependencyTest(unittest.TestCase):
         )
 
 
+class MsbuildProducerTest(unittest.TestCase):
+    """A .NET producer joins: field-eval v0.25.0 M4, bd lcq0c.4, ADR 0141 D2.
+
+    The proto case above is the *other* producer-declaration style; here both
+    ends are MSBuild, which is the shape that emitted nothing at all -- the
+    library's package name lives only in its project file, so the resolver
+    read a consumer with no sibling to point at.
+    """
+
+    def _resolve(self, producer_project: str, **properties: str) -> list:
+        """Resolve a two-child workspace whose producer is *producer_project*.
+
+        *properties* are written into that project's ``<PropertyGroup>``, so
+        the cases differ only in what the producing project declares.
+        """
+        declared = "".join(
+            f"  <{tag}>{value}</{tag}>\n" for tag, value in properties.items()
+        )
+        with tempfile.TemporaryDirectory() as root:
+            _write(
+                os.path.join(root, ".weld", "workspaces.yaml"),
+                _workspaces_yaml(
+                    [("billing", "libs/billing"), ("gw", "services/gw")]
+                ),
+            )
+            _write(
+                os.path.join(root, "libs/billing", producer_project),
+                '<Project Sdk="Microsoft.NET.Sdk">\n <PropertyGroup>\n'
+                + declared
+                + " </PropertyGroup>\n</Project>\n",
+            )
+            # Consumer: the reference is spelled exactly as the producer
+            # declares it, in the case a .NET consumer would use.
+            _write(
+                os.path.join(root, "services/gw/Gateway.csproj"),
+                "<Project>\n <ItemGroup>\n"
+                '  <PackageReference Include="Acme.Platform.Billing.Schema" '
+                'Version="1.0.0" />\n'
+                " </ItemGroup>\n</Project>\n",
+            )
+            ctx = _context(root, {"billing": None, "gw": None})
+            return PackageGraphResolver().resolve(ctx)
+
+    def test_package_id_producer_joins_a_packagereference_consumer(self) -> None:
+        edges = self._resolve(
+            "src/Billing.csproj", PackageId="Acme.Platform.Billing.Schema"
+        )
+        self.assertEqual(
+            [(e.from_id, e.to_id, e.props["package"]) for e in edges],
+            [
+                (
+                    _repo_node("gw"),
+                    _repo_node("billing"),
+                    "Acme.Platform.Billing.Schema",
+                )
+            ],
+        )
+
+    def test_a_producer_named_only_by_its_project_filename_joins(self) -> None:
+        """No ``<PackageId>``: the filename is NuGet's default package name."""
+        edges = self._resolve("src/Acme.Platform.Billing.Schema.csproj")
+        self.assertEqual(
+            [(e.from_id, e.to_id) for e in edges],
+            [(_repo_node("gw"), _repo_node("billing"))],
+        )
+
+    def test_an_unpackable_project_produces_no_join(self) -> None:
+        """``IsPackable=false`` says the filename default does not apply."""
+        edges = self._resolve(
+            "src/Acme.Platform.Billing.Schema.csproj", IsPackable="false"
+        )
+        self.assertEqual(edges, [])
+
+
 class GoDependencyTest(unittest.TestCase):
     def test_gomod_require_joins_to_gomod_module_producer(self) -> None:
         with tempfile.TemporaryDirectory() as root:

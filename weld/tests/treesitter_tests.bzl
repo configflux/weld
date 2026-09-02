@@ -215,6 +215,35 @@ def treesitter_tests():
         ],
     )
 
+    # ADR 0142 D4/D5 (bd 5038-lrnx1.5): the TypeScript dialect dispatch and the
+    # re-export evidence beside it. Both really parse, and here that is the
+    # whole point rather than an implementation detail -- gap G4 was a `.tsx`
+    # file read by the plain TypeScript grammar, which is a fact no mocked
+    # parser has an opinion about, and it survived every mocked TS test in this
+    # tree. So the grammar is declared rather than hoped for, exactly as the
+    # ADR 0061 C++ target below does and for the same measured reason (bd c42b).
+    [py_test(
+        name = _name,
+        srcs = [_name + ".py"],
+        data = _QUERY_FILES,
+        deps = _STRATEGIES + ["@pypi//tree_sitter", "@pypi//tree_sitter_typescript"],
+    ) for _name in ("weld_ts_dialect_test", "weld_typescript_reexports_test")]
+
+    # ADR 0142 D6 (bd 5038-lrnx1.6): the JavaScript query file and the
+    # definition promotion behind it. Really parses, and for a sharper reason
+    # than its TypeScript neighbours above: the `imports` and `commonjs_exports`
+    # patterns are the first tree-sitter *text predicates* (`#eq?`) in any weld
+    # language file, and whether a binding evaluates them inside
+    # `QueryCursor.matches` is a fact about py-tree-sitter that no mock states.
+    # Drop the predicate and every one-string call in a file becomes an import
+    # specifier, silently.
+    py_test(
+        name = "weld_javascript_extraction_test",
+        srcs = ["weld_javascript_extraction_test.py"],
+        data = _QUERY_FILES,
+        deps = _STRATEGIES + ["@pypi//tree_sitter", "@pypi//tree_sitter_javascript"],
+    )
+
     # ADR 0061 real-parse guardrail ("no churn in cpp.yaml without a failing-test
     # repro first"). It is the one target in this file that parses C++ with the
     # real grammar, so it names both wheels instead of hoping the interpreter
@@ -233,6 +262,27 @@ def treesitter_tests():
             # (bd 9txq); this target still owns its own probe.
             "//weld/tests:tier_check_grammar_gate",
         ],
+    )
+
+    # bd lrnx1.3 (ADR 0142 D2): the two halves of TypeScript call binding.
+    # The first really parses -- what a call site is written inside, and which
+    # import bound its callee, are facts about a parse tree that a mocked node
+    # graph cannot state -- so it names both wheels rather than hoping the
+    # ambient interpreter carries them, the bd c42b rule. The second is
+    # grammar-free by construction (it hands close_graph an in-memory graph),
+    # which is the same shape as the _INHERITS_UNIT lane above and why it sits
+    # beside its parsing half instead of in a lane of its own.
+    py_test(
+        name = "weld_ts_call_sites_test",
+        srcs = ["weld_ts_call_sites_test.py"],
+        data = _QUERY_FILES,
+        deps = _STRATEGIES + ["@pypi//tree_sitter", "@pypi//tree_sitter_typescript"],
+    )
+
+    py_test(
+        name = "weld_graph_closure_ts_calls_test",
+        srcs = ["_graph_closure_ts_calls_fixture.py", "weld_graph_closure_ts_calls_test.py"],
+        deps = ["//weld:runtime", "//weld/strategies"],
     )
 
     py_test(

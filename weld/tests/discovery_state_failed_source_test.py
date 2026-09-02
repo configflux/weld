@@ -18,7 +18,12 @@ from pathlib import Path
 
 from weld._discover_basis import entry_fingerprint, sources_needing_retry
 from weld._discover_state_check import save_state_for_graph
-from weld.discovery_state import DiscoveryState, load_state, save_state
+from weld.discovery_state import (
+    STATE_VERSION,
+    DiscoveryState,
+    load_state,
+    save_state,
+)
 from weld.strategies._strategy_failure import (
     SOURCE_FAILURE_KEY,
     KIND_NONZERO_EXIT,
@@ -186,10 +191,17 @@ class StateRoundTripTest(unittest.TestCase):
         )
 
     def test_a_state_from_an_older_weld_reads_as_no_failed_sources(self) -> None:
+        """An older weld means a MISSING FIELD, not an older schema version.
+
+        A state at a superseded ``version`` is refused outright by
+        ``load_state`` and never reaches this reading at all, so the version
+        stamped here is read from the code: a bump (ADR 0143 D4 made one)
+        must not quietly turn this case into the rejection case.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps({
-                "version": 1,
+                "version": STATE_VERSION,
                 "files": {"a.py": "sha256:x"},
                 "files_with_failed_strategy": ["b.py"],
             }),
@@ -203,7 +215,7 @@ class StateRoundTripTest(unittest.TestCase):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps({
-                "version": 1,
+                "version": STATE_VERSION,
                 "files": {"a.py": "sha256:x"},
                 "sources_with_failed_strategy": "not-a-dict",
             }),
@@ -215,7 +227,7 @@ class StateRoundTripTest(unittest.TestCase):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
             json.dumps({
-                "version": 1,
+                "version": STATE_VERSION,
                 "files": {"a.py": "sha256:x"},
                 "sources_with_failed_strategy": {
                     "eid-good": {"kind": "timeout", "reason": "x"},

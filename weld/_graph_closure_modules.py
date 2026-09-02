@@ -25,7 +25,7 @@ importing ``acme_notify.config``) -- without having to *detect* where the
 source root is. Detecting it would mean looking for ``__init__.py``, and that
 marker file is routinely empty, so it has no file node in the graph to find.
 
-Three constraints keep the inference from paying for itself with worse edges:
+Four constraints keep the inference from paying for itself with worse edges:
 
 * **Stdlib-rooted names are never inferred against.** Prefixing an ancestor
   directory is the Python-2 implicit-relative rule, and under Python 3 a
@@ -43,10 +43,42 @@ Three constraints keep the inference from paying for itself with worse edges:
   recoverable by dropping the last segment -- but ``import weld.graph_closure``
   must not fall back to ``weld`` while a node for the full name exists. Hence
   two ordered groups rather than one list.
+* **A candidate naming the importer's own module is refused.** The walk offers
+  ``weld.providers.anthropic`` to ``weld/providers/anthropic.py``, and that is
+  a file node -- the importing file itself. Because
+  ``graph_closure._link_imports`` drops a self-edge, accepting it does not
+  misdirect the dependency, it *deletes* it: ``import anthropic`` there minted
+  no ``package:python:anthropic`` node at all, and neither did ``openai``,
+  ``ollama`` or ``tree_sitter`` on this checkout. A missing edge is the worse
+  half of that pair, because no reader can see that anything is gone. The
+  refusal skips that one reading and lets the walk continue outward, so a
+  third-party name matching a first-party filename resolves exactly as it would
+  from any other file -- which is the whole claim, and no more than it: where
+  the graph also holds a speculative stub for a member of that package, the
+  direct lookup still answers with the stub rather than minting the package
+  (bd ``5038-d853w``, unrelated to the filename and
+  decided separately). Only the *inferred* readings are bound: a literal
+  ``import weld.providers.anthropic`` in that file still resolves through the
+  direct lookup and is still dropped as the self-edge it is, which is the
+  right answer for a module the graph already holds. This is ADR 0143 D3 guard
+  4 one layer down -- the strategy refuses the same candidate against
+  ``glob_modules``, and that ADR files this closure-side twin as its own
+  defect rather than folding it in.
 
 Nothing here changes the *name* an unresolved import is minted under: that
 stays :func:`external_package_name`, so the cross-repo package nodes a sibling
 repo's manifest joins against keep the ids they already had.
+
+**The TypeScript edition of the same question lives here too**
+(:func:`first_party_targets`, :func:`resolve_first_party`, ADR 0142 D3, bd
+lrnx1.4). It is a lookup rather than an inference -- an npm workspace name and
+a ``tsconfig`` alias are resolved by reading the project's own manifests, which
+the closure cannot do, so a strategy computes the binding and records it on the
+importing file node. What makes it belong beside the Python rule is not the
+mechanism but the finding: both exist because an import that should have
+resolved gained a second, external representation of a module the graph already
+held, and a reader asking "which imports does the closure understand to be
+first-party?" should not have to find that answer in two places.
 """
 
 from __future__ import annotations
@@ -152,6 +184,10 @@ def python_source_root_candidates(
     ``after`` re-reads the name as *module plus member* by dropping its last
     segment; that is strictly less specific, so it must lose to anything the
     whole name found.
+
+    Neither group ever offers the importer's own module -- the fourth
+    constraint in this module's docstring, and the one that keeps a
+    third-party import named after its own file from vanishing.
     """
     if language != "python":
         return [], []
@@ -161,13 +197,62 @@ def python_source_root_candidates(
     if not dotted or is_stdlib_module(dotted):
         return [], []
     prefixes = _ancestor_prefixes(source_file)
+    own = python_dotted_module(source_file)
     before = [dotted, *(f"{prefix}.{dotted}" for prefix in prefixes)]
     parent, _, member = dotted.rpartition(".")
     if not (parent and member):
-        return _dedupe(before), []
+        return _readings(before, own), []
     after = [f"{prefix}.{parent}" for prefix in prefixes]
     after.append(parent)
-    return _dedupe(before), _dedupe(after)
+    return _readings(before, own), _readings(after, own)
+
+
+#: Resolution tag for a first-party name whose defining file this graph does
+#: not hold. Distinct from ``"external"`` on purpose: it is the one outcome
+#: that must draw *no* edge rather than a wrong one.
+FIRST_PARTY_UNBOUND = "first_party_unbound"
+
+
+def first_party_targets(props: dict) -> dict[str, str]:
+    """``props.import_targets`` as a clean ``{specifier: file}`` map.
+
+    The map is authored by a strategy that *can* read the filesystem -- an npm
+    workspace member name and a ``tsconfig`` alias both need manifests to
+    resolve (ADR 0142 D3) -- and consumed by a closure that cannot, which is
+    what keeps :func:`weld.graph_closure.close_graph` a pure function of the
+    nodes and edges handed to it. Defensive about shape because it arrives
+    from a graph on disk, which any version may have written.
+    """
+    raw = props.get("import_targets")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(name): str(target)
+        for name, target in raw.items()
+        if isinstance(name, str) and isinstance(target, str) and name and target
+    }
+
+
+def resolve_first_party(
+    name: str, targets: dict[str, str] | None, path_index: dict[str, str],
+) -> tuple[str | None, str] | None:
+    """Resolve *name* through an already-computed first-party binding.
+
+    ``None`` when *name* is not one -- the caller then runs every other
+    reading unchanged, which is what keeps this rule additive.
+
+    It outranks the path and module readings below because it is the only one
+    backed by the project's own manifests rather than by a guess at what a
+    name could spell. When the bound file has no node in this graph the answer
+    is :data:`FIRST_PARTY_UNBOUND` and no target: the one thing that must not
+    happen to a name proven first-party is an external package node claiming
+    its code lives somewhere else, which is the whole of finding G3.
+    """
+    bound = (targets or {}).get(name)
+    if not bound:
+        return None
+    target = path_index.get(bound)
+    return (target, "first_party") if target else (None, FIRST_PARTY_UNBOUND)
 
 
 def first_file_node(
@@ -179,6 +264,11 @@ def first_file_node(
     speculative ``symbol:`` stubs keyed by their declared module, and a guess
     that lands on one of those has invented a relationship rather than found
     one -- so inference is only ever allowed to hit a real file.
+
+    The other refusal -- never answering with the importing file itself -- is
+    deliberately *not* here: it is applied to the candidate list by
+    :func:`_readings`, so it binds the guesses without touching the direct
+    lookup, which reads the same index and must still resolve a self-import.
     """
     for module_name in candidates:
         target = module_index.get(module_name)
@@ -207,6 +297,17 @@ def _ancestor_prefixes(source_file: str) -> list[str]:
     return [".".join(parts[:depth]) for depth in range(len(parts), 0, -1)]
 
 
+def _readings(candidates: list[str], own_module: str) -> list[str]:
+    """*candidates*, deduped, minus any reading of the importer's own module.
+
+    Kept beside the walk rather than folded into ``first_file_node`` so the
+    refusal is stated where the guesses are made: the direct lookup in
+    ``graph_closure._resolve_import`` reads the same index and is deliberately
+    *not* bound by this, so a literal self-import still resolves.
+    """
+    return [name for name in _dedupe(candidates) if name != own_module]
+
+
 def _rust_candidates(value: str, source_file: str) -> list[str]:
     rust = value.replace("::", ".").strip(".")
     for prefix in ("crate.", "self.", "super."):
@@ -224,11 +325,14 @@ def _dedupe(candidates: list[str]) -> list[str]:
 
 
 __all__ = [
+    "FIRST_PARTY_UNBOUND",
     "external_package_name",
     "first_file_node",
+    "first_party_targets",
     "module_candidates",
     "module_key",
     "python_dotted_module",
     "python_module_index",
     "python_source_root_candidates",
+    "resolve_first_party",
 ]

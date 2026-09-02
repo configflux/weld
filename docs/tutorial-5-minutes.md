@@ -158,7 +158,7 @@ response -- the breadth `grep` and LSP cannot give you.
 file:orders-api/src/server        exports: [createOrder, getOrder, listOrders]
 file:orders-api/src/routes        exports: [postOrders, getOrders, getOrderById]
 config:services_orders-api_package_json   file: services/orders-api/package.json
-dockerfile:Dockerfile                     file: docker/Dockerfile.orders-api
+dockerfile:docker/Dockerfile.orders-api   file: docker/Dockerfile.orders-api
 build-target:npm:@acme/orders-api:build
 build-target:npm:@acme/orders-api:start
 test-target:npm:@acme/orders-api:lint

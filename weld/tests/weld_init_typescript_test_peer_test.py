@@ -27,7 +27,9 @@ These tests pin the parity fix:
    ``_test_peer_ts`` resolver recognizes (no glob the resolver ignores).
 3. The TS ``test_peer`` entries land in the ``tests`` artifact-class
    section, mirroring the Python pairing.
-4. The ``tree_sitter`` TypeScript ``**/*.ts`` entry is still emitted.
+4. The ``tree_sitter`` TypeScript entry is still emitted, and its glob still
+   claims every ``.ts`` file in the fixture (the claim, not its spelling --
+   ADR 0142 D1 made that glob the ``{ts,tsx}`` dialect family).
 5. The scaffolded standard glob actually drives the resolver: feeding
    it through ``test_peer.extract`` against the bundled TS fixture emits
    the ``tests`` edge.
@@ -44,6 +46,7 @@ from pathlib import Path
 
 from weld._yaml import parse_yaml
 from weld.init import init as init_run
+from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies._test_peer_ts import is_test_file as ts_is_test_file
 from weld.strategies.test_peer import extract as test_peer_extract
 
@@ -151,14 +154,35 @@ class TypeScriptTestPeerScaffoldTest(unittest.TestCase):
     def test_tree_sitter_typescript_source_still_emitted(self) -> None:
         # The parity fix must not displace the tree_sitter entry that
         # emits the TS symbol/definition nodes.
+        #
+        # Asserted by *resolving* the emitted globs against the fixture rather
+        # than by matching a literal ``**/*.ts``: the spelling is not the
+        # claim. ADR 0142 D1 widened the entry to the dialect family
+        # ``**/*.{ts,tsx}`` because a per-extension glob left every ``.tsx``
+        # file init had just counted unclaimed, and a test pinned to the old
+        # string would have called that widening a regression while a genuine
+        # narrowing -- say back to ``src/*.ts`` -- slipped past it.
         data, _raw = _init_fixture(self._fixture)
         ts_src = [s for s in data.get("sources", [])
                   if s.get("strategy") == "tree_sitter"
                   and s.get("language") == "typescript"]
         self.assertTrue(ts_src, "tree_sitter typescript source dropped")
-        self.assertTrue(
-            any(s.get("glob") == "**/*.ts" for s in ts_src),
-            f"expected tree_sitter **/*.ts; got {[s.get('glob') for s in ts_src]}",
+        claimed = {
+            path.relative_to(self._fixture).as_posix()
+            for src in ts_src
+            for path in resolve_glob(
+                self._fixture, str(src.get("glob", "")), src.get("exclude") or [],
+            )
+        }
+        expected = {
+            path.relative_to(self._fixture).as_posix()
+            for path in self._fixture.rglob("*.ts")
+        }
+        self.assertTrue(expected, "the TS fixture has no .ts files to claim")
+        self.assertEqual(
+            sorted(expected - claimed), [],
+            "the tree_sitter typescript entry claims none of these fixture "
+            f"sources; its globs are {[s.get('glob') for s in ts_src]}",
         )
 
     def test_scaffolded_glob_emits_tests_edge(self) -> None:

@@ -45,6 +45,33 @@ _OWN_PYPROJECT = (
     '[project]\nname = "notify-service"\ndependencies = ["order-schema>=1.0"]\n'
 )
 
+#: An MSBuild project file, which since ADR 0141 D2 declares a *producer* --
+#: ``<PackageId>`` or, absent one, the filename. Both spellings appear inside
+#: excluded trees below: the boundary has to hold for the producer half or M4's
+#: fix reopens N2 under a .NET filename.
+_VENDORED_CSPROJ = (
+    '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup>\n'
+    "    <PackageId>Vendored.Third.Party</PackageId>\n"
+    "  </PropertyGroup>\n</Project>\n"
+)
+
+#: An npm child's own declaration (ADR 0142 D5).
+_OWN_PACKAGE_JSON = (
+    '{"name": "@acme/storefront", "dependencies": {"@acme/ui-kit": "^1.2.0"}}\n'
+)
+
+#: What ``npm install`` leaves behind: a complete, self-naming manifest for
+#: every transitive dependency. The vendored copy of ``@acme/ui-kit`` is the
+#: sharp one -- read as a declaration it makes the *consumer* a producer of
+#: its supplier's package, and every other sibling depending on that name gets
+#: an edge to the wrong repo.
+_VENDORED_NODE_MODULES: dict[str, str] = {
+    "node_modules/react/package.json": (
+        '{"name": "react", "dependencies": {"loose-envify": "^1.1.0"}}\n'
+    ),
+    "node_modules/@acme/ui-kit/package.json": '{"name": "@acme/ui-kit"}\n',
+}
+
 
 def _write(root: Path, rel: str, body: str) -> Path:
     path = root / rel
@@ -208,6 +235,11 @@ class NonGitFallbackManifestScanTest(unittest.TestCase):
                 "__pycache__/x/pyproject.toml",
             ):
                 _write(root, rel, '[project]\nname = "excluded"\n')
+            # The .NET build-output pair, with a real project file in each:
+            # a copy under obj/ carries a PackageId, one under bin/ has only
+            # its filename, and neither is this repo's own declaration.
+            _write(root, "obj/Debug/net8.0/Restored.csproj", _VENDORED_CSPROJ)
+            _write(root, "bin/Release/Acme.Copied.csproj", "<Project />\n")
 
             produced, consumed = scan_child_manifests(str(root))
 
@@ -232,6 +264,106 @@ class NonGitFallbackManifestScanTest(unittest.TestCase):
             produced, _consumed = scan_child_manifests(str(root))
 
         self.assertEqual(produced, {"notify-service"})
+
+
+class MsbuildProducerBoundaryTest(unittest.TestCase):
+    """The N2 boundary, on the producer half MSBuild gained (ADR 0141 D2).
+
+    A ``.csproj`` used to contribute consumed names only, so every question
+    this file asks about *producers* was asked of pyproject and proto alone.
+    Now that a project file declares what its repo publishes -- and does so by
+    filename when it says nothing else -- a vendored one is a fabricated
+    producer waiting to happen, under a filename no ``.venv`` probe covers.
+    Both routes are re-asked here rather than assumed from the shared dispatch
+    (bd lcq0c.4).
+    """
+
+    def test_a_gitignored_project_file_declares_no_producer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "svc"
+            _init_repo(root)
+            _write(root, "pyproject.toml", _OWN_PYPROJECT)
+            _write(root, ".gitignore", "third-party/\n")
+            _commit_all(root, "svc")
+            _write(root, "third-party/Vendored.csproj", _VENDORED_CSPROJ)
+            _write(root, "third-party/Unnamed.csproj", "<Project />\n")
+
+            produced, _consumed = scan_child_manifests(str(root))
+
+        self.assertEqual(produced, {"notify-service"})
+
+    def test_a_tracked_vendored_project_file_declares_no_producer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "svc"
+            _init_repo(root)
+            _write(root, "pyproject.toml", _OWN_PYPROJECT)
+            _write(root, "vendor/Vendored.csproj", _VENDORED_CSPROJ)
+            _write(root, "packages/Acme.Copied.csproj", "<Project />\n")
+            _commit_all(root, "svc with a vendored project file")
+
+            produced, _consumed = scan_child_manifests(str(root))
+
+        self.assertEqual(produced, {"notify-service"})
+
+
+class NpmProducerBoundaryTest(unittest.TestCase):
+    """The N2 boundary on the ecosystem that vendors by default (ADR 0142 D5).
+
+    ``node_modules`` is npm's ``.venv``, and installing is what fills it: one
+    complete manifest per transitive dependency, each naming itself. A scan
+    that read them would credit an app repo with producing ``react``. The
+    directory sits outside the shared repo boundary already, so what these ask
+    is that neither route buys it back -- committing the tree, which some
+    repos do, least of all.
+    """
+
+    def test_a_gitignored_node_modules_declares_no_producer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "storefront"
+            _init_repo(root)
+            _write(root, "package.json", _OWN_PACKAGE_JSON)
+            _write(root, ".gitignore", "node_modules/\n")
+            _commit_all(root, "storefront")
+            _write_all(root, _VENDORED_NODE_MODULES)
+
+            produced, consumed = scan_child_manifests(str(root))
+
+        self.assertEqual(produced, {"@acme/storefront"})
+        self.assertEqual(consumed, {"@acme/ui-kit"})
+
+    def test_a_committed_node_modules_declares_no_producer(self) -> None:
+        """Tracked is not the same as declared -- the tracked-``vendor/`` case.
+
+        Git-visibility says the repo claims these files, and it does; it does
+        not say the repo publishes what they name.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "storefront"
+            _init_repo(root)
+            _write(root, "package.json", _OWN_PACKAGE_JSON)
+            _write_all(root, _VENDORED_NODE_MODULES)
+            _commit_all(root, "storefront with node_modules committed")
+
+            produced, consumed = scan_child_manifests(str(root))
+
+        self.assertEqual(produced, {"@acme/storefront"})
+        self.assertEqual(consumed, {"@acme/ui-kit"})
+
+    def test_the_fallback_route_excludes_node_modules_too(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "storefront"
+            root.mkdir(parents=True)
+            # Same guard as ``NonGitFallbackManifestScanTest``: a temp dir that
+            # resolved inside a git repository would take the other route and
+            # this case would pass without asking its question.
+            self.assertFalse(get_repo_boundary(root.resolve()).uses_git)
+            _write(root, "package.json", _OWN_PACKAGE_JSON)
+            _write_all(root, _VENDORED_NODE_MODULES)
+
+            produced, consumed = scan_child_manifests(str(root))
+
+        self.assertEqual(produced, {"@acme/storefront"})
+        self.assertEqual(consumed, {"@acme/ui-kit"})
 
 
 class MissingChildTest(unittest.TestCase):

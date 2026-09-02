@@ -1,12 +1,13 @@
 """Shared harness for the import-table cases -- how a module slot gets read.
 
-Three test files now share it, covering both halves of one subject: what
-``weld.strategies._python_sibling_import`` infers from a bare name and what it
-refuses (bd ``sigz2``), and what
+Several test files now share it, covering both halves of one subject: what
+``weld.strategies._python_source_root_import`` infers from an absolute name
+and what it refuses -- beside the importer (bd ``sigz2``) and from inside a
+package tree (bd ``z98p7``) -- and what
 ``weld.strategies._python_relative_import`` computes for an explicit
 ``from .x import y`` and what it refuses (bd ``zr486``). Every split among them
 is the repo line-count cap rather than a difference in kind, so the plumbing
-lives here instead of being written three times.
+lives here instead of being written once per case file.
 
 Every case builds real files on disk and runs ``python_callgraph.extract`` over
 them. Nothing here assembles a node or edge payload by hand: what the

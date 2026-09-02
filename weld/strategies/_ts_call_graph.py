@@ -17,13 +17,30 @@ emit:
 
 This degrades gracefully: if the grammar lacks the ``calls`` query the
 helper returns ``([], [])`` and the rest of the strategy is unaffected.
+
+For TypeScript and JavaScript both halves of that shape are sharpened,
+per ADR 0142 D2 (bd lrnx1.3): a call site is attributed to the enclosing
+definition the same file exports when the grammar shows one, and a
+callee whose name came from a named import carries the import as an edge
+prop so :mod:`weld._graph_closure_ts_calls` can bind it against the whole
+merged graph. Both readings live in
+:mod:`weld.strategies._ts_call_sites`; what stays here is the pass that
+walks the grammar. Every other language keeps the file-sentinel caller
+and the bare sentinel callee it always had.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from weld.strategies._language_origin import origin_for_callgraph_sentinel
+from weld.strategies._ts_call_sites import (
+    CALL_SITE_LANGUAGES,
+    TS_IMPORT_PROP,
+    enclosing_definition,
+    import_bindings,
+    import_hint_props,
+    unresolved_sentinel_node,
+)
 from weld.strategies._ts_parse import ParseCache, ParseEntry, load_ts_language
 
 
@@ -173,6 +190,20 @@ def extract_call_edges(
         },
     )
 
+    # TS / JS only (ADR 0142 D2): what a call site is written inside, and
+    # which import introduced its callee's name. Both are read from the tree
+    # this pass already holds; every other language skips them and keeps the
+    # shape above.
+    attributes_callers = language in CALL_SITE_LANGUAGES
+    definition_names = frozenset(definitions)
+    bindings = (
+        import_bindings(
+            tree, language, ts_language_obj, queries, tree_sitter, cache=cache,
+        )
+        if attributes_callers
+        else {}
+    )
+
     # Calls
     try:
         if cache is not None:
@@ -183,65 +214,50 @@ def extract_call_edges(
         else:
             cq = tree_sitter.Query(ts_language_obj, queries["calls"])
         cc = tree_sitter.QueryCursor(cq)
-        seen: set[str] = set()
+        # Keyed on ``(caller, callee)`` rather than on the callee alone: with
+        # per-definition attribution one file legitimately calls the same
+        # function from two of its own exports, and a file-wide key would
+        # record only whichever the grammar reached first. For every language
+        # that does not attribute, the caller is constant and this is the
+        # same key it always was.
+        seen: set[tuple[str, str]] = set()
         for _pi, caps in cc.matches(tree.root_node):
             for n in caps.get("name", []):
                 callee = n.text.decode("utf-8")
-                if not callee or callee in seen:
+                if not callee:
                     continue
-                seen.add(callee)
+                caller_id = file_caller_id
+                if attributes_callers:
+                    enclosing = enclosing_definition(n, definition_names)
+                    if enclosing:
+                        caller_id = f"symbol:{language}:{module_path}:{enclosing}"
+                if (caller_id, callee) in seen:
+                    continue
+                seen.add((caller_id, callee))
                 target = f"symbol:unresolved:{callee}"
-                sentinel_props: dict = {
-                    "qualname": callee,
-                    "language": language,
-                    # ADR 0064 criterion 2: every symbol carries a
-                    # ``kind``. Unresolved call-site sentinels are
-                    # synthetic weld modelling -- they may later be
-                    # rewritten by layer-2 resolvers (C++ headers) or
-                    # the C# inheritance pass. ``"unresolved"`` is
-                    # listed in ``tier_check_kinds._SYNTHETIC_KINDS``
-                    # so it does not count toward the criterion-1
-                    # vocabulary tally.
-                    "kind": "unresolved",
-                    "resolved": False,
-                    "source_strategy": "tree_sitter",
-                    "authority": "derived",
-                    "confidence": "speculative",
-                    "roles": ["implementation"],
-                    # ADR 0042: classify the sentinel per-language. For
-                    # C++ this stays ``"unresolved"`` so layer-2's
-                    # include resolver can upgrade it; for TS/JS the
-                    # JS built-in globals (``Array``, ``Math``, ...)
-                    # collapse to ``stdlib``; for Rust the
-                    # ``std::``/``core::``/``alloc::`` qualifier does
-                    # the same. Go / Java / C# default to
-                    # ``unresolved`` at this layer because the
-                    # bare-name capture is not enough signal — Go's
-                    # richer import-layer classification lives in
-                    # ``weld.strategies._go_origin``.
-                    "origin": origin_for_callgraph_sentinel(language, callee),
-                }
                 nodes.setdefault(
-                    target,
-                    {
-                        "type": "symbol",
-                        "label": callee,
-                        "props": sentinel_props,
-                    },
+                    target, unresolved_sentinel_node(callee, language),
                 )
+                edge_props: dict = {
+                    "source_strategy": "tree_sitter",
+                    "confidence": "speculative",
+                    "resolved": False,
+                    "raw": callee,
+                    "resolution": "unresolved",
+                    "provenance": _provenance(rel_path, n),
+                }
+                binding = bindings.get(callee)
+                if binding is not None:
+                    exported, specifier = binding
+                    edge_props[TS_IMPORT_PROP] = import_hint_props(
+                        callee, exported, specifier,
+                    )
                 edges.append(
                     {
-                        "from": file_caller_id,
+                        "from": caller_id,
                         "to": target,
                         "type": "calls",
-                        "props": {
-                            "source_strategy": "tree_sitter",
-                            "confidence": "speculative",
-                            "resolved": False,
-                            "raw": callee,
-                            "resolution": "unresolved",
-                            "provenance": _provenance(rel_path, n),
-                        },
+                        "props": edge_props,
                     }
                 )
     except Exception:

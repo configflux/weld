@@ -6,11 +6,11 @@ import ast
 from pathlib import Path
 
 from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies._helpers import (
     StrategyResult,
     enum_members,
     extract_contracts,
-    filter_glob_results,
     inherits,
 )
 from weld.strategies._strategy_failure import note_strategy_failure
@@ -22,14 +22,15 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     discovered_from: list[str] = []
 
     pattern = source["glob"]
-    # ``contracts_dir`` drives the traversal below; it is not provenance.
-    # The old ``contracts_dir``-derived entry was ``"./"`` for a root-anchored
-    # glob, which marks the whole tree as tracked source (bd 8ia5).
-    contracts_dir = (root / pattern).parent
-    if not contracts_dir.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
+    excludes = source.get("exclude", [])
 
-    for py in filter_glob_results(root, sorted(contracts_dir.glob(Path(pattern).name))):
+    # bd b9xgd: this used to resolve its own glob -- ``(root / pattern).parent``,
+    # an ``is_dir()`` early-return, then one directory's worth of ``glob()``.
+    # That is the copy ADR 0112 says is gone, kept here because this strategy
+    # was never migrated. It made any ``**`` pattern *and* any wildcard in a
+    # directory segment (``api/*/contracts/*.py``) resolve to nothing at all,
+    # since both give a parent that is a literal path and never a directory.
+    for py in resolve_glob(root, pattern, excludes):
         if py.name.startswith("_"):
             continue
         rel_path = rel_to_root(py, root)

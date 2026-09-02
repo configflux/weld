@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from weld._init_next_markers import NEXT_FRAMEWORK
+
 
 def markdown_fallback_doc_source(
     files: list[Path], root: Path, doc_dirs: list[str],
@@ -194,6 +196,60 @@ def _add_go_framework_sources(
         sources.append(_source_entry(
             "**/*.go", "route", "gin",
             comment="gin HTTP routes (route nodes per handler registration)",
+        ))
+
+
+#: The glob the express entry claims: every dialect the express strategy can
+#: read, which is both TypeScript and JavaScript. It is deliberately the union
+#: of the two family globs in
+#: :data:`weld._init_language_entries._TREE_SITTER_LANGUAGES` rather than one
+#: of them -- a Node service routinely registers routes from a ``.ts`` server
+#: and a CommonJS ``.js`` module in the same repo, and the strategy reads both
+#: (it is regex-based and needs no grammar). A dialect present with no express
+#: in it costs nothing: extraction is gated on a real express import/require,
+#: so an unrelated file is skipped wholesale.
+TS_JS_FRAMEWORK_GLOB = "**/*.{ts,tsx,js,jsx,mjs,cjs}"
+
+
+def _add_ts_js_framework_sources(
+    sources: list[str], frameworks: list[tuple[str, str, str]],
+) -> None:
+    """Append TypeScript/JavaScript framework-strategy entries (ADR 0142 D1).
+
+    Mirrors :func:`_add_go_framework_sources` and
+    :func:`_add_rust_framework_sources` for the Node ecosystem, and closes the
+    hole they made obvious by existing: express was the only declared framework
+    strategy (ADR 0071) with no adder at all, so ``wd init`` printed
+    ``Detected Express in ...`` and then wrote a config that never mentioned
+    it. Detected-but-unwired is a bug, not a note.
+
+    express is detected by :data:`weld.init_detect.FRAMEWORK_PATTERNS` (the
+    ES-module ``import express`` and both quotings of ``require('express')``);
+    Next.js by the project markers in :mod:`weld._init_next_markers`, because
+    an app-router handler imports nothing from ``next`` at all (ADR 0142 D4).
+    Each detected framework gets one entry over
+    :data:`TS_JS_FRAMEWORK_GLOB`: both strategies select their own files out
+    of that dialect family -- express on a real express import, next on the
+    ``app/**/route.*`` and ``app/**/page.*`` file conventions -- so narrowing
+    the glob here would only duplicate a decision the strategy makes better.
+
+    The entries are appended *before* the tree-sitter entries by the caller so
+    the canonical tree-sitter ``file:`` node wins the later orchestrator merge
+    over either strategy's thin boundary-file placeholder.
+    """
+    detected = {fw for fw, _strategy, _path in frameworks}
+    if "Express" in detected:
+        sources.append(_source_entry(
+            TS_JS_FRAMEWORK_GLOB, "route", "express",
+            comment="express HTTP routes (route nodes per handler registration)",
+        ))
+    if NEXT_FRAMEWORK in detected:
+        sources.append(_source_entry(
+            TS_JS_FRAMEWORK_GLOB, "route", "next",
+            comment=(
+                "Next.js app-router routes (route nodes per handler export "
+                "and page)"
+            ),
         ))
 
 

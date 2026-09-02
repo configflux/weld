@@ -5,12 +5,13 @@ stays within the 400-line default cap. Handles dynamic grammar loading
 and symbol extraction from a single source file.
 
 This module also owns the per-discover :class:`ParseCache`, attached to
-the strategy ``context`` dict. The cache memoises the per-language
+the strategy ``context`` dict. The cache memoises the per-grammar
 :class:`tree_sitter.Language` and :class:`tree_sitter.Parser`, plus the
 per-file (decoded source bytes, parsed tree) tuple keyed by
-``(abs_path, mtime, language)``. The cache lives only for the duration
-of a single ``wd discover`` invocation (no module-level globals) so
-test isolation and ADR 0064 criterion 4 determinism are preserved.
+``(abs_path, mtime, grammar)`` -- the *grammar*, because one language can
+have two (see :mod:`weld.strategies._ts_dialect`). The cache lives only
+for the duration of a single ``wd discover`` invocation (no module-level
+globals) so test isolation and ADR 0064 criterion 4 determinism hold.
 """
 
 from __future__ import annotations
@@ -20,11 +21,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from weld.strategies._ts_dialect import grammar_variant
+
+# ``tsx`` is no package of its own: the JSX-aware grammar ships *inside*
+# ``tree_sitter_typescript`` as ``language_tsx()`` (below). Without these rows
+# the key resolved to a ``tree_sitter_tsx`` that has never existed on PyPI, and
+# the install hint named a package nobody can install (bd lrnx1.5).
 _GRAMMAR_MODULE_ALIASES: dict[str, str] = {
     "csharp": "tree_sitter_c_sharp",
+    "tsx": "tree_sitter_typescript",
 }
 _GRAMMAR_PACKAGE_ALIASES: dict[str, str] = {
     "csharp": "tree-sitter-c-sharp",
+    "tsx": "tree-sitter-typescript",
 }
 # Some grammars bundle multiple languages under one package and use
 # language-specific function names rather than the generic language().
@@ -58,11 +67,10 @@ def grammar_available(language: str) -> bool:
     nevertheless importable (or vice-versa); ``import_module`` mirrors
     the production import semantics exactly.
 
-    Kept as a public helper for callers that want a cheap up-front
-    check, but the strategy itself now detects missing grammars lazily
-    via the :class:`ImportError` raised by :func:`load_ts_language` on
-    the first parsed file, so all environments converge on the same
-    behaviour.
+    Kept as a public helper for callers that want a cheap up-front check;
+    the strategy itself detects missing grammars lazily via the
+    :class:`ImportError` :func:`load_ts_language` raises on the first
+    parsed file, so all environments converge on one behaviour.
     """
     module_name = grammar_module_name(language)
     try:
@@ -128,21 +136,6 @@ def load_ts_language(language: str) -> object:
     )
 
 
-def stamp_type_uses(node_props: dict, symbols: dict[str, list[str]]) -> None:
-    """Stamp ADR 0061 ``type_uses`` prop on a file node.
-
-    The captured USE-site type identifiers (parameter, return, friend,
-    base-class, template-arg positions) are sorted + deduplicated for
-    stable graph output. The prop is omitted entirely when the parser
-    returned no captures so ``"type_uses" in node_props`` remains a
-    meaningful presence check (matches the convention used by
-    ``types``, ``imports_from``, and ``symbol_records``).
-    """
-    type_uses = symbols.get("type_uses", [])
-    if type_uses:
-        node_props["type_uses"] = sorted(set(type_uses))
-
-
 @dataclass(frozen=True)
 class ParseEntry:
     """Cached per-file parse output.
@@ -190,6 +183,17 @@ class ParseCache:
     deterministic. No caller iterates today; the contract is documented
     here so future consumers cannot leak set-iteration order through
     the cache.
+
+    **Every key is a grammar, not a weld language** (bd lrnx1.5). A ``.tsx``
+    file needs ``language_tsx()`` where its ``.ts`` sibling needs
+    ``language_typescript()``, so the path-bearing tables derive their key
+    through :func:`weld.strategies._ts_dialect.grammar_variant` and every
+    caller holding a path lands on the same entry however it spelled the
+    language, ``_ts_call_graph._resolve_parse`` included. The query table is
+    keyed by the grammar its ``language_obj`` came from rather than by the
+    string passed in: a ``tree_sitter.Query`` is compiled against one
+    ``Language``, and run over a tree from the other grammar it matches
+    nothing or the wrong nodes, silently.
     """
 
     def __init__(self) -> None:
@@ -214,6 +218,18 @@ class ParseCache:
         self._langs[language] = (language_obj, parser, ts_lang)
         return language_obj, parser
 
+    def grammar_key_of(self, language_obj: Any) -> str | None:
+        """Return the grammar key *language_obj* was loaded under, if any.
+
+        Identity, over the handful of grammars one run loads. ``None`` for a
+        ``Language`` this cache did not build (a test double), leaving the
+        caller its own fallback.
+        """
+        for key, (loaded, _parser, _ts_lang) in self._langs.items():
+            if loaded is language_obj:
+                return key
+        return None
+
     def get_parse(self, file_path: Path, language: str) -> ParseEntry | None:
         """Return the cached :class:`ParseEntry` for *file_path*, or None.
 
@@ -225,18 +241,19 @@ class ParseCache:
             mtime_ns = file_path.stat().st_mtime_ns
         except OSError:
             return None
-        key = (str(file_path), mtime_ns, language)
+        key = (str(file_path), mtime_ns, grammar_variant(language, file_path))
         return self._parses.get(key)
 
     def store_parse(
         self, file_path: Path, language: str, entry: ParseEntry,
     ) -> None:
-        """Insert *entry* under the canonical ``(path, mtime, lang)`` key."""
+        """Insert *entry* under the canonical ``(path, mtime, grammar)`` key."""
         try:
             mtime_ns = file_path.stat().st_mtime_ns
         except OSError:
             return
-        self._parses[(str(file_path), mtime_ns, language)] = entry
+        grammar = grammar_variant(language, file_path)
+        self._parses[(str(file_path), mtime_ns, grammar)] = entry
 
     def get_or_compile_query(
         self,
@@ -260,7 +277,7 @@ class ParseCache:
         Raises whatever ``tree_sitter.Query`` raises on a malformed
         query string; the caller decides whether to swallow.
         """
-        key = (language, query_name)
+        key = (self.grammar_key_of(language_obj) or language, query_name)
         cached = self._queries.get(key)
         if cached is not None:
             return cached
@@ -296,11 +313,19 @@ def parse_file_symbols(
 ) -> dict[str, list[str]]:
     """Parse a source file with tree-sitter and return extracted symbols.
 
+    The grammar is chosen per *file*, not per *language*: a ``.tsx`` file
+    wired as ``language: typescript`` is parsed by ``language_tsx()``,
+    because the plain grammar reads JSX as a syntax error and error
+    recovery takes the enclosing declaration down with it (bd lrnx1.5).
+    *queries* still come from the language's own query file -- the two
+    TypeScript grammars share a node vocabulary.
+
     Args:
         file_path: Absolute path to the source file.
         language: Language name (must match a grammar package).
         queries: Dict of query name -> S-expression string.
         _language_loader: Override for :func:`load_ts_language` (testing).
+            Receives the *grammar* key: ``"tsx"`` for a ``.tsx`` file.
         cache: Optional :class:`ParseCache` to memoise grammar loads and
             per-file parses across one ``wd discover`` invocation. When
             omitted the function falls back to its original
@@ -318,10 +343,11 @@ def parse_file_symbols(
         return {}
 
     loader = _language_loader or load_ts_language
+    grammar = grammar_variant(language, file_path)
 
     if cache is not None:
         ts_language_obj, parser = cache.get_or_load_language(
-            language, loader, tree_sitter,
+            grammar, loader, tree_sitter,
         )
         entry = cache.get_parse(file_path, language)
         if entry is None:
@@ -336,7 +362,7 @@ def parse_file_symbols(
             cache.store_parse(file_path, language, entry)
         tree = entry.tree
     else:
-        ts_lang = loader(language)
+        ts_lang = loader(grammar)
         ts_language_obj = tree_sitter.Language(ts_lang)
         parser = tree_sitter.Parser(ts_language_obj)
         source_bytes = file_path.read_bytes()
@@ -348,7 +374,7 @@ def parse_file_symbols(
         try:
             if cache is not None:
                 query = cache.get_or_compile_query(
-                    language, qname, qstr, ts_language_obj, tree_sitter,
+                    grammar, qname, qstr, ts_language_obj, tree_sitter,
                 )
             else:
                 query = tree_sitter.Query(ts_language_obj, qstr)

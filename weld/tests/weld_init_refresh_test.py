@@ -60,7 +60,12 @@ class FreshConfigNoOpTest(unittest.TestCase):
     def test_no_unclaimed_language_wires_nothing_but_bumps_stamp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "app.py").write_text("x = 1\n", encoding="utf-8")
+            # The file lives under the glob that claims it. It used to sit at
+            # the root while the entry read ``src/**/*.py``, which claimed
+            # nothing on disk -- a fixture that only satisfied its own premise
+            # because the check compared strategy *names* (ADR 0144).
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
             out = _write(root, (
                 "# generated-by: weld 0.20.0\n"
                 "sources:\n"

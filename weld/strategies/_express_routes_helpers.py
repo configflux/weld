@@ -6,19 +6,32 @@ and the node/edge payload construction live apart, mirroring the
 shape here makes it trivial to assert the route-node contract in
 ``weld_express_strategy_test`` without importing the whole extractor.
 
-Layering: this module imports only stdlib and :mod:`weld._node_ids` (a
-pure id helper). It re-declares the ``authority`` literal as a plain
-string (``"canonical"``) rather than importing any enum from
-:mod:`weld.runtime` -- the ``weld/strategies`` -> ``weld/runtime`` import
-is a gate-pinned layering violation. The axum / gin / fastapi / flask /
-csharp_aspnet_routes strategies stamp the same literal the same way.
+What is *express* about a route node lives here; what every TypeScript /
+JavaScript route strategy shares -- the canonical id, the boundary-file
+placeholder, the ``exposes`` edge -- lives in
+:mod:`weld.strategies._ts_route_helpers` and is re-exported below under the
+names this module has always published, so its callers and tests are
+unaffected. The sharing is not tidiness: the placeholder carried a defect
+(bd iurvv) and one copy meant one fix.
+
+Layering: this module imports only stdlib and pure id/payload helpers. It
+re-declares the ``authority`` literal as a plain string (``"canonical"``)
+rather than importing any enum from :mod:`weld.runtime` -- the
+``weld/strategies`` -> ``weld/runtime`` import is a gate-pinned layering
+violation. The axum / gin / fastapi / flask / csharp_aspnet_routes
+strategies stamp the same literal the same way.
 """
 
 from __future__ import annotations
 
 from typing import NamedTuple
 
-from weld._node_ids import file_id as _file_id
+from weld.strategies._ts_route_helpers import (
+    boundary_file_id,
+    boundary_file_node as _shared_boundary_file_node,
+    exposes_edge as _shared_exposes_edge,
+    route_id,
+)
 
 #: ``source_strategy`` value stamped on every express-emitted node + edge.
 EXPRESS_SOURCE_STRATEGY: str = "express"
@@ -52,18 +65,6 @@ class ExpressRoute(NamedTuple):
     source: str
 
 
-def route_id(verb: str, path: str) -> str:
-    """Return the canonical ``route:<VERB>:<path>`` id.
-
-    Identical shape to the axum / gin / fastapi / flask /
-    csharp_aspnet_routes convention so a polyglot graph keeps one route
-    id namespace. The verb is upper-cased; the path is taken verbatim
-    (express route paths are literal in source, including ``:id`` /
-    ``*`` capture syntax).
-    """
-    return f"route:{verb.upper()}:{path}"
-
-
 def route_node(*, verb: str, path: str, rel_path: str, source: str) -> dict:
     """Build an express route-node payload (ADR 0086 inbound HTTP surface).
 
@@ -95,59 +96,24 @@ def route_node(*, verb: str, path: str, rel_path: str, source: str) -> dict:
     }
 
 
-def boundary_file_id(rel_path: str) -> str:
-    """Return the canonical ``file:`` node id for *rel_path*.
-
-    The express registration callsite names the receiver (``app`` /
-    ``router``) plus the path, but there is no statically resolvable
-    *router symbol* to hang the diagnostic ``exposes`` edge on, so we
-    hang it off the boundary *file* node -- the same fallback the axum /
-    gin / fastapi strategies use.
-
-    The id is built via :func:`weld._node_ids.file_id` so it matches the
-    canonical ``file:`` id the TS ``tree_sitter`` strategy mints for the
-    same source file (``src/app.ts`` -> ``file:src/app``); otherwise the
-    ``exposes`` edge would dangle and the dangling-edge post-pass would
-    drop it. ``weld._node_ids`` is a pure id helper, not ``weld.runtime``,
-    so the layering invariant holds.
-    """
-    return _file_id(rel_path)
-
-
 def boundary_file_node(rel_path: str) -> dict:
-    """Build a minimal ``file:`` placeholder node for the boundary file.
+    """Build the ``file:`` placeholder for an express route's boundary file.
 
-    Emitted so the ``file: -> exposes -> route:`` edge survives the
-    dangling-edge post-pass when the express strategy runs *without* the
-    TS ``tree_sitter`` strategy paired on the same glob (e.g. a focused
-    strategy test). When the pair runs, ``nodes.update`` in
-    :func:`weld.discover._run` overwrites this placeholder with the
-    canonical tree-sitter file node. Mirrors the axum boundary-file
-    placeholder pattern.
+    The express spelling of
+    :func:`weld.strategies._ts_route_helpers.boundary_file_node`: same
+    payload, this strategy's ``source_strategy``. Read that one for why the
+    placeholder exists and why it states ``confidence: inferred``.
     """
-    return {
-        "type": "file",
-        "label": rel_path.rsplit("/", 1)[-1],
-        "props": {
-            "file": rel_path,
-            "language": "typescript",
-            "source_strategy": EXPRESS_SOURCE_STRATEGY,
-            "roles": ["implementation"],
-        },
-    }
+    return _shared_boundary_file_node(
+        rel_path, source_strategy=EXPRESS_SOURCE_STRATEGY,
+    )
 
 
 def exposes_edge(src: str, dst: str) -> dict:
-    """Build a diagnostic ``exposes`` edge from a boundary to a route."""
-    return {
-        "from": src,
-        "to": dst,
-        "type": "exposes",
-        "props": {
-            "source_strategy": EXPRESS_SOURCE_STRATEGY,
-            "confidence": "definite",
-        },
-    }
+    """Build a diagnostic express ``exposes`` edge from a boundary to a route."""
+    return _shared_exposes_edge(
+        src, dst, source_strategy=EXPRESS_SOURCE_STRATEGY,
+    )
 
 
 __all__ = [

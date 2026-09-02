@@ -190,7 +190,7 @@
       "type": "configures"
     },
     {
-      "from": "dockerfile:Dockerfile",
+      "from": "dockerfile:docker/Dockerfile.orders-api",
       "props": {
         "confidence": "definite",
         "source_strategy": "dockerfile"
@@ -199,7 +199,7 @@
       "type": "contains"
     },
     {
-      "from": "dockerfile:Dockerfile",
+      "from": "dockerfile:docker/Dockerfile.orders-api",
       "props": {
         "confidence": "definite",
         "source_strategy": "dockerfile"
@@ -208,7 +208,7 @@
       "type": "contains"
     },
     {
-      "from": "dockerfile:Dockerfile",
+      "from": "dockerfile:docker/Dockerfile.orders-api",
       "props": {
         "confidence": "definite",
         "source_strategy": "dockerfile"
@@ -222,7 +222,7 @@
         "confidence": "definite",
         "source_strategy": "compose"
       },
-      "to": "dockerfile:Dockerfile",
+      "to": "dockerfile:docker/Dockerfile.orders-api",
       "type": "depends_on"
     }
   ],
@@ -501,9 +501,12 @@
       },
       "type": "config"
     },
-    "dockerfile:Dockerfile": {
+    "dockerfile:docker/Dockerfile.orders-api": {
       "label": "Dockerfile.orders-api",
       "props": {
+        "aliases": [
+          "dockerfile:Dockerfile"
+        ],
         "authority": "canonical",
         "base_image": "node:20-alpine",
         "confidence": "definite",

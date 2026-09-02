@@ -77,6 +77,23 @@ referenced -- ASP.NET Core controllers / routes, EF Core `DbContext` and
 entities, and xUnit / NUnit / MSTest test-framework markers. No manual
 edits to `discover.yaml` are required for the standard .NET layout.
 
+For TypeScript / JavaScript, one entry covers a language's whole dialect
+family -- `**/*.{ts,tsx}` and `**/*.{js,jsx,mjs,cjs}` -- so a Next.js
+repository's `.tsx` pages and components are claimed alongside its `.ts`
+modules. Detecting Express wires the `express` route strategy, and detecting
+Next.js — from a `next.config.*` or a `next` dependency, since an app-router
+handler imports nothing from `next` — wires the `next` one: the HTTP-verb
+functions an `app/**/route.ts` exports and the `app/**/page.tsx` files beside
+them become `route:` nodes at the URL their directory chain spells, with route
+groups and parallel slots dropped from it and dynamic segments kept as
+written. Both language entries are written with `emit_calls: true`, which
+records the function-level
+call evidence `wd callers` and `wd impact` answer from: a call is attributed to
+the export it sits inside, and a callee imported by name binds to the exported
+symbol behind that import -- through a package's `index.ts` barrel too, as long
+as the package defines that name exactly once. What cannot be bound stays
+visible as an unresolved callee rather than disappearing.
+
 When tree-sitter is available, exact identifier queries prefer definition
 `symbol:` nodes for non-preview languages before falling back to owning files
 or package-level matches.
@@ -144,8 +161,8 @@ own harness run.
 | Language | Extraction surface | Grammar package | Status |
 |---|---|---|---|
 | Python | modules, classes, functions, imports, call graph | built-in (no extra) | **Tier 1** |
-| TypeScript | exports, classes, imports | `tree-sitter-typescript` | **Tier 1** |
-| JavaScript | exports, classes, imports | `tree-sitter-javascript` | Tier 2 |
+| TypeScript | exports, re-exports, classes, imports, best-effort call graph (`.ts` and `.tsx`) | `tree-sitter-typescript` | **Tier 1** |
+| JavaScript | functions, classes, exports (ESM and CommonJS `module.exports`), imports (`import` and `require`) | `tree-sitter-javascript` | Tier 2 |
 | Go | exports, types, imports | `tree-sitter-go` | **Tier 1** |
 | Rust | exports, types, imports | `tree-sitter-rust` | **Tier 1** |
 | C# | types, methods, properties, attributes, namespaces, using dependencies, best-effort call graph | `tree-sitter-c-sharp` | **Tier 1** |

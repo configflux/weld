@@ -13,9 +13,10 @@ Emitted shape:
   ``service.build`` is not (no new node type, no schema bump -- bd
   notes locked the trade-off).
 - ``compose --contains--> service`` per service.
-- ``service --depends_on--> dockerfile:<stem>`` when ``service.build``
-  resolves to a Dockerfile path. Dangling refs (file not on disk) are
-  emitted anyway so graph closure can reconcile.
+- ``service --depends_on--> dockerfile:<path>`` when ``service.build``
+  resolves to a Dockerfile path inside the repo. Dangling refs (file not
+  on disk) are emitted anyway so graph closure can reconcile; a path
+  outside the repo root is dropped, since no node can ever answer it.
 - ``service --contains--> file:<env-file>`` per ``env_file:`` entry.
 - Legacy ``compose --orchestrates--> service:<bare>`` edges for the
   conventional ``api`` / ``web`` / ``worker`` names are preserved.
@@ -27,7 +28,9 @@ from pathlib import Path
 
 from weld._rel_path import rel_to_root
 from weld._yaml import parse_yaml
-from weld.strategies._helpers import StrategyResult, filter_glob_results
+from weld.strategies._dockerfile_ids import dockerfile_node_id
+from weld.strategies._glob_resolve import resolve_glob
+from weld.strategies._helpers import StrategyResult
 
 _LEGACY_SERVICE_MAP: dict[str, str] = {
     "api": "service:api",
@@ -58,23 +61,28 @@ def _resolve_build_dockerfile_id(
     - ``./api`` (string dir) -> ``<dir>/Dockerfile``.
     - ``./api/Dockerfile`` (string with file) -> direct file.
     - ``{context: ./api, dockerfile: Dockerfile.dev}`` -> joined.
+
+    The id is minted by :func:`weld.strategies._dockerfile_ids.dockerfile_node_id`
+    from the resolved path, so it agrees with the node
+    :mod:`weld.strategies.dockerfile` emits by construction rather than by a
+    comment asking the reader to keep two copies of one expression aligned
+    (bd bz5w9). A build path that escapes the repo root returns ``None``: no
+    dockerfile node can ever exist for it, so the edge would dangle forever
+    rather than be reconciled by graph closure the way a not-yet-written
+    in-repo path is.
     """
     if isinstance(build, str):
         candidate = (compose_dir / build).resolve()
-        if candidate.is_file():
-            df_name = candidate.name
-        else:
-            df_name = "Dockerfile"
-        return f"dockerfile:{Path(df_name).stem.replace('.', '_')}"
-    if isinstance(build, dict):
+        if not candidate.is_file():
+            candidate = candidate / "Dockerfile"
+    elif isinstance(build, dict):
         ctx_raw = build.get("context", ".")
         df_name = build.get("dockerfile", "Dockerfile")
-        ctx = (compose_dir / str(ctx_raw)).resolve()
-        candidate = ctx / str(df_name)
-        # Dockerfile stem follows the same .->_ replacement as
-        # ``weld.strategies.dockerfile.extract`` to keep ids aligned.
-        return f"dockerfile:{Path(candidate.name).stem.replace('.', '_')}"
-    return None
+        candidate = (compose_dir / str(ctx_raw)).resolve() / str(df_name)
+    else:
+        return None
+    rel = _normalize_under_root(candidate, root)
+    return None if rel is None else dockerfile_node_id(rel)
 
 
 def _collect_env_files(svc: dict) -> list[str]:
@@ -301,11 +309,17 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     discovered_from: list[str] = []
 
     pattern = source["glob"]
-    parent = (root / pattern).parent
-    if not parent.is_dir():
-        parent = root
+    excludes = source.get("exclude", [])
 
-    for cf in filter_glob_results(root, sorted(parent.glob(Path(pattern).name))):
+    # bd b9xgd: this used to resolve its own glob -- ``(root / pattern).parent``,
+    # then ``parent = root`` when that was not a directory, then one
+    # directory's worth of ``glob()``. That is the copy ADR 0112 says is gone,
+    # kept here because this strategy was never migrated, and its fallback made
+    # the failure *worse* than the silent one its siblings had: for any ``**``
+    # pattern or wildcard directory segment the parent is a literal path and
+    # never a directory, so the strategy quietly globbed the repo root instead
+    # and emitted the wrong set -- a partial result that looks like an answer.
+    for cf in resolve_glob(root, pattern, excludes):
         rel_path = rel_to_root(cf, root)
         discovered_from.append(rel_path)
         result = _process_compose_file(cf, root)

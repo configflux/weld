@@ -29,16 +29,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from weld._federation_endpoints import endpoint_child_name
-from weld.tests._field_eval_corpus_fixture import DOCS, GATEWAY, NOTIFY, SCHEMA
+from weld.tests._field_eval_corpus_fixture import (
+    BILLING,
+    DOCS,
+    GATEWAY,
+    NOTIFY,
+    SCHEMA,
+)
 from weld.tests._field_eval_corpus_sources import (
     GATEWAY_TOUCH_FILE,
     HAND_EDITED_GATEWAY_CONFIG,
 )
-from weld.tests._field_eval_e2e_harness import (
-    FieldEvalWorkspace,
-    expected_finding_failure,
-)
+from weld.tests._field_eval_corpus_sources_csharp import BILLING_PACKAGE_ID
+from weld.tests._field_eval_e2e_harness import FieldEvalWorkspace, cross_repo_joins
 from weld.tests._graph_invariants import (
     assert_cannot_answer,
     assert_edges_resolve,
@@ -50,11 +53,10 @@ from weld.tests._graph_invariants import (
 from weld.workspace import UNIT_SEPARATOR
 
 _BD = "d76r1"  # issue-id suffix -- the full ledger id is tracker-internal
-_BD_N4_STUB = "z98p7"  # N4's strategy-side half, tracked on its own issue
 
-#: One workspace, bootstrapped once: ``wd init`` + ``wd discover`` in each of
-#: the four children and a federated discover at the root is ten subprocesses,
-#: and every probe below reads the same tree the evaluator did.
+#: One workspace, bootstrapped once: ``wd init`` + ``wd discover`` in each
+#: child and a federated discover at the root is a dozen subprocesses, and
+#: every probe below reads the same tree the evaluator did.
 _WS: FieldEvalWorkspace | None = None
 _TMP: tempfile.TemporaryDirectory | None = None
 
@@ -76,22 +78,10 @@ def workspace() -> FieldEvalWorkspace:
     return _WS
 
 
-def _joins(root_graph: dict) -> set[tuple[str, str, str]]:
-    """``{(from-child, to-child, package)}`` for every cross-repo edge.
-
-    Endpoints are read child-name-first and spelling-agnostically, through the
-    helper that knows both shapes (ADR 0137 ss1): N2 is about *which repos* get
-    joined, and reading it through an id convention would make the N2 probe
-    fail for the N1 reason and hide the finding it pins.
-    """
-    return {
-        (
-            str(endpoint_child_name(str(edge.get("from")))),
-            str(endpoint_child_name(str(edge.get("to")))),
-            str((edge.get("props") or {}).get("package")),
-        )
-        for edge in graph_edges(root_graph)
-    }
+#: N2 is about *which repos* get joined. The reader moved to the harness when
+#: the v0.25.0 probes needed the same one (ADR 0137 ss1 on why it reads
+#: endpoints child-name-first); this alias keeps the call sites below.
+_joins = cross_repo_joins
 
 
 class CrossRepoResolverProbes(unittest.TestCase):
@@ -124,7 +114,13 @@ class CrossRepoResolverProbes(unittest.TestCase):
         # named in the file impact points at, it must stop saying none is wired
         # -- and name the consumers it measured, and what measured them. Read
         # from ``--json`` because the human render carries counts, not ids.
-        result = self.ws.wd("impact", f"repo:{SCHEMA[0]}", "--json", "--allow-stale")
+        #
+        # No ``--allow-stale``. It was here because wiring the resolver used to
+        # leave the root permanently stale (field-eval M1, bd lcq0c.3) -- the
+        # gate had inherited the evaluator's workaround for a bug instead of
+        # questioning it, which is why no test noticed. Answering without it is
+        # now part of what these probes assert.
+        result = self.ws.wd("impact", f"repo:{SCHEMA[0]}", "--json")
         payload = result.check().json()
         self.assertNotEqual(payload["risk_level"], "UNKNOWN", result.output)
         self.assertNotIn("cannot_answer", payload)
@@ -133,13 +129,22 @@ class CrossRepoResolverProbes(unittest.TestCase):
         for consumer in (GATEWAY[0], NOTIFY[0]):
             self.assertIn(f"repo:{consumer}", direct, result.output)
 
-        human = self.ws.wd("impact", f"repo:{SCHEMA[0]}", "--allow-stale")
+        # ``check()`` is load-bearing now that the flag is gone: a refusal
+        # exits non-zero and prints an error, and neither of the two
+        # ``assertNotIn``s below would notice it.
+        human = self.ws.wd("impact", f"repo:{SCHEMA[0]}").check()
         self.assertNotIn("Risk: UNKNOWN", human.output, human.output)
         self.assertNotIn("cross_repo_strategies is empty", human.output)
 
     def test_n2_no_join_is_fabricated_from_the_vendored_tree(self) -> None:
+        # Three real joins, not the report's two: the corpus grew a C#-only
+        # producer child for round three's M4 (bd lcq0c.4), and the gateway
+        # consumes it exactly as it consumes the proto library. What N2 asserts
+        # is unchanged -- these are the joins the manifests on disk declare,
+        # and no vendored one is among them.
         expected = {
             (GATEWAY[0], SCHEMA[0], "Acme.Platform.Order.Schema"),
+            (GATEWAY[0], BILLING[0], BILLING_PACKAGE_ID),
             (NOTIFY[0], SCHEMA[0], "order-schema"),
         }
         fabricated = {"pandas", "Google.Protobuf"}
@@ -228,13 +233,14 @@ class DiscoveryAndReadProbes(unittest.TestCase):
         )
         self.assertEqual(minted, [], f"external nodes for first-party modules: {minted}")
 
-    @expected_finding_failure(
-        "N4", _BD_N4_STUB,
-        "python_callgraph still mints a speculative symbol stub under a "
-        "first-party module's import spelling, so query returns two "
-        "representations of one function and ranks the speculative one first",
-    )
     def test_query_ranks_the_definite_symbol_over_the_stub(self) -> None:
+        """N4's strategy-side half, fixed on its own issue (bd z98p7).
+
+        Red until the source root bound the reference rather than the identity
+        (ADR 0143): the stub the ranking had to beat is no longer minted, so
+        this now asserts the stronger claim -- there is nothing left to rank
+        against, and every representation of the function is the definite one.
+        """
         matches = self.ws.wd(
             "query", "load_config", "--json", cwd=self.ws.root / NOTIFY[1]
         ).check().json()["matches"]
@@ -243,6 +249,15 @@ class DiscoveryAndReadProbes(unittest.TestCase):
         self.assertEqual(
             first.get("props", {}).get("confidence"), "definite",
             f"the top match is not the definite symbol: {first.get('id')}",
+        )
+        speculative = [
+            match.get("id") for match in matches
+            if match.get("label") == "load_config"
+            and match.get("props", {}).get("confidence") == "speculative"
+        ]
+        self.assertEqual(
+            speculative, [],
+            f"a speculative twin of load_config is still minted: {speculative}",
         )
 
     def test_n5_stale_roster_agrees_with_its_own_json(self) -> None:

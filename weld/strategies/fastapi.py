@@ -30,6 +30,7 @@ import ast
 from pathlib import Path
 
 from weld._rel_path import rel_to_root
+from weld.strategies._glob_resolve import resolve_glob
 from weld.strategies._helpers import (
     StrategyResult,
     extract_router_info,
@@ -179,21 +180,35 @@ def extract(root: Path, source: dict, context: dict) -> StrategyResult:
     discovered_from: list[str] = []
 
     pattern = source["glob"]
-    # ``routers_dir`` drives both the traversal below and the boundary
-    # lookup; it is not provenance. The old ``routers_dir``-derived entry was
-    # ``"./"`` for a root-anchored glob, which marks the whole tree as
-    # tracked source (bd 8ia5).
-    routers_dir = (root / pattern).parent
-    if not routers_dir.is_dir():
-        return StrategyResult(nodes, edges, discovered_from)
+    excludes = source.get("exclude", [])
 
-    # Resolve boundary file once per routers directory: every route under
-    # the same directory shares the same declaring boundary.
-    boundary_id = _detect_boundary_file(routers_dir.parent, root)
+    # bd b9xgd: this used to resolve its own glob -- ``(root / pattern).parent``,
+    # an ``is_dir()`` early-return, then one directory's worth of ``glob()``.
+    # That is the copy ADR 0112 says is gone, kept here because this strategy
+    # was never migrated. It made any ``**`` pattern *and* any wildcard in a
+    # directory segment (``api/*/routers/*.py``) resolve to nothing at all,
+    # since both give a parent that is a literal path and never a directory.
+    #
+    # The boundary lookup below is the one thing the old parent was legitimately
+    # used for -- a *label*, not a resolve (the same split ``sqlalchemy`` keeps
+    # for ``domain_dir``). It moves onto the matched file, memoised per routers
+    # directory: under a wildcard segment there is no single routers directory,
+    # and computing one for the whole glob would attribute every route to
+    # whichever directory the pattern's literal prefix happened to name. It is
+    # still not provenance -- ``discovered_from`` stays per file, because a
+    # directory-derived entry degenerates to ``"./"`` at the repo root and
+    # marks the whole tree as tracked source (bd 8ia5).
+    boundary_by_dir: dict[Path, str | None] = {}
 
-    for py in filter_glob_results(root, sorted(routers_dir.glob(Path(pattern).name))):
+    for py in resolve_glob(root, pattern, excludes):
         if py.name.startswith("_"):
             continue
+        routers_dir = py.parent
+        if routers_dir not in boundary_by_dir:
+            boundary_by_dir[routers_dir] = _detect_boundary_file(
+                routers_dir.parent, root,
+            )
+        boundary_id = boundary_by_dir[routers_dir]
         rel_path = rel_to_root(py, root)
         # Recorded before the parse: a file that declares no router today
         # must still be re-read once someone adds one (see StrategyResult).
